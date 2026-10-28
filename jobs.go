@@ -26,6 +26,9 @@ type jobs struct {
 	e      *Engine
 	mu     sync.Mutex
 	client *river.Client[pgx.Tx]
+	// expandBatch and expandPages size the search sync's rename expansion;
+	// zero is the worker's default.
+	expandBatch, expandPages int
 }
 
 func (j *jobs) bound() *river.Client[pgx.Tx] {
@@ -36,7 +39,7 @@ func (j *jobs) bound() *river.Client[pgx.Tx] {
 
 // The engine's schedules; each periodic run is unique per its period.
 const (
-	searchSyncEvery     = 30 * time.Second // documents trail their writes by at most this
+	searchSyncEvery     = 5 * time.Minute // backstop: writes queue their own sync (syncDocuments)
 	preferenceSyncEvery = 5 * time.Minute
 	resyncEvery         = 24 * time.Hour
 	searchPruneEvery    = time.Hour
@@ -124,8 +127,9 @@ func (e *Engine) rebuild(ctx context.Context) error {
 
 // syncDocuments queues a search sync in the transaction that queued
 // documents (q, or after it when q is none), so they follow writes at once;
-// the periodic sync stays the backstop. A sync already running may have read
-// the queue before this write, so it gets one follow-up.
+// the periodic sync is only the backstop for a lost enqueue or exhausted
+// retries. A sync already running may have read the queue before this write,
+// so it gets one follow-up.
 func (e *Engine) syncDocuments(ctx context.Context, q any) error {
 	c := e.jobs.bound()
 	if c == nil {
@@ -156,21 +160,38 @@ type searchSyncWorker struct {
 
 func (w *searchSyncWorker) Timeout(*river.Job[searchSyncArgs]) time.Duration { return 10 * time.Minute }
 
+// Work runs one bounded sync. When work remains (a rename's expansion, a
+// backlog past the drain budget, backfill), the next run follows this one at
+// once rather than at the backstop.
 func (w *searchSyncWorker) Work(ctx context.Context, job *river.Job[searchSyncArgs]) error {
-	if err := mediastore.WaitFor(ctx, river.ClientFromContext[pgx.Tx](ctx), job.Args.After); err != nil {
+	c := river.ClientFromContext[pgx.Tx](ctx)
+	if err := mediastore.WaitFor(ctx, c, job.Args.After); err != nil {
 		return err
 	}
-	e := w.e
+	more, err := w.e.searchSync(ctx)
+	if err != nil || !more {
+		return err
+	}
+	return mediastore.InsertOnce(ctx, c.Insert, searchSyncArgs{After: job.ID}, river.InsertOpts{Queue: queueContentKit, MaxAttempts: 3})
+}
+
+// searchSync runs one tick of the keyword documents' maintenance and reports
+// whether work remains.
+func (e *Engine) searchSync(ctx context.Context) (bool, error) {
+	e.jobs.mu.Lock()
+	batch, pages := e.jobs.expandBatch, e.jobs.expandPages
+	e.jobs.mu.Unlock()
 	return worker.SyncOnce(ctx, worker.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant,
-		SupportedLanguages: e.cfg.Content.Languages, Sources: []worker.Source{e.catalog, e.entities}})
+		SupportedLanguages: e.cfg.Content.Languages, Sources: []worker.Source{e.catalog, e.entities},
+		ExpandBatchSize: batch, ExpandMaxPages: pages})
 }
 
 type searchPruneArgs struct{}
 
 func (searchPruneArgs) Kind() string { return "contentkit_search_prune" }
 
-// searchPruneWorker deletes recent searches hidden by a clear, of erased
-// people, or past their retention.
+// searchPruneWorker deletes recent searches past their retention, and any of
+// an erased person recorded while the erasure ran.
 type searchPruneWorker struct {
 	river.WorkerDefaults[searchPruneArgs]
 	e *Engine
@@ -229,6 +250,15 @@ func (w *popularRefreshWorker) Work(ctx context.Context, _ *river.Job[popularRef
 }
 
 func init() {
+	jobhook.SearchExpansion = func(engine any, batch, pages int) {
+		j := engine.(*Engine).jobs
+		j.mu.Lock()
+		defer j.mu.Unlock()
+		j.expandBatch, j.expandPages = batch, pages
+	}
+	jobhook.SearchSync = func(ctx context.Context, engine any) (bool, error) {
+		return engine.(*Engine).searchSync(ctx)
+	}
 	jobhook.Fleet = func(ctx context.Context, engine any, cfg *river.Config, extra ...riverhelpers.Contribution) (*river.Client[pgx.Tx], error) {
 		e := engine.(*Engine)
 		e.mu.Lock()

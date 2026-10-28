@@ -1,7 +1,7 @@
-// Package worker maintains one tenant's keyword documents: it drains the dirty
-// queue and runs a bounded cursor backfill, building every document from
-// ContentKit's own records through its Sources (the catalog's content, the
-// groups').
+// Package worker maintains one tenant's keyword documents: it expands
+// deferred marks, drains the dirty queue and runs a bounded cursor backfill,
+// building every document from ContentKit's own records through its Sources
+// (the catalog's content, the groups').
 package worker
 
 import (
@@ -33,6 +33,14 @@ type Source interface {
 	BuildDocuments(ctx context.Context, kind, language string, refs []contentref.ContentRef) ([]search.KeywordDocument, error)
 }
 
+// Expander is a Source that also marks documents a write deferred to the
+// worker, such as those of every item showing a renamed entity.
+type Expander interface {
+	// ExpandDocuments marks the documents of at most limit records, in its
+	// own transaction, and reports whether any deferred work remains.
+	ExpandDocuments(ctx context.Context, limit int) (more bool, err error)
+}
+
 // Options configures one tenant's worker.
 type Options struct {
 	// Pool is released before every source call, so one connection
@@ -50,13 +58,22 @@ type Options struct {
 	// Batch sizing (defaults are conservative).
 	DirtyBatchSize   int
 	BackfillPageSize int
-	// Upper bound on how much cursor backfill work to do per SyncOnce.
+	ExpandBatchSize  int
+	// Upper bounds on how much cursor backfill and expansion work to do per
+	// SyncOnce.
 	BackfillMaxPages int
+	ExpandMaxPages   int
 }
 
 func (o Options) withDefaults() Options {
 	if o.DirtyBatchSize <= 0 {
 		o.DirtyBatchSize = 250
+	}
+	if o.ExpandBatchSize <= 0 {
+		o.ExpandBatchSize = 500
+	}
+	if o.ExpandMaxPages <= 0 {
+		o.ExpandMaxPages = 20
 	}
 	if o.BackfillPageSize <= 0 {
 		o.BackfillPageSize = 1000
@@ -88,58 +105,93 @@ type dirtyRow struct {
 // queue slot for the job's whole timeout; the next tick continues it.
 const dirtyBudget = time.Minute
 
-// SyncOnce runs one tick: drain the dirty queue until it is empty or
-// dirtyBudget has passed, then a bounded backfill step.
+// SyncOnce runs one tick: up to ExpandMaxPages expansion batches, then drain
+// the dirty queue until it is empty or dirtyBudget has passed, then a bounded
+// backfill step. It reports whether work remains, for the caller to run the
+// next tick at once.
 // No connection or transaction is held across source calls: each write is a
 // short transaction fenced by the dirty-queue revision, so overlapping ticks
 // are safe (only duplicated work) and a stale build never overwrites a newer
 // one.
-func SyncOnce(ctx context.Context, opts Options) error {
+func SyncOnce(ctx context.Context, opts Options) (more bool, err error) {
 	cfg := opts.withDefaults()
 	if cfg.Pool == nil {
-		return fmt.Errorf("worker: pool is required")
+		return false, fmt.Errorf("worker: pool is required")
 	}
 	if strings.TrimSpace(cfg.Schema) == "" || strings.TrimSpace(cfg.Tenant) == "" {
-		return fmt.Errorf("worker: schema and tenant are required")
+		return false, fmt.Errorf("worker: schema and tenant are required")
 	}
 	if len(cfg.SupportedLanguages) == 0 {
-		return fmt.Errorf("worker: SupportedLanguages is required")
+		return false, fmt.Errorf("worker: SupportedLanguages is required")
 	}
 	if len(cfg.Sources) == 0 {
-		return fmt.Errorf("worker: Sources are required")
+		return false, fmt.Errorf("worker: Sources are required")
 	}
 	qs, err := search.QuoteSchema(cfg.Schema)
 	if err != nil {
-		return err
+		return false, err
 	}
 	w := syncer{cfg: cfg, qs: qs, sources: map[string]Source{}}
 	for _, src := range cfg.Sources {
 		for _, k := range src.DocumentKinds() {
 			if _, dup := w.sources[k]; dup {
-				return fmt.Errorf("worker: kind %q has two sources", k)
+				return false, fmt.Errorf("worker: kind %q has two sources", k)
 			}
 			w.sources[k] = src
 			w.kinds = append(w.kinds, k)
 		}
+		if x, ok := src.(Expander); ok {
+			w.expanders = append(w.expanders, x)
+		}
+	}
+	if more, err = w.expand(ctx); err != nil {
+		return false, err
 	}
 	deadline := time.Now().Add(dirtyBudget)
 	for {
 		n, err := w.dirty(ctx)
 		if err != nil {
-			return err
+			return false, err
 		}
-		if n < cfg.DirtyBatchSize || time.Now().After(deadline) {
+		if n < cfg.DirtyBatchSize {
+			break
+		}
+		if time.Now().After(deadline) {
+			more = true
 			break
 		}
 	}
-	return w.backfill(ctx)
+	backfilling, err := w.backfill(ctx)
+	if err != nil {
+		return false, err
+	}
+	return more || backfilling, nil
 }
 
 type syncer struct {
-	cfg     Options
-	qs      string
-	sources map[string]Source
-	kinds   []string
+	cfg       Options
+	qs        string
+	sources   map[string]Source
+	kinds     []string
+	expanders []Expander
+}
+
+// expand runs up to ExpandMaxPages expansion batches and reports whether
+// deferred work remains.
+func (w syncer) expand(ctx context.Context) (bool, error) {
+	pages := 0
+	for _, x := range w.expanders {
+		for more := true; more; pages++ {
+			if pages == w.cfg.ExpandMaxPages {
+				return true, nil
+			}
+			var err error
+			if more, err = x.ExpandDocuments(ctx, w.cfg.ExpandBatchSize); err != nil {
+				return false, err
+			}
+		}
+	}
+	return false, nil
 }
 
 type buildGroup struct{ kind, language string }
@@ -375,46 +427,47 @@ func (w syncer) ack(ctx context.Context, acked []dirtyRow) error {
 }
 
 // backfill lists a bounded number of pages and queues them through the
-// revision-fenced dirty queue. Each page commits with a compare-and-set of
-// its cursor, so an overlapping tick never rewinds or re-queues a page.
-func (w syncer) backfill(ctx context.Context) error {
+// revision-fenced dirty queue, and reports whether pages remain. Each page
+// commits with a compare-and-set of its cursor, so an overlapping tick never
+// rewinds or re-queues a page.
+func (w syncer) backfill(ctx context.Context) (bool, error) {
 	cfg := w.cfg
 	if cfg.BackfillMaxPages <= 0 || cfg.BackfillPageSize <= 0 {
-		return nil
+		return false, nil
 	}
-	pagesDone := 0
+	pagesDone, more := 0, false
 	for _, kind := range w.kinds {
 		for _, lang := range cfg.SupportedLanguages {
-			if pagesDone >= cfg.BackfillMaxPages {
-				return nil
-			}
 			if strings.TrimSpace(lang) == "" || strings.TrimSpace(kind) == "" {
 				continue
 			}
 			cursor, state, err := w.backfillState(ctx, kind, lang)
 			if err != nil {
-				return err
+				return false, err
 			}
 			if state == "done" {
 				continue
+			}
+			if pagesDone >= cfg.BackfillMaxPages {
+				return true, nil
 			}
 			where := `tenant_id = $1 AND content_kind = $2 AND language = $3 AND cursor = $4 AND state = $5`
 			refs, nextCursor, done, err := w.sources[kind].ListDocuments(ctx, kind, lang, cursor, cfg.BackfillPageSize)
 			if err != nil {
 				_, _ = cfg.Pool.Exec(ctx, fmt.Sprintf(`UPDATE %s.content_search_backfill SET last_error = $6, state = 'failed', updated_at = now() WHERE %s`, w.qs, where),
 					cfg.Tenant, kind, lang, cursor, state, err.Error())
-				return err
+				return false, err
 			}
 			rows := make([]map[string]any, 0, len(refs))
 			for _, ref := range refs {
 				if ref.TenantID != cfg.Tenant || ref.ContentKind != kind {
-					return fmt.Errorf("worker: source listed %s outside the requested %s/%s", ref, cfg.Tenant, kind)
+					return false, fmt.Errorf("worker: source listed %s outside the requested %s/%s", ref, cfg.Tenant, kind)
 				}
 				rows = append(rows, map[string]any{"content_id": ref.ContentID, "content_version_id": ref.ContentVersionID})
 			}
 			data, err := json.Marshal(rows)
 			if err != nil {
-				return err
+				return false, err
 			}
 			next := "running"
 			if done {
@@ -433,12 +486,13 @@ func (w syncer) backfill(ctx context.Context) error {
 				return err
 			})
 			if err != nil {
-				return err
+				return false, err
 			}
 			pagesDone++
+			more = more || !done
 		}
 	}
-	return nil
+	return more, nil
 }
 
 func (w syncer) backfillState(ctx context.Context, kind, language string) (cursor, state string, err error) {

@@ -1006,6 +1006,23 @@ CREATE TABLE content_search_documents (
     CONSTRAINT content_search_documents_version_check CHECK ((content_version_id <> ''::text))
 );
 
+CREATE TABLE content_search_entity_dirty (
+    tenant_id text NOT NULL,
+    entity_id text NOT NULL,
+    revision bigint NOT NULL,
+    cursor text DEFAULT ''::text NOT NULL,
+    updated_at timestamp with time zone DEFAULT CURRENT_TIMESTAMP NOT NULL
+);
+
+CREATE SEQUENCE content_search_entity_dirty_revision_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+ALTER SEQUENCE content_search_entity_dirty_revision_seq OWNED BY content_search_entity_dirty.revision;
+
 CREATE TABLE content_search_invalid (
     tenant_id text NOT NULL,
     content_kind text NOT NULL,
@@ -1016,12 +1033,6 @@ CREATE TABLE content_search_invalid (
     last_error text NOT NULL,
     failed_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT content_search_invalid_version_check CHECK ((content_version_id <> ''::text))
-);
-
-CREATE TABLE content_search_marks (
-    tenant_id text NOT NULL,
-    subject text NOT NULL,
-    hidden_before timestamp with time zone NOT NULL
 );
 
 CREATE TABLE content_searches (
@@ -1133,6 +1144,8 @@ CREATE TABLE eventlog_streams (
 );
 
 ALTER TABLE ONLY content_search_dirty ALTER COLUMN revision SET DEFAULT nextval('content_search_dirty_revision_seq'::regclass);
+
+ALTER TABLE ONLY content_search_entity_dirty ALTER COLUMN revision SET DEFAULT nextval('content_search_entity_dirty_revision_seq'::regclass);
 
 ALTER TABLE ONLY content_access_history
     ADD CONSTRAINT content_access_history_pkey PRIMARY KEY (tenant_id, id);
@@ -1281,11 +1294,11 @@ ALTER TABLE ONLY content_search_dirty
 ALTER TABLE ONLY content_search_documents
     ADD CONSTRAINT content_search_documents_key UNIQUE NULLS NOT DISTINCT (tenant_id, content_kind, content_id, content_version_id, language);
 
+ALTER TABLE ONLY content_search_entity_dirty
+    ADD CONSTRAINT content_search_entity_dirty_pkey PRIMARY KEY (tenant_id, entity_id);
+
 ALTER TABLE ONLY content_search_invalid
     ADD CONSTRAINT content_search_invalid_key UNIQUE NULLS NOT DISTINCT (tenant_id, content_kind, content_id, content_version_id, language);
-
-ALTER TABLE ONLY content_search_marks
-    ADD CONSTRAINT content_search_marks_pkey PRIMARY KEY (tenant_id, subject);
 
 ALTER TABLE ONLY content_searches
     ADD CONSTRAINT content_searches_pkey PRIMARY KEY (tenant_id, subject, normalized);
@@ -1478,6 +1491,8 @@ CREATE INDEX content_search_documents_names_substring ON content_search_document
 CREATE INDEX content_search_documents_terms ON content_search_documents USING gin (terms);
 
 CREATE INDEX content_search_documents_terms_native ON content_search_documents USING pgroonga (terms);
+
+CREATE INDEX content_search_entity_dirty_updated_at ON content_search_entity_dirty USING btree (tenant_id, updated_at);
 
 CREATE INDEX content_searches_age_idx ON content_searches USING btree (tenant_id, searched_at);
 

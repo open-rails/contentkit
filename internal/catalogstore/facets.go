@@ -133,9 +133,23 @@ func effectiveRule(content, override []byte) (access.Rule, error) {
 	return entitlement.Effective(c, &o), nil
 }
 
-// markDocuments marks each edition's text plus existing documents that may
-// need removal. Parent-scoped documents are retired during the hard cut.
+// markDocuments marks the items' documents (mark) and queues the search sync
+// in q's transaction.
 func (s *Store) markDocuments(ctx context.Context, q Querier, ids []string) error {
+	n, err := s.mark(ctx, q, ids)
+	if err != nil || n == 0 || s.documents == nil {
+		return err
+	}
+	return s.documents(ctx, q)
+}
+
+// mark marks each edition's text plus existing documents that may need
+// removal, and reports how many. Parent-scoped documents are retired during
+// the hard cut.
+func (s *Store) mark(ctx context.Context, q Querier, ids []string) (int, error) {
+	if len(ids) == 0 {
+		return 0, nil
+	}
 	rows, err := q.Query(ctx, `SELECT c.kind,c.id,v.id,l.language FROM `+s.t.items+` c
  JOIN `+s.t.versions+` v ON v.tenant_id=c.tenant_id AND v.content_id=c.id
  CROSS JOIN LATERAL (SELECT t.language FROM `+s.t.versionText+` t WHERE t.tenant_id=v.tenant_id AND t.version_id=v.id
@@ -144,7 +158,7 @@ func (s *Store) markDocuments(ctx context.Context, q Querier, ids []string) erro
  UNION SELECT d.content_kind,d.content_id,d.content_version_id,d.language FROM `+s.t.docs+` d
  WHERE d.tenant_id=$1 AND d.content_id=ANY($2) AND EXISTS(SELECT 1 FROM `+s.t.items+` c WHERE c.tenant_id=d.tenant_id AND c.id=d.content_id AND c.kind=d.content_kind)`, s.tenant, ids)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	var marks []search.DirtyMark
 	for rows.Next() {
@@ -152,7 +166,7 @@ func (s *Store) markDocuments(ctx context.Context, q Querier, ids []string) erro
 		var version *string
 		if err := rows.Scan(&kind, &id, &version, &language); err != nil {
 			rows.Close()
-			return err
+			return 0, err
 		}
 		ref := s.Ref(kind, id)
 		ref.ContentVersionID = version
@@ -160,26 +174,71 @@ func (s *Store) markDocuments(ctx context.Context, q Querier, ids []string) erro
 	}
 	rows.Close()
 	if err := rows.Err(); err != nil {
-		return err
+		return 0, err
 	}
-	if err := search.MarkDirty(ctx, q, s.schema, marks); err != nil || len(marks) == 0 || s.documents == nil {
+	return len(marks), search.MarkDirty(ctx, q, s.schema, marks)
+}
+
+// EntitiesRenamed is entities.Options.NamesChanged: in q's transaction it
+// queues the reindexing of every edition showing a renamed entity as one row
+// per entity, which the search sync expands in batches (ExpandDocuments). A
+// rename resets the row's cursor and takes a new revision, so a rename during
+// expansion restarts it rather than being lost.
+func (s *Store) EntitiesRenamed(ctx context.Context, q entitystore.Querier, entityIDs []string) error {
+	tag, err := q.Exec(ctx, `INSERT INTO `+s.t.renamed+` (tenant_id, entity_id)
+ SELECT DISTINCT $1, e.id FROM unnest($2::text[]) AS e(id)
+ WHERE EXISTS (SELECT 1 FROM `+s.t.facets+` f WHERE f.tenant_id = $1 AND f.entity_ids @> ARRAY[e.id]) ORDER BY e.id
+ ON CONFLICT (tenant_id, entity_id) DO UPDATE SET revision = DEFAULT, cursor = '', updated_at = now()`, s.tenant, entityIDs)
+	if err != nil || tag.RowsAffected() == 0 || s.documents == nil {
 		return err
 	}
 	return s.documents(ctx, q)
 }
 
-// EntitiesRenamed reindexes editions whose effective shared/version metadata
-// contains the renamed entity, using the normal transaction-local admission.
-func (s *Store) EntitiesRenamed(ctx context.Context, q entitystore.Querier, entityIDs []string) error {
-	rows, err := q.Query(ctx, `SELECT DISTINCT f.content_id FROM `+s.t.facets+` f WHERE f.tenant_id=$1 AND f.entity_ids && $2::text[] ORDER BY f.content_id`, s.tenant, entityIDs)
-	if err != nil {
-		return err
-	}
-	ids, err := pgx.CollectRows(rows, pgx.RowTo[string])
-	if err != nil || len(ids) == 0 {
-		return err
-	}
-	return s.markDocuments(ctx, q, ids)
+// ExpandDocuments is worker.Expander. It marks the documents of the next
+// limit items showing the renamed entity expanded least recently, then
+// advances that entity's cursor, or deletes its row once none remain, at the
+// revision and cursor it read: a rename meanwhile keeps the row to restart,
+// and an overlapping run only repeats marks. It locks the row only after
+// marking, the order an entity edit takes them in, so the two never deadlock.
+// It reports whether any renamed entity remains.
+func (s *Store) ExpandDocuments(ctx context.Context, limit int) (bool, error) {
+	limit = max(limit, 1)
+	var more bool
+	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
+		var entity, cursor string
+		var revision int64
+		err := tx.QueryRow(ctx, `SELECT entity_id, revision, cursor FROM `+s.t.renamed+` WHERE tenant_id = $1 ORDER BY updated_at, entity_id LIMIT 1`,
+			s.tenant).Scan(&entity, &revision, &cursor)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil
+		} else if err != nil {
+			return err
+		}
+		rows, err := tx.Query(ctx, `SELECT DISTINCT content_id FROM `+s.t.facets+` WHERE tenant_id = $1 AND entity_ids @> ARRAY[$2::text] AND content_id > $3
+ ORDER BY content_id LIMIT $4`, s.tenant, entity, cursor, limit)
+		if err != nil {
+			return err
+		}
+		ids, err := pgx.CollectRows(rows, pgx.RowTo[string])
+		if err != nil {
+			return err
+		}
+		if _, err := s.mark(ctx, tx, ids); err != nil {
+			return err
+		}
+		const at = ` WHERE tenant_id = $1 AND entity_id = $2 AND revision = $3 AND cursor = $4`
+		if len(ids) < limit {
+			_, err = tx.Exec(ctx, `DELETE FROM `+s.t.renamed+at, s.tenant, entity, revision, cursor)
+		} else {
+			_, err = tx.Exec(ctx, `UPDATE `+s.t.renamed+` SET cursor = $5, updated_at = now()`+at, s.tenant, entity, revision, cursor, ids[len(ids)-1])
+		}
+		if err != nil {
+			return err
+		}
+		return tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM `+s.t.renamed+` WHERE tenant_id = $1)`, s.tenant).Scan(&more)
+	})
+	return more, err
 }
 
 // ContentChanged is entities.Options.ContentChanged: after the entities module
