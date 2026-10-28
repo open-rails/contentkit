@@ -1445,16 +1445,17 @@ the host's periodic jobs. The worker migrates its schema itself.
     process). It is enforced in `Reader.Grant`, so reads and playlists
     pass it (downloads have their own `media.downloads` quotas); over the limit the read API answers 429
     `rate_limited` with `Retry-After`, and `Grant` returns a `LimitError`
-    (`ErrRateLimited`). Opening the same item again within the hour is free;
+    (`ErrRateLimited`). Opening the same item again within an hour of first
+    opening it is free;
     viewers without access, the item's editors and `Issuance.Exempt` actors
     (staff) are not counted. An anonymous viewer is counted by `Actor.IP`
     (an IPv6 address by its /64). The read API fills it from `RemoteAddr`;
     a host route that calls `Grant` or `Read` itself for an anonymous actor
     must set it, or the grant fails with `ErrNoViewerKey` rather than put
-    every anonymous viewer in one count. The per-process count holds at most
-    65,536 viewers; past that it forgets some, who start again.
-  - `HandlerOptions.Limit` bounds requests to the read API (default 2/s,
-    burst 120 per viewer).
+    every anonymous viewer in one count. The per-process count forgets some
+    viewers once it is full, and they start again.
+  - `HandlerOptions.Limit` bounds requests to the read API (at most `Burst`
+    per `Burst/PerSecond` per viewer; default 120 per minute).
   - The ingress of the media host limits downloads per IP (Traefik's
     `rateLimit`). Clients treat its 429 as "over the limit" and do not retry
     in a loop (the SDK does not).
@@ -1466,9 +1467,9 @@ the host's periodic jobs. The worker migrates its schema itself.
 - **Multiple replicas**: the limit is per process unless `Limit.Redis` is set
   (logged at startup), so N replicas allow N times it. Pass the host's
   go-redis client for Redis or Microsoft Garnet (`Limit.KeyPrefix`, default
-  `contentkit:media:rl:`); replicas then share one sliding-window count per
-  viewer (at most `Burst` per `Burst/PerSecond` window; plain INCR/PEXPIRE/GET
-  in MULTI, no Lua, keys expire after two windows; replica clocks need NTP).
+  `contentkit:media:rl:`); replicas then share one sliding window per viewer
+  (sorted-set commands in MULTI, no Lua, keys expire a window after their last
+  request; replica clocks need NTP).
   A Redis error fails open to the per-process limit for 1 s, logs a warning
   once per outage and increments expvar
   `contentkit_media_ratelimit_redis_errors`: the limit is abuse protection,
