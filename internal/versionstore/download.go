@@ -418,18 +418,14 @@ func (s *Service) downloadSnapshot(ctx context.Context, k *mediastore.Registered
 	if k.Publish == nil {
 		return nil, nil
 	}
-	p, err := s.current(ctx, s.o.Pool, t, kindPages)
+	active, err := s.activeRelease(ctx, s.o.Pool, t)
 	if err != nil {
 		return nil, err
 	}
-	if p == nil {
+	if active == nil || active.View == nil {
 		return nil, ErrNotReady
 	}
-	var snap pagesSnapshot
-	if err := json.Unmarshal(p.Source, &snap); err != nil {
-		return nil, err
-	}
-	return map[versions.Target]pagesSnapshot{t: snap}, nil
+	return map[versions.Target]pagesSnapshot{t: active.Pages}, nil
 }
 
 // grant is a policy's grant of a download: the pages (from 1) to mark and

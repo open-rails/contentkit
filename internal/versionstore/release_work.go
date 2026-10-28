@@ -24,6 +24,7 @@ import (
 // A releasePlan is a frozen publication attempt with optional storage work.
 // Chapter membership comes from ordered paths when a new plan is prepared.
 type releasePlan struct {
+	ID              string      `json:"-"`
 	EffectiveAccess access.Rule `json:"effective_access"`
 	versions.Target
 	Kind        string                 `json:"kind"`
@@ -118,10 +119,6 @@ func downloadOnly(k *mediastore.RegisteredKind, f media.File) bool {
 	return z != nil && z.HostOnly && z.Zip != "" && strings.HasPrefix(f.Path, z.Zip)
 }
 
-func (s *Service) publicationRequestsTable() string {
-	return pgxIdent(s.o.Schema, "content_publication_requests")
-}
-
 // releaseDueTx schedules the first publication at its requested time, while
 // edits of an already released item reconcile immediately (including withdrawal).
 func (s *Service) releaseDueTx(ctx context.Context, tx pgx.Tx, t versions.Target) (time.Time, error) {
@@ -134,7 +131,7 @@ func (s *Service) releaseDueTx(ctx context.Context, tx pgx.Tx, t versions.Target
 	if err != nil {
 		return time.Time{}, err
 	}
-	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM `+s.publicationRequestsTable()+`
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM `+s.releaseRequestsTable()+`
  WHERE tenant_id=$1 AND version_id=$2 AND plan IS NOT NULL AND state<>'cancelled')`, s.o.Tenant, t.Version).Scan(&storageStarted); err != nil {
 		return time.Time{}, err
 	}
@@ -153,10 +150,11 @@ func (s *Service) releaseDueTx(ctx context.Context, tx pgx.Tx, t versions.Target
 }
 
 func (s *Service) activeRelease(ctx context.Context, q querier, t versions.Target) (*releasePlan, error) {
+	var id string
 	var raw []byte
-	err := q.QueryRow(ctx, `SELECT r.result FROM `+s.t.versions+` v
- JOIN `+s.publicationRequestsTable()+` r ON r.tenant_id=v.tenant_id AND r.id=v.release_id
- WHERE v.tenant_id=$1 AND v.id=$2 AND v.content_id=$3 AND r.state IN ('retiring','completed')`, s.o.Tenant, t.Version, t.Content).Scan(&raw)
+	err := q.QueryRow(ctx, `SELECT r.id::text,r.result FROM `+s.t.versions+` v
+ JOIN `+s.releaseRequestsTable()+` r ON r.tenant_id=v.tenant_id AND r.id=v.release_id
+ WHERE v.tenant_id=$1 AND v.id=$2 AND v.content_id=$3 AND r.state IN ('retiring','completed')`, s.o.Tenant, t.Version, t.Content).Scan(&id, &raw)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, nil
 	}
@@ -167,6 +165,7 @@ func (s *Service) activeRelease(ctx context.Context, q querier, t versions.Targe
 	if err := json.Unmarshal(raw, &plan); err != nil {
 		return nil, err
 	}
+	plan.ID = id
 	return &plan, nil
 }
 
@@ -677,7 +676,7 @@ func (p *releasePlan) applyDelivery(delivery *mediastore.PublicationDelivery) {
 
 func (s *Service) runRelease(ctx context.Context, id string) (resultErr error) {
 	var t versions.Target
-	err := s.o.Pool.QueryRow(ctx, `SELECT content_id,version_id FROM `+s.publicationRequestsTable()+` WHERE tenant_id=$1 AND id=$2::uuid`, s.o.Tenant, id).Scan(&t.Content, &t.Version)
+	err := s.o.Pool.QueryRow(ctx, `SELECT content_id,version_id FROM `+s.releaseRequestsTable()+` WHERE tenant_id=$1 AND id=$2::uuid`, s.o.Tenant, id).Scan(&t.Content, &t.Version)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
@@ -692,7 +691,7 @@ func (s *Service) runRelease(ctx context.Context, id string) (resultErr error) {
 	// A newer intent cannot declare the item settled while an older active
 	// swap still has served objects awaiting retirement. Continue those exact
 	// obligations under the same item owner before preparing another move.
-	rows, err := s.o.Pool.Query(ctx, `SELECT id::text,result FROM `+s.publicationRequestsTable()+`
+	rows, err := s.o.Pool.Query(ctx, `SELECT id::text,result FROM `+s.releaseRequestsTable()+`
  WHERE tenant_id=$1 AND version_id=$2 AND state='retiring' AND id<>$3::uuid ORDER BY created_at,id`, s.o.Tenant, t.Version, id)
 	if err != nil {
 		return err
@@ -750,7 +749,7 @@ func (s *Service) runRelease(ctx context.Context, id string) (resultErr error) {
 				if err := s.lockTarget(ctx, tx, t); err != nil {
 					return err
 				}
-				_, err := tx.Exec(ctx, `UPDATE `+s.publicationRequestsTable()+` SET state=CASE WHEN state='retiring' THEN state ELSE 'failed' END,error=$3,updated_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2::uuid AND (current OR state='retiring') AND state<>'completed'`, s.o.Tenant, id, resultErr.Error())
+				_, err := tx.Exec(ctx, `UPDATE `+s.releaseRequestsTable()+` SET state=CASE WHEN state='retiring' THEN state ELSE 'failed' END,error=$3,updated_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2::uuid AND (current OR state='retiring') AND state<>'completed'`, s.o.Tenant, id, resultErr.Error())
 				return err
 			})
 		}
@@ -765,7 +764,7 @@ func (s *Service) runRelease(ctx context.Context, id string) (resultErr error) {
 			var raw []byte
 			var due time.Time
 			var state string
-			if err := tx.QueryRow(ctx, `SELECT current,state,scheduled_at,CASE WHEN state='retiring' THEN result ELSE plan END FROM `+s.publicationRequestsTable()+` WHERE tenant_id=$1 AND id=$2::uuid FOR UPDATE`, s.o.Tenant, id).Scan(&current, &state, &due, &raw); err != nil {
+			if err := tx.QueryRow(ctx, `SELECT current,state,scheduled_at,CASE WHEN state='retiring' THEN result ELSE plan END FROM `+s.releaseRequestsTable()+` WHERE tenant_id=$1 AND id=$2::uuid FOR UPDATE`, s.o.Tenant, id).Scan(&current, &state, &due, &raw); err != nil {
 				return err
 			}
 			if state == "retiring" {
@@ -788,7 +787,7 @@ func (s *Service) runRelease(ctx context.Context, id string) (resultErr error) {
 				return err
 			}
 			if plan.Waiting {
-				_, err := tx.Exec(ctx, `UPDATE `+s.publicationRequestsTable()+` SET state='waiting',error='',updated_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2::uuid`, s.o.Tenant, id)
+				_, err := tx.Exec(ctx, `UPDATE `+s.releaseRequestsTable()+` SET state='waiting',error='',updated_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2::uuid`, s.o.Tenant, id)
 				current = false
 				return err
 			}
@@ -802,7 +801,7 @@ func (s *Service) runRelease(ctx context.Context, id string) (resultErr error) {
 				if err != nil {
 					return err
 				}
-				if _, err := tx.Exec(ctx, `UPDATE `+s.publicationRequestsTable()+` SET state='completed',result=$3,completed_at=$4,updated_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2::uuid`, s.o.Tenant, id, body, s.o.Now()); err != nil {
+				if _, err := tx.Exec(ctx, `UPDATE `+s.releaseRequestsTable()+` SET state='completed',result=$3,completed_at=$4,updated_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2::uuid`, s.o.Tenant, id, body, s.o.Now()); err != nil {
 					return err
 				}
 				current = false
@@ -815,7 +814,7 @@ func (s *Service) runRelease(ctx context.Context, id string) (resultErr error) {
 			if err != nil {
 				return err
 			}
-			_, err = tx.Exec(ctx, `UPDATE `+s.publicationRequestsTable()+` SET plan=$3,state='running',error='',updated_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2::uuid`, s.o.Tenant, id, raw)
+			_, err = tx.Exec(ctx, `UPDATE `+s.releaseRequestsTable()+` SET plan=$3,state='running',error='',updated_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2::uuid`, s.o.Tenant, id, raw)
 			return err
 		})
 	})
@@ -846,7 +845,7 @@ func (s *Service) runRelease(ctx context.Context, id string) (resultErr error) {
 			if err := s.lockTarget(ctx, tx, t); err != nil {
 				return err
 			}
-			if err := tx.QueryRow(ctx, `SELECT current FROM `+s.publicationRequestsTable()+` WHERE tenant_id=$1 AND id=$2::uuid FOR UPDATE`, s.o.Tenant, id).Scan(&current); err != nil {
+			if err := tx.QueryRow(ctx, `SELECT current FROM `+s.releaseRequestsTable()+` WHERE tenant_id=$1 AND id=$2::uuid FOR UPDATE`, s.o.Tenant, id).Scan(&current); err != nil {
 				return err
 			}
 			if !current {
@@ -860,20 +859,15 @@ func (s *Service) runRelease(ctx context.Context, id string) (resultErr error) {
 				current = false
 				return s.scheduleReleaseAtTx(ctx, tx, t, s.o.Now())
 			}
-			if plan.View != nil {
-				for _, snapshot := range []struct {
-					kind  string
-					value any
-				}{{kindPages, plan.Pages}, {kindPlayback, plan.Playback}} {
-					pubID, same, err := s.prepareTx(ctx, tx, k, t, snapshot.kind, snapshot.value)
-					if err != nil {
-						return err
-					}
-					if !same {
-						if _, err := s.promoteTx(ctx, tx, k, t, snapshot.kind, pubID); err != nil {
-							return err
-						}
-					}
+			prior, err := s.activeRelease(ctx, tx, t)
+			if err != nil {
+				return err
+			}
+			// A republication with more pages than the one it replaces added pages
+			// (new chapters in the same edition): cards mark the work updated.
+			if plan.View != nil && prior != nil && prior.View != nil && len(plan.Pages.Pages) > len(prior.Pages.Pages) {
+				if _, err := tx.Exec(ctx, `UPDATE `+s.t.versions+` SET pages_added_at = now() WHERE tenant_id = $1 AND id = $2`, s.o.Tenant, t.Version); err != nil {
+					return err
 				}
 			}
 			at := s.o.Now()
@@ -886,7 +880,7 @@ func (s *Service) runRelease(ctx context.Context, id string) (resultErr error) {
 			if err != nil {
 				return err
 			}
-			if _, err := tx.Exec(ctx, `UPDATE `+s.publicationRequestsTable()+` SET result=$3,state='retiring',error='',updated_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2::uuid`, s.o.Tenant, id, body); err != nil {
+			if _, err := tx.Exec(ctx, `UPDATE `+s.releaseRequestsTable()+` SET result=$3,state='retiring',error='',updated_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2::uuid`, s.o.Tenant, id, body); err != nil {
 				return err
 			}
 			if _, err := tx.Exec(ctx, `UPDATE `+s.t.versions+` SET release_id=$3::uuid,released_access=$4 WHERE tenant_id=$1 AND id=$2`, s.o.Tenant, t.Version, id, plan.EffectiveAccess); err != nil {
@@ -954,7 +948,7 @@ func (s *Service) finishRetirement(ctx context.Context, id string, plan *release
 		}
 		var current bool
 		var state string
-		if err := tx.QueryRow(ctx, `SELECT current,state FROM `+s.publicationRequestsTable()+` WHERE tenant_id=$1 AND id=$2::uuid FOR UPDATE`, s.o.Tenant, id).Scan(&current, &state); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT current,state FROM `+s.releaseRequestsTable()+` WHERE tenant_id=$1 AND id=$2::uuid FOR UPDATE`, s.o.Tenant, id).Scan(&current, &state); err != nil {
 			return err
 		}
 		if state == "completed" {
@@ -964,7 +958,7 @@ func (s *Service) finishRetirement(ctx context.Context, id string, plan *release
 			return errRetired
 		}
 		at := s.o.Now()
-		if _, err := tx.Exec(ctx, `UPDATE `+s.publicationRequestsTable()+` SET state='completed',completed_at=$3,error=NULL,updated_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2::uuid`, s.o.Tenant, id, at); err != nil {
+		if _, err := tx.Exec(ctx, `UPDATE `+s.releaseRequestsTable()+` SET state='completed',completed_at=$3,error=NULL,updated_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2::uuid`, s.o.Tenant, id, at); err != nil {
 			return err
 		}
 		completion, ok := s.o.Facets.(publicationCompletion)

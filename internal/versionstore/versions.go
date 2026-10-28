@@ -87,7 +87,7 @@ type Service struct {
 }
 
 type tables struct {
-	items, versions, segments, publications, entities, facets string
+	items, versions, segments, entities, facets string
 }
 
 // New validates o. When media is configured, build it with Hooks, then Bind it.
@@ -109,7 +109,7 @@ func New(o Options) (*Service, error) {
 	}
 	q := func(t string) string { return pgxIdent(o.Schema, t) }
 	s := &Service{o: o, t: tables{items: q("content_items"), versions: q("content_versions"), segments: q("content_segments"),
-		publications: q("content_version_publications"), entities: q("content_entities"), facets: q("content_facets")}}
+		entities: q("content_entities"), facets: q("content_facets")}}
 	var err error
 	if s.dl, err = newQuotas(o.Downloads, o.Redis, o.Kinds.Tiers, o.Logger, o.Now); err != nil {
 		return nil, err
@@ -119,7 +119,7 @@ func New(o Options) (*Service, error) {
 
 // Hooks are media's hooks over the content model, for media.NewRegistry.
 func (s *Service) Hooks() mediastore.Hooks {
-	return mediastore.Hooks{Resolver: resolver{s}, ReaderManifest: s.readerManifest, CanUpload: uploads{s}, ValidatePathsChanged: s.validatePathsChanged, PathsChanged: s.pathsChanged, ItemReady: s.itemReady, ItemProgressed: s.itemProgressed, ItemCommitted: s.itemCommitted, BeforeRetire: s.beforeRetire, Failed: s.failed}
+	return mediastore.Hooks{Resolver: resolver{s}, ReaderManifest: s.readerManifest, CanUpload: uploads{s}, ValidatePathsChanged: s.validatePathsChanged, PathsChanged: s.pathsChanged, ItemReady: s.itemReady, ItemProgressed: s.itemProgressed, ItemCommitted: s.itemCommitted, Failed: s.failed}
 }
 
 // Bind attaches the media runtime built over Hooks.

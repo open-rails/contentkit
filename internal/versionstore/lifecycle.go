@@ -15,9 +15,8 @@ import (
 // The caller commits this claim before Delete erases storage, so retirement
 // hooks never wait on catalog locks held by the erasing transaction.
 func (s *Service) DeleteTx(ctx context.Context, tx pgx.Tx, targets []versions.Target) error {
-	// A publisher locks and retires publications while it holds their
-	// version: lock the versions before them, after their contents as
-	// catalog writes and media callbacks do.
+	// Lock the versions after their contents, as catalog writes and media
+	// callbacks do.
 	contents, ids := make([]string, len(targets)), make([]string, len(targets))
 	for i, t := range targets {
 		contents[i], ids[i] = t.Content, t.Version
@@ -29,29 +28,12 @@ func (s *Service) DeleteTx(ctx context.Context, tx pgx.Tx, targets []versions.Ta
 ON v.content_id = t.content AND (t.version = '' OR v.id = t.version) WHERE v.tenant_id = $1 ORDER BY v.id FOR UPDATE OF v`, s.o.Tenant, contents, ids); err != nil {
 		return err
 	}
-	refs, kinds, err := s.itemRefs(ctx, tx, targets)
+	refs, _, err := s.itemRefs(ctx, tx, targets)
 	if err != nil {
 		return err
 	}
 	for _, ref := range refs {
 		if err := s.m.Jobs.ClaimErasureTx(ctx, tx, ref); err != nil {
-			return err
-		}
-	}
-	for kind, vers := range kinds {
-		k, err := s.reg.Kind(kind)
-		if err != nil || !k.Versions {
-			continue
-		}
-		rows, err := tx.Query(ctx, `SELECT id FROM `+s.t.publications+` WHERE tenant_id = $1 AND version_id = ANY($2)`, s.o.Tenant, vers)
-		if err != nil {
-			return err
-		}
-		ids, err := pgx.CollectRows(rows, pgx.RowTo[string])
-		if err != nil {
-			return err
-		}
-		if err := s.retireTx(ctx, tx, k, ids); err != nil {
 			return err
 		}
 	}
