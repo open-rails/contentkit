@@ -84,7 +84,7 @@ func TestPreparedPopularityBuckets(t *testing.T) {
 	// The read contract uses prepared scalar rows. These IDs have no raw
 	// engagement receipts, so a raw-ranking fallback would return no results.
 	for i, id := range []string{first.ID, second.ID} {
-		must(t, a.deps.ClickHouse.Exec(t.Context(), `INSERT INTO `+a.cfg.ClickHouse.Database+`.popularity_daily (tenant,content_kind,domain,language,day,content_id,readers,eligible,version) VALUES(?,?,?,?,?,?,?,?,?)`, tenant, "article", "", "", day.AddDate(0, 0, -1), id, uint64(2-i), uint64(10), uint64(1)))
+		must(t, a.deps.ClickHouse.Exec(t.Context(), `INSERT INTO `+a.cfg.ClickHouse.Database+`.popularity_daily (tenant,content_kind,domain,language,day,content_id,readers,eligible) VALUES(?,?,?,?,?,?,?,?)`, tenant, "article", "", "", day.AddDate(0, 0, -1), id, uint64(2-i), uint64(10)))
 	}
 	query := ck.GetContentsQuery{Kind: "article", Sort: "popular", ActivityFrom: day.AddDate(0, 0, -1).Format(time.DateOnly), ActivityUntil: day.Format(time.DateOnly), Limit: 1}
 	ranged, err := client.GetContents(t.Context(), query)

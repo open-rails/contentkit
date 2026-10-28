@@ -65,7 +65,7 @@ func TestPreparedPopularityBrowser(t *testing.T) {
  (tenant,content_kind,domain,language,day,computed_at) VALUES(?,'article','','',?,now64(6))`, tenant, at))
 		for i, id := range []string{first.ID, second.ID} {
 			must(t, a.deps.ClickHouse.Exec(t.Context(), `INSERT INTO `+a.cfg.ClickHouse.Database+`.popularity_daily
- (tenant,content_kind,domain,language,day,content_id,readers,eligible,version) VALUES(?,'article','','',?,?,?,?,1)`, tenant, at, id, uint64(2-i), uint64(10)))
+ (tenant,content_kind,domain,language,day,content_id,readers,eligible) VALUES(?,'article','','',?,?,?,?)`, tenant, at, id, uint64(2-i), uint64(10)))
 		}
 	}
 	base, err := url.Parse(a.server.URL)

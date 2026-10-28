@@ -22,6 +22,8 @@ import (
 // due bucket windows. Today and yesterday cover the 24-hour activity receipt
 // lifetime. Older imports/corrections require rebuild=true. Failures return to
 // that caller; partial derived state is retried, never a reason to lose raw data.
+// Callers must not prepare one scope concurrently: the refresh job is unique
+// fleet-wide, and two builds of one day would share its staging partition.
 func (st *Store) PrepareDailyPopularity(ctx context.Context, tenant, kind string, availability signal.Availability, scope signal.ActivityScope, rebuild bool) (signal.DailyPopularityPreparation, error) {
 	var report signal.DailyPopularityPreparation
 	if err := dailyPopularityScope(tenant, kind, scope); err != nil {
@@ -54,7 +56,7 @@ func (st *Store) PrepareDailyPopularity(ctx context.Context, tenant, kind string
 			report.Reused++
 			continue
 		}
-		if err := st.preparePopularityDay(ctx, tenant, kind, scope, day, availability.Intervals, rebuild); err != nil {
+		if err := st.preparePopularityDay(ctx, tenant, kind, scope, day, availability.Intervals); err != nil {
 			return report, err
 		}
 		report.Prepared++
@@ -118,18 +120,33 @@ func popularityDayAudiences(day time.Time, intervals []signal.AccessInterval) ma
 	return out
 }
 
-func (st *Store) preparePopularityDay(ctx context.Context, tenant, kind string, scope signal.ActivityScope, day time.Time, intervals []signal.AccessInterval, rebuild bool) error {
+// preparePopularityDay builds a whole scope/day in staging and swaps it in, so
+// each day holds exactly its latest preparation and reads need no FINAL.
+func (st *Store) preparePopularityDay(ctx context.Context, tenant, kind string, scope signal.ActivityScope, day time.Time, intervals []signal.AccessInterval) error {
 	audiences := popularityDayAudiences(day, intervals)
-	// Ordinary refresh appends replacements: immutable history retains every
-	// item available at any point that day. Only an explicit correction can
-	// retract that history, so only rebuild physically removes the old day.
-	if rebuild {
-		if err := st.mutate(ctx, "popularity_daily", "tenant=? AND content_kind=? AND domain=? AND language=? AND day=?", tenant, kind, scope.Domain, scope.Language, day); err != nil {
+	partition := " PARTITION (?,?,?,?,toDate(?))"
+	key := []any{tenant, kind, scope.Domain, scope.Language, day.Format(time.DateOnly)}
+	alter := func(statement string) error {
+		if err := st.conn.Exec(ctx, "ALTER TABLE "+st.db+"."+statement, key...); err != nil {
+			return fmt.Errorf("signal: swap popularity day %s: %w", day.Format(time.DateOnly), err)
+		}
+		return nil
+	}
+	if err := alter("popularity_daily_staging DROP" + partition); err != nil {
+		return err
+	}
+	if len(audiences) == 0 {
+		if err := alter("popularity_daily DROP" + partition); err != nil {
 			return err
 		}
-	}
-	if len(audiences) > 0 {
+	} else {
 		if err := st.insertPopularityDay(ctx, tenant, kind, scope, day, audiences); err != nil {
+			return err
+		}
+		if err := alter("popularity_daily REPLACE" + partition + " FROM " + st.db + ".popularity_daily_staging"); err != nil {
+			return err
+		}
+		if err := alter("popularity_daily_staging DROP" + partition); err != nil {
 			return err
 		}
 	}
@@ -161,14 +178,23 @@ func (st *Store) insertPopularityDay(ctx context.Context, tenant, kind string, s
 			return err
 		}
 	}
+	// Every replica holds the staged day before any of them swaps it in.
+	quorum, err := st.erasureQuorum(ctx)
+	if err != nil {
+		return err
+	}
+	replicated := ""
+	if quorum > 1 {
+		replicated = fmt.Sprintf(", insert_quorum=%d, insert_quorum_parallel=1", quorum)
+	}
 	ctx = clickhouse.Context(ctx, clickhouse.WithExternalTable(table))
 	until := day.AddDate(0, 0, 1)
 	// Canonicalize only scalar facts needed for participation. Geometry is not
 	// unioned or rescored. Signed receipt access facts are immutable across
 	// revisions, so filter full access and scope before grouping receipts.
 	// Edition qualification precedes work/person dedupe.
-	query := fmt.Sprintf(`INSERT INTO %[1]s.popularity_daily
- (tenant,content_kind,domain,language,day,content_id,readers,eligible,version)
+	query := fmt.Sprintf(`INSERT INTO %[1]s.popularity_daily_staging
+ (tenant,content_kind,domain,language,day,content_id,readers,eligible)
  WITH canonical AS (
  SELECT content_id,content_version_id,subject_kind,subject,receipt_id,
  argMax(tuple(active_ms,notEmpty(covered_units)),version) AS fact
@@ -195,10 +221,10 @@ func (st *Store) insertPopularityDay(ctx context.Context, tenant, kind string, s
  SELECT a.audience,count() AS eligible FROM cohorts a CROSS JOIN people p
  WHERE a.public=1 OR hasAny(p.tiers,a.tiers) GROUP BY a.audience
  )
- SELECT ?,?,?,?,toDate(?),a.content_id,coalesce(r.readers,0),coalesce(p.eligible,0),toUInt64(toUnixTimestamp64Micro(now64(6)))
+ SELECT ?,?,?,?,toDate(?),toUUID(a.content_id),coalesce(r.readers,0),coalesce(p.eligible,0)
  FROM contentkit_daily_audiences a LEFT JOIN readers r USING(content_id) LEFT JOIN population p USING(audience)
  SETTINGS max_threads=2, max_execution_time=120, max_memory_usage=1073741824,
- max_bytes_before_external_group_by=134217728, max_bytes_before_external_sort=134217728`, st.db, st.notErased())
+ max_bytes_before_external_group_by=134217728, max_bytes_before_external_sort=134217728%[3]s`, st.db, st.notErased(), replicated)
 	if err := st.conn.Exec(ctx, query, tenant, kind, day, until, scope.Domain, scope.Domain, scope.Language, scope.Language,
 		tenant, kind, day, until, scope.Domain, scope.Domain, scope.Language, scope.Language,
 		tenant, kind, scope.Domain, scope.Language, day); err != nil {
@@ -237,6 +263,11 @@ func (st *Store) DailyPopularityCoverage(ctx context.Context, tenant, kind strin
 	return Between(utcDay(from), utcDay(last).AddDate(0, 0, 1)), true, nil
 }
 
+// dailyRankSettings bound one ranking read. Days hold no duplicates, so memory
+// is the per-work aggregate: about 32 MiB for a year of 100,000 works. Spilling
+// does not help: the hash table outgrows the cap in one resize.
+const dailyRankSettings = " SETTINGS max_threads=2, max_memory_usage=67108864"
+
 // DailyPopular reads only prepared anonymous day rows. Available days with no
 // readers contribute zero. Each available UTC day has equal weight, including
 // a partial launch/access-transition day; no period-distinct or quality terms
@@ -256,9 +287,9 @@ func (st *Store) DailyPopular(ctx context.Context, tenant, kind string, window s
 	predicate, args := windowDayPredicate(window, "day")
 	params := append([]any{tenant, kind, scope.Domain, scope.Language}, args...)
 	params = append(params, limit)
-	query := `SELECT content_id,round(avg(toFloat64(readers)/(eligible+20.)),12) AS score
- FROM ` + st.db + `.popularity_daily FINAL WHERE tenant=? AND content_kind=? AND domain=? AND language=?` + predicate + `
- GROUP BY content_id HAVING sum(readers)>0 ORDER BY score DESC,content_id LIMIT ? SETTINGS max_threads=2, max_memory_usage=268435456, max_execution_time=15`
+	query := `SELECT toString(content_id) AS id,round(avg(toFloat64(readers)/(eligible+20.)),12) AS score
+ FROM ` + st.db + `.popularity_daily WHERE tenant=? AND content_kind=? AND domain=? AND language=?` + predicate + `
+ GROUP BY content_id HAVING sum(readers)>0 ORDER BY score DESC,id LIMIT ?` + dailyRankSettings
 	rows, err := st.conn.Query(ctx, query, params...)
 	if err != nil {
 		return nil, fmt.Errorf("signal: daily popularity: %w", err)
