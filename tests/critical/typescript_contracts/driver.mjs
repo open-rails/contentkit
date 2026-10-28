@@ -584,9 +584,35 @@ if (group === "catalog_publication") {
     "forbidden",
   );
   proved("DiscoveryClient.adminSuggestions");
-  assert.deepEqual(ids(await anonymous.discovery.similar(one.id, query)), [
-    two.id,
-  ]);
+  // Similar comes from co-reading: a guest reads both through the same
+  // activity-context and engagement calls a browser makes. A separate
+  // visitor keeps the reader's own recommendations unread.
+  const targets = [{ content_id: one.id }, { content_id: two.id }];
+  const session = crypto.randomUUID();
+  const contexts = await anonymous.discovery.activityContexts(targets, session);
+  assert.equal(contexts.enabled, true);
+  await anonymous.discovery.engagement(
+    targets.map((target) => ({
+      ...target,
+      visit_id: crypto.randomUUID(),
+      segment_id: crypto.randomUUID(),
+      revision: 1,
+      activity_token: contexts.contexts.find(
+        (context) => context.content_id === target.content_id,
+      ).token,
+      active_ms: 1000,
+      pages: [{ index: 0, ranges: [{ from: 0, to: 10000 }], active_ms: 1000 }],
+    })),
+    { session },
+  );
+  const similarDeadline = Date.now() + 30_000;
+  let similar;
+  do {
+    similar = await anonymous.discovery.similar(one.id, query);
+    if (ids(similar).length > 0) break;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  } while (Date.now() < similarDeadline);
+  assert.deepEqual(ids(similar), [two.id]);
   proved("DiscoveryClient.similar");
   assert.deepEqual(
     ids(await reader.discovery.recommendations(query)).sort(),

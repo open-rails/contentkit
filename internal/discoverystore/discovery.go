@@ -69,7 +69,7 @@ type Options struct {
 	// view_status, similar, recommendations and popularity are unavailable.
 	Hub *hub.Hub
 	// Candidates sources similar and recommendations; nil is co-engagement
-	// over the signal plane, with shared-entity fill for similar.
+	// over the signal plane.
 	Candidates discovery.Candidates
 	// Tenure supplies elapsed access to configured tiers; nil omits it from
 	// account statistics. Billing adapters may implement access.TenureReader.
