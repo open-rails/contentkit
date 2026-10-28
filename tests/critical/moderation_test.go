@@ -17,6 +17,7 @@ import (
 	ckauth "github.com/open-rails/contentkit/adapters/authkit"
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/content"
+	"github.com/open-rails/contentkit/importer"
 )
 
 func authoredArticle(t *testing.T, a *application, author *ck.Client, entity string) catalog.Content {
@@ -292,6 +293,25 @@ func TestCommentModerationBoundaries(t *testing.T) {
 		must(t, err)
 		if masked.Body != "A ****** word" {
 			t.Fatalf("mask failed: %q", masked.Body)
+		}
+		// Imported history is masked like a new comment but never refused.
+		out, err := admin.PostImport(t.Context(), importer.Batch{Source: "rule-normalization", Comments: []importer.CommentRecord{
+			{ExternalID: "masked-history", Target: importer.TargetRef{Content: &importer.Ref{ID: item.ID}}, AnonName: "Masked guest", Body: "An old MASKED and forbidden word"},
+		}})
+		must(t, err)
+		if len(out.Failed) != 0 {
+			t.Fatalf("imported history was refused: %+v", out.Failed)
+		}
+		thread, err := client.GetContentComments(t.Context(), item.ID, ck.GetContentCommentsQuery{})
+		must(t, err)
+		var imported *content.Comment
+		for i := range thread {
+			if thread[i].ID == out.IDs["comment"]["masked-history"] {
+				imported = &thread[i]
+			}
+		}
+		if imported == nil || imported.Body != "An old ****** and forbidden word" || imported.AnonName != "****** guest" {
+			t.Fatalf("imported comment was not masked: %+v", imported)
 		}
 		must(t, admin.DeleteModerationBannedWords(t.Context(), []string{"forbidden", "masked"}))
 		postComment(t, client, item.ID, "forbidden")
