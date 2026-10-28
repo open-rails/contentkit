@@ -12,7 +12,7 @@ An explicitly authorized read-only auditor can request administrative
 inspection of ready reader derivatives before release. These requests return
 short-lived exact preview URLs, never a folder cookie, editing controls,
 undeclared original uploads or `HostOnly`/download-only outputs. Declared reader
-audio and explicit non-ZIP `ServeOriginals` assets may pass through; this does
+audio may pass through; this does
 not grant general source-export authority. Reader-plan inspection segments and
 playback carry an explicit flag so media fetches repeat the permission check.
 HLS inspection reads only indexes referenced by allowed current tracks and

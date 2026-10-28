@@ -321,7 +321,6 @@ HOST_INTEGRATION "Media" covers the registry, commit ops, reads and exposure.
 ```text
 tenant/{tenant}/app/{app}/{kind}/{owner}/manifest.json
                                        /private/{blob}
-                                       /download/{blob}
                                        /public/{name}
                                        /temp/{name}
 ```

@@ -35,7 +35,7 @@ func ForContent(c Config, k kinds.Config) (Config, error) {
 		}
 		mk.Versions = content
 		if content {
-			if err := downloads(mk, k.Kinds[mk.Name]); err != nil {
+			if err := download(mk, k.Kinds[mk.Name]); err != nil {
 				return Config{}, fmt.Errorf("media: kind %q: %w", mk.Name, err)
 			}
 		}
@@ -48,35 +48,18 @@ func ForContent(c Config, k kinds.Config) (Config, error) {
 	return out, nil
 }
 
-// downloads puts a content kind's originals and the files leaving only as
-// downloads in download/ (Kind.Downloads), and names what its download
-// serves (Kind.Download): its page uploads and imports, its zip and what
-// the zip packs, its videos' sources, and its served MP4. A default (k sets
-// no Serve) the media cannot serve serves none; a configured one is an error.
-func downloads(mk *Kind, k kinds.Kind) error {
-	mk.Downloads = slices.Clone(mk.Downloads)
-	add := func(d string) {
-		if d != "" && !slices.Contains(mk.Downloads, d) {
-			mk.Downloads = append(mk.Downloads, d)
-		}
-	}
+// download names what a content kind's download serves (Kind.Download): its
+// zip, its video's source, or its served MP4. A default (k sets no Serve)
+// the media cannot serve serves none; a configured one is an error.
+func download(mk *Kind, k kinds.Kind) error {
 	var zip, original string
 	if p := mk.Publish; p != nil {
-		add(p.Pages)
-		add(p.Import)
 		if z := findPrivate(mk.Private, p.Download); z != nil && z.Zip != "" {
 			zip = z.Name
-			add(z.Name)
-			for _, pr := range mk.Private {
-				if pr.From == p.Pages && strings.HasPrefix(pr.To, z.Zip) {
-					add(pr.Name)
-				}
-			}
 		}
 	}
 	for _, pr := range mk.Private {
 		if pr.HLS != nil && !strings.Contains(pr.From, nameVar) && findUpload(mk.Uploads, pr.From) >= 0 {
-			add(pr.From)
 			if original == "" && mk.KeepOriginals {
 				original = pr.From
 			}
@@ -98,7 +81,6 @@ func downloads(mk *Kind, k kinds.Kind) error {
 		if pr := findPrivate(mk.Private, serve); pr == nil || pr.MP4 == nil {
 			return fmt.Errorf("download serves %q, which is no MP4 preset", serve)
 		}
-		add(serve)
 		mk.Download = serve
 	}
 	return nil

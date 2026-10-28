@@ -1068,22 +1068,14 @@ worker, _ := cfg.MediaRegistry() // the stock worker's MEDIA_KINDS_FILE
   of an item: there is no partial access to `private/`.
 - **Originals.** `KeepOriginals` keeps uploads once their private outputs
   exist (otherwise the blob is dropped and the file marked `gone`; public
-  presets' sources are always kept). `ServeOriginals` lists uploads in reads
-  for viewers with access; otherwise the read API never returns an upload's
-  path or URL.
+  presets' sources are always kept). Except a version's declared audio
+  (`Publish.Playback`), the read API never returns an upload's path or URL
+  to viewers.
 - **Host-only presets.** `Private.HostOnly` keeps an output out of generic
   reads, downloads and playlists.
 - **`private/` is all or nothing.** One token per item opens every private
-  file of it. `ServeOriginals` and `HostOnly` decide what reads list, not
-  what the token reaches: a viewer with access who learns a blob's hash can
-  fetch it.
-- **`download/`.** `Kind.Downloads` names the uploads and presets (Image,
-  MP4, Zip) whose files live in `download/`: no item token or cookie opens
-  them, reads never list them, and only the version download route's token
-  opens one, that one key, for minutes (`media.downloads.ttl`, default 5m).
-  `media.ForContent` fills it for content kinds: page uploads and imports,
-  the zip and the presets it packs, videos' HLS sources, the served MP4.
-  Workers read them with storage credentials as before.
+  file of it. `HostOnly` decides what reads list, not what the token
+  reaches: a viewer with access who learns a blob's hash can fetch it.
 - **Defaults.** A kind's `Defaults` (an `fs.FS`, e.g. `go:embed`) holds the
   images its public presets name in `Public.Default`; the registry checks
   they exist. A shared kind ships its own, so importing apps merge nothing.

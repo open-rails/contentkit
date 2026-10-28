@@ -664,7 +664,7 @@ func (p *Processor) render(ctx context.Context, item mediastore.Item, m *mediast
 		}
 		typ := outputType(s, w.src.Type)
 		blob := w.src.Blob
-		area := k.Area("", pr.Name)
+		area := k.Area(pr.Name)
 		sourceArea, _, _ := layout.SplitBlobRef(blob)
 		if s.Format != media.ImageFormatSource || !bytes.Equal(out, src) || sourceArea != area {
 			blob, err = p.putBlob(ctx, item, area, bytes.NewReader(out), int64(len(out)), sha(out), typ)

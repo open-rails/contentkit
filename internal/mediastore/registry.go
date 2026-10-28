@@ -206,9 +206,6 @@ func (i Item) ManifestKey() string { return i.prefix + layout.ManifestName }
 
 func (i Item) PrivatePrefix() string { return i.prefix + layout.AreaPrivate + "/" }
 
-// DownloadPrefix is the folder's download/: files the gateway never serves.
-func (i Item) DownloadPrefix() string { return i.prefix + layout.AreaDownload + "/" }
-
 func (i Item) PublicPrefix() string { return i.prefix + layout.AreaPublic + "/" }
 
 func (i Item) OriginalsPrefix() string { return i.prefix + layout.AreaOriginals + "/" }
@@ -223,7 +220,7 @@ func (i Item) TempPrefix() string {
 }
 
 // Blob is the key of an allocation by its reference: "sha256-{hex}-{uuid}"
-// in private/, "download/sha256-{hex}-{uuid}" in download/.
+// in private/, "{area}/sha256-{hex}-{uuid}" in another area.
 func (i Item) Blob(ref string) (string, error) {
 	area, name, ok := layout.SplitBlobRef(ref)
 	if !ok {

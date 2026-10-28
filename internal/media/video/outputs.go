@@ -62,13 +62,6 @@ func (e *Encoder) codecs(p *media.Private) []media.Codec {
 	return e.c.Codecs
 }
 
-func profile(p *media.Private) string {
-	if p.MP4 != nil {
-		return p.MP4.Profile
-	}
-	return p.HLS.Profile
-}
-
 // stages are an encode preset's runs for a probed source, smallest rung
 // first: the HLS ladder, or the MP4's rung (none above the source).
 func stages(p *media.Private, pl plan) ([]rung, error) {

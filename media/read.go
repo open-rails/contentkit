@@ -47,7 +47,7 @@ type ReadOptions struct {
 	Download bool // URLs serve each file as a download under its name
 	// Editor adds an editor's uploads with their edit, frame, meta,
 	// pending, failure, editor view and retained source URL, unattached ones
-	// included. Source URLs are independent of the viewer's ServeOriginals.
+	// included.
 	Editor bool
 	// Status returns only whole-manifest processing counts, for editors.
 	// It issues no URLs or editor-view work and ignores pagination/prefix.

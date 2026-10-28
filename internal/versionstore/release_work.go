@@ -301,7 +301,7 @@ func (s *Service) planRelease(ctx context.Context, tx pgx.Tx, t versions.Target)
 				return nil
 			}
 			for _, f := range prior.View.Files {
-				if !f.IsUpload() || k.AudioUpload(f) || k.ServeOriginals && f.Type != "application/zip" {
+				if !f.IsUpload() || k.AudioUpload(f) {
 					if err := pin(f.Blob); err != nil {
 						return nil, err
 					}
@@ -504,7 +504,7 @@ func (s *Service) planRelease(ctx context.Context, tx pgx.Tx, t versions.Target)
 				if served[f.Path] {
 					// Uploaded originals stay internal; only declared audio is
 					// copied for direct reader playback.
-					if k.AudioUpload(f) || k.ServeOriginals && f.Type != "application/zip" {
+					if k.AudioUpload(f) {
 						if previous, ok := m.Delivered(f.Blob, area); ok {
 							f.Blob = previous
 						} else if prior != nil && prior.View != nil {
@@ -633,7 +633,7 @@ func (p *releasePlan) applyDelivery(delivery *mediastore.PublicationDelivery) {
 			f.Track.Index = replace(f.Track.Index)
 		}
 		for j := range f.Public {
-			// ServeOriginals can remap the upload itself to identical served
+			// A served upload can remap itself to identical served
 			// bytes; its verified rendition ownership follows that reference.
 			if f.Public[j].Source == priorSource {
 				f.Public[j].Source = f.Key()
