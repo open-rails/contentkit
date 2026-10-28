@@ -1538,7 +1538,7 @@
       "behavior": "Banned words and normalized IP/CIDR input cannot bypass restrictions",
       "status": "verified",
       "evidence": [
-        "Real word rules reject case/NFKC/zero-width variants, mask actual comment bytes, and removal restores writes. CIDR and IPv4-mapped inputs bind actual loopback requests; lift works and malformed batch leaves no partial rule.",
+        "Real word rules reject case/NFKC/zero-width variants, mask actual comment bytes, mask an imported comment's body and anonymous name without refusing it, and removal restores writes. CIDR and IPv4-mapped inputs bind actual loopback requests; lift works and malformed batch leaves no partial rule.",
         "Executed with the race detector in the completed 8d5ae7c6 aggregate; the strict runner requires these exact cases on every qualification."
       ],
       "cases": [
