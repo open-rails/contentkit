@@ -563,16 +563,22 @@ func blankAndLastChapterStarts(t *testing.T, w *world) {
 	g.readable(t, "reader/01.webp", "reader/02.webp", "reader/03.webp", "reader/05.webp", "reader/11.webp")
 }
 
-func TestHiddenChapterPublication(t *testing.T) {
+// newChapterArchiveWorld attaches gallery media whose readers get page
+// renditions and a ZIP of the released pages.
+func newChapterArchiveWorld(t *testing.T) *world {
 	w := newWorld(t)
-	a := w.apps[0]
-	attachMedia(t, w, a, func(c *ck.Config) {
+	attachMedia(t, w, w.apps[0], func(c *ck.Config) {
 		k := &c.Media.Kinds[0]
 		k.Uploads[0].Max = 20
 		k.Publish = &media.Publish{Pages: "pages/{name}", Renditions: []string{"reader"}, Download: "released-archive"}
 		k.Private = append(k.Private, media.Private{Name: "archive-pages", From: "pages/{name}", To: "download-pages/{name}{ext}", Image: &media.Image{Format: media.ImageFormatSource}},
 			media.Private{Name: "released-archive", To: "released.zip", Zip: "download-pages/", HostOnly: true})
 	})
+	return w
+}
+
+func TestHiddenChapterPublication(t *testing.T) {
+	w := newChapterArchiveWorld(t)
 
 	t.Run("TestHiddenChapterStartKeepsPublishing", func(t *testing.T) { hiddenChapterStartKeepsPublishing(t, w) })
 	t.Run("TestHiddenChapterStartSpreadWaits", func(t *testing.T) { hiddenChapterStartSpreadWaits(t, w) })
