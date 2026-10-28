@@ -573,27 +573,12 @@ func (r *Reader) read(ctx context.Context, ref contentref.ContentRef, actor acce
 		out.Access = media.AccessPartial
 	}
 	k := g.Item.Kind()
-	if !editor || !k.Versions {
-		for _, n := range k.previewNames(g.Manifest) {
-			out.Previews = append(out.Previews, g.r.base+layout.URLPrefix+g.Item.PublicPrefix()+n)
-		}
-	}
 	out.Public = r.reg.publicImages(g.Item, g.Manifest)
 	if editor && k.Versions {
 		out.Public, err = g.editorPublicImages()
 		if err != nil {
 			return nil, nil, err
 		}
-		for _, image := range out.Public {
-			if preset := k.public(image.Preset); preset != nil && preset.First > 0 {
-				for _, rendition := range image.Renditions {
-					out.Previews = append(out.Previews, rendition.URL)
-				}
-			}
-		}
-	}
-	if !editor && k.Publish != nil {
-		out.Public = slices.DeleteFunc(out.Public, func(p media.PublicImage) bool { return p.Preset == k.Publish.Previews })
 	}
 	if editor {
 		out.State, out.Full, out.Uploads = k.Readiness(g.Manifest).State, g.Manifest.Full, k.UploadRules()

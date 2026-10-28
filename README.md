@@ -529,8 +529,13 @@ copy, repartition or rename image objects. A ready-file snapshot references the
 version's existing immutable renditions; every chapter reads that same version
 item. The server evaluates released pages and access when a reader asks, signs
 only requested authorized files, and excludes original uploads and archives
-from ordinary reader grants. Preview pages use those same existing renditions.
-Reader plans expose their signed-preview expiry so clients can refresh URLs.
+from ordinary reader grants. A locked version's free preview pages (its
+rule's `preview`, else its kind's) are the same for every reader who does not
+open it, so its release copies those leading released pages' renditions to the
+version's public area: the reader plan lists them as plain, cacheable public
+URLs without a grant, and a later release with fewer preview pages (or none)
+retires the copies it no longer lists. Scheduled chapters never contribute
+preview pages before they release.
 Media reads accept up to 64 repeated `path` query parameters to sign the
 selected permitted files without changing their manifest order. The SDK
 batches larger selections and refreshes active grants before expiry.

@@ -2292,7 +2292,7 @@ func (c *Client) PostContentVersionPageNoticeRestore(ctx context.Context, id str
 	return out, err
 }
 
-// GetContentVersionReader is GET /v1/contents/{id}/versions/{version}/reader (public). A version's reader plan: its segments with their release state, the canonical version item for released spans, signed previews of a locked version, playback and reader metadata. 202 while it has no current publication.
+// GetContentVersionReader is GET /v1/contents/{id}/versions/{version}/reader (public). A version's reader plan: its segments with their release state, the canonical version item for released spans, the public preview pages of a locked version, playback and reader metadata. 202 while it has no current publication.
 func (c *Client) GetContentVersionReader(ctx context.Context, id string, version string) (*Reply, error) {
 	return c.raw(ctx, http.MethodGet, expand("/v1/contents/{id}/versions/{version}/reader", "{id}", url.PathEscape(id), "{version}", url.PathEscape(version)), nil, nil)
 }

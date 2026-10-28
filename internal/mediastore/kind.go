@@ -8,7 +8,6 @@ import (
 	"math"
 	"path"
 	"slices"
-	"strconv"
 	"strings"
 
 	media "github.com/open-rails/contentkit/media"
@@ -70,12 +69,6 @@ func (k *RegisteredKind) validatePublish() error {
 		r := k.private(name)
 		if r == nil || r.Image == nil || r.From != p.Pages || !strings.HasSuffix(r.To, nameVar+".webp") {
 			return fmt.Errorf("rendition %q is no image preset from Pages to {dir}{name}.webp", name)
-		}
-	}
-	if p.Previews != "" {
-		pv := k.public(p.Previews)
-		if pv == nil || pv.First == 0 || !slices.Contains(k.Uploads[k.uploadIndex(pv.From)].Types, "image/webp") {
-			return fmt.Errorf("Previews %q is no preview preset (First) of a WebP upload", p.Previews)
 		}
 	}
 	if p.Playback != "" {
@@ -207,18 +200,9 @@ func (k *RegisteredKind) OutputPath(p *media.Private, uploadPath string) string 
 	return fill(p.To, map[string]string{"name": k.NameOf(uploadPath), "ext": path.Ext(uploadPath)})
 }
 
-// PublicNames are p's public names in m for the upload at path, one per
-// width: none for an upload outside a preview's First. m may be nil for a
-// preset without First.
-func (k *RegisteredKind) PublicNames(m *Manifest, p *media.Public, path string) []string {
+// PublicNames are p's public names for the upload at path, one per width.
+func (k *RegisteredKind) PublicNames(p *media.Public, path string) []string {
 	vars := map[string]string{"name": k.NameOf(path)}
-	if p.First > 0 {
-		n := slices.Index(k.firsts(m, p), path)
-		if n < 0 {
-			return nil
-		}
-		vars["n"] = strconv.Itoa(n + 1)
-	}
 	if len(p.Widths) == 0 {
 		return []string{fill(p.To, vars)}
 	}
@@ -230,73 +214,24 @@ func (k *RegisteredKind) PublicNames(m *Manifest, p *media.Public, path string) 
 	return out
 }
 
-// firsts are the paths of the uploads preview p renders, in order: the
-// first p.First attached uploads of its From.
-func (k *RegisteredKind) firsts(m *Manifest, p *media.Public) []string {
-	var out []string
-	if m == nil {
-		return nil
-	}
-	g := k.uploadIndex(p.From)
-	for _, f := range m.Files {
-		if len(out) == p.First {
-			break
-		}
-		if i, _, _, _, ok := k.upload(f.Path); ok && i == g && f.IsUpload() && !f.Unattached {
-			out = append(out, f.Path)
-		}
-	}
-	return out
-}
-
-// rendered reports preview p rendered for the upload now at f's position:
-// until then the name there holds another upload's image, or none.
-func rendered(f media.File, p *media.Public) bool {
-	return f.Blob != "" && f.Fail() == nil && !slices.Contains(f.Pending, p.Name)
-}
-
-// previewNames lists m's published preview generations in order.
-func (k *RegisteredKind) previewNames(m *Manifest) []string {
-	var out []string
-	for i := range k.Public {
-		p := &k.Public[i]
-		for _, path := range k.firsts(m, p) {
-			if f, _ := m.Get(path); rendered(f, p) {
-				if pub, ok := k.Current(m, f, p); ok {
-					if k.Versions {
-						for _, blob := range pub.Blobs {
-							if area, name, valid := layout.SplitBlobRef(blob); valid && area == layout.AreaPublic {
-								out = append(out, name)
-							}
-						}
-						continue
-					}
-					out = append(out, pub.NamesOnDisk()...)
-				}
-			}
-		}
-	}
-	return out
-}
-
-// Publication returns the latest generation still owned by the source and
-// position: a reservation (cleanup must protect it while PUTs run), else
-// the current generation.
-func (k *RegisteredKind) Publication(m *Manifest, f media.File, p *media.Public) (media.Publication, bool) {
+// Publication returns the latest generation still owned by the source: a
+// reservation (cleanup must protect it while PUTs run), else the current
+// generation.
+func (k *RegisteredKind) Publication(f media.File, p *media.Public) (media.Publication, bool) {
 	pub, ok := f.Publication(p.Name)
-	return pub, ok && k.owned(m, f, p, pub)
+	return pub, ok && k.owned(f, p, pub)
 }
 
-// Current returns the ready generation still owned by the source and
-// position: what readers are shown.
-func (k *RegisteredKind) Current(m *Manifest, f media.File, p *media.Public) (media.Publication, bool) {
+// Current returns the ready generation still owned by the source: what
+// readers are shown.
+func (k *RegisteredKind) Current(f media.File, p *media.Public) (media.Publication, bool) {
 	pub, ok := f.Current(p.Name)
-	return pub, ok && k.owned(m, f, p, pub)
+	return pub, ok && k.owned(f, p, pub)
 }
 
-func (k *RegisteredKind) owned(m *Manifest, f media.File, p *media.Public, pub media.Publication) bool {
+func (k *RegisteredKind) owned(f media.File, p *media.Public, pub media.Publication) bool {
 	return !f.Unattached && f.Fail() == nil && pub.Source == f.Key() &&
-		slices.Equal(pub.Names, k.PublicNames(m, p, f.Path))
+		slices.Equal(pub.Names, k.PublicNames(p, f.Path))
 }
 
 // PublicKept protects every owned generation: the current files, legacy
@@ -320,7 +255,7 @@ func (k *RegisteredKind) PublicKept(m *Manifest) []string {
 		}
 		for _, p := range k.PublicFor(f.Path) {
 			for _, pub := range f.Public {
-				if pub.Preset == p.Name && k.owned(m, f, p, pub) {
+				if pub.Preset == p.Name && k.owned(f, p, pub) {
 					out = append(out, pub.NamesOnDisk()...)
 					if p.Stable && pub.Ready() && pub.Generation != "" {
 						out = append(out, pub.Names...)
@@ -351,12 +286,12 @@ func (k *RegisteredKind) mirrors(item Item, cur, next *Manifest) []Mirror {
 			continue
 		}
 		for _, p := range k.PublicFor(f.Path) {
-			pub, ok := k.Current(next, f, p)
+			pub, ok := k.Current(f, p)
 			if !p.Stable || !ok || pub.Generation == "" {
 				continue
 			}
 			if was, ok := cur.Get(f.Path); ok {
-				if prev, ok := k.Current(cur, was, p); ok && prev.Generation == pub.Generation {
+				if prev, ok := k.Current(was, p); ok && prev.Generation == pub.Generation {
 					continue
 				}
 			}
@@ -368,47 +303,6 @@ func (k *RegisteredKind) mirrors(item Item, cur, next *Manifest) []Mirror {
 		}
 	}
 	return out
-}
-
-// syncPreviews keeps each preview preset pending on exactly the uploads
-// whose position's file is not the one before did (a reorder, an insert, a
-// removal, a new source or edit); uploads past First carry none.
-func (k *RegisteredKind) syncPreviews(before, m *Manifest) {
-	for i := range k.Public {
-		p := &k.Public[i]
-		if p.First == 0 {
-			continue
-		}
-		was := map[int]string{}
-		if before != nil {
-			for n, path := range k.firsts(before, p) {
-				if f, ok := before.Get(path); ok && !slices.Contains(f.Pending, p.Name) {
-					was[n] = f.Key()
-				}
-			}
-		}
-		now := k.firsts(m, p)
-		g := k.uploadIndex(p.From)
-		for j := range m.Files {
-			f := &m.Files[j]
-			if u, _, _, _, ok := k.upload(f.Path); !ok || u != g || !f.IsUpload() {
-				continue
-			}
-			n := slices.Index(now, f.Path)
-			pending := slices.Contains(f.Pending, p.Name)
-			switch {
-			case n < 0 || f.Fail() != nil:
-				if pending {
-					f.Pending = slices.DeleteFunc(slices.Clone(f.Pending), func(s string) bool { return s == p.Name })
-					if len(f.Pending) == 0 {
-						f.Pending = nil
-					}
-				}
-			case !pending && was[n] != f.Key():
-				f.Pending = append(slices.Clone(f.Pending), p.Name)
-			}
-		}
-	}
 }
 
 // UploadRules are the kind's upload paths with the rules a client checks.
@@ -631,16 +525,13 @@ func (k *RegisteredKind) validatePublic(p *media.Public, names map[string]bool) 
 	if slices.Contains(vars, "name") && (k.patterns[i].literal == "" && !k.Uploads[i].Named || p.Default != "") {
 		return errors.New("{name} in To needs a literal or Named upload, and no Default")
 	}
-	if p.First < 0 || p.First > maxFirst || p.First > 0 && (k.patterns[i].literal != "" || slices.Contains(vars, "name") || p.Default != "") {
-		return fmt.Errorf("First (at most %d) needs a {name} upload, {n} in To for {name}, and no Default", maxFirst)
+	if slices.ContainsFunc(vars, func(s string) bool { return s != "name" && s != "w" }) ||
+		slices.Contains(vars, "w") != (len(p.Widths) > 0) ||
+		!layout.ValidSegment(fill(p.To, map[string]string{"name": "n", "w": "1"})) {
+		return fmt.Errorf("invalid To %q ([A-Za-z0-9._-] with {w} exactly when Widths are set)", p.To)
 	}
-	if slices.ContainsFunc(vars, func(s string) bool { return s != "name" && s != "w" && s != "n" }) ||
-		slices.Contains(vars, "w") != (len(p.Widths) > 0) || slices.Contains(vars, "n") != (p.First > 0) ||
-		!layout.ValidSegment(fill(p.To, map[string]string{"name": "n", "w": "1", "n": "1"})) {
-		return fmt.Errorf("invalid To %q ([A-Za-z0-9._-] with {w} exactly when Widths are set and {n} exactly with First)", p.To)
-	}
-	if p.Stable && (slices.Contains(vars, "name") || p.First > 0) {
-		return errors.New("Stable needs one image per item: no {name} in To, no First")
+	if p.Stable && slices.Contains(vars, "name") {
+		return errors.New("Stable needs one image per item: no {name} in To")
 	}
 	if p.Default != "" && k.Defaults != nil {
 		if _, err := fs.Stat(k.Defaults, p.Default); err != nil {
@@ -777,16 +668,15 @@ func (k *RegisteredKind) Unwritten(m *Manifest) int64 {
 		from := jsonLen(f.Path)
 		public := k.PublicFor(f.Path)
 		for _, p := range public {
-			names := k.PublicNames(m, p, f.Path)
-			if len(names) == 0 || f.Unattached {
+			if f.Unattached {
 				continue
 			}
-			if _, ok := k.Publication(m, f, p); !ok {
+			if _, ok := k.Publication(f, p); !ok {
 				// Source, fingerprint and UUID; one logical name and measured
 				// dimension pair per rendition. Replacement does not accumulate
 				// old generations in the root.
 				out += 256 + int64(len(p.Name))
-				for _, name := range names {
+				for _, name := range k.PublicNames(p, f.Path) {
 					out += int64(jsonLen(name) + 64)
 				}
 			}

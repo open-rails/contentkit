@@ -49,7 +49,7 @@ func PublishDefaults(ctx context.Context, store media.Store, reg *mediastore.Reg
 				return result, fmt.Errorf("media/image: default %s: %w", p.Default, err)
 			}
 			typ := mime.TypeByExtension(path.Ext(p.Default))
-			names := k.PublicNames(nil, p, "")
+			names := k.PublicNames(p, "")
 			outs, _, err := encodePublic(src, typ, p, names, nil, rules{maxPixels: 100_000_000, maxFrames: 1000, maxSeconds: 60})
 			if err != nil {
 				return result, fmt.Errorf("media/image: default %s: %w", p.Default, err)

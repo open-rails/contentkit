@@ -15,7 +15,7 @@ import { HugeiconsIcon } from "@hugeicons/react";
 import { cn } from "cn";
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 import type { ContentKitUiAppearance } from "../appearance.js";
-import { formatDuration, galleryItems, stageAspect, type GalleryItem, type GalleryLockedItem, type GalleryMediaItem } from "../client/gallery.js";
+import { formatDuration, galleryItems, stageAspect, type GalleryItem, type GalleryMediaItem } from "../client/gallery.js";
 import { useCarousel, useGalleryView, useHlsPlayer, useRefreshBeforeExpiry, type GalleryViewOptions, type HlsPlayerOptions } from "../react/gallery.js";
 import { useInlinePreview } from "../react/inline-preview.js";
 import { useMessages } from "../i18n/context.js";
@@ -270,28 +270,23 @@ function NavButton({ side, hidden, last, onClick, label, lightbox }: { side: "pr
 
 function Slide({ ctx, item, position, active, lightbox }: { ctx: Ctx; item: GalleryItem; position: number; active: boolean; lightbox?: boolean }) {
   const { t } = useMessages();
-  if (item.kind === "locked") return <Locked ctx={ctx} item={item} />;
+  if (item.kind === "locked") return <Locked ctx={ctx} />;
   const f = item.file;
   if (item.kind === "audio") return <AudioSlide item={item} position={position} />;
   if (item.kind === "image") {
     if (!f.url) return f.failed ? <ImageFailed file={f} /> : <Processing>{t("gallery.processingImage")}</Processing>;
-    // A public teaser of a locked item carries the unlock, so no one swipes past it to find it.
-    const locked = item.key.startsWith("preview/") && !lightbox ? ctx.items.find((i): i is GalleryLockedItem => i.kind === "locked") : undefined;
     return (
-      <>
-        <img
-          src={f.url}
-          alt={t("gallery.image", { index: position + 1 })}
-          width={f.w}
-          height={f.h}
-          sizes={lightbox ? "100vw" : (ctx.sizes ?? "(min-width: 768px) 720px, 100vw")}
-          loading={active ? "eager" : "lazy"}
-          decoding="async"
-          draggable={false}
-          className="absolute inset-0 size-full object-contain"
-        />
-        {locked && <LockedBar ctx={ctx} />}
-      </>
+      <img
+        src={f.url}
+        alt={t("gallery.image", { index: position + 1 })}
+        width={f.w}
+        height={f.h}
+        sizes={lightbox ? "100vw" : (ctx.sizes ?? "(min-width: 768px) 720px, 100vw")}
+        loading={active ? "eager" : "lazy"}
+        decoding="async"
+        draggable={false}
+        className="absolute inset-0 size-full object-contain"
+      />
     );
   }
   const { poster, start } = videoArt(ctx, item);
@@ -371,12 +366,11 @@ function Processing({ children }: { children: string }) {
   );
 }
 
-function Locked({ ctx, item, tile }: { ctx: Ctx; item: GalleryLockedItem; tile?: boolean }) {
+function Locked({ ctx, tile }: { ctx: Ctx; tile?: boolean }) {
   const { t } = useMessages();
   return (
     <div className="absolute inset-0 overflow-hidden bg-muted" data-ckui="locked">
-      {item.backdrop && <img src={item.backdrop} alt="" draggable={false} className="absolute inset-0 size-full scale-110 object-cover blur-xl" />}
-      <div className={cn("absolute inset-0 flex flex-col items-center justify-center gap-3 p-4 text-center", item.backdrop ? "bg-black/45 text-white" : "text-foreground")}>
+      <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 p-4 text-center text-foreground">
         <HugeiconsIcon icon={SquareLock02Icon} className={tile ? "size-6" : "size-8"} strokeWidth={1.75} />
         {!tile && (
           <>
@@ -385,22 +379,6 @@ function Locked({ ctx, item, tile }: { ctx: Ctx; item: GalleryLockedItem; tile?:
           </>
         )}
       </div>
-    </div>
-  );
-}
-
-function LockedBar({ ctx }: { ctx: Ctx }) {
-  const { t } = useMessages();
-  return (
-    <div
-      className="absolute inset-x-0 bottom-0 flex flex-wrap items-center justify-between gap-x-3 gap-y-2 bg-linear-to-t from-black/75 via-black/45 to-transparent px-4 pt-10 pb-4 text-white"
-      data-ckui="locked-bar"
-    >
-      <span className="flex items-center gap-2 text-sm font-medium">
-        <HugeiconsIcon icon={SquareLock02Icon} className="size-5 shrink-0" strokeWidth={1.75} />
-        {t("gallery.locked")}
-      </span>
-      {ctx.renderLocked && <div data-ckui-noswipe="">{ctx.renderLocked()}</div>}
     </div>
   );
 }
@@ -422,7 +400,7 @@ function Grid({ ctx, onOpen }: { ctx: Ctx; onOpen: (i: number) => void }) {
 function Tile({ ctx, item, label, onOpen }: { ctx: Ctx; item: GalleryItem; label: string; onOpen: () => void }) {
   const [el, setEl] = useState<HTMLButtonElement | null>(null);
   let body: ReactNode;
-  if (item.kind === "locked") body = <Locked ctx={ctx} item={item} tile />;
+  if (item.kind === "locked") body = <Locked ctx={ctx} tile />;
   else if (item.kind === "audio")
     body = (
       <span className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-muted text-muted-foreground">
