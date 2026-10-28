@@ -753,11 +753,13 @@
       "behavior": "Daily popularity counts each qualified person once per work and available UTC day",
       "status": "verified",
       "evidence": [
-        "A 25,000-reader work and a ten-reader work share exactly 50,000 eligible readers; six available zero-reader days remain in the seven-day mean. Canonical receipt revisions, edition deduplication, public/tier daily unions, finalization, explicit rebuild, erasure and purge boundaries are covered with real ClickHouse."
+        "A 25,000-reader work and a ten-reader work share exactly 50,000 eligible readers; six available zero-reader days remain in the seven-day mean. Canonical receipt revisions, edition deduplication, public/tier daily unions, finalization, explicit rebuild, erasure and purge boundaries are covered with real ClickHouse.",
+        "Each day is swapped in whole: repeated refreshes, explicit rebuilds and an interrupted staged build leave exact plain sums without FINAL, and sixty one-part days of a 20,000-work scope rank under the read memory cap."
       ],
       "cases": [
         "TestDailyPopularityCountsReadersExactly",
-        "TestDailyParticipationPreparation"
+        "TestDailyParticipationPreparation",
+        "TestDailyPopularityDaysAreWriteOnce"
       ]
     },
     {

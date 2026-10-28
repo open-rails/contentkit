@@ -94,6 +94,11 @@ counts can remain; an explicit rebuild respects the erased source. This keeps
 routine analytics approximate without coupling account erasure to rebuilding
 every historical ranking.
 
+Each preparation builds a whole scope/day in a staging table and swaps it in
+with `REPLACE PARTITION`, so a day holds exactly its latest preparation and
+range reads aggregate plain rows without `FINAL` under a small memory cap.
+Preparation of one scope must not run concurrently; the refresh job is unique.
+
 A preparation failure preserves the previous stored ranking. Raw engagement
 remains authoritative, and the next scheduled attempt can refresh provisional
 results. Empty days receive a preparation checkpoint so they do not trigger

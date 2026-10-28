@@ -156,7 +156,7 @@ func (f *fixture) verifyDaily() {
 			}
 		}
 	}
-	rows, e := f.ch.Query(ctx, "SELECT domain,language,content_id,readers,eligible FROM "+f.db+".popularity_daily FINAL WHERE day=? ORDER BY domain,language,content_id", f.day)
+	rows, e := f.ch.Query(ctx, "SELECT domain,language,content_id,readers,eligible FROM "+f.db+".popularity_daily WHERE day=? ORDER BY domain,language,content_id", f.day)
 	must(t, e)
 	counts := map[string]int{}
 	totals := map[string]uint64{}

@@ -173,6 +173,8 @@ PARTITION BY toYYYYMM(observed_at)
 ORDER BY (tenant, content_kind, subject_kind, subject, observation_id)
 SETTINGS index_granularity = 8192;
 
+-- One partition per scope/day, written only by swapping in a whole day built in
+-- popularity_daily_staging, so a day never holds duplicate rows.
 CREATE TABLE IF NOT EXISTS popularity_daily {{ON_CLUSTER}}
 (
     `tenant` LowCardinality(String),
@@ -180,13 +182,28 @@ CREATE TABLE IF NOT EXISTS popularity_daily {{ON_CLUSTER}}
     `domain` LowCardinality(String),
     `language` LowCardinality(String),
     `day` Date,
-    `content_id` String,
+    `content_id` UUID,
     `readers` UInt64,
-    `eligible` UInt64,
-    `version` UInt64
+    `eligible` UInt64
 )
-ENGINE = ReplicatedReplacingMergeTree('/clickhouse/tables/{database}/{table}', '{replica}', version)
-PARTITION BY toYYYYMM(day)
+ENGINE = ReplicatedMergeTree('/clickhouse/tables/{database}/{table}', '{replica}')
+PARTITION BY (tenant, content_kind, domain, language, day)
+ORDER BY (tenant, content_kind, domain, language, day, content_id)
+SETTINGS index_granularity = 8192;
+
+CREATE TABLE IF NOT EXISTS popularity_daily_staging {{ON_CLUSTER}}
+(
+    `tenant` LowCardinality(String),
+    `content_kind` LowCardinality(String),
+    `domain` LowCardinality(String),
+    `language` LowCardinality(String),
+    `day` Date,
+    `content_id` UUID,
+    `readers` UInt64,
+    `eligible` UInt64
+)
+ENGINE = ReplicatedMergeTree('/clickhouse/tables/{database}/{table}', '{replica}')
+PARTITION BY (tenant, content_kind, domain, language, day)
 ORDER BY (tenant, content_kind, domain, language, day, content_id)
 SETTINGS index_granularity = 8192;
 

@@ -382,7 +382,7 @@ func (st *Store) ForgetContents(ctx context.Context, tenant string, contents []s
 	}
 	// Daily popularity is work-level and anonymous. Purging one edition must
 	// not remove the work's other editions from its historical aggregate.
-	if err := forget(works, []string{"popularity_daily"}, func(in string) string { return "(content_kind, content_id) IN " + in }); err != nil {
+	if err := forget(works, []string{"popularity_daily", "popularity_daily_staging"}, func(in string) string { return "(content_kind, content_id) IN " + in }); err != nil {
 		return err
 	}
 	return forget(versions, tables, func(in string) string { return "(content_kind, content_id, content_version_id) IN " + in })

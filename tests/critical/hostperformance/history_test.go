@@ -22,7 +22,7 @@ func (f *fixture) seedHistory() {
 	from := f.day.AddDate(0, 0, 1-f.days)
 	for off := 0; off < f.days-1; off += 7 {
 		n := min(7, f.days-1-off)
-		must(t, f.ch.Exec(ctx, fmt.Sprintf(`INSERT INTO %s.popularity_daily (tenant,content_kind,domain,language,day,content_id,readers,eligible,version) SELECT tenant,content_kind,domain,language,addDays(toDate('%s'),toInt32(number)+%d),content_id,least(eligible,toUInt64(intDiv(readers*(80+(cityHash64(content_id)+intDiv(number+%d,7))%%41),100))),eligible,toUInt64(1) FROM (SELECT * FROM %s.popularity_daily FINAL WHERE day=toDate('%s')) AS base CROSS JOIN numbers(%d) AS dates`, f.db, from.Format(time.DateOnly), off, off, f.db, f.day.Format(time.DateOnly), n)))
+		must(t, f.ch.Exec(ctx, fmt.Sprintf(`INSERT INTO %s.popularity_daily (tenant,content_kind,domain,language,day,content_id,readers,eligible) SETTINGS max_partitions_per_insert_block=0 SELECT tenant,content_kind,domain,language,addDays(toDate('%s'),toInt32(number)+%d),content_id,least(eligible,toUInt64(intDiv(readers*(80+(cityHash64(content_id)+intDiv(number+%d,7))%%41),100))),eligible FROM (SELECT * FROM %s.popularity_daily WHERE day=toDate('%s')) AS base CROSS JOIN numbers(%d) AS dates`, f.db, from.Format(time.DateOnly), off, off, f.db, f.day.Format(time.DateOnly), n)))
 	}
 	for _, scope := range f.model.Kinds[f.kind].Popularity[0].ActivityScopes() {
 		must(t, f.ch.Exec(ctx, fmt.Sprintf(`INSERT INTO %s.popularity_daily_prepared (tenant,content_kind,domain,language,day,computed_at) SELECT ?,?,?,?,addDays(toDate(?),toInt32(number)),now64(6) FROM numbers(%d)`, f.db, f.days-1), f.tenant, f.kind, scope.Domain, scope.Language, from.Format(time.DateOnly)))
@@ -40,7 +40,7 @@ func (f *fixture) seedHistory() {
 	must(t, e)
 	_, e = f.pool.Exec(ctx, "UPDATE "+f.schema+".content_access_history_start SET started_at=$2 WHERE tenant_id=$1", f.tenant, from)
 	must(t, e)
-	rows, e := f.ch.Query(ctx, "SELECT count(),uniqExact(content_id),uniqExact(tuple(domain,language)),min(day),max(day),sum(readers) FROM "+f.db+".popularity_daily FINAL")
+	rows, e := f.ch.Query(ctx, "SELECT count(),uniqExact(content_id),uniqExact(tuple(domain,language)),min(day),max(day),sum(readers) FROM "+f.db+".popularity_daily")
 	must(t, e)
 	if !rows.Next() {
 		t.Fatal("missing history rows")
