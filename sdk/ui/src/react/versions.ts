@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ContentKitClient } from "../client/client.js";
 import { ContentKitError, throwIfAborted, toContentKitError } from "../client/errors.js";
 import type { FileDownload, Pending, PlanSegment, ReaderPlan } from "../client/generated/wire.js";
@@ -23,7 +23,7 @@ export interface UseReaderPlan {
 const MAX_DELAY = 2 ** 31 - 1;
 
 /** The next publication boundary to observe, including an overdue operation. */
-export function nextRelease(plan: ReaderPlan | null, now = Date.now()): number | null {
+export function nextRelease(plan: ReaderPlan | null, now = Date.now(), overdue = 2000): number | null {
   const next = (plan as ReaderPlan & { next_release_at?: string } | null)?.next_release_at;
   const at = [
     ...(next ? [Date.parse(next)] : []),
@@ -31,23 +31,39 @@ export function nextRelease(plan: ReaderPlan | null, now = Date.now()): number |
   ].filter(Number.isFinite);
   // Past dates mean storage work may still be running. Ask again without
   // pretending the chapter has already become available in this plan.
-  if (at.some((time) => time <= now)) return now + 2000;
+  if (at.some((time) => time <= now)) return now + overdue;
   return at.length ? Math.min(...at) : null;
 }
 
 /** Refresh signed previews before expiry and observe durable chapter completion. */
-export function nextReaderRefresh(plan: ReaderPlan | null, now = Date.now()): number | null {
-  const release = nextRelease(plan, now);
+export function nextReaderRefresh(plan: ReaderPlan | null, now = Date.now(), overdue = 2000): number | null {
+  const release = nextRelease(plan, now, overdue);
   if (!plan?.expires) return release;
   const renewal = Math.max(now + 5000, plan.expires * 1000 - 60_000);
   return release === null ? renewal : Math.min(release, renewal);
+}
+
+/** Reload interval while a release is overdue or the plan pending: 2.5 s, doubling to 60 s. */
+export function overdueDelay(attempt: number): number {
+  return Math.min(60_000, 2500 * 2 ** attempt);
+}
+
+/**
+ * The back-off after answer. It grows while the same overdue or pending answer
+ * repeats, and starts again when the live release or next_release_at changes.
+ */
+export function overdueAttempts(answer: ReaderPlan | Pending | null | undefined, last: { mark: string | null; attempt: number }, now = Date.now()): { mark: string | null; attempt: number } {
+  const plan = isPending(answer) ? null : answer ?? null;
+  const mark = isPending(answer) ? "pending" : plan && nextRelease(plan, now, 0) === now ? `${plan.publication_id} ${plan.next_release_at ?? ""}` : null;
+  return { mark, attempt: mark !== null && mark === last.mark ? last.attempt + 1 : 0 };
 }
 
 /**
  * A version's reader plan for this viewer: its segments (released or not,
  * open or locked), previews, playback item and reader metadata. It asks again
  * while the version is being published, when its next segment is released,
- * and before signed preview URLs expire.
+ * and before signed preview URLs expire. While a release is overdue it asks
+ * again after 2.5 s, doubling to once a minute.
  */
 export function useReaderPlan(content: string | null | undefined, version: string | null | undefined, o: { poll?: number; client?: ContentKitClient } = {}): UseReaderPlan {
   const { client, store, scope } = useContentScope(o.client);
@@ -65,10 +81,15 @@ export function useReaderPlan(content: string | null | undefined, version: strin
   const expired = useMediaGrantExpired(candidate?.expires);
   const plan = useMemo(() => expired && candidate ? { ...candidate, previews: [] } : candidate, [candidate, expired]);
   const { data, reload } = r;
+  const backoff = useRef<{ answer?: unknown; mark: string | null; attempt: number }>({ mark: null, attempt: 0 });
   // Every answer schedules the next look: a pending one polls, a plan waits for its next release.
   useEffect(() => {
     if (r.loading || terminal) return;
-    const at = r.error || isPending(data) ? Date.now() + (o.poll ?? 5000) : nextReaderRefresh(data ? (data as ReaderPlan) : null);
+    const now = Date.now();
+    const b = backoff.current;
+    if (b.answer !== data) Object.assign(b, overdueAttempts(data, b, now), { answer: data });
+    const overdue = overdueDelay(b.attempt) - 500; // the timer adds 500 ms
+    const at = r.error ? now + (o.poll ?? 5000) : isPending(data) ? now + overdue : nextReaderRefresh(data ? (data as ReaderPlan) : null, now, overdue);
     if (at === null) return;
     const t = setTimeout(reload, Math.min(MAX_DELAY, Math.max(0, at - Date.now()) + 500));
     return () => clearTimeout(t);

@@ -159,9 +159,8 @@ func (s *Service) Plan(ctx context.Context, actor access.Actor, t versions.Targe
 	cut := len(snap.Pages)
 	length := d.res.Accessible || d.res.Editor || d.res.ReadRestricted || s.o.Kinds.Kinds[v.Kind].LockedView().Shows(kinds.ShowLength)
 	plan := &versions.ReaderPlan{Content: t.Content, Version: t.Version, Publication: active.ID, Segments: []versions.PlanSegment{}, Previews: []versions.PlanPreview{}}
-	// Waiting and failed requests keep a past time indefinitely; readers poll while it is past.
 	if err := s.o.Pool.QueryRow(ctx, `SELECT scheduled_at FROM `+s.releaseRequestsTable()+`
- WHERE tenant_id=$1 AND version_id=$2 AND current AND state IN ('pending','running')`, s.o.Tenant, t.Version).Scan(&plan.NextReleaseAt); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+ WHERE tenant_id=$1 AND version_id=$2 AND current AND state IN ('pending','waiting','running','failed')`, s.o.Tenant, t.Version).Scan(&plan.NextReleaseAt); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return nil, err
 	}
 	if length {

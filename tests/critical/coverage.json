@@ -381,14 +381,12 @@
         "An editor reads an unreleased internal/ output through its exact presigned capability with identical bytes; reader item, private-file and absent tokens get 404 from the real gateway for that key.",
         "When processing hides a page a released edition already serves, its completion re-plans the edition at once; a later chapter keeps its own date.",
         "A first release leaves pages_added_at unset; a later release with more pages than the active release sets it.",
-        "The reader plan's next_release_at names a future chapter date or a due release in progress, never a waiting or failed request's past time.",
         "A wake-up or publish that changes nothing adds no request row and no copy of the live release; a real release removes the finished requests it supersedes, and readers see the same pages, chapters and downloads throughout."
       ],
       "cases": [
         "TestCommerceMediaGrantRevocation/CK-J05-S04_CK-J13-S07_segment_and_audience_deadlines_bound_reads_and_archives",
         "TestPublicationWithoutWorkers/CK-J05-S04_public_audience_release_opens_without_a_grant",
         "TestCopiedPageChapterPlacement",
-        "TestReaderPlanReleaseHint",
         "TestHiddenChapterPublication/TestHiddenChapterStartKeepsPublishing",
         "TestHiddenChapterPublication/TestHiddenChapterStartSpreadWaits",
         "TestHiddenChapterPublication/TestHiddenPageCopiesWaitForTheirChapter",
