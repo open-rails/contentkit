@@ -105,7 +105,7 @@ type Store struct {
 type tables struct {
 	items, creators, versions, versionText, segments, facets string
 	entities, entityNames, memberships, prefs, counts, docs  string
-	reactions, favorites, comments, accessHistory            string
+	reactions, favorites, comments, accessHistory, renamed   string
 }
 
 func catalogTables(schema string) tables {
@@ -114,7 +114,8 @@ func catalogTables(schema string) tables {
 		versionText: q("content_version_text"), segments: q("content_segments"), facets: q("content_facets"),
 		entities: q("content_entities"), entityNames: q("content_entity_names"), memberships: q("content_memberships"),
 		prefs: q("content_filter_prefs"), counts: q("content_interaction_counts"), docs: q("content_search_documents"),
-		reactions: q("content_reactions"), favorites: q("content_favorites"), comments: q("content_comments"), accessHistory: q("content_access_history")}
+		reactions: q("content_reactions"), favorites: q("content_favorites"), comments: q("content_comments"), accessHistory: q("content_access_history"),
+		renamed: q("content_search_entity_dirty")}
 }
 
 // New validates opts and checks the schema has the catalog tables.

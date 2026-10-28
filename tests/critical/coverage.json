@@ -794,6 +794,47 @@
       ]
     },
     {
+      "id": "CK-J07-S21",
+      "journey": "CK-J07",
+      "behavior": "Clearing one recent search or all of them deletes the stored rows; other readers' searches and later searches are unaffected",
+      "status": "verified",
+      "evidence": [
+        "Real HTTP record, list and clear for a signed-in reader and a signed-out session; the normalized one-query clear and the clear-all leave exactly the expected PostgreSQL rows, with no hide marker.",
+        "contentkit#271: focused real-service execution against PostgreSQL; the strict gate must execute every exact case again."
+      ],
+      "cases": [
+        "TestRecentSearchHistory/CK-J07-S21_clearing_one_or_all_recent_searches_deletes_them"
+      ]
+    },
+    {
+      "id": "CK-J07-S22",
+      "journey": "CK-J07",
+      "behavior": "The hourly prune deletes searches unused for 180 days and any recorded for an erased person, keeping newer ones",
+      "status": "verified",
+      "evidence": [
+        "Engine.AnonymizeAccount deletes the person's searches; a row committed after that delete (the erasure race) and a 181-day-old row are removed by the real contentkit_search_prune River job at StartJobs, while a 179-day-old and a fresh search stay.",
+        "contentkit#271: focused real-service execution against PostgreSQL; the strict gate must execute every exact case again."
+      ],
+      "cases": [
+        "TestRecentSearchHistory/CK-J07-S22_prune_deletes_expired_and_erased_peoples_searches"
+      ]
+    },
+    {
+      "id": "CK-J07-S23",
+      "journey": "CK-J07",
+      "behavior": "An entity rename queues one row per entity; the search sync reindexes every linked edition and language in bounded batches across runs, continues at once, and a rename during expansion converges to the latest name",
+      "status": "verified",
+      "evidence": [
+        "Five published two-language galleries share a renamed tag with two items per batch: the rename transaction marks no item document, each engine search run reindexes exactly one batch, and a second rename mid-expansion restarts it at a new revision and ends with every document keyed by the final name.",
+        "With the engine's River jobs running, one rename finishes in three or more chained contentkit_search_sync runs within seconds, without the five-minute backstop.",
+        "contentkit#271: focused real-service execution against PostgreSQL; the strict gate must execute every exact case again."
+      ],
+      "cases": [
+        "TestEntityRenameReindexesLinkedContent/CK-J07-S23_rename_reindexes_every_linked_edition_in_batches_across_runs_and_a_second_rename_restarts",
+        "TestEntityRenameReindexesLinkedContent/CK-J07-S23_the_search_job_continues_an_expansion_at_once"
+      ]
+    },
+    {
       "id": "CK-J07-S19",
       "journey": "CK-J07",
       "behavior": "Observed search query and absolute result rank join to exact clicked visits across same-tab and native new-tab navigation",
