@@ -65,7 +65,6 @@ export const discovery = {
     hidden: "Hidden",
     useDefault: "Use the default",
     noFilters: "This site has no content filters.",
-    includeDeleted: "Show removed content I bought",
     noDates: "No release dates.",
     items_one: "{count} item",
     items_other: "{count} items",

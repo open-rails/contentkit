@@ -1,9 +1,7 @@
 package mediastore
 
 import (
-	"bytes"
 	"context"
-	"crypto/sha256"
 	"errors"
 	"fmt"
 	"time"
@@ -51,24 +49,8 @@ func (j *Jobs) ErasureStartedTx(ctx context.Context, tx pgx.Tx, ref contentref.C
  AND effects->>'erasure'='true')`, ref.TenantID, ref.ContentKind, ref.ContentID, ref.ContentVersionID).Scan(&started); err != nil || started {
 		return started, err
 	}
-	_, err = j.cfg.Store.Head(ctx, item.PublicPrefix()+layout.ErasureFenceName)
-	if errors.Is(err, ErrNotFound) {
-		return false, nil
-	}
-	return err == nil, err
-}
-
-func (j *Jobs) fenceErasure(ctx context.Context, item Item) error {
-	if err := RequireConditionalPut(ctx, j.cfg.Store); err != nil {
-		return err
-	}
-	sum := sha256.Sum256(nil)
-	_, err := j.cfg.Store.Put(ctx, item.PublicPrefix()+layout.ErasureFenceName, bytes.NewReader(nil), 0,
-		media.PutOptions{IfNoneMatch: "*", ContentType: "application/octet-stream", CacheControl: "no-store", ChecksumSHA256: sum[:]})
-	if errors.Is(err, ErrPreconditionFailed) {
-		return nil
-	}
-	return err
+	_, kind, err := j.fence(ctx, item)
+	return kind == layout.FenceErased, err
 }
 
 // Erase permanently tombstones an item, synchronously deletes its known
@@ -87,7 +69,7 @@ func (j *Jobs) Erase(ctx context.Context, d media.Deletion) error {
 		return errors.New("media: erasure needs a stable operation ID")
 	}
 	operation := uuid.NewSHA1(uuid.NameSpaceURL, []byte("erase:"+item.Prefix()+d.OperationID))
-	fence := item.PublicPrefix() + layout.ErasureFenceName
+	fence := item.PublicPrefix() + layout.FenceName
 	if err = j.fenceErasure(ctx, item); err != nil {
 		return err
 	}

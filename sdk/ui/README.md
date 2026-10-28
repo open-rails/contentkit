@@ -1130,7 +1130,7 @@ The HTTP shape is flat and updates only the submitted entities:
 {"filters":[{"entity_id":"tag-id","visible":false}]}
 ```
 
-`PATCH /me/content-filters` preserves omitted entities and `include_deleted`.
+`PATCH /me/content-filters` preserves omitted entities.
 `setVisible(entityId, visible)` performs that one-entity update. Reset a choice
 with `{entity_id, default: true}`; the reset follows current domain defaults and
 suppresses old legacy choices. Independent account updates merge atomically.

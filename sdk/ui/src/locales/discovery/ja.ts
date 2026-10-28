@@ -66,7 +66,6 @@ export const discovery: typeof en = {
     hidden: "非表示",
     useDefault: "既定に戻す",
     noFilters: "このサイトにはコンテンツフィルターがありません。",
-    includeDeleted: "購入済みの削除されたコンテンツを表示",
     noDates: "公開日はありません。",
     items_one: "{count} 件",
     items_other: "{count} 件",

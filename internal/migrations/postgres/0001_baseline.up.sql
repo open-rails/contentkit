@@ -574,7 +574,6 @@ CREATE TABLE content_filter_prefs (
     tenant_id text NOT NULL,
     user_id text NOT NULL,
     overrides jsonb DEFAULT '{}'::jsonb NOT NULL,
-    include_deleted boolean DEFAULT false NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 

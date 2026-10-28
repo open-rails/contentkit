@@ -30,11 +30,28 @@ type effects struct {
 	publish []versions.Target
 	// republish are versions whose effective rule or segments changed.
 	republish []versions.Target
+	// fence are versions whose state an edit set; see fenced.
+	fence []versions.Target
+}
+
+// fenced are the targets whose deletion fx may have changed.
+func (fx effects) fenced() []versions.Target {
+	out := slices.Clone(fx.fence)
+	for _, e := range fx.events {
+		switch e.Type {
+		case catalog.EventContentDeleted, catalog.EventContentRestored:
+			out = append(out, versions.Target{Content: e.ContentID})
+		case catalog.EventVersionDeleted:
+			out = append(out, versions.Target{Content: e.ContentID, Version: e.VersionID})
+		}
+	}
+	return out
 }
 
 // mutate runs fn over the authorized, locked items in one transaction, then
 // bumps their revisions, refreshes facets and documents, re-codes, emits
-// events and queues media exposure before committing.
+// events and queues media exposure before committing. After the commit it
+// fences or unfences the media of what it deleted or restored.
 func (s *Store) mutate(ctx context.Context, actor access.Actor, ids []string, fn func(ctx context.Context, tx pgx.Tx, got map[string]owned) (effects, error)) error {
 	g, err := s.grantsFor(ctx, actor, ids)
 	if err != nil {
@@ -56,7 +73,22 @@ func (s *Store) mutate(ctx context.Context, actor access.Actor, ids []string, fn
 	if err := s.apply(ctx, tx, ids, fx); err != nil {
 		return err
 	}
-	return tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	s.syncFences(ctx, fx.fenced())
+	return nil
+}
+
+// syncFences applies committed deletions and restores to the media gateway
+// at once. A failure leaves it to the publication job the write scheduled.
+func (s *Store) syncFences(ctx context.Context, targets []versions.Target) {
+	if s.media == nil || len(targets) == 0 {
+		return
+	}
+	if err := s.media.Versions.SyncFences(ctx, targets); err != nil {
+		s.log.ErrorContext(ctx, "catalog: media fence sync failed; the publication job retries it", "err", err)
+	}
 }
 
 func (s *Store) apply(ctx context.Context, tx pgx.Tx, ids []string, fx effects) error {
@@ -683,6 +715,7 @@ func (s *Store) followOwned(ctx context.Context, query string, entities []string
 		if err != nil || len(ids) == 0 {
 			return err
 		}
+		s.syncFences(ctx, effects{events: events}.fenced())
 	}
 }
 
@@ -762,6 +795,9 @@ func (s *Store) PutVersions(ctx context.Context, actor access.Actor, in []catalo
 				}
 				if p.State != "" || p.PublishAt != nil || p.Access != nil || p.ClearAccess || p.Segments != nil {
 					fx.publish = append(fx.publish, versions.Target{Content: p.ContentID, Version: p.VersionID})
+				}
+				if p.State != "" {
+					fx.fence = append(fx.fence, versions.Target{Content: p.ContentID, Version: p.VersionID})
 				}
 				out[i] = p.VersionID
 				fx.events = append(fx.events, catalog.Event{Type: catalog.EventVersionUpdated, Kind: o.kind, ContentID: p.ContentID, VersionID: p.VersionID})

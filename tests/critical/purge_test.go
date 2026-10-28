@@ -151,7 +151,7 @@ func TestDeletedContentPurgeOwnsMedia(t *testing.T) {
 		for _, object := range objects.Contents {
 			// The permanent gateway erasure fence contains no media bytes and
 			// deliberately survives the item it prevents from reappearing.
-			if !strings.HasSuffix(aws.ToString(object.Key), "/"+layout.ErasureFenceName) && !strings.HasSuffix(aws.ToString(object.Key), "/"+layout.ManifestName) {
+			if !strings.HasSuffix(aws.ToString(object.Key), "/"+layout.FenceName) && !strings.HasSuffix(aws.ToString(object.Key), "/"+layout.ManifestName) {
 				count++
 			}
 		}
@@ -313,7 +313,7 @@ CREATE TRIGGER critical_pause_restore BEFORE UPDATE ON %s.content_versions FOR E
 			t.Fatal("purger erased media of the winning restore")
 		}
 		claimed := makeDeleted("Purge claim wins")
-		fencePath := "/" + m.bucket + "/" + root + claimed.Kind + "/" + claimed.Version + "/public/" + layout.ErasureFenceName
+		fencePath := "/" + m.bucket + "/" + root + claimed.Kind + "/" + claimed.Version + "/public/" + layout.FenceName
 		pauseErasure.Store(&fencePath)
 		job, err := producer.Insert(t.Context(), scheduledContentJob{kind: "contentkit_content_purge_deleted"}, &river.InsertOpts{Queue: catalogstore.QueueFor(a.cfg.Scope.AppID.String()), MaxAttempts: 1})
 		must(t, err)
@@ -335,6 +335,13 @@ CREATE TRIGGER critical_pause_restore BEFORE UPDATE ON %s.content_versions FOR E
 		})
 		_, err = admin.GetContent(t.Context(), claimed.ID, ck.GetContentQuery{})
 		requireError(t, err, 404, "not_found")
+		// The refused restore never lifted the fence: erasure replaced the
+		// deletion fence for good.
+		head, err := m.management.HeadObject(t.Context(), &awss3.HeadObjectInput{Bucket: &m.bucket, Key: aws.String(strings.TrimPrefix(fencePath, "/"+m.bucket+"/"))})
+		must(t, err)
+		if head.Metadata[layout.FenceMeta] != layout.FenceErased {
+			t.Fatalf("erased version kept a removable fence: %v", head.Metadata)
+		}
 		_, err = admin.GetContent(t.Context(), restored.ID, ck.GetContentQuery{})
 		must(t, err)
 	})

@@ -182,7 +182,7 @@ var routes = []httpapi.Route[handler]{
 		Query: []httpapi.Param{httpapi.Text("language", "the language of labels and group names")}, Responses: []httpapi.Reply{httpapi.OK(discovery.ContentFilters{})}},
 		Serve: httpapi.H(handler.contentFilters)},
 	{Spec: httpapi.Spec{Method: httpapi.PATCH, Path: "/me/content-filters", Resource: "discovery", Auth: httpapi.User,
-		Doc:   "Atomically changes only submitted shared entity choices and optional include_deleted. Omitted choices remain unchanged. Each choice sets visible or default:true.",
+		Doc:   "Atomically changes only submitted shared entity choices. Omitted choices remain unchanged. Each choice sets visible or default:true.",
 		Query: []httpapi.Param{httpapi.Text("language", "the language of labels and group names")}, Request: discovery.ContentFiltersUpdate{},
 		Responses: []httpapi.Reply{httpapi.OK(discovery.ContentFilters{})}}, Serve: httpapi.H(handler.setContentFilters)},
 	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/me/content-filters/initialize", Resource: "discovery", Auth: httpapi.User,

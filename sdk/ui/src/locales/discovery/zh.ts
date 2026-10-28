@@ -66,7 +66,6 @@ export const discovery: typeof en = {
     hidden: "隐藏",
     useDefault: "使用默认设置",
     noFilters: "此站点没有内容过滤器。",
-    includeDeleted: "显示我已购买但已移除的内容",
     noDates: "没有发布日期。",
     items_one: "{count} 项",
     items_other: "{count} 项",

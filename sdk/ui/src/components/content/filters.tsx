@@ -1,11 +1,11 @@
 import { cn } from "cn";
-import { useContext, useId } from "react";
+import { useId } from "react";
 import type { ContentKitUiAppearance } from "../../appearance.js";
 import type { ContentKitClient } from "../../client/client.js";
 import type { EntityCard } from "../../client/generated/wire.js";
 import type { ReleaseDatesQuery } from "../../client/discovery.js";
 import { useMessages } from "../../i18n/context.js";
-import { ContentKitContext, type ContentKitErrorHandler } from "../../react/context.js";
+import type { ContentKitErrorHandler } from "../../react/context.js";
 import { useContentFilters, useReleaseDates } from "../../react/discovery.js";
 import { ContentKitUiRoot } from "../../scope.js";
 import { Button } from "#ckui/ui/button";
@@ -30,8 +30,6 @@ export interface ContentFilterSettingsProps {
   counts?: readonly ContentFilterCount[];
   /** Counts cover a bounded candidate set, so each displayed count is a lower bound. */
   countsLowerBound?: boolean;
-  /** Offer listing deleted content the reader holds. Default true. */
-  includeDeleted?: boolean;
   client?: ContentKitClient;
   onError?: ContentKitErrorHandler;
   className?: string;
@@ -41,9 +39,7 @@ export interface ContentFilterSettingsProps {
 /** Show or hide configured content for this browser or signed-in account. */
 export function ContentFilterSettings(p: ContentFilterSettingsProps) {
   const m = useMessages();
-  const { t } = m;
   const id = useId();
-  const ctx = useContext(ContentKitContext);
   const f = useContentFilters({ language: p.language, client: p.client });
   const save = useAction("filters.save", p.onError);
   const root = (children: React.ReactNode) => (
@@ -57,30 +53,22 @@ export function ContentFilterSettings(p: ContentFilterSettingsProps) {
   }
   const filters = f.filters;
   const rows = !p.kinds || p.kinds.some((kind) => filters.applies_to.includes(kind)) ? filters.filters : [];
-  if (!rows.length && p.includeDeleted === false) return null;
+  if (!rows.length) return null;
   return root(
     <>
-      {rows.length > 0 && (
-        <ul className="grid divide-y divide-border rounded-lg border border-border">
-          {rows.map((x) => (
-            <li key={x.entity.id} className="flex flex-wrap items-center gap-3 p-3" data-ckui="content-filter" data-slug={x.entity.slug} data-visible={x.visible}>
-              <Switch id={`${id}-${x.entity.id}`} checked={x.visible} disabled={save.pending} onCheckedChange={(v) => void save.run(() => f.setVisible(x.entity.id, v))} />
-              <Label htmlFor={`${id}-${x.entity.id}`} className="min-w-0 flex-1">
-                {x.entity.name || x.entity.slug}
-                {p.counts !== undefined && (
-                  <span className="tabular-nums">: {p.countsLowerBound ? "≥ " : ""}{new Intl.NumberFormat(m.language).format(p.counts.filter((entry) => entry.entity.id === x.entity.id).reduce((n, entry) => n + entry.count, 0))}</span>
-                )}
-              </Label>
-            </li>
-          ))}
-        </ul>
-      )}
-      {p.includeDeleted !== false && ctx?.viewer !== null && (
-        <div className="flex items-center gap-3">
-          <Switch id={`${id}-deleted`} checked={filters.include_deleted} disabled={save.pending} onCheckedChange={(v) => void save.run(() => f.setIncludeDeleted(v))} />
-          <Label htmlFor={`${id}-deleted`}>{t("contents.includeDeleted")}</Label>
-        </div>
-      )}
+      <ul className="grid divide-y divide-border rounded-lg border border-border">
+        {rows.map((x) => (
+          <li key={x.entity.id} className="flex flex-wrap items-center gap-3 p-3" data-ckui="content-filter" data-slug={x.entity.slug} data-visible={x.visible}>
+            <Switch id={`${id}-${x.entity.id}`} checked={x.visible} disabled={save.pending} onCheckedChange={(v) => void save.run(() => f.setVisible(x.entity.id, v))} />
+            <Label htmlFor={`${id}-${x.entity.id}`} className="min-w-0 flex-1">
+              {x.entity.name || x.entity.slug}
+              {p.counts !== undefined && (
+                <span className="tabular-nums">: {p.countsLowerBound ? "≥ " : ""}{new Intl.NumberFormat(m.language).format(p.counts.filter((entry) => entry.entity.id === x.entity.id).reduce((n, entry) => n + entry.count, 0))}</span>
+              )}
+            </Label>
+          </li>
+        ))}
+      </ul>
       <ErrorLine error={save.error} />
     </>,
   );

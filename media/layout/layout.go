@@ -39,8 +39,17 @@ const (
 const (
 	// ManifestName is the manifest's key within the folder.
 	ManifestName = "manifest.json"
-	// ErasureFenceName is reserved gateway state, never a public rendition.
-	ErasureFenceName = "_contentkit_erased"
+	// FenceName is an item's reserved gateway fence in public/, never a
+	// rendition: while it exists the gateway serves none of the item's files.
+	// Its FenceMeta is FenceDeleted while the item is soft-deleted, and restore
+	// removes it; any other fence is permanent erasure. The name predates
+	// deletion fences.
+	FenceName = "_contentkit_erased"
+	// FenceMeta is the fence's user-metadata key (x-amz-meta-contentkit-fence).
+	FenceMeta = "contentkit-fence"
+	// FenceDeleted and FenceErased are FenceMeta's values.
+	FenceDeleted = "deleted"
+	FenceErased  = "erased"
 	// DefaultID is the item id under which a kind's default public images live.
 	DefaultID = "_default"
 	// SHA256Prefix starts every blob name.
@@ -157,7 +166,7 @@ func ValidSegment(s string) bool {
 // filename. Only object names gain that allowance; folder segments keep their
 // existing bounds. Default images use content-addressed names.
 func ValidPublicName(name string) bool {
-	if name == ErasureFenceName {
+	if name == FenceName {
 		return false
 	}
 	if ValidSegment(name) {

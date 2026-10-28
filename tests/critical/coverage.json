@@ -489,7 +489,7 @@
       "evidence": [
         "Actual product-access revocation and exact expiry remove body and purchased-library access plus fresh media URLs and download grants. A real ZIP is readable before loss of access; a still-unexpired signed archive ticket also refuses after revocation/expiry.",
         "Exact cases passed under the race detector in resume-fixed9 / resume-purge10; body/library profiles additionally passed resume-boundaries5.",
-        "Deleting a primary channel preserves the existing retained exact-version purchase read, while a sibling edition and anonymous reader remain hidden; revocation removes that retained read. Final candidate execution is required."
+        "Deleting a primary channel closes its content to an exact-edition buyer and anonymous readers alike, while the purchase stays held and listed as deleted in the buyer\u2019s library (contentkit#272)."
       ],
       "cases": [
         "TestCommerceEntitlementBoundaries/CK-J06-S04_revocation_and_expiry_refuse_fresh_content_grants",
@@ -498,7 +498,7 @@
         "TestCommerceMediaGrantRevocation/CK-J06-S04_CK-J13-S07_revocation_and_expiry_remove_fresh_media_and_archive_access",
         "TestCommerceMediaGrantRevocation/CK-J06-S04_CK-J13-S07_revocation_and_expiry_remove_fresh_media_and_archive_access/expire",
         "TestCommerceMediaGrantRevocation/CK-J06-S04_CK-J13-S07_revocation_and_expiry_remove_fresh_media_and_archive_access/revoke",
-        "TestCommerceEntitlementBoundaries/CK-J06-S04_deleted_channel_retains_only_exact_edition_purchase"
+        "TestCommerceEntitlementBoundaries/CK-J06-S04_deleted_channel_closes_exact_edition_purchase_but_keeps_it"
       ]
     },
     {
@@ -894,14 +894,11 @@
       "status": "verified",
       "evidence": [
         "The existing River purge preserves version and parent at the earliest 30-day equality boundary. Past both deadlines it removes public/managed rows and actual S3 media, retaining only decoded empty deleted manifests and gateway fences. The real Stripe-wire purchase, settled payment amount and billing product still exist.",
-        "Exact cases passed under the race detector in resume-fixed9 / resume-purge10; body/library profiles additionally passed resume-boundaries5.",
-        "Previously released soft-deleted editions retain exact-item purchased access through the existing purge grace period. Ordinary public reader objects move private, future chapters stay unreleased, and HLS survives deletion and restore; parent and sibling grants remain denied."
+        "Exact cases passed under the race detector in resume-fixed9 / resume-purge10; body/library profiles additionally passed resume-boundaries5."
       ],
       "cases": [
         "TestDeletedContentPurgeOwnsMedia/CK-J08-S04_CK-J08-S05_retried_same_sweep_erases_media_and_records_but_retains_billing",
-        "TestDeletedContentPurgeOwnsMedia/CK-J08-S04_exact_retention_boundary_preserves_soft_deleted_records_and_media",
-        "TestDeletedEditionRetainsCompletedPublication",
-        "TestDeletedHLSRetainsImmutableIndex"
+        "TestDeletedContentPurgeOwnsMedia/CK-J08-S04_exact_retention_boundary_preserves_soft_deleted_records_and_media"
       ]
     },
     {
@@ -2087,6 +2084,59 @@
       ],
       "cases": [
         "TestContentPurgeRetriesSignalCleanup"
+      ]
+    },
+    {
+      "id": "CK-J08-S08",
+      "journey": "CK-J08",
+      "behavior": "Deleting content or a version closes its text and every served file to everyone, buyers included, at once",
+      "status": "verified",
+      "evidence": [
+        "contentkit#272: a buyer's fresh page URL, an item-token private URL and the public cover answer 200, then 404 from the gateway as soon as the deletion commits and after its publication job, while a live sibling still serves. Exact-edition and parent buyers and anonymous readers get 404 for the text and media read; the bytes stay in place and the purchase stays held. HLS segments are covered the same way."
+      ],
+      "cases": [
+        "TestDeletedMediaFence/CK-J08-S08_deleting_a_version_closes_its_files_to_everyone_at_once",
+        "TestDeletedEditionClosedUntilRestore",
+        "TestDeletedHLSClosedUntilRestore"
+      ]
+    },
+    {
+      "id": "CK-J08-S09",
+      "journey": "CK-J08",
+      "behavior": "Restore reopens content and its files to the same purchases without a new grant",
+      "status": "verified",
+      "evidence": [
+        "contentkit#272: restoring the version lifts its deletion fence at once; after publication the same buyer reads text and files again with no new grant, and no served object moved."
+      ],
+      "cases": [
+        "TestDeletedMediaFence/CK-J08-S09_restoring_a_version_reopens_it_to_the_same_purchase",
+        "TestDeletedEditionClosedUntilRestore",
+        "TestDeletedHLSClosedUntilRestore"
+      ]
+    },
+    {
+      "id": "CK-J08-S10",
+      "journey": "CK-J08",
+      "behavior": "Content deletion closes every version; restoring one version reopens only it",
+      "status": "verified",
+      "evidence": [
+        "contentkit#272: deleting the last version deletes the content and closes both versions' files; restoring one version restores the content and serves only that version."
+      ],
+      "cases": [
+        "TestDeletedMediaFence/CK-J08-S10_content_deletion_closes_every_version_and_restore_only_the_restored"
+      ]
+    },
+    {
+      "id": "CK-J08-S11",
+      "journey": "CK-J08",
+      "behavior": "Purge erases a deleted version's files; its permanent fence outlives every restore attempt",
+      "status": "verified",
+      "evidence": [
+        "contentkit#272: the River purge removes every served object and turns the deletion fence into the erasure fence; a restore request answers 404 and a direct stale fence sync leaves the erasure in place. A restore refused by a committed purge claim also leaves the erasure fence."
+      ],
+      "cases": [
+        "TestDeletedMediaFence/CK-J08-S11_purge_erases_and_its_fence_outlives_restore",
+        "TestDeletedContentPurgeOwnsMedia/CK-J08-S06_restore_and_durable_purge_claim_have_one_winner"
       ]
     },
     {
@@ -11167,6 +11217,21 @@
           "selection": "included critical host/value specification; use public literal values"
         }
       ]
+    },
+    {
+      "issue": "contentkit#272",
+      "case": "TestDeletedEditionRetainsCompletedPublication",
+      "reason": "Owner ruling 2026-10-28: deleted content is unavailable to buyers until restored. Replaced by TestDeletedEditionClosedUntilRestore."
+    },
+    {
+      "issue": "contentkit#272",
+      "case": "TestDeletedHLSRetainsImmutableIndex",
+      "reason": "Deleted media no longer moves between areas; replaced by TestDeletedHLSClosedUntilRestore."
+    },
+    {
+      "issue": "contentkit#272",
+      "case": "TestCommerceEntitlementBoundaries/CK-J06-S04_deleted_channel_retains_only_exact_edition_purchase",
+      "reason": "Buyers no longer read deleted content; replaced by CK-J06-S04_deleted_channel_closes_exact_edition_purchase_but_keeps_it."
     }
   ]
 }

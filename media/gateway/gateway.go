@@ -6,9 +6,10 @@
 // Public renditions are anonymous; private files require an exact-file or item token and
 // download files require a token for that exact key. Denials use a uniform
 // no-store 404 and token denials precede S3 access. Before serving a scoped
-// item, a HEAD of its reserved public erasure marker rejects permanently erased
-// items, including late uploads reached through old tokens. Forbidden marker
-// reads fail closed. The gateway reads no manifests or databases.
+// item, one HEAD of its reserved fence (layout.FenceName) rejects a soft-deleted
+// or permanently erased item, including late uploads reached through old
+// tokens. Forbidden fence reads fail closed. The gateway reads no manifests or
+// databases.
 package gateway
 
 import (
@@ -52,7 +53,7 @@ type Config struct {
 	Routes []Route
 
 	Endpoint, Region             string // path-style S3 endpoint; Region default us-east-1
-	AccessKeyID, SecretAccessKey string // read key for served private/public objects, including erasure-marker HEAD; scoped prefixes need missing-object 404s
+	AccessKeyID, SecretAccessKey string // read key for served private/public objects, including the fence HEAD; scoped prefixes need missing-object 404s
 	Ring                         token.Ring
 	Hosts                        map[string][]string // legacy lower-case host -> namespaces; Routes selects scoped paths
 	Buckets                      map[string]string   // legacy namespace -> bucket; required for each legacy host namespace
@@ -192,7 +193,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		check.Header = make(http.Header)
 		fence := o
 		fence.area = layout.AreaPublic
-		fence.name = layout.ErasureFenceName
+		fence.name = layout.FenceName
 		status, err := h.fetch(check, o.bucket, fence.key())
 		if err != nil {
 			h.fail(w, http.StatusBadGateway)

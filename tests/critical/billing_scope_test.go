@@ -286,24 +286,30 @@ func TestCommerceEntitlementBoundaries(t *testing.T) {
 			t.Fatalf("sibling library crossed app boundary: %+v", page)
 		}
 	})
-	t.Run("CK-J06-S04_deleted_channel_retains_only_exact_edition_purchase", func(t *testing.T) {
+	t.Run("CK-J06-S04_deleted_channel_closes_exact_edition_purchase_but_keeps_it", func(t *testing.T) {
 		reader, customer := newReader(t)
 		exact := keyOf(access.VersionKey(a.cfg.Scope.AppID.String(), entityItem.ID, entityItem.Versions[0].ID))
-		window := grant(t, customer, product(exact), nil)
+		grant(t, customer, product(exact), nil)
 		assertVersion(t, reader, entityItem, 0, true)
 		must(t, admin.DeleteChannel(t.Context(), channel.ID))
-		retained, err := reader.GetVersion(t.Context(), entityItem.Versions[0].ID, ck.GetVersionQuery{})
-		must(t, err)
-		if !retained.Decision.Allowed || retained.Body != "Protected manuscript" {
-			t.Fatal("deleted channel discarded a retained exact-edition purchase")
+		// Deleted content is unavailable to everyone, its buyers included.
+		for _, client := range []*ck.Client{reader, a.client("")} {
+			for _, version := range entityItem.Versions {
+				_, err := client.GetVersion(t.Context(), version.ID, ck.GetVersionQuery{})
+				requireError(t, err, 404, "not_found")
+			}
 		}
-		_, err = reader.GetVersion(t.Context(), entityItem.Versions[1].ID, ck.GetVersionQuery{})
-		requireError(t, err, 404, "not_found")
-		_, err = a.client("").GetVersion(t.Context(), entityItem.Versions[0].ID, ck.GetVersionQuery{})
-		requireError(t, err, 404, "not_found")
-		must(t, b.merchant.RevokeProductAccess(t.Context(), window.ID, billing.RevokeProductAccessParams{Reason: "End retained purchase"}))
-		_, err = reader.GetVersion(t.Context(), entityItem.Versions[0].ID, ck.GetVersionQuery{})
-		requireError(t, err, 404, "not_found")
+		// The purchase itself is untouched and stays in the buyer's library.
+		rights, err := b.merchant.CheckEntitlements(t.Context(), billing.CheckEntitlementsParams{CustomerID: customer, Entitlements: []string{exact}})
+		must(t, err)
+		if !rights.Entitlements[exact] {
+			t.Fatal("deleting the channel revoked an exact-edition purchase")
+		}
+		library, err := reader.GetMeLibrary(t.Context(), ck.GetMeLibraryQuery{})
+		must(t, err)
+		if len(library.Items) != 1 || library.Items[0].ContentID != entityItem.ID || !library.Items[0].Deleted {
+			t.Fatalf("library lost the deleted purchase: %+v", library)
+		}
 	})
 	t.Run("CK-J06-S05_unavailable_entitlement_authority_refuses_protected_access", func(t *testing.T) {
 		reader, id := newReader(t)
