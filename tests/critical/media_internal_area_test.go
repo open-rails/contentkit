@@ -2,10 +2,13 @@ package critical_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
+	"image"
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -156,6 +159,82 @@ func TestInternalArea(t *testing.T) {
 		}
 		if _, err := m.store.Head(ctx, page); !errors.Is(err, mediastore.ErrNotFound) {
 			t.Fatalf("release kept the copied internal/ source: %v", err)
+		}
+	})
+	t.Run("public_presets_show_registered_renditions_without_signing_secrets", func(t *testing.T) {
+		presets, err := a.client("").GetMediaPresets(t.Context())
+		must(t, err)
+		found := 0
+		for _, preset := range presets {
+			if preset.Kind != "gallery" || preset.Name != "cover" {
+				continue
+			}
+			found++
+			if preset.From != "cover" || preset.To != "cover-{w}.webp" || !slices.Equal(preset.Widths, []int{16, 32}) || preset.Base != m.gateway.URL || preset.Root != "tenant/"+a.cfg.Scope.TenantID.String()+"/app/"+a.cfg.Scope.AppID.String()+"/" {
+				t.Fatalf("public cover preset changed ownership or rendering: %+v", preset)
+			}
+		}
+		if found != 1 {
+			t.Fatalf("public presets have %d gallery covers", found)
+		}
+		body, err := json.Marshal(presets)
+		must(t, err)
+		if strings.Contains(string(body), m.signing) {
+			t.Fatal("public presets disclosed the private signing key")
+		}
+	})
+	t.Run("CK-J09-S01_real_image_upload_produces_a_readable_rendition", func(t *testing.T) {
+		item, err := admin.PostContents(t.Context(), catalog.ContentInput{Kind: "gallery", Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: "Image processing"}}}}})
+		must(t, err)
+		if len(item.Versions) != 1 {
+			t.Fatal("gallery fixture lacks its edition")
+		}
+		ref := media.RefBody{Kind: "gallery", ID: item.ID, Version: item.Versions[0].ID}
+		payload := imageBytes(t)
+		_, err = admin.IngestMedia(t.Context(), http.DefaultClient, ref, uuid.NewString(), []ck.MediaFile{{Path: "pages/one.png", Type: "image/png", Body: bytes.NewReader(payload)}, {Path: "cover.png", Type: "image/png", Body: bytes.NewReader(payload)}})
+		must(t, err)
+		awaitMediaReady(t, admin, ref)
+		_, err = a.client("").GetContent(t.Context(), item.ID, ck.GetContentQuery{})
+		requireError(t, err, 404, "not_found")
+		_, err = admin.PostContentPublish(t.Context(), item.ID, catalog.PublishInput{})
+		must(t, err)
+		awaitEditionPublication(t, a, admin, ref.ID, ref.Version)
+		ready, err := a.client("").GetMediaVersion(t.Context(), ref.Kind, ref.ID, ref.Version, ck.GetMediaVersionQuery{})
+		must(t, err)
+		if ready.Access != media.AccessFull || len(ready.Files) != 1 || ready.Files[0].Path != "reader/one.webp" {
+			t.Fatalf("completed reader publication missing: %+v", ready)
+		}
+		if len(ready.Public) != 1 || len(ready.Public[0].Renditions) != 2 {
+			t.Fatalf("cover renditions incomplete: %+v", ready.Public)
+		}
+		seen := map[int]bool{}
+		for _, rendition := range ready.Public[0].Renditions {
+			assertImage(t, rendition.URL, rendition.W, rendition.H)
+			if rendition.W != rendition.H || (rendition.W != 16 && rendition.W != 32) {
+				t.Fatalf("unexpected cover dimensions: %+v", rendition)
+			}
+			seen[rendition.W] = true
+		}
+		if !seen[16] || !seen[32] {
+			t.Fatal("cover widths missing")
+		}
+		for _, file := range ready.Files {
+			if file.Path != "reader/one.webp" {
+				continue
+			}
+			res, err := http.Get(file.URL)
+			must(t, err)
+			data, err := io.ReadAll(res.Body)
+			res.Body.Close()
+			must(t, err)
+			if res.StatusCode != 200 {
+				t.Fatalf("actual image rendition returned %d", res.StatusCode)
+			}
+			decoded, format, err := image.DecodeConfig(bytes.NewReader(data))
+			must(t, err)
+			if format != "webp" || decoded.Width != 48 || decoded.Height != 32 {
+				t.Fatalf("actual rendition = %s %dx%d", format, decoded.Width, decoded.Height)
+			}
 		}
 	})
 }

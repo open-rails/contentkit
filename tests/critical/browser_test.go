@@ -38,26 +38,34 @@ func TestShippedBrowserClient(t *testing.T) {
 	server := httptest.NewServer(mux)
 	defer server.Close()
 
-	for _, scenario := range []string{"CK-J29-S02", "CK-J29-S03", "CK-J29-S04", "CK-J29-S05", "CK-J29-S06", "CK-J09-S01"} {
+	scenarios := []string{"CK-J29-S02", "CK-J29-S03", "CK-J29-S04", "CK-J29-S05", "CK-J29-S06", "CK-J09-S01"}
+	var fixtures []map[string]any
+	for _, scenario := range scenarios {
+		item := publishedArticle(t, a, "Browser "+scenario)
+		_, err := a.client(aliceToken).PostContentFavorite(t.Context(), item.ID, ck.PostContentFavoriteQuery{})
+		must(t, err)
+		fixtures = append(fixtures, map[string]any{"scenario": scenario, "fixture": map[string]string{"url": server.URL, "item": item.ID, "alice": alice.ID, "aliceToken": aliceToken, "bob": bob.ID, "bobToken": bobToken}})
+	}
+	fixture, err := json.Marshal(fixtures)
+	must(t, err)
+	command := exec.CommandContext(t.Context(), "node", "browser/driver.mjs", "batch")
+	command.Env = append(os.Environ(), "CONTENTKIT_BROWSER_FIXTURE="+string(fixture))
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("real browser scenarios: %v\n%s", err, output)
+	}
+	var receipts []struct {
+		Scenario string `json:"scenario"`
+		Status   string `json:"status"`
+	}
+	must(t, json.Unmarshal([]byte(strings.TrimSpace(string(output))), &receipts))
+	if len(receipts) != len(scenarios) {
+		t.Fatalf("browser omitted scenarios: %s", output)
+	}
+	for i, scenario := range scenarios {
 		t.Run(scenario, func(t *testing.T) {
-			item := publishedArticle(t, a, "Browser "+scenario)
-			_, err := a.client(aliceToken).PostContentFavorite(t.Context(), item.ID, ck.PostContentFavoriteQuery{})
-			must(t, err)
-			fixture, err := json.Marshal(map[string]string{"url": server.URL, "item": item.ID, "alice": alice.ID, "aliceToken": aliceToken, "bob": bob.ID, "bobToken": bobToken})
-			must(t, err)
-			command := exec.CommandContext(t.Context(), "node", "browser/driver.mjs", scenario)
-			command.Env = append(os.Environ(), "CONTENTKIT_BROWSER_FIXTURE="+string(fixture))
-			output, err := command.CombinedOutput()
-			if err != nil {
-				t.Fatalf("real browser %s: %v\n%s", scenario, err, output)
-			}
-			var receipt struct {
-				Scenario string `json:"scenario"`
-				Status   string `json:"status"`
-			}
-			must(t, json.Unmarshal([]byte(strings.TrimSpace(string(output))), &receipt))
-			if receipt.Scenario != scenario || receipt.Status != "passed" {
-				t.Fatalf("browser did not execute selected scenario: %s", output)
+			if receipts[i].Scenario != scenario || receipts[i].Status != "passed" {
+				t.Fatalf("browser did not execute selected scenario: %+v", receipts[i])
 			}
 		})
 	}

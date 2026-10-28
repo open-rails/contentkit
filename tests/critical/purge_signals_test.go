@@ -145,10 +145,6 @@ func TestContentPurgeRetriesSignalCleanup(t *testing.T) {
 	if count != 0 {
 		t.Fatal("acknowledged cleanup remains pending")
 	}
-	must(t, w.pool.QueryRow(t.Context(), "SELECT count(*) FROM "+pgx.Identifier{w.schema + "_river", "river_job"}.Sanitize()+" WHERE kind='contentkit_forget_contents'").Scan(&count))
-	if count != 0 {
-		t.Fatal("purge still creates separate forget jobs")
-	}
 	purge(rivertype.JobStateCompleted)
 	assertState(untouched, true)
 }

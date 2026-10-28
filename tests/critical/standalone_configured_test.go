@@ -113,9 +113,13 @@ func TestConfiguredStandaloneParity(t *testing.T) {
 		if count != 1 {
 			t.Fatalf("configured standalone lost/duplicated actual ClickHouse write: %d", count)
 		}
-		stop()
 		must(t, w.pool.Ping(t.Context()))
 		must(t, a.deps.ClickHouse.Exec(t.Context(), "SELECT 1"))
 		assertImage(t, local.Files[0].URL, 48, 32)
 	})
+	stop()
+	must(t, a.deps.ClickHouse.Exec(t.Context(), "SELECT 1"))
+	read, err := a.client("").GetMediaVersion(t.Context(), ref.Kind, ref.ID, ref.Version, ck.GetMediaVersionQuery{})
+	must(t, err)
+	assertImage(t, read.Files[0].URL, 48, 32)
 }

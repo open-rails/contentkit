@@ -1,9 +1,11 @@
 package critical_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -14,6 +16,7 @@ import (
 	"github.com/open-rails/authkit/authtest"
 	"github.com/open-rails/authkit/iam"
 	ck "github.com/open-rails/contentkit"
+	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/gateway"
 	"github.com/open-rails/contentkit/media/layout"
@@ -186,5 +189,38 @@ func TestMediaAdmissionBoundaries(t *testing.T) {
 			must(t, err)
 			requireMediaPaths(t, read, control.path)
 		}
+	})
+	t.Run("CK-J03-S10_media_read_limit_is_per_viewer", func(t *testing.T) {
+		w := newWorld(t)
+		a := w.apps[0]
+		attachMedia(t, w, a, func(c *ck.Config) {
+			c.Media.ReadLimit = ck.RateLimitConfig{PerSecond: 1, Burst: 2}
+		})
+		admin := a.engine.Client()
+		ref := galleryRef(t, admin, "Per-viewer read limit")
+		_, err := admin.IngestMedia(t.Context(), nil, ref, uuid.NewString(), []ck.MediaFile{{Path: "pages/one.png", Type: "image/png", Body: bytes.NewReader(imageBytes(t))}})
+		must(t, err)
+		awaitMediaReady(t, admin, ref)
+		_, err = admin.PostContentPublish(t.Context(), ref.ID, catalog.PublishInput{})
+		must(t, err)
+		awaitEditionPublication(t, a, admin, ref.ID, ref.Version)
+		_, firstToken := w.person(t, 0)
+		_, secondToken := w.person(t, 0)
+		first, second := a.client(firstToken), a.client(secondToken)
+		// Issue the burst without sleeps or retries that could replenish its allowance.
+		for range 2 {
+			read, err := first.GetMediaVersion(t.Context(), ref.Kind, ref.ID, ref.Version, ck.GetMediaVersionQuery{})
+			must(t, err)
+			requireMediaPaths(t, read, "reader/one.webp")
+		}
+		_, err = first.GetMediaVersion(t.Context(), ref.Kind, ref.ID, ref.Version, ck.GetMediaVersionQuery{})
+		requireError(t, err, 429, "rate_limited")
+		var limited *ck.Error
+		if !errors.As(err, &limited) || limited.RetryAfter < time.Second {
+			t.Fatalf("rate-limited read omitted a positive Retry-After: %v", err)
+		}
+		read, err := second.GetMediaVersion(t.Context(), ref.Kind, ref.ID, ref.Version, ck.GetMediaVersionQuery{})
+		must(t, err)
+		requireMediaPaths(t, read, "reader/one.webp")
 	})
 }

@@ -159,6 +159,17 @@ func TestMediaVideoFailureRecovery(t *testing.T) {
 			case "image-before-video":
 				want = append(want, "pages/one.png")
 			}
+			if mode == "image-before-video" {
+				imageFailures := 0
+				for _, failure := range read.Status.Failures {
+					if failure.Path == "pages/one.png" {
+						imageFailures++
+					}
+				}
+				if imageFailures != 1 || read.Status.FailureCount != len(read.Status.Failures) {
+					t.Fatalf("exhausted image missing from failure status: %+v", read.Status)
+				}
+			}
 			for _, name := range want {
 				f, ok := before.Get(name)
 				if !ok || f.Fail() == nil || len(f.Pending) != 0 {
