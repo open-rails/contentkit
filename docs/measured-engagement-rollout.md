@@ -1,7 +1,7 @@
 # Measured engagement
 
 Measured engagement uses `/engagement` and separate ClickHouse segment, state,
-daily and co-engagement tables. Opening a reader is not a measured event.
+daily tables. Opening a reader is not a measured event.
 Snapshots contain loaded visible page ranges, allocated attention, actually
 played timeline ranges and a resume selector. A receipt and revision identify
 one cumulative segment; repeated delivery cannot add attention or coverage.
@@ -39,22 +39,6 @@ input; a focused, visible, actually playing video can continue without pointer
 input. Pauses, seeks, hidden tabs and unloaded/preloaded elements contribute
 nothing. Gaps longer than five seconds between browser observations are
 unobserved, so the tracker drops them rather than inventing attention.
-
-## Final retirement operation
-
-After stopping the last legacy writer, use
-`signal.Store.RetireOpenCounters(ctx, signal.RetirementOptions{LegacyWritersStopped: true, Cluster: cluster})`.
-It refreshes legacy resume/progress with erasure filtering, synchronously
-removes old view/preview source rows, removes unused consumption columns and
-old projection/population tables, and re-enforces erasures. Runtime schema
-validation and erasure continue to work before and after this operation.
-
-For each PostgreSQL catalog, call
-`catalog.Store.RetireOpenCounters(ctx, true)` to drop unused imported-counter
-columns. Neither operation runs on startup or as an automatic migration.
-Back up and verify the writer cohort before running these destructive final
-steps. Do not report the rollout complete until both catalog schemas and the
-shared ClickHouse database have completed retirement.
 
 ## Importing existing bookmarks
 

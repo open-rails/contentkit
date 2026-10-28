@@ -28,10 +28,7 @@ func (st *Store) AnonymizeSubject(ctx context.Context, tenant string, old, anony
 	if err != nil {
 		return err
 	}
-	tables, err := st.activeSubjectTables(ctx)
-	if err != nil {
-		return err
-	}
+	tables := subjectTables
 	replicas, err := st.prepareAnonymousCopy(ctx, append(append([]string{}, tables...), "erasures"), quorum)
 	if err != nil {
 		return err

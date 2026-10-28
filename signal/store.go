@@ -3,7 +3,6 @@ package signal
 import (
 	"context"
 	"fmt"
-	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -354,8 +353,8 @@ func subjectFromKey(kind, key string) Subject {
 // work and all its versions) or an entire content kind when contentID is
 // empty. Per-subject readers stop counting the subject at once; anonymous
 // finalized daily popularity counts remain until explicitly rebuilt. This is
-// NOT account erasure: exposures and the
-// content_pairs rollup remain, and a write racing the deletion can re-project.
+// NOT account erasure: exposures remain, and a write racing the deletion can
+// re-project.
 func (st *Store) Forget(ctx context.Context, tenant string, subject Subject, contentKind string, contentID string) error {
 	if strings.TrimSpace(tenant) == "" {
 		return fmt.Errorf("signal: tenant is required")
@@ -389,11 +388,10 @@ type ForgottenContent struct {
 }
 
 // contentTables hold per-content rows; exposures keep their served lists.
-var contentTables = []string{"signals", "subject_content_state", "subject_content_daily", "engagement_segments",
-	"engagement_state", "engagement_daily", "legacy_reading_state"}
+var contentTables = []string{"signals", "engagement_segments", "engagement_state", "engagement_daily", "legacy_reading_state"}
 
 // ForgetContents erases every subject's events and projections of purged
-// content, and a purged work's co-engagement pairs. Idempotent.
+// content. Idempotent.
 func (st *Store) ForgetContents(ctx context.Context, tenant string, contents []ForgottenContent) error {
 	if strings.TrimSpace(tenant) == "" {
 		return fmt.Errorf("signal: tenant is required")
@@ -409,20 +407,7 @@ func (st *Store) ForgetContents(ctx context.Context, tenant string, contents []F
 			versions = append(versions, []any{c.Kind, c.ContentID, c.VersionID})
 		}
 	}
-	active, err := st.activeSubjectTables(ctx)
-	if err != nil {
-		return err
-	}
-	var tables []string
-	for _, t := range contentTables {
-		if slices.Contains(active, t) {
-			tables = append(tables, t)
-		}
-	}
-	pairs, err := st.existing(ctx, []string{"engagement_pairs", "content_pairs"})
-	if err != nil {
-		return err
-	}
+	tables := contentTables
 	forget := func(rows [][]any, tables []string, where func(in string) string) error {
 		for start := 0; start < len(rows); start += mutationTupleChunk {
 			chunk := rows[start:min(start+mutationTupleChunk, len(rows))]
@@ -451,16 +436,7 @@ func (st *Store) ForgetContents(ctx context.Context, tenant string, contents []F
 	}
 	// Daily popularity is work-level and anonymous. Purging one edition must
 	// not remove the work's other editions from its historical aggregate.
-	daily, err := st.existing(ctx, []string{"popularity_daily"})
-	if err != nil {
-		return err
-	}
-	if err := forget(works, daily, func(in string) string { return "(content_kind, content_id) IN " + in }); err != nil {
-		return err
-	}
-	if err := forget(works, pairs, func(in string) string {
-		return fmt.Sprintf("((content_kind_a, content_id_a) IN %[1]s OR (content_kind_b, content_id_b) IN %[1]s)", in)
-	}); err != nil {
+	if err := forget(works, []string{"popularity_daily"}, func(in string) string { return "(content_kind, content_id) IN " + in }); err != nil {
 		return err
 	}
 	return forget(versions, tables, func(in string) string { return "(content_kind, content_id, content_version_id) IN " + in })

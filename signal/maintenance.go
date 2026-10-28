@@ -3,7 +3,6 @@ package signal
 import (
 	"context"
 	"fmt"
-	"slices"
 	"strings"
 	"time"
 )
@@ -57,8 +56,8 @@ ORDER BY content_kind, signal_type`, st.db, st.notErased(), refColumns)
 	return out, rows.Err()
 }
 
-// PurgeContentKinds deletes a tenant's events, projections and co-engagement
-// pairs for whole content kinds (for example retired fan-out rows) and waits
+// PurgeContentKinds deletes a tenant's events and projections for whole content
+// kinds (for example retired fan-out rows) and waits
 // for the mutations on every replica. Irreversible; inventory first.
 func (st *Store) PurgeContentKinds(ctx context.Context, tenant string, contentKinds []string) error {
 	if strings.TrimSpace(tenant) == "" {
@@ -68,11 +67,7 @@ func (st *Store) PurgeContentKinds(ctx context.Context, tenant string, contentKi
 	if len(kinds) == 0 {
 		return fmt.Errorf("signal: contentKinds are required")
 	}
-	tables, err := st.activeSubjectTables(ctx)
-	if err != nil {
-		return err
-	}
-	for _, table := range tables {
+	for _, table := range subjectTables {
 		if table == "exposures" {
 			continue
 		}
@@ -80,24 +75,8 @@ func (st *Store) PurgeContentKinds(ctx context.Context, tenant string, contentKi
 			return err
 		}
 	}
-	daily, err := st.existing(ctx, []string{"popularity_daily", "popularity_daily_prepared"})
-	if err != nil {
-		return err
-	}
-	for _, table := range daily {
+	for _, table := range []string{"popularity_daily", "popularity_daily_prepared"} {
 		if err := st.mutate(ctx, table, "tenant = ? AND content_kind IN ?", tenant, kinds); err != nil {
-			return err
-		}
-	}
-	pairs, err := st.existing(ctx, []string{"content_pairs", "engagement_pairs"})
-	if err != nil {
-		return err
-	}
-	for _, table := range pairs {
-		if !slices.Contains([]string{"content_pairs", "engagement_pairs"}, table) {
-			continue
-		}
-		if err := st.mutate(ctx, table, "tenant = ? AND (content_kind_a IN ? OR content_kind_b IN ?)", tenant, kinds, kinds); err != nil {
 			return err
 		}
 	}

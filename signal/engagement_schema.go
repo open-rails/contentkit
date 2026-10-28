@@ -1,22 +1,6 @@
 package signal
 
-// These additive tables have a separate lineage from the retired open/session
-// projections. Old writers never write them during a rolling app update.
 func init() {
-	expectedSchema["measured_population_observations"] = expectedSchema["population_observations"]
-	expectedSchema["measured_population_coverage"] = expectedSchema["population_coverage"]
-	for _, name := range retiredTables {
-		delete(expectedSchema, name)
-	}
-	source := expectedSchema["signals"]
-	var columns []columnSpec
-	for _, column := range source.columns {
-		if _, retired := retiredSourceColumns[column.name]; !retired {
-			columns = append(columns, column)
-		}
-	}
-	source.columns = columns
-	expectedSchema["signals"] = source
 	for name, spec := range measuredSchema {
 		expectedSchema[name] = spec
 	}
@@ -53,10 +37,5 @@ var measuredSchema = map[string]tableSpec{
 		columns: append(append([]columnSpec{{"tenant", "LowCardinality(String)"}, {"subject_kind", "LowCardinality(String)"}, {"subject", "String"}}, refColumnSpecs...),
 			columnSpec{"first_seen_at", "DateTime('UTC')"}, columnSpec{"last_seen_at", "DateTime('UTC')"}, columnSpec{"progress", "UInt32"}, columnSpec{"progress_max", "UInt32"},
 			columnSpec{"completed", "Bool"}, columnSpec{"resume", "String"}, columnSpec{"version", "UInt256"}),
-	},
-	"engagement_pairs": {
-		engine: "ReplacingMergeTree", version: "refreshed_at", sortingKey: "tenant, content_kind_a, content_id_a, content_kind_b, content_id_b",
-		columns: []columnSpec{{"tenant", "LowCardinality(String)"}, {"content_kind_a", "LowCardinality(String)"}, {"content_id_a", "String"},
-			{"content_kind_b", "LowCardinality(String)"}, {"content_id_b", "String"}, {"strength", "Int64"}, {"refreshed_at", "DateTime('UTC')"}},
 	},
 }
