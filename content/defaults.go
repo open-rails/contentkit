@@ -2,15 +2,12 @@ package content
 
 import (
 	"context"
-	"regexp"
 	"strings"
 )
 
-// stripProcessor is the default ContentProcessor: strip HTML tags to plain text.
-type stripProcessor struct{}
+// trimProcessor is the default ContentProcessor: trim plain text.
+type trimProcessor struct{}
 
-var tagRe = regexp.MustCompile(`<[^>]*>`)
-
-func (stripProcessor) Sanitize(_ context.Context, raw string) (string, error) {
-	return strings.TrimSpace(tagRe.ReplaceAllString(raw, "")), nil
+func (trimProcessor) Sanitize(_ context.Context, raw string) (string, error) {
+	return strings.TrimSpace(raw), nil
 }

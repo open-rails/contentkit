@@ -28,9 +28,10 @@ func badRequest(format string, a ...any) httpError {
 }
 
 var (
-	errContentChanged = httpError{status: http.StatusConflict, msg: "content changed while being screened; retry the edit"}
-	errUnauthorized   = httpError{status: http.StatusUnauthorized, msg: "authentication required"}
-	errForbidden      = httpError{status: http.StatusForbidden, msg: "forbidden"}
+	errDuplicateComment = errors.New("content: duplicate comment")
+	errContentChanged   = httpError{status: http.StatusConflict, msg: "content changed while being screened; retry the edit"}
+	errUnauthorized     = httpError{status: http.StatusUnauthorized, msg: "authentication required"}
+	errForbidden        = httpError{status: http.StatusForbidden, msg: "forbidden"}
 	// errCommentModerated refuses an author's edit of their held or rejected
 	// comment. -> 403 comment_moderated
 	errCommentModerated = errors.New("content: comment is held or rejected")
@@ -66,6 +67,7 @@ const (
 	CodeNotFound           = "not_found"
 	CodeConflict           = "conflict"
 	CodeModerationRejected = "moderation_rejected"
+	CodeDuplicateComment   = "duplicate_comment"
 	// CodeRateLimited: too many of one interaction; the body carries action
 	// and retry_after (seconds, as the Retry-After header). -> 429
 	CodeRateLimited = "rate_limited"
@@ -159,6 +161,8 @@ func classifyErr(err error) (status int, code, msg string) {
 			return http.StatusUnauthorized, CodeUnauthorized, "authentication required"
 		}
 		return http.StatusServiceUnavailable, CodeUnavailable, "authentication is unavailable; retry"
+	case errors.Is(err, errDuplicateComment):
+		return http.StatusUnprocessableEntity, CodeDuplicateComment, "duplicate comment"
 	case errors.As(err, &long):
 		return http.StatusUnprocessableEntity, CodeCommentTooLong, long.Error()
 	case errors.Is(err, ErrRateLimited):

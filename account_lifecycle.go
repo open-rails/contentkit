@@ -17,6 +17,12 @@ func (e *Engine) SetAccountDeleted(ctx context.Context, accountID string, delete
 	return e.content.SetAccountDeleted(ctx, accountID, deleted)
 }
 
+// SetAccountHidden hides an account's comments during a ban. Unhiding restores
+// approved, undeleted comments; moderation and deletion state are preserved.
+func (e *Engine) SetAccountHidden(ctx context.Context, accountID string, hidden bool) error {
+	return e.content.SetAccountHidden(ctx, accountID, hidden)
+}
+
 // AnonymizeAccount is the host consumer's idempotent response to user.purged.
 // It keeps comments and anonymous contributions, unlinks the account and
 // removes its private inbox, avatars, searches and provider data. Errors keep

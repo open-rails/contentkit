@@ -259,6 +259,7 @@ Clients branch on `code`; `error` is a message for people and may change.
 | `comments_locked` | 403 | The actor can't open the content (or the comment's version), so its comments take no writes from them; reads withhold them. |
 | `conflict` | 409 | A concurrent change, a path or slug already taken, or an operation id already used for another commit. |
 | `download_unavailable` | 403 | The host's download policy refuses this download now: `reason` is its code, `available_at` when it opens if a matter of time. Nothing was charged. |
+| `duplicate_comment` | 422 | An identical comment was already saved in the configured duplicate window. |
 | `event_cursor_expired` | 410 | The event cursor predates retained history or names a reset stream; resync current state before continuing. |
 | `forbidden` | 403 | The actor may not do this. |
 | `gone` | 410 | The content was removed. |

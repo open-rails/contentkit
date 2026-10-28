@@ -19,7 +19,7 @@ func (s *Service) standingOrder(raw string, w signal.Window, favorites bool) ord
 	erased := fmt.Sprintf(`NOT EXISTS (SELECT 1 FROM %s e WHERE e.tenant_id=a.tenant_id AND e.actor_id=a.user_id)`, s.t.erased)
 	window := ` AND (@standing_from::timestamptz IS NULL OR a.updated_at>=@standing_from) AND (@standing_until::timestamptz IS NULL OR a.updated_at<@standing_until)`
 	action := fmt.Sprintf(`SELECT CASE WHEN a.user_id IS NOT NULL THEN 'user:'||a.user_id WHEN a.anonymous_actor_id IS NOT NULL THEN 'anon:'||a.anonymous_actor_id::text ELSE 'guest:'||a.ip END AS actor,a.value AS vote FROM %s a
- WHERE a.tenant_id=f.tenant_id AND a.content_kind=f.kind AND a.content_id=f.content_id AND a.value<>0 AND (a.user_id IS NULL OR %s)`+window, s.t.reactions, erased)
+ WHERE a.tenant_id=f.tenant_id AND a.content_kind=f.kind AND a.content_id=f.content_id AND a.value<>0 AND NOT a.author_hidden AND (a.user_id IS NULL OR %s)`+window, s.t.reactions, erased)
 	if favorites {
 		action += fmt.Sprintf(` UNION ALL SELECT CASE WHEN a.user_id IS NOT NULL THEN 'user:'||a.user_id ELSE 'anon:'||a.anonymous_actor_id::text END,a.value FROM %s a
  WHERE a.tenant_id=f.tenant_id AND a.content_kind=f.kind AND a.content_id=f.content_id AND a.value=1 AND %s`+window, s.t.favorites, erased)
