@@ -5,11 +5,13 @@ import (
 	"testing"
 	"time"
 
+	versionstore "github.com/open-rails/contentkit/internal/versionstore"
+
+	"github.com/open-rails/contentkit/internal/jobhook"
+
 	"github.com/jackc/pgx/v5"
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/catalog"
-	"github.com/open-rails/contentkit/media/versions"
-	riverhelpers "github.com/open-rails/helpers/river"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
 )
@@ -19,9 +21,8 @@ func TestPublicationQueuesIsolateSharedCatalogApps(t *testing.T) {
 	a, b := w.apps[0], w.apps[1]
 	makeFleet := func(app *application) *river.Client[pgx.Tx] {
 		t.Helper()
-		fleet, err := riverhelpers.New(t.Context(), w.pool, &river.Config{Schema: w.schema + "_river", Queues: map[string]river.QueueConfig{}}, app.engine.RiverJobs())
+		fleet, err := jobhook.Fleet(t.Context(), app.engine, &river.Config{Schema: w.schema + "_river", Queues: map[string]river.QueueConfig{}})
 		must(t, err)
-		must(t, app.engine.Start(t.Context(), ck.WithRiverClient(fleet)))
 		t.Cleanup(func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()
@@ -47,7 +48,7 @@ func TestPublicationQueuesIsolateSharedCatalogApps(t *testing.T) {
  JOIN `+w.schema+`.content_publication_requests r ON r.id::text=j.args->>'id'
  WHERE j.kind='contentkit_version_release' AND r.content_id=$1 ORDER BY j.id LIMIT 1`, id).Scan(queue))
 	}
-	if qa != versions.QueueFor(publicationTenant(a)) || qb != versions.QueueFor(publicationTenant(b)) || qa == qb {
+	if qa != versionstore.QueueFor(publicationTenant(a)) || qb != versionstore.QueueFor(publicationTenant(b)) || qa == qb {
 		t.Fatalf("publication queues do not preserve app ownership: A=%s B=%s", qa, qb)
 	}
 	must(t, fa.Start(t.Context()))

@@ -4,8 +4,9 @@ import (
 	"testing"
 	"time"
 
+	versionstore "github.com/open-rails/contentkit/internal/versionstore"
+
 	"github.com/jackc/pgx/v5"
-	"github.com/open-rails/contentkit/media/versions"
 )
 
 // releaseJob replays the existing request-ID contract; it never manufactures a
@@ -61,7 +62,7 @@ func awaitDuePublications(t *testing.T, a *application) {
 		must(t, a.deps.Postgres.QueryRow(t.Context(), `SELECT count(*) FROM `+
 			pgx.Identifier{publicationRiverSchema(a), "river_job"}.Sanitize()+`
  WHERE kind='contentkit_version_release' AND queue=$1 AND state='discarded'`,
-			versions.QueueFor(publicationTenant(a))).Scan(&discarded))
+			versionstore.QueueFor(publicationTenant(a))).Scan(&discarded))
 		if discarded != 0 {
 			t.Fatalf("%d exact publication jobs were discarded", discarded)
 		}

@@ -3,6 +3,8 @@ package contentkit
 import (
 	"net/http"
 
+	entitystore "github.com/open-rails/contentkit/internal/entitystore"
+
 	"github.com/open-rails/contentkit/contenturl"
 	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/internal/gate"
@@ -64,7 +66,7 @@ func (e *Engine) codeVisibility(req *http.Request, links []contenturl.Link) ([]c
 	if len(ids) == 0 {
 		return visible, nil
 	}
-	cards, err := e.entities.As(e.auth, gate.Actor(req.Context())).Cards(req.Context(), ids, entities.CardOptions{})
+	cards, err := e.entities.As(e.auth, gate.Actor(req.Context())).Cards(req.Context(), ids, entitystore.CardOptions{})
 	if err != nil {
 		return nil, err
 	}

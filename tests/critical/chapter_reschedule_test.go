@@ -9,12 +9,13 @@ import (
 	"testing"
 	"time"
 
+	versionstore "github.com/open-rails/contentkit/internal/versionstore"
+
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/media"
-	"github.com/open-rails/contentkit/media/versions"
 )
 
 // The public media read API is rate limited. Observe publication at under two
@@ -124,7 +125,7 @@ func TestReleasedChapterFutureDateWithdrawsItsFiles(t *testing.T) {
 	}
 	// Pass the queue's due check, then rewind the controlled clock while the
 	// release waits for its source lock, exercising the second due check.
-	unlock, err := versions.LockSource(t.Context(), w.pool, a.cfg.Scope.AppID.String(), ref.Version)
+	unlock, err := versionstore.LockSource(t.Context(), w.pool, a.cfg.Scope.AppID.String(), ref.Version)
 	must(t, err)
 	t.Cleanup(unlock)
 	beforeDue := w.clock.now()
@@ -286,7 +287,7 @@ func TestProcessingWithdrawsHiddenCopyBeforeChapterDate(t *testing.T) {
  WHERE kind='contentkit_version_release' AND state IN ('available','pending','running','retryable','scheduled') AND scheduled_at<=clock_timestamp()`).Scan(&busy))
 		return busy == 0
 	})
-	unlock, err := versions.LockSource(t.Context(), m.pool, tenant, ref.Version)
+	unlock, err := versionstore.LockSource(t.Context(), m.pool, tenant, ref.Version)
 	must(t, err)
 	t.Cleanup(unlock)
 	queued := func(want int) {

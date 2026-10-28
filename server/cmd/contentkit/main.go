@@ -4,9 +4,10 @@
 //
 //	contentkit -config contentkit.yaml               serve
 //	contentkit media-config -config contentkit.yaml  print the media worker's registry
+//	contentkit reconcile -config contentkit.yaml     repair derived catalog state
 //
 // The config file is server.Config as YAML. media-config prints the engine's
-// media registry (contentkit.Config.MediaKinds) as the JSON cmd/media-worker
+// media registry (contentkit.Config.MediaRegistry) as the JSON cmd/media-worker
 // reads from MEDIA_KINDS_FILE. The environment holds the connections and
 // secrets:
 //
@@ -22,7 +23,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -36,7 +36,6 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
-	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/server"
 )
 
@@ -71,24 +70,24 @@ func run(log *slog.Logger, args []string, stdout io.Writer) error {
 	}
 	switch cmd {
 	case "serve":
-		return serve(log, cfg)
+		return serve(log, cfg, nil)
 	case "media-config":
 		return mediaConfig(cfg, stdout)
+	case "reconcile":
+		return serve(log, cfg, func(ctx context.Context, srv *server.Server) error {
+			n, err := srv.Reconcile(ctx)
+			if err == nil {
+				_, err = fmt.Fprintf(stdout, "reconciled facets of %d and paths of %d content items\n", n.Facets, n.Paths)
+			}
+			return err
+		})
 	}
-	return fmt.Errorf("unknown command %q: serve or media-config", cmd)
+	return fmt.Errorf("unknown command %q: serve, media-config or reconcile", cmd)
 }
 
 // mediaConfig writes the engine's media registry as cmd/media-worker reads it.
 func mediaConfig(cfg server.Config, w io.Writer) error {
-	mc, err := cfg.Engine.MediaKinds()
-	if err != nil {
-		return err
-	}
-	reg, err := media.NewRegistry(mc)
-	if err != nil {
-		return err
-	}
-	b, err := json.MarshalIndent(reg, "", "  ")
+	b, err := cfg.Engine.MediaRegistry()
 	if err != nil {
 		return err
 	}
@@ -96,7 +95,8 @@ func mediaConfig(cfg server.Config, w io.Writer) error {
 	return err
 }
 
-func serve(log *slog.Logger, cfg server.Config) error {
+// serve runs the server until a signal, or, with task, builds it and runs task instead.
+func serve(log *slog.Logger, cfg server.Config, task func(context.Context, *server.Server) error) error {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 	dsn := os.Getenv("DATABASE_URL")
@@ -121,6 +121,9 @@ func serve(log *slog.Logger, cfg server.Config) error {
 	srv, err := server.New(ctx, cfg, d)
 	if err != nil {
 		return err
+	}
+	if task != nil {
+		return errors.Join(task(ctx, srv), srv.Close(context.WithoutCancel(ctx)))
 	}
 	return srv.Run(ctx)
 }

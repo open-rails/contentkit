@@ -5,11 +5,12 @@ import (
 	"testing"
 	"time"
 
+	signalstore "github.com/open-rails/contentkit/internal/signalstore"
+
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverpgxv5"
 	"github.com/riverqueue/river/rivertype"
 
-	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/signal"
 )
 
@@ -18,7 +19,7 @@ func refreshPopularRankings(t *testing.T, w *world) {
 	t.Helper()
 	queue, err := river.NewClient(riverpgxv5.New(w.pool), &river.Config{Schema: w.schema + "_river"})
 	must(t, err)
-	job, err := queue.Insert(t.Context(), scheduledContentJob{kind: "contentkit_popular_refresh"}, &river.InsertOpts{Queue: ck.QueueContentKit})
+	job, err := queue.Insert(t.Context(), scheduledContentJob{kind: "contentkit_popular_refresh"}, &river.InsertOpts{Queue: "contentkit"})
 	must(t, err)
 	waitForWithin(t, time.Minute, func() bool {
 		row, err := queue.JobGet(t.Context(), job.Job.ID)
@@ -35,7 +36,7 @@ func TestDailyPopularityCountsReadersExactly(t *testing.T) {
 	a := w.apps[0]
 	configureDiscoverySignals(t, w, a)
 	database := w.schema + "_signals"
-	store, err := signal.NewStore(a.deps.ClickHouse, database)
+	store, err := signalstore.NewStore(a.deps.ClickHouse, database)
 	must(t, err)
 	ctx := t.Context()
 	// A large work and a small work share one daily population. The other
@@ -57,7 +58,7 @@ func TestDailyPopularityCountsReadersExactly(t *testing.T) {
 		{ContentID: "big", From: from, Until: until, Audience: "public"},
 		{ContentID: "small", From: from, Until: until, Audience: "public"}}}, scope, false)
 	must(t, err)
-	hits, err := store.DailyPopular(ctx, "batch", "gallery", signal.Between(from, until), scope, 10)
+	hits, err := store.DailyPopular(ctx, "batch", "gallery", signalstore.Between(from, until), scope, 10)
 	must(t, err)
 	want := map[string]float64{"big": 25000, "small": 10}
 	if len(hits) != len(want) {

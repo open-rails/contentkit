@@ -10,7 +10,7 @@ import tempfile
 
 ROOT = Path(__file__).resolve().parents[2]
 MODULES = [".", "server", "adapters/authkit", "adapters/openrails"]
-CODECS = {"github.com/open-rails/contentkit/" + p for p in ("media/image", "media/video", "media/worker", "cmd/media-worker")}
+CODECS = {"github.com/open-rails/contentkit/" + p for p in ("internal/media/image", "internal/media/video", "internal/media/worker", "cmd/media-worker")}
 
 
 def go(args, cwd, env):

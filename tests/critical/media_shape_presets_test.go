@@ -13,14 +13,16 @@ import (
 	"testing"
 	"time"
 
+	mediastore "github.com/open-rails/contentkit/internal/mediastore"
+
 	"github.com/google/uuid"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
 
 	ck "github.com/open-rails/contentkit"
+	"github.com/open-rails/contentkit/internal/media/worker"
+	"github.com/open-rails/contentkit/internal/media/workqueue"
 	"github.com/open-rails/contentkit/media"
-	"github.com/open-rails/contentkit/media/worker"
-	"github.com/open-rails/contentkit/media/workqueue"
 )
 
 var (
@@ -42,14 +44,14 @@ func TestImageShapePresets(t *testing.T) {
 		reader := func(shapes ...media.Shape) media.Private {
 			return media.Private{Name: "reader", From: "pages/{name}", To: "reader/{name}.webp", Image: &shapeBase, Shapes: shapes}
 		}
-		registry, err := media.NewRegistry(kind(reader(readerShapes...)))
+		registry, err := mediastore.NewRegistry(kind(reader(readerShapes...)), mediastore.Hooks{})
 		must(t, err)
 		gallery, err := registry.Kind("gallery")
 		must(t, err)
 		if got := gallery.Private[0].ImageFor(media.Dims{}); got != shapeBase {
 			t.Fatalf("an unmeasured upload rendered %+v, not the preset image", got)
 		}
-		_, err = media.NewRegistry(kind(reader(media.Shape{NoWiderThan: media.Square, Image: shapeTall}, media.Shape{WiderThan: media.Square, Image: shapeWide})))
+		_, err = mediastore.NewRegistry(kind(reader(media.Shape{NoWiderThan: media.Square, Image: shapeTall}, media.Shape{WiderThan: media.Square, Image: shapeWide})), mediastore.Hooks{})
 		must(t, err) // touching ranges: square belongs to the first
 		source := shapeTall
 		source.Format = media.ImageFormatSource
@@ -66,7 +68,7 @@ func TestImageShapePresets(t *testing.T) {
 			"no image producer": kind(media.Private{Name: "pages", Zip: "reader/", To: "pages.zip", Shapes: readerShapes}),
 		}
 		for name, config := range invalid {
-			if _, err := media.NewRegistry(config); err == nil {
+			if _, err := mediastore.NewRegistry(config, mediastore.Hooks{}); err == nil {
 				t.Errorf("%s: registry accepted invalid shapes", name)
 			}
 		}
@@ -87,7 +89,7 @@ func TestImageShapePresets(t *testing.T) {
 		}
 		parsed, err := media.ParseConfig(printed)
 		must(t, err)
-		registry, err := media.NewRegistry(parsed)
+		registry, err := mediastore.NewRegistry(parsed, mediastore.Hooks{})
 		must(t, err)
 		gallery, err := registry.Kind("gallery")
 		must(t, err)
@@ -166,9 +168,9 @@ func TestImageShapePresets(t *testing.T) {
 		must(t, err)
 		item, err := registry.Item(logical)
 		must(t, err)
-		journal, err := media.NewPGJournal(m.pool, m.schema, nil)
+		journal, err := mediastore.NewPGJournal(m.pool, m.schema, nil)
 		must(t, err)
-		manifests, err := media.NewManifests(m.storage.store, registry, media.ManifestOptions{Locker: media.PGLocker(m.pool), Journal: journal})
+		manifests, err := mediastore.NewManifests(m.storage.store, registry, mediastore.ManifestOptions{Locker: mediastore.PGLocker(m.pool), Journal: journal})
 		must(t, err)
 		manifest, _, err := manifests.Get(t.Context(), logical)
 		must(t, err)

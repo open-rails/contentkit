@@ -82,11 +82,3 @@ func (a Actor) Can(ctx context.Context, scope auth.Scope, permission string) (bo
 type Entitled interface {
 	Entitlements() []string
 }
-
-// claims is the actor's token entitlement claims.
-func (a Actor) claims() []string {
-	if e, ok := a.Verified.(Entitled); ok && !a.Anonymous {
-		return e.Entitlements()
-	}
-	return nil
-}

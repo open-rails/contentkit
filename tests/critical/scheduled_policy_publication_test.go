@@ -8,12 +8,13 @@ import (
 	"testing"
 	"time"
 
+	versionstore "github.com/open-rails/contentkit/internal/versionstore"
+
 	"github.com/google/uuid"
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/media"
-	"github.com/open-rails/contentkit/media/versions"
 	"github.com/open-rails/openrails/billing"
 )
 
@@ -79,7 +80,7 @@ func TestScheduledPolicyPublishesWithoutStorageAreaChange(t *testing.T) {
 		var count int
 		must(t, w.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+w.schema+`_river.river_job
  WHERE queue=$1 AND state IN ('available','pending','running','retryable','scheduled')
- AND scheduled_at<=clock_timestamp()`, versions.QueueFor(a.cfg.Scope.AppID.String())).Scan(&count))
+ AND scheduled_at<=clock_timestamp()`, versionstore.QueueFor(a.cfg.Scope.AppID.String())).Scan(&count))
 		return count == 0
 	})
 	initialPrivate, initialEmpty := read(private.Versions[0].ID), read(empty.Versions[0].ID)

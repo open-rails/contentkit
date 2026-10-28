@@ -72,7 +72,7 @@ func (m Module) Prefix() string {
 // Reserved is the first path segments the non-content modules take: a content
 // kind with one of these names would be unreachable under the host's prefix.
 func Reserved() []string {
-	return []string{"media", "codes", "entities", "channels", "contents", "kinds", "me", "catalog", "events", "notifications",
+	return []string{"media", "codes", "entities", "channels", "contents", "kinds", "me", "catalog", "events", "notifications", "accounts",
 		"search", "typeahead", "recommendations", "release-dates", "releases", "signals", "exposures", "import", "sitemap", "stats", "content-filters"}
 }
 

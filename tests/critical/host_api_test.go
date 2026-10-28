@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	catalogstore "github.com/open-rails/contentkit/internal/catalogstore"
+
 	"github.com/google/uuid"
 	"github.com/open-rails/authkit/iam"
 	ck "github.com/open-rails/contentkit"
@@ -201,7 +203,7 @@ func TestHostAPIContract(t *testing.T) {
 		w.clock.set(w.clock.now().Add(31 * 24 * time.Hour))
 		producer, err := river.NewClient(riverpgxv5.New(w.pool), &river.Config{Schema: w.schema + "_river"})
 		must(t, err)
-		job, err := producer.Insert(t.Context(), scheduledContentJob{kind: "contentkit_content_purge_deleted"}, &river.InsertOpts{Queue: catalog.QueueFor(a.cfg.Scope.AppID.String()), MaxAttempts: 1})
+		job, err := producer.Insert(t.Context(), scheduledContentJob{kind: "contentkit_content_purge_deleted"}, &river.InsertOpts{Queue: catalogstore.QueueFor(a.cfg.Scope.AppID.String()), MaxAttempts: 1})
 		must(t, err)
 		waitForWithin(t, 45*time.Second, func() bool {
 			current, err := producer.JobGet(t.Context(), job.Job.ID)

@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 
+	mediastore "github.com/open-rails/contentkit/internal/mediastore"
+
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/avatar"
@@ -36,7 +38,7 @@ func TestWorkerPublishesDefaults(t *testing.T) {
 	must(t, os.WriteFile(filepath.Join(images, "series.png"), imageBytes(t), 0o600))
 	series := media.Kind{Name: "series", Uploads: []media.Upload{{Path: "cover", Types: []string{"image/png"}, MaxBytes: 1 << 20}},
 		Public: []media.Public{{Name: "cover", From: "cover", To: "cover-{w}.webp", Widths: []int{32}, Image: media.Image{Aspect: media.Square}, Default: "series.png"}}}
-	reg, err := media.NewRegistry(media.Config{Namespace: "critical", Kinds: []media.Kind{series, avatar.User()}})
+	reg, err := mediastore.NewRegistry(media.Config{Namespace: "critical", Kinds: []media.Kind{series, avatar.User()}}, mediastore.Hooks{})
 	must(t, err)
 	kinds, err := reg.MarshalJSON()
 	must(t, err)

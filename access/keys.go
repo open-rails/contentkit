@@ -20,9 +20,18 @@ const (
 
 const (
 	contentNamespace = "content"
+)
+
+const (
 	// Existing billing products and purchases retain this opaque namespace.
 	channelNamespace = "group"
-	maxTenant        = 64
+)
+
+const (
+	maxTenant = 64
+)
+
+const (
 	// MaxKeyBytes bounds a key: <tenant>:content:<id>/<version>.
 	MaxKeyBytes = maxTenant + len(":content:") + 36 + 1 + 36
 )

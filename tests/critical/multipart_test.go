@@ -52,7 +52,7 @@ func TestMultipartUpload(t *testing.T) {
 		reopened, err := ck.New(t.Context(), cfg, a.deps)
 		must(t, err)
 		defer func() { must(t, reopened.Close(context.Background())) }()
-		must(t, reopened.Start(t.Context()))
+		must(t, reopened.StartJobs(t.Context()))
 		server := mountEngine(t, reopened)
 		resumed := ck.NewClient(server.URL+"/content", &http.Client{Transport: bearerTransport{credential, http.DefaultTransport}})
 		landed, err := resumed.PostMediaUploadPartsList(t.Context(), ticket)

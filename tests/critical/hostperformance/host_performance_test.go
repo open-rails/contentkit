@@ -22,6 +22,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/open-rails/contentkit/internal/jobhook"
+
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/ClickHouse/clickhouse-go/v2/lib/driver"
 	"github.com/google/uuid"
@@ -36,7 +38,6 @@ import (
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/kinds"
-	rh "github.com/open-rails/helpers/river"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
 	"go.yaml.in/yaml/v3"
@@ -253,12 +254,11 @@ func newFixture(t *testing.T, app, out string) *fixture {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	f.engine, e = ck.New(t.Context(), c, ck.Deps{Postgres: f.pool, ClickHouse: f.ch, Auth: ak.Authenticator(), Authorization: policy, Users: ta.UserInfo(), Scopes: scoper, Clock: func() time.Time { return f.now }, Logger: log})
 	must(t, e)
-	f.fleet, e = rh.New(t.Context(), f.pool, &river.Config{Schema: f.schema + "_river", Logger: log, Queues: map[string]river.QueueConfig{ck.QueueContentKit: {MaxWorkers: 1}}}, f.engine.RiverJobs())
+	f.fleet, e = jobhook.Fleet(t.Context(), f.engine, &river.Config{Schema: f.schema + "_river", Logger: log, Queues: map[string]river.QueueConfig{"contentkit": {MaxWorkers: 1}}})
 	must(t, e)
 	// Public River control disables unrelated periodic work only in this isolated
 	// benchmark fleet. Measured refreshes still use the production worker.
 	f.fleet.PeriodicJobs().Clear()
-	must(t, f.engine.Start(t.Context(), ck.WithRiverClient(f.fleet)))
 	must(t, f.fleet.Start(t.Context()))
 	t.Cleanup(func() { must(t, f.fleet.Stop(context.Background())); must(t, f.engine.Close(context.Background())) })
 	routes, e := f.engine.Routes(ck.Routes{Prefix: "/content", Groups: f.engine.RouteGroups()})
@@ -321,7 +321,7 @@ func (f *fixture) refreshObserved(label string, running chan<- struct{}) {
 	must(t, e)
 	f.ch.phase.Store(label)
 	start := time.Now()
-	job, e := f.fleet.Insert(ctx, refreshArgs{}, &river.InsertOpts{Queue: ck.QueueContentKit, MaxAttempts: 1})
+	job, e := f.fleet.Insert(ctx, refreshArgs{}, &river.InsertOpts{Queue: "contentkit", MaxAttempts: 1})
 	must(t, e)
 	var observedRunning, attempted, completed time.Time
 	for {

@@ -7,6 +7,9 @@ import (
 	"testing"
 	"time"
 
+	channelstore "github.com/open-rails/contentkit/internal/channelstore"
+	entitystore "github.com/open-rails/contentkit/internal/entitystore"
+
 	"github.com/open-rails/authkit/iam"
 	ckauth "github.com/open-rails/contentkit/adapters/authkit"
 	"github.com/open-rails/contentkit/channels"
@@ -57,7 +60,7 @@ func testChannelLateRetirement(t *testing.T, loseAck bool) {
 	var releaseOnce sync.Once
 	release := func() { releaseOnce.Do(func() { close(provider.release) }) }
 	t.Cleanup(release)
-	store, err := channels.New(channels.Options{Pool: w.pool, Schema: w.schema, Tenant: a.cfg.Scope.AppID.String(), Model: a.cfg.Content, Scopes: provider})
+	store, err := channelstore.New(channelstore.Options{Pool: w.pool, Schema: w.schema, Tenant: a.cfg.Scope.AppID.String(), Model: a.cfg.Content, Scopes: provider})
 	must(t, err)
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
@@ -77,7 +80,7 @@ func testChannelLateRetirement(t *testing.T, loseAck bool) {
 	release()
 	select {
 	case err := <-deleted:
-		if err == nil || !loseAck && !errors.Is(err, entities.ErrConflict) {
+		if err == nil || !loseAck && !errors.Is(err, entitystore.ErrConflict) {
 			t.Fatalf("stale retirement reported completion: %v", err)
 		}
 	case <-ctx.Done():

@@ -51,7 +51,7 @@ var (
 )
 
 func newAuth(ctx context.Context, origin string, pool *pgxpool.Pool) (*authkit.Client, *authtest.Outbox, error) {
-	return newAuthInDatabase(ctx, origin, pool, authkit.DatabaseConfig{Schema: authSchema, RiverSchema: riverSchema})
+	return newAuthInDatabase(ctx, origin, pool, authkit.DatabaseConfig{Schema: authSchema, RiverSchema: authRiver})
 }
 
 // The runtime and its isolated-schema smoke test share the same native setup.

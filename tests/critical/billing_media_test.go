@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	mediastore "github.com/open-rails/contentkit/internal/mediastore"
+
 	"github.com/google/uuid"
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/access"
@@ -52,15 +54,15 @@ func TestCommerceMediaGrantRevocation(t *testing.T) {
 	assertDownloadSourceUnserved := func(readerURL string) {
 		config, err := a.cfg.MediaKinds()
 		must(t, err)
-		registry, err := media.NewRegistry(config)
+		registry, err := mediastore.NewRegistry(config, mediastore.Hooks{})
 		must(t, err)
 		target, err := registry.VersionRef(ref.Kind, ref.ID, ref.Version)
 		must(t, err)
 		item, err := registry.Item(target)
 		must(t, err)
-		journal, err := media.NewPGJournal(w.pool, w.schema, nil)
+		journal, err := mediastore.NewPGJournal(w.pool, w.schema, nil)
 		must(t, err)
-		manifests, err := media.NewManifests(storage.store, registry, media.ManifestOptions{Locker: media.PGLocker(w.pool), Journal: journal})
+		manifests, err := mediastore.NewManifests(storage.store, registry, mediastore.ManifestOptions{Locker: mediastore.PGLocker(w.pool), Journal: journal})
 		must(t, err)
 		manifest, _, err := manifests.Get(t.Context(), target)
 		must(t, err)

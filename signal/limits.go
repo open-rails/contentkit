@@ -1,18 +1,36 @@
 package signal
 
-import "fmt"
+import (
+	"fmt"
+)
 
-// Ingestion bounds. Oversize input is rejected, never truncated, so hosts see
-// it as backpressure and can count it instead of silently losing detail.
 const (
-	MaxSignalsPerBatch   = 500
+	MaxSignalsPerBatch = 500
+)
+
+const (
 	MaxExposuresPerBatch = 200
-	MaxShownPerExposure  = 200
+)
+
+const (
+	MaxShownPerExposure = 200
+)
+
+const (
 	// MaxIdentifierBytes bounds content kinds/ids/versions, subject keys,
 	// signal types, event ids, query ids, surfaces and languages.
 	MaxIdentifierBytes = 256
-	MaxResumeBytes     = 256
-	MaxQueryBytes      = 256
+)
+
+const (
+	MaxResumeBytes = 256
+)
+
+const (
+	MaxQueryBytes = 256
+)
+
+const (
 	// MaxPayloadBytes bounds the JSON-encoded payload.
 	MaxPayloadBytes = 2048
 )
@@ -26,22 +44,6 @@ type LimitError struct {
 
 func (e *LimitError) Error() string {
 	return fmt.Sprintf("signal: %s is %d, limit %d", e.Field, e.Got, e.Limit)
-}
-
-func checkLen(field, value string, limit int) error {
-	if len(value) > limit {
-		return &LimitError{Field: field, Limit: limit, Got: len(value)}
-	}
-	return nil
-}
-
-func checkIdentifiers(pairs ...string) error {
-	for i := 0; i+1 < len(pairs); i += 2 {
-		if err := checkLen(pairs[i], pairs[i+1], MaxIdentifierBytes); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 // MaxErasureSubjects bounds one EraseSubjects call.

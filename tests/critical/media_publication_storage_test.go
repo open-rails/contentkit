@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	mediastore "github.com/open-rails/contentkit/internal/mediastore"
+
 	"github.com/google/uuid"
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/media"
@@ -72,18 +74,18 @@ func TestPublicationStorage(t *testing.T) {
 	must(t, err)
 	config, err := a.cfg.MediaKinds()
 	must(t, err)
-	registry, err := media.NewRegistry(config)
+	registry, err := mediastore.NewRegistry(config, mediastore.Hooks{})
 	must(t, err)
 	target, err := registry.VersionRef(ref.Kind, ref.ID, ref.Version)
 	must(t, err)
 	item, err := registry.Item(target)
 	must(t, err)
-	journal, err := media.NewPGJournal(w.pool, w.schema, nil)
+	journal, err := mediastore.NewPGJournal(w.pool, w.schema, nil)
 	must(t, err)
 	store := &uncertainPublicationCopy{Store: storage.store}
-	manifests, err := media.NewManifests(store, registry, media.ManifestOptions{Locker: media.PGLocker(w.pool), Journal: journal})
+	manifests, err := mediastore.NewManifests(store, registry, mediastore.ManifestOptions{Locker: mediastore.PGLocker(w.pool), Journal: journal})
 	must(t, err)
-	var snapshot *media.Manifest
+	var snapshot *mediastore.Manifest
 	var original, prepared, cover string
 	waitForWithin(t, 45*time.Second, func() bool {
 		snapshot, _, err = manifests.Get(t.Context(), target)
@@ -142,7 +144,7 @@ func TestPublicationStorage(t *testing.T) {
 
 	operation := uuid.NewString()
 	store.forbidDataReads = true
-	inputs := []media.Promotion{{Source: prepared, Area: layout.AreaPrivate}, {Source: cover, Area: layout.AreaPublic}}
+	inputs := []mediastore.Promotion{{Source: prepared, Area: layout.AreaPrivate}, {Source: cover, Area: layout.AreaPublic}}
 	plan, err := manifests.PreparePromotion(t.Context(), target, operation, inputs)
 	must(t, err)
 	repeated, err := manifests.PreparePromotion(t.Context(), target, operation, inputs)
@@ -151,7 +153,7 @@ func TestPublicationStorage(t *testing.T) {
 		t.Fatal("acceptance retry changed the reserved destination or falsely completed")
 	}
 	_, err = manifests.PreparePromotion(t.Context(), target, operation, inputs[:1])
-	if !errors.Is(err, media.ErrCommitIdentity) {
+	if !errors.Is(err, mediastore.ErrCommitIdentity) {
 		t.Fatalf("changed operation input was accepted: %v", err)
 	}
 	store.fail = true
@@ -176,11 +178,11 @@ func TestPublicationStorage(t *testing.T) {
 	if !finished.Ready || store.calls != len(inputs) {
 		t.Fatalf("resume recopied a verified destination: ready=%v calls=%d", finished.Ready, store.calls)
 	}
-	if _, err := storage.store.Head(t.Context(), preparedKey); !errors.Is(err, media.ErrNotFound) {
+	if _, err := storage.store.Head(t.Context(), preparedKey); !errors.Is(err, mediastore.ErrNotFound) {
 		t.Fatalf("completed move retained an unreferenced internal source: %v", err)
 	}
 	unchanged := uuid.NewString()
-	_, err = manifests.PreparePromotion(t.Context(), target, unchanged, []media.Promotion{
+	_, err = manifests.PreparePromotion(t.Context(), target, unchanged, []mediastore.Promotion{
 		{Source: finished.Files[0].Blob, Area: layout.AreaPrivate},
 		{Source: finished.Files[1].Blob, Area: layout.AreaPublic},
 	})
@@ -210,7 +212,7 @@ func TestPublicationStorage(t *testing.T) {
 	get(finished.Files[0].Blob, exact, http.StatusOK)
 
 	move := uuid.NewString()
-	_, err = manifests.PreparePromotion(t.Context(), target, move, []media.Promotion{{Source: finished.Files[0].Blob, Area: layout.AreaInternal}})
+	_, err = manifests.PreparePromotion(t.Context(), target, move, []mediastore.Promotion{{Source: finished.Files[0].Blob, Area: layout.AreaInternal}})
 	must(t, err)
 	moved, err := manifests.Promote(t.Context(), target, move)
 	must(t, err)
@@ -222,17 +224,17 @@ func TestPublicationStorage(t *testing.T) {
 			t.Fatal("completed withdrawal left historical pins in the live manifest")
 		}
 	}
-	if _, err := manifests.PreparePromotion(t.Context(), target, operation, inputs); !errors.Is(err, media.ErrDeliveryWithdrawn) {
+	if _, err := manifests.PreparePromotion(t.Context(), target, operation, inputs); !errors.Is(err, mediastore.ErrDeliveryWithdrawn) {
 		t.Fatalf("compacted operation was allowed to publish again: %v", err)
 	}
 	get(finished.Files[0].Blob, itemToken, http.StatusNotFound)
 	get(moved.Files[0].Blob, itemToken, http.StatusNotFound)
 	_, err = manifests.Promote(t.Context(), target, operation)
-	if !errors.Is(err, media.ErrDeliveryWithdrawn) {
+	if !errors.Is(err, mediastore.ErrDeliveryWithdrawn) {
 		t.Fatalf("withdrawn operation resurrected its served objects: %v", err)
 	}
 	republish := uuid.NewString()
-	_, err = manifests.PreparePromotion(t.Context(), target, republish, []media.Promotion{{Source: moved.Files[0].Blob, Area: layout.AreaPrivate}})
+	_, err = manifests.PreparePromotion(t.Context(), target, republish, []mediastore.Promotion{{Source: moved.Files[0].Blob, Area: layout.AreaPrivate}})
 	must(t, err)
 	newRelease, err := manifests.Promote(t.Context(), target, republish)
 	must(t, err)

@@ -6,8 +6,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/open-rails/contentkit/internal/jobhook"
+
 	ck "github.com/open-rails/contentkit"
-	riverhelpers "github.com/open-rails/helpers/river"
 	"github.com/riverqueue/river"
 )
 
@@ -46,9 +47,8 @@ func TestSignalRecoveryDoesNotScheduleProjectionRepair(t *testing.T) {
 	if check == nil || check(t.Context()) == nil {
 		t.Fatal("missing real summary table did not make signal plane unready")
 	}
-	fleet, err := riverhelpers.New(t.Context(), w.pool, &river.Config{Schema: w.schema + "_river", Queues: map[string]river.QueueConfig{}}, a.engine.RiverJobs())
+	fleet, err := jobhook.Fleet(t.Context(), a.engine, &river.Config{Schema: w.schema + "_river", Queues: map[string]river.QueueConfig{}})
 	must(t, err)
-	must(t, a.engine.Start(t.Context(), ck.WithRiverClient(fleet)))
 	// The fleet deliberately never starts: a preference job after restoration
 	// can only be the engine's reconnect callback, not a periodic first tick.
 	restore()

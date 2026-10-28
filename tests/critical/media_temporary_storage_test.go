@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	mediastore "github.com/open-rails/contentkit/internal/mediastore"
+
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/google/uuid"
@@ -82,10 +84,10 @@ func TestTemporaryPublicationStorage(t *testing.T) {
 	if len(remaining.Uploads) != 0 {
 		t.Fatal("owned multipart abort left unfinished bytes")
 	}
-	if media.TemporaryRetention != 7*24*time.Hour {
+	if mediastore.TemporaryRetention != 7*24*time.Hour {
 		t.Fatal("temporary retention no longer matches the seven-day contract")
 	}
-	_, err = storage.store.PresignPut(t.Context(), prefix+"tmp/u-"+uuid.NewString(), media.PresignPut{ContentType: "text/plain", Size: int64(len(payload)), SHA256: sum[:], TTL: media.TemporaryRetention + time.Second})
+	_, err = storage.store.PresignPut(t.Context(), prefix+"tmp/u-"+uuid.NewString(), media.PresignPut{ContentType: "text/plain", Size: int64(len(payload)), SHA256: sum[:], TTL: mediastore.TemporaryRetention + time.Second})
 	if err == nil || !strings.Contains(err.Error(), "ttl") {
 		t.Fatalf("temporary upload capability outlives seven-day retention: %v", err)
 	}

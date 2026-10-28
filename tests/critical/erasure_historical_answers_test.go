@@ -4,6 +4,8 @@ import (
 	"testing"
 	"time"
 
+	signalstore "github.com/open-rails/contentkit/internal/signalstore"
+
 	"github.com/google/uuid"
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/contentref"
@@ -35,9 +37,9 @@ func TestErasedProjectionAndHistoricalAnswers(t *testing.T) {
 	must(t, err)
 	item := publishedArticle(t, a, "Projection source")
 	ref := contentref.NewVersion(a.cfg.Scope.AppID.String(), "article", item.ID, item.Versions[0].ID)
-	store, err := signal.NewStore(a.deps.ClickHouse, a.cfg.ClickHouse.Database)
+	store, err := signalstore.NewStore(a.deps.ClickHouse, a.cfg.ClickHouse.Database)
 	must(t, err)
-	measurement, err := signal.MeasurePages([]signal.PageEngagement{{Index: 0, Ranges: []signal.CoverageRange{{From: 0, To: 10_000}}, ActiveMS: 1_000}}, 1, 1_000)
+	measurement, err := signalstore.MeasurePages([]signal.PageEngagement{{Index: 0, Ranges: []signal.CoverageRange{{From: 0, To: 10_000}}, ActiveMS: 1_000}}, 1, 1_000)
 	must(t, err)
 	measurement.VersionID = item.Versions[0].ID
 	measurement.VisitID, measurement.SegmentID = uuid.NewString(), uuid.NewString()

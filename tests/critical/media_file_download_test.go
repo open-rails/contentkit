@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	mediastore "github.com/open-rails/contentkit/internal/mediastore"
+
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/kinds"
@@ -57,7 +59,7 @@ func TestPublishedSingleFileDownload(t *testing.T) {
 			a.engine, err = ck.New(t.Context(), a.cfg, a.deps)
 			must(t, err)
 			a.server = mountEngine(t, a.engine)
-			must(t, a.engine.Start(t.Context()))
+			must(t, a.engine.StartJobs(t.Context()))
 			reader := a.client("")
 			var grant versions.FileDownload
 			waitForWithin(t, 45*time.Second, func() bool {
@@ -108,15 +110,15 @@ func TestPublishedSingleFileDownload(t *testing.T) {
 			}
 			config, err := a.cfg.MediaKinds()
 			must(t, err)
-			reg, err := media.NewRegistry(config)
+			reg, err := mediastore.NewRegistry(config, mediastore.Hooks{})
 			must(t, err)
 			ref, err := reg.VersionRef(f.Ref.Kind, f.Ref.ID, f.Ref.Version)
 			must(t, err)
 			item, err := reg.Item(ref)
 			must(t, err)
-			journal, err := media.NewPGJournal(f.pool, f.schema, nil)
+			journal, err := mediastore.NewPGJournal(f.pool, f.schema, nil)
 			must(t, err)
-			manifests, err := media.NewManifests(f.storage.store, reg, media.ManifestOptions{Locker: media.PGLocker(f.pool), Journal: journal})
+			manifests, err := mediastore.NewManifests(f.storage.store, reg, mediastore.ManifestOptions{Locker: mediastore.PGLocker(f.pool), Journal: journal})
 			must(t, err)
 			manifest, _, err := manifests.Get(t.Context(), ref)
 			must(t, err)

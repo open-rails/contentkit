@@ -15,9 +15,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/catalog"
+	"github.com/open-rails/contentkit/internal/media/worker"
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
-	"github.com/open-rails/contentkit/media/worker"
 )
 
 // The same actual derivative worker handles PNG and MP4. A held S3 output

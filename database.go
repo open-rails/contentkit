@@ -7,6 +7,9 @@ import (
 	"net"
 	"strings"
 
+	mediastore "github.com/open-rails/contentkit/internal/mediastore"
+	signalstore "github.com/open-rails/contentkit/internal/signalstore"
+
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -16,10 +19,8 @@ import (
 	"github.com/open-rails/migratekit/chmigrate"
 
 	"github.com/open-rails/contentkit/entities"
-	"github.com/open-rails/contentkit/media"
-	"github.com/open-rails/contentkit/media/workqueue"
-	"github.com/open-rails/contentkit/migrations"
-	"github.com/open-rails/contentkit/signal"
+	"github.com/open-rails/contentkit/internal/media/workqueue"
+	"github.com/open-rails/contentkit/internal/migrations"
 )
 
 // ErrMigrationsRequired means a read-only startup check found storage that the
@@ -152,7 +153,7 @@ func MigrateClickHouse(ctx context.Context, pool *pgxpool.Pool, cfg Config) erro
 		return fmt.Errorf("contentkit: open ClickHouse migration connection: %w", err)
 	}
 	defer admin.Close()
-	if err := signal.CreateDatabase(ctx, admin, c.Database, c.Cluster); err != nil {
+	if err := signalstore.CreateDatabase(ctx, admin, c.Database, c.Cluster); err != nil {
 		return err
 	}
 	steps, err := migratekit.Load(migrations.ClickHouse, ".")
@@ -166,7 +167,7 @@ func MigrateClickHouse(ctx context.Context, pool *pgxpool.Pool, cfg Config) erro
 	if err := m.ApplyMigrations(ctx, steps); err != nil {
 		return fmt.Errorf("contentkit: apply signal migrations: %w", err)
 	}
-	if err := signal.CheckSchema(ctx, admin, c.Database); err != nil {
+	if err := signalstore.CheckSchema(ctx, admin, c.Database); err != nil {
 		return fmt.Errorf("contentkit: validate migrated signal schema: %w", err)
 	}
 	return nil
@@ -213,25 +214,25 @@ func (e *Engine) validateDatabase(ctx context.Context) error {
 
 // cleanupStorage resolves only the registry and journal routes; migration and
 // startup validation must not need an object-store connection or live workers.
-func (e *Engine) cleanupStorage() (*media.Registry, *media.PGJournal, error) {
+func (e *Engine) cleanupStorage() (*mediastore.Registry, *mediastore.PGJournal, error) {
 	cfg, err := e.cfg.MediaKinds()
 	if err != nil {
 		return nil, nil, err
 	}
-	reg, err := media.NewRegistry(cfg)
+	reg, err := mediastore.NewRegistry(cfg, mediastore.Hooks{})
 	if err != nil {
 		return nil, nil, err
 	}
-	journal, err := media.NewPGJournal(e.pool, e.schema, nil)
+	journal, err := mediastore.NewPGJournal(e.pool, e.schema, nil)
 	if err != nil {
 		return nil, nil, err
 	}
 	if account, ok := e.accountMediaStorage(); ok {
-		shared, err := media.NewPGJournal(e.pool, account.Schema, nil)
+		shared, err := mediastore.NewPGJournal(e.pool, account.Schema, nil)
 		if err != nil {
 			return nil, nil, err
 		}
-		journal, err = media.RouteJournal(journal, shared, e.accountMediaPartition())
+		journal, err = mediastore.RouteJournal(journal, shared, e.accountMediaPartition())
 		if err != nil {
 			return nil, nil, err
 		}

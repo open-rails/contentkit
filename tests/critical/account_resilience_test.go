@@ -15,6 +15,8 @@ import (
 	"testing"
 	"time"
 
+	signalstore "github.com/open-rails/contentkit/internal/signalstore"
+
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
@@ -91,7 +93,7 @@ func TestAccountAnonymizationRecoveryAcrossStores(t *testing.T) {
 	}
 	eventID := uuid.NewString()
 	must(t, a.client(credential).PostSignals(t.Context(), discovery.Signals{Signals: []discovery.SignalInput{{ContentID: item.ID, Type: "click", EventID: eventID, OccurredAt: time.Now()}}}))
-	signalStore, err := signal.NewStore(direct, a.cfg.ClickHouse.Database)
+	signalStore, err := signalstore.NewStore(direct, a.cfg.ClickHouse.Database)
 	must(t, err)
 	signalRef := contentref.New(a.cfg.Scope.AppID.String(), "article", item.ID)
 	beforeHistory, err := signalStore.States(t.Context(), a.cfg.Scope.AppID.String(), signal.Subject{UserID: user.ID}, []signal.ContentRef{signalRef})
@@ -348,7 +350,7 @@ CREATE CONSTRAINT TRIGGER critical_reject_anonymization AFTER INSERT OR UPDATE O
 		if response.StatusCode != 404 {
 			t.Fatalf("avatar remained accessible during physical cleanup: %d", response.StatusCode)
 		}
-		states, err := signal.NewStore(direct, a.cfg.ClickHouse.Database)
+		states, err := signalstore.NewStore(direct, a.cfg.ClickHouse.Database)
 		must(t, err)
 		history, err := states.States(t.Context(), a.cfg.Scope.AppID.String(), signal.Subject{UserID: user.ID}, []signal.ContentRef{signalRef})
 		must(t, err)

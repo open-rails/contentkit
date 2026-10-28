@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	signalstore "github.com/open-rails/contentkit/internal/signalstore"
+
 	"github.com/google/uuid"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/signal"
@@ -14,7 +16,7 @@ func TestDailyParticipationPreparation(t *testing.T) {
 	w := newWorld(t)
 	a := w.apps[0]
 	configureDiscoverySignals(t, w, a)
-	store, err := signal.NewStore(a.deps.ClickHouse, a.cfg.ClickHouse.Database)
+	store, err := signalstore.NewStore(a.deps.ClickHouse, a.cfg.ClickHouse.Database)
 	must(t, err)
 	tenant := a.cfg.Scope.AppID.String()
 	scope := signal.ActivityScope{Domain: "main", Language: "en"}
@@ -36,7 +38,7 @@ func TestDailyParticipationPreparation(t *testing.T) {
 	must(t, store.RecordPopulation(t.Context(), tenant, observations))
 	measurement := func(ref contentref.ContentRef, person signal.Subject, ms uint32) signal.Signal {
 		t.Helper()
-		m, err := signal.MeasurePages([]signal.PageEngagement{{Index: 0, Ranges: []signal.CoverageRange{{From: 0, To: 10000}}, ActiveMS: ms}}, 1, ms)
+		m, err := signalstore.MeasurePages([]signal.PageEngagement{{Index: 0, Ranges: []signal.CoverageRange{{From: 0, To: 10000}}, ActiveMS: ms}}, 1, ms)
 		must(t, err)
 		m.VersionID, m.VisitID, m.SegmentID = ref.Version(), uuid.NewString(), uuid.NewString()
 		at := day.Add(10 * time.Hour)
@@ -118,7 +120,7 @@ func TestDailyParticipationPreparation(t *testing.T) {
 	if !known || !covered.From.Equal(day.AddDate(0, 0, 1)) || !covered.To.Equal(end) {
 		t.Fatalf("partial instrumentation coverage=%+v known=%v", covered, known)
 	}
-	hits, err := store.DailyPopular(t.Context(), tenant, "article", signal.Between(day, end), scope, 10)
+	hits, err := store.DailyPopular(t.Context(), tenant, "article", signalstore.Between(day, end), scope, 10)
 	must(t, err)
 	if len(hits) != 2 || hits[0].ContentID != premium.ContentID || hits[0].Score != math.Round(2./22*1e12)/1e12 || hits[1].Score != math.Round((2./24)/2*1e12)/1e12 {
 		t.Fatalf("daily score/available-day mean=%+v", hits)

@@ -6,7 +6,7 @@ package hub
 
 import (
 	"github.com/open-rails/contentkit/contentref"
-	"github.com/open-rails/contentkit/search"
+	"github.com/open-rails/contentkit/internal/search"
 )
 
 // ContentRef is the tenant-scoped reference to a content item or one of its

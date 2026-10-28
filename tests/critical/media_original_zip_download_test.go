@@ -11,16 +11,20 @@ import (
 	"testing"
 	"time"
 
+	catalogstore "github.com/open-rails/contentkit/internal/catalogstore"
+	mediastore "github.com/open-rails/contentkit/internal/mediastore"
+	versionstore "github.com/open-rails/contentkit/internal/versionstore"
+
 	"github.com/google/uuid"
 	"github.com/open-rails/authkit"
 	"github.com/open-rails/authkit/authtest"
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
+	"github.com/open-rails/contentkit/internal/media/workqueue"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/token"
 	"github.com/open-rails/contentkit/media/versions"
-	"github.com/open-rails/contentkit/media/workqueue"
 )
 
 func TestOriginalZIPCannotBypassChapterRelease(t *testing.T) {
@@ -116,28 +120,27 @@ func TestOriginalZIPCannotBypassChapterRelease(t *testing.T) {
 	roles := authkit.NewRoles()
 	roles.Root.Declare(access.Names(access.Permissions()...)...)
 	identity, _ := authtest.New(t, authtest.WithConfig(func(c *authkit.Config) { c.Roles = roles }), authtest.WithDeps(func(d *authkit.Deps) { d.Postgres = w.pool }))
-	cat, err := catalog.New(t.Context(), catalog.Options{Pool: w.pool, Schema: w.schema, Tenant: owner, Kinds: a.cfg.Content, Auth: identity.Authenticator(), Now: w.clock.now})
+	cat, err := catalogstore.New(t.Context(), catalogstore.Options{Pool: w.pool, Schema: w.schema, Tenant: owner, Kinds: a.cfg.Content, Auth: identity.Authenticator(), Now: w.clock.now})
 	must(t, err)
-	service, err := versions.New(versions.Options{Pool: w.pool, Schema: w.schema, Tenant: owner, Kinds: a.cfg.Content, Auth: identity.Authenticator(), Resolver: cat.Resolver(), Facets: cat, Now: w.clock.now})
+	service, err := versionstore.New(versionstore.Options{Pool: w.pool, Schema: w.schema, Tenant: owner, Kinds: a.cfg.Content, Auth: identity.Authenticator(), Resolver: cat.Resolver(), Facets: cat, Now: w.clock.now})
 	must(t, err)
-	model.Hooks = service.Hooks()
-	registry, err := media.NewRegistry(model)
+	registry, err := mediastore.NewRegistry(model, service.Hooks())
 	must(t, err)
 	queue, err := workqueue.New(w.pool, registry, a.cfg.Media.WorkerSchema)
 	must(t, err)
-	journal, err := media.NewPGJournal(w.pool, w.schema, queue)
+	journal, err := mediastore.NewPGJournal(w.pool, w.schema, queue)
 	must(t, err)
-	jobs, err := media.NewJobs(media.JobsConfig{Store: storage.store, Registry: registry, Locker: media.PGLocker(w.pool), Journal: journal})
+	jobs, err := mediastore.NewJobs(mediastore.JobsConfig{Store: storage.store, Registry: registry, Locker: mediastore.PGLocker(w.pool), Journal: journal})
 	must(t, err)
 	ring, err := token.NewRing(storage.key, nil)
 	must(t, err)
-	uploads, err := media.NewUploads(media.UploadOptions{Store: storage.store, Manifests: jobs.Manifests(), Tickets: &ring})
+	uploads, err := mediastore.NewUploads(mediastore.UploadOptions{Store: storage.store, Manifests: jobs.Manifests(), Tickets: &ring})
 	must(t, err)
-	delivery, err := media.NewReader(media.ReaderOptions{Manifests: jobs.Manifests(), Delivery: media.Delivery{Mode: media.DeliverURL, SigningKey: storage.key}})
+	delivery, err := mediastore.NewReader(mediastore.ReaderOptions{Manifests: jobs.Manifests(), Delivery: media.Delivery{Mode: media.DeliverURL, SigningKey: storage.key}})
 	must(t, err)
-	must(t, service.Bind(versions.Media{Manifests: jobs.Manifests(), Uploads: uploads, Jobs: jobs, Reader: delivery}))
+	must(t, service.Bind(versionstore.Media{Manifests: jobs.Manifests(), Uploads: uploads, Jobs: jobs, Reader: delivery}))
 	raw, err := service.Download(t.Context(), access.Actor{Anonymous: true, IP: "127.0.0.1"}, versions.Target{Content: ref.ID, Version: ref.Version})
-	if !errors.Is(err, versions.ErrNoDownload) || raw != nil {
+	if !errors.Is(err, versionstore.ErrNoDownload) || raw != nil {
 		t.Fatalf("raw original ZIP bypassed future chapter release: granted=%t error=%v", raw != nil, err)
 	}
 }

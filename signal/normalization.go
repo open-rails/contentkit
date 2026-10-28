@@ -1,6 +1,8 @@
 package signal
 
-import "time"
+import (
+	"time"
+)
 
 // ActivityScope identifies the reader population of a ranking. An empty field
 // includes every domain or language in the tenant's application.

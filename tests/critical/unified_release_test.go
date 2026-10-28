@@ -5,12 +5,14 @@ import (
 	"testing"
 	"time"
 
+	versionstore "github.com/open-rails/contentkit/internal/versionstore"
+
+	"github.com/open-rails/contentkit/internal/jobhook"
+
 	"github.com/jackc/pgx/v5"
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
-	"github.com/open-rails/contentkit/media/versions"
-	riverhelpers "github.com/open-rails/helpers/river"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
 )
@@ -24,9 +26,8 @@ func TestReleaseRequestsSurviveRestartAndSequentialDeadlines(t *testing.T) {
 	bind := func() {
 		t.Helper()
 		var err error
-		fleet, err = riverhelpers.New(t.Context(), w.pool, &river.Config{Schema: publicationRiverSchema(a), Queues: map[string]river.QueueConfig{}}, a.engine.RiverJobs())
+		fleet, err = jobhook.Fleet(t.Context(), a.engine, &river.Config{Schema: publicationRiverSchema(a), Queues: map[string]river.QueueConfig{}})
 		must(t, err)
-		must(t, a.engine.Start(t.Context(), ck.WithRiverClient(fleet)))
 	}
 	bind()
 	t.Cleanup(func() { must(t, fleet.Stop(context.Background())) })
@@ -54,7 +55,7 @@ func TestReleaseRequestsSurviveRestartAndSequentialDeadlines(t *testing.T) {
 		var linked bool
 		must(t, w.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM `+w.schema+`_river.river_job j
  WHERE j.kind='contentkit_version_release' AND j.queue=$1 AND j.args->>'id'=$2 AND j.scheduled_at=$3
- AND j.state IN ('available','pending','running','retryable','scheduled'))`, versions.QueueFor(publicationTenant(a)), next.ID, at).Scan(&linked))
+ AND j.state IN ('available','pending','running','retryable','scheduled'))`, versionstore.QueueFor(publicationTenant(a)), next.ID, at).Scan(&linked))
 		if !linked {
 			t.Fatal("next release has no durable exact-deadline job")
 		}
@@ -140,7 +141,7 @@ func TestReleaseRequestsSurviveRestartAndSequentialDeadlines(t *testing.T) {
 		t.Fatalf("sequential release facts=%v", before)
 	}
 	// At-least-once delivery of the last completed request must emit nothing.
-	job, err := fleet.Insert(t.Context(), next, &river.InsertOpts{Queue: versions.QueueFor(publicationTenant(a))})
+	job, err := fleet.Insert(t.Context(), next, &river.InsertOpts{Queue: versionstore.QueueFor(publicationTenant(a))})
 	must(t, err)
 	must(t, fleet.Start(t.Context()))
 	waitFor(t, func() bool {
