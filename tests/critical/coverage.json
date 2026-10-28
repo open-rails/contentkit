@@ -853,6 +853,19 @@
       ]
     },
     {
+      "id": "CK-J07-S24",
+      "journey": "CK-J07",
+      "behavior": "The first search syncs of an API and a worker starting together on fresh storage both succeed and create every backfill position once",
+      "status": "verified",
+      "evidence": [
+        "A started API's startup entity write and a worker's scheduled run make two concurrent contentkit_search_sync jobs; a rolled-back gate lines both up on the first backfill position. Neither job records an error and every kind and language ends done.",
+        "contentkit#275: before the fix one job failed with no rows in result set on every run; focused real-service execution against PostgreSQL; the strict gate must execute the exact case again."
+      ],
+      "cases": [
+        "TestConcurrentFirstSearchSync/CK-J07-S24_first_search_syncs_of_an_api_and_worker_starting_together_both_succeed"
+      ]
+    },
+    {
       "id": "CK-J07-S19",
       "journey": "CK-J07",
       "behavior": "Observed search query and absolute result rank join to exact clicked visits across same-tab and native new-tab navigation",
