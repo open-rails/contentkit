@@ -772,6 +772,8 @@ export interface EntityCard {
   internal: boolean;
   scope_id?: string;
   parent_id?: string;
+  state: "active" | "deleted" | "merged";
+  merged_into?: string;
   name: string;
   name_language?: string;
   code?: string;
@@ -933,6 +935,8 @@ export interface EventRecord {
   kind: string;
   content_id: string;
   version_id?: string;
+  entity_id?: string;
+  merged_into?: string;
   occurred_at: string;
   recorded_at: string;
   source: string;
@@ -1311,6 +1315,11 @@ export interface Name {
   language: string;
   kind: "alias" | "name";
   name: string;
+}
+
+export interface NameMatch {
+  name: string;
+  ids: string[];
 }
 
 export interface NewEntity {
@@ -2033,6 +2042,16 @@ export interface VersionRules {
   languages: string;
   traits?: string[];
   hidden?: boolean;
+}
+
+export interface VersionStatus {
+  version_id: string;
+  content_id: string;
+  kind: string;
+  languages: string[];
+  deleted: boolean;
+  live: boolean;
+  live_from?: string;
 }
 
 export interface VersionText {

@@ -242,6 +242,8 @@ go:Client.GetManageChannel	go	Go generated Client route	Client.GetManageChannel	
 go:Client.GetChannelEntities	go	Go generated Client route	Client.GetChannelEntities	client_gen.go	included-critical channel253 contract
 go:Client.PutChannelEntities	go	Go generated Client route	Client.PutChannelEntities	client_gen.go	included-critical channel253 contract
 go:Client.GetChannelContents	go	Go generated Client route	Client.GetChannelContents	client_gen.go	included-critical channel253 contract
+go:Client.GetVersions	go	Go generated Client route	Client.GetVersions	client_gen.go	included-critical
+go:Client.GetManageEntitiesMatch	go	Go generated Client route	Client.GetManageEntitiesMatch	client_gen.go	included-critical
 ts:ChannelsClient.mine	ts	TS channel client method	ChannelsClient.mine	sdk/ui/src/client/channels.ts	included-critical channel253 contract
 ts:ChannelsClient.create	ts	TS channel client method	ChannelsClient.create	sdk/ui/src/client/channels.ts	included-critical channel253 contract
 ts:ChannelsClient.get	ts	TS channel client method	ChannelsClient.get	sdk/ui/src/client/channels.ts	included-critical channel253 contract

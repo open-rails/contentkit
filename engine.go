@@ -329,7 +329,7 @@ func (e *Engine) migratePostgres(ctx context.Context, options MigrationOptions) 
 // newCatalog builds the stores media is built over: entities and the catalog, which refreshes facets when entities change.
 func (e *Engine) newCatalog(ctx context.Context, deps Deps, now func() time.Time) error {
 	c := e.cfg.Content
-	opts := entities.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Kinds: c, Scopes: deps.Scopes, Logger: e.log, References: deps.EntityReferences,
+	opts := entities.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Kinds: c, Scopes: deps.Scopes, Logger: e.log,
 		ContentChanged: func(ctx context.Context, q entities.Querier, ids []string) error {
 			return e.catalog.ContentChanged(ctx, q, ids)
 		},
@@ -337,7 +337,10 @@ func (e *Engine) newCatalog(ctx context.Context, deps Deps, now func() time.Time
 			return e.catalog.EntitiesRenamed(ctx, q, ids)
 		},
 		DocumentsChanged: func(ctx context.Context, q entities.Querier) error { return e.syncDocuments(ctx, q) },
-		Owned:            ownedContent{e}}
+		EntitiesChanged: func(ctx context.Context, q entities.Querier, changes []entities.Change) error {
+			return e.catalog.EntitiesChanged(ctx, q, changes)
+		},
+		Owned: ownedContent{e}}
 	if e.cfg.Media != nil {
 		opts.Covers, opts.Folders = entityCovers{e}, entityFolders{e}
 	}
@@ -348,7 +351,7 @@ func (e *Engine) newCatalog(ctx context.Context, deps Deps, now func() time.Time
 	}
 	e.channels = channels.FromStore(e.entities)
 	co := catalog.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant, Kinds: c, Auth: e.auth, Gate: e.gate, Entities: e.entities, Channels: e.channels,
-		Body: deps.BodyProcessor, Now: now, Logger: e.log, References: deps.VersionReferences,
+		Body: deps.BodyProcessor, Now: now, Logger: e.log,
 		EventRetention: e.cfg.EventRetention, OnPurge: e.forgetPurgedTx, AfterPurge: e.purgeSignals,
 		DocumentsChanged: func(ctx context.Context, q catalog.Querier) error { return e.syncDocuments(ctx, q) }}
 	if e.catalog, err = catalog.New(ctx, co); err != nil {

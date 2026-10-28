@@ -50,11 +50,6 @@ func (s *Store) Merge(ctx context.Context, merges []Merge) ([]MergeReport, error
 		return nil, err
 	}
 	err = s.run(ctx, func(q Querier) error {
-		if s.references != nil {
-			if err := checkReferenceTransaction(ctx, q); err != nil {
-				return err
-			}
-		}
 		if err := s.lockHierarchy(ctx, q); err != nil {
 			return err
 		}
@@ -67,19 +62,17 @@ func (s *Store) Merge(ctx context.Context, merges []Merge) ([]MergeReport, error
 			byID[g.ID] = g
 		}
 		var touched []string
+		var changes []Change
 		for i, m := range merges {
 			src, dst := byID[m.From], byID[m.Into]
 			if err := s.mergeable(ctx, q, src, dst); err != nil {
 				return err
 			}
-			if reports[i], err = s.merge(ctx, q, src, dst); err != nil {
+			var moved []Change
+			if reports[i], moved, err = s.merge(ctx, q, src, dst); err != nil {
 				return err
 			}
-			if s.references != nil {
-				if err := s.references.Merge(ctx, q, s.tenant, Ref{Kind: src.Kind, ID: src.ID}, Ref{Kind: dst.Kind, ID: dst.ID}); err != nil {
-					return err
-				}
-			}
+			changes = append(changes, moved...)
 			src.State, src.MergedInto = StateMerged, dst.ID
 			byID[src.ID] = src
 			touched = append(touched, string(src.ID), string(dst.ID))
@@ -104,8 +97,7 @@ func (s *Store) Merge(ctx context.Context, merges []Merge) ([]MergeReport, error
 		if err := s.markDirty(ctx, q, marks); err != nil {
 			return err
 		}
-
-		return nil
+		return s.record(ctx, q, changes)
 	})
 	if err != nil {
 		return nil, err
@@ -137,84 +129,109 @@ func (s *Store) mergeable(ctx context.Context, q Querier, src, dst Entity) error
 	return nil
 }
 
-func (s *Store) merge(ctx context.Context, q Querier, src, dst Entity) (MergeReport, error) {
+// merge returns the merge's events: From and earlier merges into it merged
+// into Into, and Into and the entities re-pointed to it updated.
+func (s *Store) merge(ctx context.Context, q Querier, src, dst Entity) (MergeReport, []Change, error) {
 	r := MergeReport{From: src.ID, Into: dst.ID}
+	changes := []Change{{Type: EventMerged, Kind: src.Kind, ID: src.ID, MergedInto: dst.ID}}
 	from, into := string(src.ID), string(dst.ID)
 	m := s.table("content_memberships")
 	if _, err := q.Exec(ctx, fmt.Sprintf(`UPDATE %[1]s d SET state = 'active' FROM %[1]s o
  WHERE o.tenant_id = $1 AND o.entity_id = $2 AND o.state = 'active' AND d.tenant_id = $1 AND d.entity_id = $3 AND d.state = 'proposed'
    AND d.content_id = o.content_id AND d.version_id IS NOT DISTINCT FROM o.version_id AND d.role = o.role`, m), s.tenant, from, into); err != nil {
-		return r, err
+		return r, nil, err
 	}
 	tag, err := q.Exec(ctx, fmt.Sprintf(`INSERT INTO %[1]s (tenant_id, entity_id, content_id, version_id, role, position, state)
  SELECT tenant_id, $3, content_id, version_id, role, position, state FROM %[1]s WHERE tenant_id = $1 AND entity_id = $2
  ON CONFLICT (tenant_id, entity_id, content_id, version_id, role) DO NOTHING`, m), s.tenant, from, into)
 	if err != nil {
-		return r, err
+		return r, nil, err
 	}
 	r.MembershipsMoved = tag.RowsAffected()
 	if _, err := q.Exec(ctx, fmt.Sprintf(`DELETE FROM %s WHERE tenant_id = $1 AND entity_id = $2`, m), s.tenant, from); err != nil {
-		return r, err
+		return r, nil, err
 	}
 	// Channel metadata follows the same canonical survivor as content tags.
 	// The hierarchy lock serializes this move with SetChannelMetadata.
 	channelMetadata := s.table("content_channel_entities")
 	if _, err := q.Exec(ctx, `INSERT INTO `+channelMetadata+` (tenant_id,channel_id,entity_id) SELECT tenant_id,channel_id,$3 FROM `+channelMetadata+` WHERE tenant_id=$1 AND entity_id=$2 ON CONFLICT DO NOTHING`, s.tenant, from, into); err != nil {
-		return r, err
+		return r, nil, err
 	}
 	if _, err := q.Exec(ctx, `DELETE FROM `+channelMetadata+` WHERE tenant_id=$1 AND entity_id=$2`, s.tenant, from); err != nil {
-		return r, err
+		return r, nil, err
 	}
 	names := s.table("content_entity_names")
 	if tag, err = q.Exec(ctx, fmt.Sprintf(`INSERT INTO %[1]s (tenant_id, entity_id, language, kind, name)
  SELECT tenant_id, $3, language, 'alias', name FROM %[1]s WHERE tenant_id = $1 AND entity_id = $2
  ON CONFLICT (tenant_id, entity_id, language, normalized) DO NOTHING`, names), s.tenant, from, into); err != nil {
-		return r, err
+		return r, nil, err
 	}
 	r.NamesMoved = tag.RowsAffected()
 	if _, err := q.Exec(ctx, fmt.Sprintf(`DELETE FROM %s WHERE tenant_id = $1 AND entity_id = $2`, names), s.tenant, from); err != nil {
-		return r, err
+		return r, nil, err
 	}
 	text := s.table("content_entity_text")
 	if _, err := q.Exec(ctx, fmt.Sprintf(`INSERT INTO %[1]s (tenant_id, entity_id, language, description, sort_key)
  SELECT tenant_id, $3, language, description, sort_key FROM %[1]s WHERE tenant_id = $1 AND entity_id = $2
  ON CONFLICT (tenant_id, entity_id, language) DO NOTHING`, text), s.tenant, from, into); err != nil {
-		return r, err
+		return r, nil, err
 	}
 	edges := s.table("content_entity_edges")
 	if tag, err = q.Exec(ctx, fmt.Sprintf(`INSERT INTO %[1]s (tenant_id, from_id, relation, to_id)
  SELECT tenant_id, CASE WHEN from_id = $2 THEN $3 ELSE from_id END, relation, CASE WHEN to_id = $2 THEN $3 ELSE to_id END
  FROM %[1]s WHERE tenant_id = $1 AND (from_id = $2 OR to_id = $2) AND from_id <> $3 AND to_id <> $3
  ON CONFLICT DO NOTHING`, edges), s.tenant, from, into); err != nil {
-		return r, err
+		return r, nil, err
 	}
 	r.EdgesMoved = tag.RowsAffected()
 	if _, err := q.Exec(ctx, fmt.Sprintf(`DELETE FROM %s WHERE tenant_id = $1 AND (from_id = $2 OR to_id = $2)`, edges), s.tenant, from); err != nil {
-		return r, err
+		return r, nil, err
 	}
 	g := s.table("content_entities")
 	// Into may sit under From; it takes From's place.
 	if _, err := q.Exec(ctx, fmt.Sprintf(`UPDATE %s SET parent_id = (SELECT parent_id FROM %[1]s WHERE tenant_id = $1 AND id = $2)
  WHERE tenant_id = $1 AND id = $3 AND parent_id = $2`, g), s.tenant, from, into); err != nil {
-		return r, err
+		return r, nil, err
 	}
-	if tag, err = q.Exec(ctx, fmt.Sprintf(`UPDATE %s SET parent_id = CASE WHEN parent_id = $2 THEN $3 ELSE parent_id END,
+	repointed, err := s.returned(ctx, q, EventUpdated, "", fmt.Sprintf(`UPDATE %s SET parent_id = CASE WHEN parent_id = $2 THEN $3 ELSE parent_id END,
  scope_id = CASE WHEN scope_id = $2 THEN $3 ELSE scope_id END, updated_at = now(), revision = revision + 1
- WHERE tenant_id = $1 AND (parent_id = $2 OR scope_id = $2) AND id <> $3`, g), s.tenant, from, into); err != nil {
-		return r, err
+ WHERE tenant_id = $1 AND (parent_id = $2 OR scope_id = $2) AND id <> $3 RETURNING id, kind`, g), from, into)
+	if err != nil {
+		return r, nil, err
 	}
-	r.EntitiesMoved = tag.RowsAffected()
-	if _, err := q.Exec(ctx, fmt.Sprintf(`UPDATE %s SET merged_into = $3, updated_at = now() WHERE tenant_id = $1 AND merged_into = $2`, g), s.tenant, from, into); err != nil {
-		return r, err
+	r.EntitiesMoved = int64(len(repointed))
+	earlier, err := s.returned(ctx, q, EventMerged, dst.ID, fmt.Sprintf(`UPDATE %s SET merged_into = $3, updated_at = now() WHERE tenant_id = $1 AND merged_into = $2 RETURNING id, kind`, g), from, into)
+	if err != nil {
+		return r, nil, err
 	}
+	changes = append(append(append(changes, earlier...), repointed...), Change{Type: EventUpdated, Kind: dst.Kind, ID: dst.ID})
 	if _, err := q.Exec(ctx, fmt.Sprintf(`UPDATE %s SET state = 'merged', merged_into = $3, updated_at = now(), revision = revision + 1 WHERE tenant_id = $1 AND id = $2`, g), s.tenant, from, into); err != nil {
-		return r, err
+		return r, nil, err
 	}
 	if _, err := q.Exec(ctx, fmt.Sprintf(`UPDATE %s SET updated_at = now(), revision = revision + 1 WHERE tenant_id = $1 AND id = $2`, g), s.tenant, into); err != nil {
-		return r, err
+		return r, nil, err
 	}
 	if err := s.syncCodes(ctx, q, []string{from, into}); err != nil {
-		return r, err
+		return r, nil, err
 	}
-	return r, codes.Merge(ctx, codes.Pgx(q), s.qs, s.tenant, codes.Key{Kind: src.Kind, ID: from}, codes.Key{Kind: dst.Kind, ID: into})
+	return r, changes, codes.Merge(ctx, codes.Pgx(q), s.qs, s.tenant, codes.Key{Kind: src.Kind, ID: from}, codes.Key{Kind: dst.Kind, ID: into})
+}
+
+// returned runs an UPDATE returning id and kind with the tenant, from and into
+// as $1-$3 and reports each row as a typ change.
+func (s *Store) returned(ctx context.Context, q Querier, typ string, mergedInto EntityID, sql, from, into string) ([]Change, error) {
+	rows, err := q.Query(ctx, sql, s.tenant, from, into)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Change
+	for rows.Next() {
+		c := Change{Type: typ, MergedInto: mergedInto}
+		if err := rows.Scan(&c.ID, &c.Kind); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
 }

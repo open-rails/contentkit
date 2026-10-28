@@ -2402,6 +2402,58 @@
       "evidence": [
         "A worker whose registry is the media-config JSON parsed back (ParseConfig, NewRegistry) renders real PNG pages through libvips and S3: exactly 1:2 renders the tall image, a portrait and a square page the preset image, a wide page the wide image, each with one WebP write. NewRegistry refuses overlapping, unbounded, empty, unreduced, other-format, other-animation and non-image shapes. Focused local run passed; mutations (shape from recorded size only; inclusive wide bound) failed it."
       ]
+    },
+    {
+      "id": "CK-J31-S01",
+      "journey": "CK-J31",
+      "behavior": "Host resolves entity ids in every state, merged ones to their final survivor",
+      "status": "verified",
+      "evidence": [
+        "Remote staff client resolves active, deleted, internal and twice-merged entities by id with state and final merged_into; unknown ids are absent; ids with state or past the bound are refused.",
+        "contentkit#266: focused real-service execution against PostgreSQL through the remote Go client; the strict gate must execute every exact case again."
+      ],
+      "cases": [
+        "TestHostAPIContract/CK-J31-S01_resolve_answers_deleted_internal_and_merged_entities"
+      ]
+    },
+    {
+      "id": "CK-J31-S02",
+      "journey": "CK-J31",
+      "behavior": "Host matches whole names to entities literally or normalized, at most two ids per name",
+      "status": "verified",
+      "evidence": [
+        "Literal and normalized canonical-name and alias matches keep request order, never match deleted, merged or internal entities, honor language and scope, and cap ambiguity at two ids.",
+        "contentkit#266: focused real-service execution against PostgreSQL through the remote Go client; the strict gate must execute every exact case again."
+      ],
+      "cases": [
+        "TestHostAPIContract/CK-J31-S02_exact_name_match_is_literal_or_normalized_and_bounded"
+      ]
+    },
+    {
+      "id": "CK-J31-S03",
+      "journey": "CK-J31",
+      "behavior": "Host reads edition status across draft, live, scheduled, deleted and purged",
+      "status": "verified",
+      "evidence": [
+        "Batch status reports content, kind, languages, deletion, live and live_from in request order; a real retention purge removes the edition from the answer.",
+        "contentkit#266: focused real-service execution against PostgreSQL through the remote Go client; the strict gate must execute every exact case again."
+      ],
+      "cases": [
+        "TestHostAPIContract/CK-J31-S03_version_status_follows_draft_live_scheduled_deleted_and_purged"
+      ]
+    },
+    {
+      "id": "CK-J31-S04",
+      "journey": "CK-J31",
+      "behavior": "Entity create, update, delete, restore and merge are committed events",
+      "status": "verified",
+      "evidence": [
+        "The remote event reader returns exact entity facts in commit order; merges carry the final survivor and re-record earlier merges into the merged entity.",
+        "contentkit#266: focused real-service execution against PostgreSQL through the remote Go client; the strict gate must execute every exact case again."
+      ],
+      "cases": [
+        "TestHostAPIContract/CK-J31-S04_entity_events_tell_hosts_to_repair_links"
+      ]
     }
   ],
   "review_notes": {
@@ -5493,7 +5545,8 @@
         "TestHTTPAuthenticationMatrix/CK-API-109_GET_/v1/manage/entities/member_without_named_permission",
         "TestHTTPAuthenticationMatrix/CK-API-109_GET_/v1/manage/entities/revoked_session",
         "TestHTTPAuthenticationMatrix/CK-API-109_GET_/v1/manage/entities/wrong_issuer",
-        "TestOwnedEntityAuthority/CK-J16-S01_created_scope_belongs_to_exact_tenant_and_app"
+        "TestOwnedEntityAuthority/CK-J16-S01_created_scope_belongs_to_exact_tenant_and_app",
+        "TestHostAPIContract/CK-J31-S01_resolve_answers_deleted_internal_and_merged_entities"
       ],
       "implemented_security_cases": [
         "TestHTTPAuthenticationMatrix/CK-API-109_GET_/v1/manage/entities/malformed_credential",
@@ -5508,7 +5561,8 @@
       "security_evidence": "credential gate and app-key boundary only; no route-specific functional or mutation no-effect approval; executed in integrated-f052-aggregate",
       "evidence": [
         "Management list returns exact real entity; ordinary owner403 and sibling-app empty list control scope.",
-        "Independently reviewed executable contract mapping; prior matching real-service race receipts are retained with the test rebuild. The strict gate must execute every exact case again on the combined media source before release qualification."
+        "Independently reviewed executable contract mapping; prior matching real-service race receipts are retained with the test rebuild. The strict gate must execute every exact case again on the combined media source before release qualification.",
+        "With ids, the management listing resolves deleted, internal and merged entities with state and final merged_into."
       ]
     },
     {
@@ -7612,6 +7666,72 @@
         "The real public-client repost journey asserts idempotency, original identity, destination removal and refusal to edit original versions; pending and withdrawn originals are excluded.",
         "Reviewed executable contract mapping; this is not an execution receipt. Final combined qualification must run every selected case."
       ]
+    },
+    {
+      "id": "CK-API-190",
+      "method": "GET",
+      "path": "/v1/versions",
+      "selection": "included-critical functionality and security",
+      "status": "verified",
+      "cases": [
+        "TestHTTPAuthenticationMatrix/CK-API-190_GET_/v1/versions/anonymous_protected_operation",
+        "TestHTTPAuthenticationMatrix/CK-API-190_GET_/v1/versions/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-190_GET_/v1/versions/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-190_GET_/v1/versions/inherited_HEAD_credential_gate",
+        "TestHTTPAuthenticationMatrix/CK-API-190_GET_/v1/versions/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-190_GET_/v1/versions/member_without_named_permission",
+        "TestHTTPAuthenticationMatrix/CK-API-190_GET_/v1/versions/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-190_GET_/v1/versions/wrong_issuer",
+        "TestHostAPIContract/CK-J31-S03_version_status_follows_draft_live_scheduled_deleted_and_purged"
+      ],
+      "implemented_security_cases": [
+        "TestHTTPAuthenticationMatrix/CK-API-190_GET_/v1/versions/anonymous_protected_operation",
+        "TestHTTPAuthenticationMatrix/CK-API-190_GET_/v1/versions/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-190_GET_/v1/versions/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-190_GET_/v1/versions/inherited_HEAD_credential_gate",
+        "TestHTTPAuthenticationMatrix/CK-API-190_GET_/v1/versions/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-190_GET_/v1/versions/member_without_named_permission",
+        "TestHTTPAuthenticationMatrix/CK-API-190_GET_/v1/versions/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-190_GET_/v1/versions/wrong_issuer"
+      ],
+      "security_evidence": "credential gate and app-key boundary only; functional behavior is the mapped host contract case",
+      "evidence": [
+        "Edition status by version id across draft, live, scheduled, deleted and purged editions.",
+        "contentkit#266: focused real-service execution against PostgreSQL through the remote Go client; the strict gate must execute every exact case again."
+      ]
+    },
+    {
+      "id": "CK-API-191",
+      "method": "GET",
+      "path": "/v1/manage/entities/match",
+      "selection": "included-critical functionality and security",
+      "status": "verified",
+      "cases": [
+        "TestHTTPAuthenticationMatrix/CK-API-191_GET_/v1/manage/entities/match/anonymous_protected_operation",
+        "TestHTTPAuthenticationMatrix/CK-API-191_GET_/v1/manage/entities/match/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-191_GET_/v1/manage/entities/match/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-191_GET_/v1/manage/entities/match/inherited_HEAD_credential_gate",
+        "TestHTTPAuthenticationMatrix/CK-API-191_GET_/v1/manage/entities/match/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-191_GET_/v1/manage/entities/match/member_without_named_permission",
+        "TestHTTPAuthenticationMatrix/CK-API-191_GET_/v1/manage/entities/match/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-191_GET_/v1/manage/entities/match/wrong_issuer",
+        "TestHostAPIContract/CK-J31-S02_exact_name_match_is_literal_or_normalized_and_bounded"
+      ],
+      "implemented_security_cases": [
+        "TestHTTPAuthenticationMatrix/CK-API-191_GET_/v1/manage/entities/match/anonymous_protected_operation",
+        "TestHTTPAuthenticationMatrix/CK-API-191_GET_/v1/manage/entities/match/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-191_GET_/v1/manage/entities/match/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-191_GET_/v1/manage/entities/match/inherited_HEAD_credential_gate",
+        "TestHTTPAuthenticationMatrix/CK-API-191_GET_/v1/manage/entities/match/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-191_GET_/v1/manage/entities/match/member_without_named_permission",
+        "TestHTTPAuthenticationMatrix/CK-API-191_GET_/v1/manage/entities/match/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-191_GET_/v1/manage/entities/match/wrong_issuer"
+      ],
+      "security_evidence": "credential gate and app-key boundary only; functional behavior is the mapped host contract case",
+      "evidence": [
+        "Literal and normalized whole-name matching, bounded ambiguity, scope and language.",
+        "contentkit#266: focused real-service execution against PostgreSQL through the remote Go client; the strict gate must execute every exact case again."
+      ]
     }
   ],
   "binding_contracts": [
@@ -8228,11 +8348,13 @@
       "name": "Client.GetManageEntities",
       "status": "verified",
       "cases": [
-        "TestOwnedEntityAuthority/CK-J16-S01_created_scope_belongs_to_exact_tenant_and_app"
+        "TestOwnedEntityAuthority/CK-J16-S01_created_scope_belongs_to_exact_tenant_and_app",
+        "TestHostAPIContract/CK-J31-S01_resolve_answers_deleted_internal_and_merged_entities"
       ],
       "evidence": [
         "Management list returns exact real entity; ordinary owner403 and sibling-app empty list control scope.",
-        "Independently reviewed executable contract mapping; prior matching real-service race receipts are retained with the test rebuild. The strict gate must execute every exact case again on the combined media source before release qualification."
+        "Independently reviewed executable contract mapping; prior matching real-service race receipts are retained with the test rebuild. The strict gate must execute every exact case again on the combined media source before release qualification.",
+        "Remote client resolves entity ids in every state."
       ]
     },
     {
@@ -8474,11 +8596,13 @@
         "TestRetainedLog/CK-J26-S03_filtered_pagination_has_no_gaps_or_duplicates",
         "TestRetainedLog/CK-J26-S04_new_reader_resumes_its_own_cursor",
         "TestRetainedLog/CK-J26-S05_reads_do_not_ack_or_delete_source_facts",
-        "TestRetainedLog/CK-J26-S06_foreign_malformed_and_expired_cursors_are_explicit"
+        "TestRetainedLog/CK-J26-S06_foreign_malformed_and_expired_cursors_are_explicit",
+        "TestHostAPIContract/CK-J31-S04_entity_events_tell_hosts_to_repair_links"
       ],
       "evidence": [
         "ListEvents delegates directly to GetEvents; exact domain facts, filtered pagination, restart, immutable reads and invalid/expired cursor errors are asserted.",
-        "Independently reviewed executable contract mapping; prior matching real-service race receipts are retained with the test rebuild. The strict gate must execute every exact case again on the combined media source before release qualification."
+        "Independently reviewed executable contract mapping; prior matching real-service race receipts are retained with the test rebuild. The strict gate must execute every exact case again on the combined media source before release qualification.",
+        "Catalog records carry entity_id and merged_into for entity events."
       ]
     },
     {
@@ -8487,11 +8611,13 @@
       "status": "verified",
       "cases": [
         "TestRetainedLog/CK-J26-S04_new_reader_resumes_its_own_cursor",
-        "TestRetainedLog/CK-J26-S06_foreign_malformed_and_expired_cursors_are_explicit"
+        "TestRetainedLog/CK-J26-S06_foreign_malformed_and_expired_cursors_are_explicit",
+        "TestHostAPIContract/CK-J31-S04_entity_events_tell_hosts_to_repair_links"
       ],
       "evidence": [
         "Remote shared reader returns the new real subject and preserves errors.Is invalid/expired cursor classifications.",
-        "Independently reviewed executable contract mapping; prior matching real-service race receipts are retained with the test rebuild. The strict gate must execute every exact case again on the combined media source before release qualification."
+        "Independently reviewed executable contract mapping; prior matching real-service race receipts are retained with the test rebuild. The strict gate must execute every exact case again on the combined media source before release qualification.",
+        "Remote shared reader returns entity events with the entity as subject."
       ]
     },
     {
@@ -10741,6 +10867,30 @@
       "evidence": [
         "Shipped helper resolves only the selected edition image map in HTML/Quill, omits unsafe or missing reference URLs, and supports Node rendering without DOMParser. CK-J29-S09 verifies separate English/Chinese images alongside independent editor saves.",
         "Reviewed contract; exact combined execution remains required."
+      ]
+    },
+    {
+      "id": "go:Client.GetVersions",
+      "name": "Client.GetVersions",
+      "status": "verified",
+      "cases": [
+        "TestHostAPIContract/CK-J31-S03_version_status_follows_draft_live_scheduled_deleted_and_purged"
+      ],
+      "evidence": [
+        "Remote client decodes edition status in request order and omits purged editions.",
+        "contentkit#266: focused real-service execution against PostgreSQL through the remote Go client; the strict gate must execute every exact case again."
+      ]
+    },
+    {
+      "id": "go:Client.GetManageEntitiesMatch",
+      "name": "Client.GetManageEntitiesMatch",
+      "status": "verified",
+      "cases": [
+        "TestHostAPIContract/CK-J31-S02_exact_name_match_is_literal_or_normalized_and_bounded"
+      ],
+      "evidence": [
+        "Remote client sends repeated whole names and decodes one match per name.",
+        "contentkit#266: focused real-service execution against PostgreSQL through the remote Go client; the strict gate must execute every exact case again."
       ]
     }
   ],

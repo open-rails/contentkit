@@ -172,9 +172,9 @@ type Options struct {
 	// DocumentsChanged runs in the writing transaction after a write queued
 	// search documents, so the engine can sync them at once. Optional.
 	DocumentsChanged func(ctx context.Context, q Querier) error
-	// References preserves host-owned links when an entity is merged or made
-	// unavailable. Nil means no host-owned references are registered.
-	References References
+	// EntitiesChanged records entity events in the writing transaction: the
+	// catalog event log. Optional.
+	EntitiesChanged func(ctx context.Context, q Querier, changes []Change) error
 	// Covers fills covers' and avatars' renditions on reads. Optional.
 	Covers CoverResolver
 	// Gate reads the viewer's entitlement-backed entity membership.
@@ -217,25 +217,25 @@ type OwnedContent interface {
 
 // Store is one tenant's entities.
 type Store struct {
-	channels   bool // private reserved-channel storage handle
-	pool       *pgxpool.Pool
-	tx         pgx.Tx
-	qs         string
-	schema     string
-	tenant     string
-	cfg        kinds.Config
-	changed    func(ctx context.Context, q Querier, contentIDs []string) error
-	renamed    func(ctx context.Context, q Querier, entityIDs []string) error
-	documents  func(ctx context.Context, q Querier) error
-	references References
-	covers     CoverResolver
-	gate       *access.Gate
-	scopes     Scopes
-	folders    Folders
-	keep       time.Duration
-	owned      OwnedContent
-	log        *slog.Logger
-	as         *writer
+	channels  bool // private reserved-channel storage handle
+	pool      *pgxpool.Pool
+	tx        pgx.Tx
+	qs        string
+	schema    string
+	tenant    string
+	cfg       kinds.Config
+	changed   func(ctx context.Context, q Querier, contentIDs []string) error
+	renamed   func(ctx context.Context, q Querier, entityIDs []string) error
+	documents func(ctx context.Context, q Querier) error
+	recorded  func(ctx context.Context, q Querier, changes []Change) error
+	covers    CoverResolver
+	gate      *access.Gate
+	scopes    Scopes
+	folders   Folders
+	keep      time.Duration
+	owned     OwnedContent
+	log       *slog.Logger
+	as        *writer
 }
 
 // New validates the options and returns the store.
@@ -266,7 +266,7 @@ func New(opts Options) (*Store, error) {
 	if keep <= 0 {
 		keep = DefaultDeletedRetention
 	}
-	return &Store{pool: opts.Pool, qs: qs, schema: strings.TrimSpace(opts.Schema), tenant: tenant, cfg: opts.Kinds, changed: opts.ContentChanged, renamed: opts.NamesChanged, documents: opts.DocumentsChanged, references: opts.References,
+	return &Store{pool: opts.Pool, qs: qs, schema: strings.TrimSpace(opts.Schema), tenant: tenant, cfg: opts.Kinds, changed: opts.ContentChanged, renamed: opts.NamesChanged, documents: opts.DocumentsChanged, recorded: opts.EntitiesChanged,
 		covers: opts.Covers, gate: opts.Gate, scopes: opts.Scopes, folders: opts.Folders, keep: keep, owned: opts.Owned, log: log}, nil
 }
 

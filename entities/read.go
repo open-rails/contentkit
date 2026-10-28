@@ -37,6 +37,9 @@ type ListOptions struct {
 	IncludeInternal bool
 	// Deleted lists deleted entities instead of active ones; with IncludeInternal only.
 	Deleted bool
+	// IDs lists these entities (at most MaxListIDs) in every state, merged
+	// tombstones included; with IncludeInternal only and without Deleted.
+	IDs []EntityID
 	// Parent keeps the children of one entity (sub-series of a series).
 	Parent EntityID
 	// Scope keeps the entities scoped by one entity (characters of a series).
@@ -65,14 +68,20 @@ type ListOptions struct {
 // maxPageOffset bounds numbered pages; deeper reading pages by cursor.
 const maxPageOffset = 10_000
 
+// MaxListIDs bounds ListOptions.IDs.
+const MaxListIDs = 100
+
 // EntityCard is a listed entity: what a directory page or a chip needs.
 type EntityCard struct {
-	ID           EntityID `json:"id"`
-	Kind         string   `json:"kind"`
-	Slug         string   `json:"slug"`
-	Internal     bool     `json:"internal"`
-	ScopeID      EntityID `json:"scope_id,omitempty"`
-	ParentID     EntityID `json:"parent_id,omitempty"`
+	ID       EntityID `json:"id"`
+	Kind     string   `json:"kind"`
+	Slug     string   `json:"slug"`
+	Internal bool     `json:"internal"`
+	ScopeID  EntityID `json:"scope_id,omitempty"`
+	ParentID EntityID `json:"parent_id,omitempty"`
+	State    State    `json:"state"`
+	// MergedInto is a merged entity's final survivor.
+	MergedInto   EntityID `json:"merged_into,omitempty"`
 	Name         string   `json:"name"`
 	NameLanguage string   `json:"name_language,omitempty"`
 	Code         string   `json:"code,omitempty"`
@@ -176,6 +185,23 @@ func (s *Store) compile(opts ListOptions, ids []string) (cardQuery, error) {
 			return c, fmt.Errorf("%w: deleted groups are listed for management only", ErrForbidden)
 		}
 		where[1] = "g.state = 'deleted'"
+	}
+	if opts.IDs != nil {
+		switch {
+		case !opts.IncludeInternal:
+			return c, fmt.Errorf("%w: groups are resolved by id for management only", ErrForbidden)
+		case opts.Deleted:
+			return c, fmt.Errorf("%w: ids lists every state; omit state", ErrInvalid)
+		case ids != nil, opts.Page > 0, opts.Cursor != "":
+			return c, fmt.Errorf("%w: ids lists one page; omit page and cursor", ErrInvalid)
+		case len(opts.IDs) > MaxListIDs:
+			return c, fmt.Errorf("%w: ids lists at most %d entities", ErrInvalid, MaxListIDs)
+		}
+		list, err := uniqueIDs(opts.IDs)
+		if err != nil {
+			return c, err
+		}
+		where[1], ids, c.limit = "true", list, max(len(list), 1)
 	}
 	if !opts.IncludeInternal {
 		where = append(where, "NOT g.internal")
@@ -304,7 +330,7 @@ func (s *Store) compile(opts ListOptions, ids []string) (cardQuery, error) {
 	}
 	predicate, paging = "", ""
 	base := fmt.Sprintf(`SELECT g.id, g.kind, g.slug, %[9]s, %[10]s, coalesce(nm.name, ''), coalesce(nm.language, ''),
- coalesce(cd.code, ''), coalesce(cd.slugs->>@language, cd.slug, ''), CASE WHEN g.cover IS NULL OR g.cover ? 'auto' THEN %[13]s ELSE g.cover END, coalesce(g.avatar, ''), %[5]s, g.attributes, g.created_at, %[6]s, g.internal
+ coalesce(cd.code, ''), coalesce(cd.slugs->>@language, cd.slug, ''), CASE WHEN g.cover IS NULL OR g.cover ? 'auto' THEN %[13]s ELSE g.cover END, coalesce(g.avatar, ''), %[5]s, g.attributes, g.created_at, %[6]s, g.internal, g.state, coalesce(g.merged_into, '')
 FROM %[1]s
 %[11]s
 %[12]s
@@ -332,7 +358,7 @@ func (s *Store) cards(ctx context.Context, q Querier, c cardQuery) (EntityPage, 
 		var g EntityCard
 		var code, slug, avatar, name string
 		if err := rows.Scan(&g.ID, &g.Kind, &g.Slug, &g.ScopeID, &g.ParentID, &g.Name, &g.NameLanguage, &code, &slug, &g.Cover, &avatar, &g.Count,
-			&g.Attributes, &g.CreatedAt, &name, &g.Internal); err != nil {
+			&g.Attributes, &g.CreatedAt, &name, &g.Internal, &g.State, &g.MergedInto); err != nil {
 			return page, err
 		}
 		if g.Attributes == nil {
