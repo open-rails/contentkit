@@ -225,32 +225,7 @@ func (s *Service) runChunk(ctx context.Context, run *batchRun, sec section, from
 	if err := tx.Commit(ctx); err != nil {
 		return err
 	}
-	// Channel identity is already durable, so a lost provider response can be
-	// retried by the same external ID. Finish outside the import transaction:
-	// embedded AuthKit may share this pool, and remote AuthKit may time out.
-	// A provider failure is a failed record, never success deferred to a worker.
-	if sec.name == importer.SectionChannels || sec.name == importer.SectionDeletes {
-		completed := written[:0]
-		for _, p := range written {
-			var channelID string
-			switch input := p.in.(type) {
-			case channels.Import:
-				channelID = input.ID
-			case deletion:
-				if input.entity == importer.RecordChannel {
-					channelID = input.id
-				}
-			}
-			if channelID != "" {
-				if err := s.o.Channels.Finish(ctx, []string{channelID}); err != nil {
-					run.fail(sec.name, p.index, p.external, err)
-					continue
-				}
-			}
-			completed = append(completed, p)
-		}
-		written = completed
-	}
+	written = s.finish(ctx, run, sec, written)
 	if len(written) > 0 {
 		run.res.Written[sec.name] += len(written)
 	}
@@ -263,6 +238,53 @@ func (s *Service) runChunk(ctx context.Context, run *batchRun, sec section, from
 		}
 	}
 	return nil
+}
+
+// finish completes a committed chunk's channel lifecycle and entity media
+// fences, and returns the records it finished. Identity is already durable,
+// so a lost provider response or a failed fence can be retried by the same
+// external ID. Finish outside the import transaction: embedded AuthKit may
+// share this pool, and remote AuthKit may time out. A failure is a failed
+// record, never success deferred to a worker.
+func (s *Service) finish(ctx context.Context, run *batchRun, sec section, written []pending) []pending {
+	channel, fenced := make([]string, len(written)), make([]entities.EntityID, len(written))
+	var media []entities.EntityID
+	for i, p := range written {
+		switch input := p.in.(type) {
+		case channels.Import:
+			channel[i] = input.ID
+		case entities.ImportEntity:
+			fenced[i] = input.ID
+		case deletion:
+			switch input.entity {
+			case importer.RecordChannel:
+				channel[i] = input.id
+			case importer.RecordEntity:
+				fenced[i] = entities.EntityID(input.id)
+			}
+		}
+		if fenced[i] != "" {
+			media = append(media, fenced[i])
+		}
+	}
+	// The chunk's fences together, else each, so only failures fail.
+	together := s.o.Entities.FinishMedia(ctx, media)
+	completed := written[:0]
+	for i, p := range written {
+		var err error
+		switch {
+		case channel[i] != "":
+			err = s.o.Channels.Finish(ctx, []string{channel[i]})
+		case fenced[i] != "" && together != nil:
+			err = s.o.Entities.FinishMedia(ctx, []entities.EntityID{fenced[i]})
+		}
+		if err != nil {
+			run.fail(sec.name, p.index, p.external, err)
+			continue
+		}
+		completed = append(completed, p)
+	}
+	return completed
 }
 
 // putIDs records new identities, refusing one a concurrent import gave

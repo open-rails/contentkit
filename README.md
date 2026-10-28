@@ -663,13 +663,19 @@ Likes and favorites keep their existing atomic counters.
 Entity writes record `entity.*` events on the catalog event log. Merging or
 deleting an entity a host links to is allowed; hosts repair their links from
 `GET /v1/manage/entities?ids=`, `GET /v1/manage/entities/match` and the events.
+A deleted entity's avatar and cover are unavailable to everyone until it is
+restored: after the write commits, the same request writes its item's deletion
+fence and the gateway answers 404; no bytes move. A failure after the commit is
+reported, and retrying the same write or import completes it. Purge makes the
+fence permanent and erases the files.
 
 The engine builds separate entity and channel interfaces from `Config.Content`.
 Metadata operations use `/entities`; channel operations use `/channels`. Channels
 retain their editor teams and optional billing entitlements. Their lifecycle
 operations call AuthKit directly, report failures and support idempotent caller
 retries. No entity/channel sync worker is registered. Physical deletion stays
-with the content-purge sweep. Ordinary tags and series need no lifecycle work.
+with the content-purge sweep. Ordinary tags and series need no lifecycle work
+beyond their media fence.
 One primary channel governs the overall item and all of its versions; a repost
 only references that original from another channel and grants no editing rights.
 

@@ -1317,7 +1317,8 @@ next one. Browsers keep using a read's `public` or `usePublicImage`.
   rules, expires temp objects and aborts multipart uploads after seven days.
   Use equivalent server settings where multipart lifecycle is unsupported.
 - `jobs.RetireItemsTx(ctx, tx, media.Deletion{Ref, Owner})` records an
-  incarnation-bound deletion with the owning tombstone. `RetirementStartedTx`
+  incarnation-bound deletion with the owning tombstone; executing it makes a
+  soft-deleted item's fence permanent. `RetirementStartedTx`
   prevents restoration after the claim; `RetirementComplete` permits the owner
   to mark completion only after physical deletion succeeds. The content purge
   retains exact late-write targets after the owning row is finalized.
@@ -1612,7 +1613,10 @@ The same channel/group identity makes caller retries safe, including a lost
 remote response after commit. Incomplete/deleted channels grant no authority.
 There is no `contentkit_entity_sync` or replacement lifecycle job. Imports finish
 their channel calls after committing identity, then report provider failures per
-record so replay uses the same external IDs.
+record so replay uses the same external IDs. Deleting or restoring any entity,
+through the API or an import, finishes its media fence the same way: the
+gateway answers 404 for a deleted entity's avatar and cover until it is
+restored, and a failure is reported for the caller to retry.
 
 ## Authored content and editions
 
