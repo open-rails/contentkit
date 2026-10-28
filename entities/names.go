@@ -148,11 +148,11 @@ func (s *Store) editNames(ctx context.Context, op nameOp, edits []EntityNames) e
 		return err
 	}
 	return s.run(ctx, func(q Querier) error {
-		entities, err := s.lock(ctx, q, list)
+		ents, err := s.lock(ctx, q, list)
 		if err != nil {
 			return err
 		}
-		for _, g := range entities {
+		for _, g := range ents {
 			if g.State == StateMerged {
 				return fmt.Errorf("%w: group %s is merged", ErrConflict, g.ID)
 			}
@@ -180,15 +180,15 @@ func (s *Store) editNames(ctx context.Context, op nameOp, edits []EntityNames) e
 				return err
 			}
 		}
-		return s.touch(ctx, q, entities)
+		return s.touch(ctx, q, ents)
 	})
 }
 
 // touch bumps the entities' revision, re-slugs their codes from their names and
 // queues their documents.
-func (s *Store) touch(ctx context.Context, q Querier, entities []Entity) error {
-	ids := make([]string, len(entities))
-	for i, g := range entities {
+func (s *Store) touch(ctx context.Context, q Querier, ents []Entity) error {
+	ids := make([]string, len(ents))
+	for i, g := range ents {
 		ids[i] = string(g.ID)
 	}
 	if _, err := q.Exec(ctx, fmt.Sprintf(`UPDATE %s SET updated_at = now(), revision = revision + 1 WHERE tenant_id = $1 AND id = ANY($2::text[])`,
@@ -201,10 +201,10 @@ func (s *Store) touch(ctx context.Context, q Querier, entities []Entity) error {
 	if err := s.namesChanged(ctx, q, ids); err != nil {
 		return err
 	}
-	if err := s.markDirty(ctx, q, entities); err != nil {
+	if err := s.markDirty(ctx, q, ents); err != nil {
 		return err
 	}
-	return s.record(ctx, q, changesOf(EventUpdated, entities))
+	return s.record(ctx, q, changesOf(EventUpdated, ents))
 }
 
 // namesChanged tells Options.NamesChanged that the entities' names or slugs

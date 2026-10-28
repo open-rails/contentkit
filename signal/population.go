@@ -12,7 +12,7 @@ import (
 
 const accessPayloadKey = "contentkit_access"
 
-func (a *AccessContext) validate() error {
+func validateAccessContext(a *AccessContext) error {
 	if a == nil {
 		return nil
 	}

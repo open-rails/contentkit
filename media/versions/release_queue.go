@@ -24,14 +24,14 @@ func (s *Service) SchedulePublicationTx(ctx context.Context, tx pgx.Tx, targets 
 	if tx == nil {
 		return errors.New("versions: publication scheduling requires a transaction")
 	}
-	contents, versions := make([]string, len(targets)), make([]string, len(targets))
+	contents, vers := make([]string, len(targets)), make([]string, len(targets))
 	for i, target := range targets {
-		contents[i], versions[i] = target.Content, target.Version
+		contents[i], vers[i] = target.Content, target.Version
 	}
 	rows, err := tx.Query(ctx, `SELECT DISTINCT v.content_id,v.id FROM `+s.t.versions+` v
  JOIN unnest($2::text[],$3::text[]) AS target(content_id,version_id)
  ON target.content_id=v.content_id AND (target.version_id='' OR target.version_id=v.id)
- WHERE v.tenant_id=$1 ORDER BY v.content_id,v.id`, s.o.Tenant, contents, versions)
+ WHERE v.tenant_id=$1 ORDER BY v.content_id,v.id`, s.o.Tenant, contents, vers)
 	if err != nil {
 		return err
 	}

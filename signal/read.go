@@ -290,7 +290,7 @@ func (st *Store) CoEngaged(ctx context.Context, tenant string, ref ContentRef, o
 		return []CoEngagedHit{}, nil
 	}
 	ctx = clickhouse.Context(ctx, clickhouse.WithExternalTable(readers))
-	window, windowArgs := opts.Window.predicate("c.1")
+	window, windowArgs := windowPredicate(opts.Window, "c.1")
 	scope := "(subject_kind,subject) IN (SELECT subject_kind,subject FROM contentkit_coengaged_readers) AND NOT(content_kind=? AND content_id=?)"
 	scopeArgs := []any{ref.ContentKind, ref.ContentID}
 	if kinds := trimAll(opts.ContentKinds); len(kinds) > 0 {
@@ -323,7 +323,7 @@ func (st *Store) CoEngaged(ctx context.Context, tenant string, ref ContentRef, o
 // Send the bounded sample as query-local data, not SQL literals or a CTE that
 // ClickHouse would evaluate again for each candidate source.
 func (st *Store) coEngagedReaders(ctx context.Context, tenant string, ref ContentRef, window Window, limit int) (*ext.Table, error) {
-	pred, windowArgs := window.predicate("c.1")
+	pred, windowArgs := windowPredicate(window, "c.1")
 	canonical := "SELECT * FROM (" + st.measuredCanonical("content_kind=? AND content_id=?") + ") WHERE 1" + pred
 	args := append([]any{tenant, ref.ContentKind, ref.ContentID}, windowArgs...)
 	args = append(args, limit)
@@ -386,7 +386,7 @@ func (st *Store) Activity(ctx context.Context, tenant, contentKind string, windo
 	if err := ValidateActivityCohorts(cohorts); err != nil {
 		return nil, err
 	}
-	pred, args := window.dayPredicate("day")
+	pred, args := windowDayPredicate(window, "day")
 	cohortSQL, params := activityCohortSQL(cohorts)
 	join := ""
 	var populationArgs []any
@@ -394,7 +394,7 @@ func (st *Store) Activity(ctx context.Context, tenant, contentKind string, windo
 		if len(c.AnyTier) == 0 {
 			continue
 		}
-		observed, observedArgs := window.dayPredicate("toDate(observed_at)")
+		observed, observedArgs := windowDayPredicate(window, "toDate(observed_at)")
 		join = fmt.Sprintf(`LEFT JOIN (
  SELECT toDate(observed_at) AS day,subject_kind,subject,
  arrayDistinct(arrayFlatten(groupArrayIf(eligible_tiers,eligibility_known))) AS tiers

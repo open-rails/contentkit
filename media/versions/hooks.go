@@ -70,14 +70,14 @@ func (s *Service) existing(ctx context.Context, refs []contentref.ContentRef) (m
 	if len(refs) == 0 {
 		return out, nil
 	}
-	kinds, contents, versions := make([]string, len(refs)), make([]string, len(refs)), make([]string, len(refs))
+	kinds, contents, vers := make([]string, len(refs)), make([]string, len(refs)), make([]string, len(refs))
 	for i, ref := range refs {
-		kinds[i], contents[i], versions[i] = ref.ContentKind, ref.ContentID, ref.Version()
+		kinds[i], contents[i], vers[i] = ref.ContentKind, ref.ContentID, ref.Version()
 	}
 	rows, err := s.o.Pool.Query(ctx, `SELECT t.n FROM unnest($2::text[], $3::text[], $4::text[]) WITH ORDINALITY AS t(kind, content, version, n)
 JOIN `+s.t.items+` c ON c.tenant_id = $1 AND c.id = t.content AND c.kind = t.kind
 WHERE t.version = '' OR EXISTS (SELECT 1 FROM `+s.t.versions+` v WHERE v.tenant_id = $1 AND v.id = t.version AND v.content_id = t.content)`,
-		s.o.Tenant, kinds, contents, versions)
+		s.o.Tenant, kinds, contents, vers)
 	if err != nil {
 		return nil, err
 	}

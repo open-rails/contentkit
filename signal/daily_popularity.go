@@ -260,7 +260,7 @@ func (st *Store) DailyPopular(ctx context.Context, tenant, kind string, window W
 	if limit <= 0 {
 		limit = 20
 	}
-	predicate, args := window.dayPredicate("day")
+	predicate, args := windowDayPredicate(window, "day")
 	params := append([]any{tenant, kind, scope.Domain, scope.Language}, args...)
 	params = append(params, limit)
 	query := `SELECT content_id,round(avg(toFloat64(readers)/(eligible+20.)),12) AS score

@@ -69,12 +69,12 @@ type ProjectionKey struct {
 	Subject Subject
 }
 
-func (k ProjectionKey) args() []any {
+func projectionArgs(k ProjectionKey) []any {
 	return []any{k.ContentKind, k.ContentID, k.ContentVersionID, k.Subject.Kind(), k.Subject.Key()}
 }
 
-func (k ProjectionKey) less(o ProjectionKey) bool {
-	a, b := k.args(), o.args()
+func projectionLess(k, o ProjectionKey) bool {
+	a, b := projectionArgs(k), projectionArgs(o)
 	for i := range a {
 		if a[i] != b[i] {
 			return a[i].(string) < b[i].(string)
@@ -154,7 +154,7 @@ func (st *Store) RecordSignals(ctx context.Context, tenant string, signals []Sig
 	}
 	subjects := make([]Subject, 0, len(signals))
 	for i := range signals {
-		if err := signals[i].validate(tenant); err != nil {
+		if err := validateSignal(signals[i], tenant); err != nil {
 			return err
 		}
 		subjects = append(subjects, signals[i].Subject)
@@ -258,7 +258,7 @@ func (st *Store) RepairProjections(ctx context.Context, tenant string, opts Repa
 	var sb strings.Builder
 	args := []any{tenant}
 	fmt.Fprintf(&sb, `SELECT DISTINCT %s, subject_kind, subject FROM %s.engagement_segments WHERE tenant = ?`, refColumns, st.db)
-	pred, predArgs := opts.Window.predicate("occurred_at")
+	pred, predArgs := windowPredicate(opts.Window, "occurred_at")
 	sb.WriteString(pred)
 	args = append(args, predArgs...)
 	if !opts.IngestedSince.IsZero() {
@@ -268,7 +268,7 @@ func (st *Store) RepairProjections(ctx context.Context, tenant string, opts Repa
 	sb.WriteString(" AND " + st.notErased())
 	if opts.After != nil {
 		sb.WriteString(" AND (" + refColumns + ", subject_kind, subject) > (?, ?, ?, ?, ?)")
-		args = append(args, opts.After.args()...)
+		args = append(args, projectionArgs(*opts.After)...)
 	}
 	sb.WriteString(" ORDER BY " + refColumns + ", subject_kind, subject LIMIT ?")
 	args = append(args, limit)

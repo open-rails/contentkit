@@ -205,7 +205,7 @@ func (rt *Runtime) handleEntityHeld(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
-	page.trim(limit)
+	trimHeld(&page, limit)
 	rt.enrichHeld(req.Context(), page.Items)
 	writeJSON(w, http.StatusOK, page)
 }
@@ -260,7 +260,7 @@ func (rt *Runtime) handleEntityUnban(w http.ResponseWriter, req *http.Request) {
 }
 
 // trim cuts the page to limit, setting Next when there is more.
-func (p *HeldPage) trim(limit int) {
+func trimHeld(p *HeldPage, limit int) {
 	if len(p.Items) > limit {
 		p.Items = p.Items[:limit]
 		last := p.Items[limit-1]

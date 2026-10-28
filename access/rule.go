@@ -92,7 +92,7 @@ func (r Rule) Validate(cfg kinds.Config) error {
 			return fmt.Errorf("%w: %v", ErrRule, err)
 		}
 	}
-	return r.validateReleases(cfg)
+	return r.ValidateReleases(cfg)
 }
 
 // Free reports whether r opens to anyone at now.

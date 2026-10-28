@@ -19,9 +19,9 @@ func (s *Store) ref(kind string, id EntityID) contentref.ContentRef {
 
 // markDirty queues one keyword document per configured language for each
 // entity; inactive and internal entities have theirs deleted.
-func (s *Store) markDirty(ctx context.Context, q Querier, entities []Entity) error {
-	marks := make([]search.DirtyMark, 0, len(entities)*len(s.cfg.Languages))
-	for _, g := range entities {
+func (s *Store) markDirty(ctx context.Context, q Querier, ents []Entity) error {
+	marks := make([]search.DirtyMark, 0, len(ents)*len(s.cfg.Languages))
+	for _, g := range ents {
 		for _, lang := range s.cfg.Languages {
 			marks = append(marks, search.DirtyMark{DocumentKey: search.DocumentKey{ContentRef: s.ref(g.Kind, g.ID), Language: lang},
 				Deleted: g.State != StateActive || g.Internal || g.Kind == "channel", Reason: "groups"})

@@ -35,8 +35,8 @@ const (
 // target: all of content they open (for a version's, the version) or edit,
 // of the rest what its kind's locked view shows; all of an entity.
 func (rt *Runtime) shows(ref contentref.ContentRef, res resolve.Resolution, p string) bool {
-	k, content := rt.cfg.Kinds[ref.ContentKind]
-	return res.Visible && (!content || res.Accessible || res.Editor || k.LockedView().Shows(p))
+	k, cnt := rt.cfg.Kinds[ref.ContentKind]
+	return res.Visible && (!cnt || res.Accessible || res.Editor || k.LockedView().Shows(p))
 }
 
 // commentsLocked refuses comment writes where the actor doesn't see the

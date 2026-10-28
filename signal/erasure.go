@@ -104,7 +104,7 @@ func (st *Store) EraseSubjects(ctx context.Context, tenants []string, subjects [
 		if err != nil {
 			return report, err
 		}
-		report.merge(pass)
+		mergeErasure(&report, pass)
 	}
 	if !report.Complete() {
 		return report, fmt.Errorf("signal: erasure incomplete: %v", report.Remaining)
@@ -149,7 +149,7 @@ func (st *Store) EnforceErasures(ctx context.Context, tenant string) (ErasureRep
 		if err != nil {
 			return report, err
 		}
-		report.merge(pass)
+		mergeErasure(&report, pass)
 	}
 	if !report.Complete() {
 		return report, fmt.Errorf("signal: erasure enforcement incomplete: %v", report.Remaining)
@@ -191,7 +191,7 @@ func (st *Store) eraseWhere(ctx context.Context, tenant, filter string, args []a
 // mutationTupleChunk bounds the literal IN list of one mutation.
 const mutationTupleChunk = 1000
 
-func (r *ErasureReport) merge(o ErasureReport) {
+func mergeErasure(r *ErasureReport, o ErasureReport) {
 	for k, v := range o.Remaining {
 		r.Remaining[k] += v
 	}

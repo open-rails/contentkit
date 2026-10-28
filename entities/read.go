@@ -596,13 +596,13 @@ func (s *Store) detail(ctx context.Context, id EntityID, language string, includ
 			for _, edge := range d.Edges {
 				links = append(links, string(edge.From), string(edge.To))
 			}
-			entities, err := s.byIDs(ctx, q, links)
+			ents, err := s.byIDs(ctx, q, links)
 			if err != nil {
 				return err
 			}
 			edges := d.Edges[:0]
 			for _, edge := range d.Edges {
-				if !entities[edge.From].Internal && !entities[edge.To].Internal {
+				if !ents[edge.From].Internal && !ents[edge.To].Internal {
 					edges = append(edges, edge)
 				}
 			}

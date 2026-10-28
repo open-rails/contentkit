@@ -86,7 +86,7 @@ func (s *Store) Totals(ctx context.Context, q TotalsQuery) (Totals, error) {
 		return out, err
 	}
 	for _, k := range keys {
-		out.Kinds[k.kind] = got[k].only(languages, s.cfg.Tiers)
+		out.Kinds[k.kind] = totalOnly(got[k], languages, s.cfg.Tiers)
 	}
 	return out, nil
 }
@@ -122,7 +122,7 @@ func (s *Store) totalsLanguages(in []string) ([]string, error) {
 
 // only copies t with the given languages, zero where nothing counts; none
 // keeps all. Copies keep callers off the cached maps.
-func (t Total) only(languages, tiers []string) Total {
+func totalOnly(t Total, languages, tiers []string) Total {
 	if len(languages) == 0 {
 		languages = slices.Collect(maps.Keys(t.Languages))
 	}

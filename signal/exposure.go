@@ -29,7 +29,7 @@ func (st *Store) RecordExposures(ctx context.Context, tenant string, exposures [
 		if utf8.RuneCountInString(normalize.Query(exposures[i].SearchQuery)) > 200 {
 			return fmt.Errorf("exposure: search query exceeds 200 runes")
 		}
-		if err := exposures[i].validate(tenant); err != nil {
+		if err := validateExposure(exposures[i], tenant); err != nil {
 			return err
 		}
 		if exposures[i].Subject != (Subject{}) {

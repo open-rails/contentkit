@@ -128,7 +128,7 @@ func (r Recommender) Similar(ctx context.Context, anchor contentref.ContentRef, 
 	}
 	cands, err := source.Similar(ctx, anchor, q)
 	if err != nil && hasFallback {
-		fallback.report(err)
+		reportFallback(fallback, err)
 		cands, err = fallback.Secondary.Similar(ctx, anchor, q)
 		hasFallback = false
 	}
@@ -162,7 +162,7 @@ func (r Recommender) Similar(ctx context.Context, anchor contentref.ContentRef, 
 			if len(cands) == 0 {
 				return nil, err
 			}
-			fallback.report(err)
+			reportFallback(fallback, err)
 			return f.out, nil
 		}
 		if err := apply(secondary, false); err != nil {
@@ -198,7 +198,7 @@ func (r Recommender) Recommend(ctx context.Context, subject signal.Subject, opts
 	}
 	cands, err := source.ForSubject(ctx, subject, q)
 	if err != nil && hasFallback {
-		fallback.report(err)
+		reportFallback(fallback, err)
 		cands, err = fallback.Secondary.ForSubject(ctx, subject, q)
 		hasFallback = false
 	}
@@ -219,7 +219,7 @@ func (r Recommender) Recommend(ctx context.Context, subject signal.Subject, opts
 			if len(cands) == 0 {
 				return nil, err
 			}
-			fallback.report(err)
+			reportFallback(fallback, err)
 		} else if err := f.pushAll(ctx, secondary); err != nil {
 			return nil, err
 		}

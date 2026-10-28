@@ -42,7 +42,7 @@ type Target struct {
 // Facets refreshes the listing projection of versions whose derived media
 // facts changed, in the writing transaction.
 type Facets interface {
-	RefreshTx(ctx context.Context, tx pgx.Tx, versions []string) error
+	RefreshTx(ctx context.Context, tx pgx.Tx, vers []string) error
 }
 
 // Others answer the media kinds of neither contents nor groups: posts' and

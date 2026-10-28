@@ -64,8 +64,8 @@ type EntityUpdate struct {
 	Text []Text `json:"text,omitempty"`
 }
 
-// staffOnly names the fields of u only staff change.
-func (u EntityUpdate) staffOnly() string {
+// staffOnlyFields names the fields of u only staff change.
+func staffOnlyFields(u EntityUpdate) string {
 	switch {
 	case u.Internal != nil:
 		return "internal"
@@ -493,7 +493,7 @@ func (s *Store) UpdateEntities(ctx context.Context, updates []EntityUpdate) ([]E
 	}
 	if !staff {
 		for _, u := range updates {
-			if f := u.staffOnly(); f != "" {
+			if f := staffOnlyFields(u); f != "" {
 				return nil, fmt.Errorf("%w: only staff change %s", ErrForbidden, f)
 			}
 		}

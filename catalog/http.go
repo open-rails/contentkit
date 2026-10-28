@@ -21,7 +21,6 @@ import (
 	"github.com/open-rails/contentkit/media/versions"
 )
 
-
 func init() { routes = append(routes, repostRoutes...); httpapi.Register(httpapi.Contents, routes) }
 
 const editorsDoc = " The authenticated author with current edit-own permission in the relevant app/channel, current channel content:write holders, or app content:write holders only. Author credits do not grant authority."

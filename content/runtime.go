@@ -163,8 +163,8 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 	if err := opts.Kinds.Validate(); err != nil {
 		return nil, fmt.Errorf("content: Kinds: %w", err)
 	}
-	_, content := opts.Kinds.Kinds[KindComment]
-	if _, entity := opts.Kinds.EntityKinds[KindComment]; content || entity {
+	_, cnt := opts.Kinds.Kinds[KindComment]
+	if _, entity := opts.Kinds.EntityKinds[KindComment]; cnt || entity {
 		return nil, fmt.Errorf("content: kind %q is reserved", KindComment)
 	}
 	if opts.ProviderDataEraser == nil && !policyIsStateless(opts.Moderator) {
@@ -276,9 +276,9 @@ func (rt *Runtime) isRegistered(kind string) bool {
 	if kind == "channel" {
 		return rt.cfg.Channels != nil
 	}
-	_, content := rt.cfg.Kinds[kind]
+	_, cnt := rt.cfg.Kinds[kind]
 	_, entity := rt.cfg.EntityKinds[kind]
-	return content || entity
+	return cnt || entity
 }
 
 // checkRef pins a caller-supplied reference to this tenant.

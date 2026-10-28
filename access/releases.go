@@ -27,7 +27,8 @@ func (r Release) key() string {
 	return string(data)
 }
 
-func (r Rule) validateReleases(cfg kinds.Config) error {
+// ValidateReleases checks r's scheduled releases against cfg's tiers.
+func (r Rule) ValidateReleases(cfg kinds.Config) error {
 	if len(r.Releases) > 32 {
 		return fmt.Errorf("%w: at most 32 releases", ErrRule)
 	}

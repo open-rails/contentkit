@@ -208,11 +208,11 @@ type OwnedContent interface {
 	// DeleteOwned deletes the live content of the deleted ones among entities,
 	// recording each entity as its content's cause; bought content stays
 	// readable to its buyers.
-	DeleteOwned(ctx context.Context, entities []string) error
+	DeleteOwned(ctx context.Context, ents []string) error
 	// RestoreOwned restores the content the active ones among entities
 	// deleted when they were, unless it was purged since; content deleted
 	// for another reason stays deleted.
-	RestoreOwned(ctx context.Context, entities []string) error
+	RestoreOwned(ctx context.Context, ents []string) error
 }
 
 // Store is one tenant's entities.

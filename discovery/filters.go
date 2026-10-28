@@ -54,7 +54,7 @@ type GuestFilterSetting struct {
 	Default  *bool  `json:"default,omitempty"`
 }
 
-func (f GuestFilterSetting) value() (string, error) {
+func guestFilterValue(f GuestFilterSetting) (string, error) {
 	if f.EntityID == "" || (f.Visible == nil) == (f.Default == nil) || f.Default != nil && !*f.Default {
 		return "", fmt.Errorf("%w: a preference needs visible or default:true", ErrInvalid)
 	}
@@ -211,7 +211,7 @@ func (s *Service) setContentFilters(ctx context.Context, actor access.Actor, cho
 	patch := map[string]string{}
 	seen := map[string]bool{}
 	for _, f := range choices {
-		value, err := f.value()
+		value, err := guestFilterValue(f)
 		if err != nil {
 			return err
 		}

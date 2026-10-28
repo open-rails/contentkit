@@ -36,7 +36,6 @@ type PollOption struct {
 	ImageURL  string `json:"image_url,omitempty"`
 	Position  int    `json:"position"`
 	VoteCount int    `json:"vote_count"`
-	image     string // its image name, resolved to ImageURL
 }
 
 // PollMultipleChoice is the supported poll kind.
@@ -57,7 +56,6 @@ type Poll struct {
 	Language   string       `json:"language"`
 	IsActive   bool         `json:"is_active"`
 	ImageURL   string       `json:"image_url,omitempty"`
-	image      string       // its image name, resolved to ImageURL
 	LiveAt     time.Time    `json:"live_at"`
 	ClosesAt   *time.Time   `json:"closes_at,omitempty"`
 	Closed     bool         `json:"closed"` // inactive or past closes_at: no more votes
@@ -65,7 +63,6 @@ type Poll struct {
 	Options    []PollOption `json:"options"`
 	Voted      bool         `json:"voted"`
 	MyOption   string       `json:"my_option,omitempty"`
-	scheduled  bool         // live_at is still ahead, by the database clock
 }
 
 // PollInput is a new poll.
@@ -319,7 +316,7 @@ func (p *polls) list(ctx context.Context, actor access.Actor, f listFilter) ([]P
 	defer rows.Close()
 	var views []Poll
 	for rows.Next() {
-		v, err := p.scan(rows)
+		v, _, err := p.scan(rows)
 		if err != nil {
 			return nil, err
 		}
@@ -356,35 +353,42 @@ func parseWindow(month, date string) (from, to time.Time, ok bool) {
 const pollCols = `id::text, kind, question, language, is_active, coalesce(image_name,''), live_at, closes_at, live_at > now(), closes_at IS NOT NULL AND closes_at <= now()`
 
 // scan reads pollCols and derives Closed by the database clock, as open
-// does; attach resolves the images.
-func (p *polls) scan(row pgx.Row) (Poll, error) {
+// does, and whether live_at is still ahead. ImageURL holds the image name
+// until attach resolves it.
+func (p *polls) scan(row pgx.Row) (Poll, bool, error) {
 	v := Poll{Options: []PollOption{}}
-	var pastClose bool
-	if err := row.Scan(&v.ID, &v.Kind, &v.Question, &v.Language, &v.IsActive, &v.image, &v.LiveAt, &v.ClosesAt, &v.scheduled, &pastClose); err != nil {
-		return Poll{}, err
+	var pastClose, scheduled bool
+	if err := row.Scan(&v.ID, &v.Kind, &v.Question, &v.Language, &v.IsActive, &v.ImageURL, &v.LiveAt, &v.ClosesAt, &scheduled, &pastClose); err != nil {
+		return Poll{}, false, err
 	}
 	v.Closed = !v.IsActive || pastClose
-	return v, nil
+	return v, scheduled, nil
 }
 
 // get returns one non-deleted poll (any state) with options + caller vote; the
 // HTTP layer live-gates public access.
 func (p *polls) get(ctx context.Context, actor access.Actor, id string) (Poll, error) {
+	v, _, err := p.getScheduled(ctx, actor, id)
+	return v, err
+}
+
+// getScheduled is get, and whether the poll's live_at is still ahead.
+func (p *polls) getScheduled(ctx context.Context, actor access.Actor, id string) (Poll, bool, error) {
 	if !uuidRe.MatchString(id) {
-		return Poll{}, ErrNotFound
+		return Poll{}, false, ErrNotFound
 	}
-	v, err := p.scan(p.s.pool.QueryRow(ctx, `SELECT `+pollCols+` FROM `+p.s.t.pollQuestions+` WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL AND kind = 'multiple_choice'`, id, p.s.tenant))
+	v, scheduled, err := p.scan(p.s.pool.QueryRow(ctx, `SELECT `+pollCols+` FROM `+p.s.t.pollQuestions+` WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL AND kind = 'multiple_choice'`, id, p.s.tenant))
 	if errors.Is(err, pgx.ErrNoRows) {
-		return Poll{}, ErrNotFound
+		return Poll{}, false, ErrNotFound
 	}
 	if err != nil {
-		return Poll{}, err
+		return Poll{}, false, err
 	}
 	views := []Poll{v}
 	if err := p.attach(ctx, actor, views); err != nil {
-		return Poll{}, err
+		return Poll{}, false, err
 	}
-	return views[0], nil
+	return views[0], scheduled, nil
 }
 
 // attach batch-loads options + the caller's votes into views, sums total_votes,
@@ -410,18 +414,18 @@ func (p *polls) attach(ctx context.Context, actor access.Actor, views []Poll) er
 		if o := opts[views[i].ID]; o != nil {
 			views[i].Options = o
 		}
-		set.add(pollFolder, views[i].ID, views[i].image)
+		set.add(pollFolder, views[i].ID, views[i].ImageURL)
 		for _, o := range views[i].Options {
-			set.add(pollFolder, views[i].ID, o.image)
+			set.add(pollFolder, views[i].ID, o.ImageURL)
 		}
 	}
 	if err := set.resolve(ctx); err != nil {
 		return err
 	}
 	for i := range views {
-		views[i].ImageURL, _ = set.url(pollFolder, views[i].ID, views[i].image)
+		views[i].ImageURL, _ = set.url(pollFolder, views[i].ID, views[i].ImageURL)
 		for j := range views[i].Options {
-			views[i].Options[j].ImageURL, _ = set.url(pollFolder, views[i].ID, views[i].Options[j].image)
+			views[i].Options[j].ImageURL, _ = set.url(pollFolder, views[i].ID, views[i].Options[j].ImageURL)
 		}
 		total := 0
 		for j := range views[i].Options {
@@ -448,7 +452,7 @@ func (p *polls) optionsFor(ctx context.Context, q querier, ids []string) (map[st
 	for rows.Next() {
 		var qid string
 		var o PollOption
-		if err := rows.Scan(&qid, &o.ID, &o.Label, &o.image, &o.Position, &o.VoteCount); err != nil {
+		if err := rows.Scan(&qid, &o.ID, &o.Label, &o.ImageURL, &o.Position, &o.VoteCount); err != nil {
 			return nil, err
 		}
 		out[qid] = append(out[qid], o)
@@ -770,7 +774,7 @@ func (p *polls) handleUpdateOption(w http.ResponseWriter, req *http.Request) {
  AND EXISTS (SELECT 1 FROM `+p.s.t.pollQuestions+` q WHERE q.tenant_id=$5 AND q.id=$4 AND q.kind='multiple_choice' AND q.deleted_at IS NULL)
 		RETURNING id::text, question_id::text, label, coalesce(image_name,''), position, vote_count`,
 		oid, in.Label, in.Position, pollID, p.s.tenant).
-		Scan(&o.ID, &pollID, &o.Label, &o.image, &o.Position, &o.VoteCount)
+		Scan(&o.ID, &pollID, &o.Label, &o.ImageURL, &o.Position, &o.VoteCount)
 	if errors.Is(err, pgx.ErrNoRows) {
 		writeErr(w, ErrNotFound)
 		return
@@ -780,12 +784,12 @@ func (p *polls) handleUpdateOption(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	set := p.rt.images()
-	set.add(pollFolder, pollID, o.image)
+	set.add(pollFolder, pollID, o.ImageURL)
 	if err := set.resolve(req.Context()); err != nil {
 		writeErr(w, err)
 		return
 	}
-	o.ImageURL, _ = set.url(pollFolder, pollID, o.image)
+	o.ImageURL, _ = set.url(pollFolder, pollID, o.ImageURL)
 	writeJSON(w, http.StatusOK, o)
 }
 
@@ -954,13 +958,13 @@ func (p *polls) handleAdminList(w http.ResponseWriter, req *http.Request) {
 
 func (p *polls) handleGet(w http.ResponseWriter, req *http.Request) {
 	actor := p.rt.actor(req.Context())
-	v, err := p.get(req.Context(), actor, req.PathValue("id"))
+	v, scheduled, err := p.getScheduled(req.Context(), actor, req.PathValue("id"))
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 	// Future polls are admin-only; hide as 404 (don't leak schedules).
-	if v.scheduled {
+	if scheduled {
 		if err := p.rt.requirePerm(req.Context(), actor, access.PollsWrite); err != nil {
 			writeErr(w, ErrNotFound)
 			return

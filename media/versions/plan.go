@@ -336,7 +336,7 @@ func (s *Service) Plan(ctx context.Context, actor access.Actor, t Target) (*Read
 		}
 	}
 	if rm, ok := readerMetaOf(m); ok {
-		kept := rm.hashPages(snap.Pages).filter(readable, files)
+		kept := filterReaderMeta(hashReaderPages(rm, snap.Pages), readable, files)
 		plan.Reader = &kept
 	}
 	return plan, nil

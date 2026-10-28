@@ -175,15 +175,15 @@ func (s *Service) Covers(ctx context.Context, covers []CoverOf) ([][]media.Publi
 	type chosen struct{ kind, version, image string }
 	found := map[int]chosen{}
 	if len(asks) > 0 {
-		contents, versions, languages := make([]string, len(asks)), make([]string, len(asks)), make([]string, len(asks))
+		contents, vers, languages := make([]string, len(asks)), make([]string, len(asks)), make([]string, len(asks))
 		for i, a := range asks {
-			contents[i], versions[i], languages[i] = a.content, a.version, a.language
+			contents[i], vers[i], languages[i] = a.content, a.version, a.language
 		}
 		rows, err := s.o.Pool.Query(ctx, `SELECT t.n, f.kind, f.version_id, coalesce(v.cover->>'image', '')
 FROM unnest($2::text[], $3::text[], $4::text[]) WITH ORDINALITY AS t(content, version, language, n)
 CROSS JOIN LATERAL (SELECT f.kind, f.version_id FROM `+s.t.facets+` f WHERE f.tenant_id = $1 AND f.content_id = t.content
  AND (t.version = '' OR f.version_id = t.version) ORDER BY `+edition.Order("f", "t.language")+` LIMIT 1) f
-JOIN `+s.t.versions+` v ON v.tenant_id = $1 AND v.id = f.version_id`, s.o.Tenant, contents, versions, languages)
+JOIN `+s.t.versions+` v ON v.tenant_id = $1 AND v.id = f.version_id`, s.o.Tenant, contents, vers, languages)
 		if err != nil {
 			return nil, err
 		}

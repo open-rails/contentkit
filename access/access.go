@@ -84,9 +84,3 @@ type Entitled interface {
 }
 
 // claims is the actor's token entitlement claims.
-func (a Actor) claims() []string {
-	if e, ok := a.Verified.(Entitled); ok && !a.Anonymous {
-		return e.Entitlements()
-	}
-	return nil
-}

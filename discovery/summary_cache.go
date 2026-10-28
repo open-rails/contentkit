@@ -50,11 +50,11 @@ func (s *Service) cachedListingSummary(ctx context.Context, filter Filter, q *se
 	if got, ok := s.summaries.get(key, now); ok {
 		return &got, nil
 	}
-	out, err := s.listingSummary(ctx, filter, q, sort, nil)
+	out, unknown, err := s.settledListingSummary(ctx, filter, q, sort, nil)
 	if err != nil {
 		return nil, err
 	}
-	if !out.unknown {
+	if !unknown {
 		s.summaries.put(key, *out, now)
 	}
 	return out, nil

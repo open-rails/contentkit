@@ -98,7 +98,7 @@ func (s *Service) Import(ctx context.Context, b Batch) (Result, error) {
 			continue
 		}
 		if sec.skip != "" {
-			res.skip(sec.name, sec.n)
+			skipRecords(&res, sec.name, sec.n)
 			s.o.Logger.InfoContext(ctx, "contentkit: import skipped "+sec.name, "reason", sec.skip, "records", sec.n)
 			continue
 		}
@@ -130,7 +130,7 @@ func (b Batch) RecordCount() int {
 	return n
 }
 
-func (r *Result) skip(section string, n int) {
+func skipRecords(r *Result, section string, n int) {
 	if r.Skipped == nil {
 		r.Skipped = map[string]int{}
 	}

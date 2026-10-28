@@ -17,7 +17,7 @@ func (st *Store) recordMeasured(ctx context.Context, tenant string, events []Sig
 	}
 	subjects := make([]Subject, len(events))
 	for i, s := range events {
-		if err := s.validate(tenant); err != nil {
+		if err := validateSignal(s, tenant); err != nil {
 			return err
 		}
 		if s.Measurement == nil {
@@ -153,10 +153,10 @@ func (st *Store) projectMeasured(ctx context.Context, tenant string, keys []Proj
 		return nil
 	}
 	slices.SortFunc(keys, func(a, b ProjectionKey) int {
-		if a.less(b) {
+		if projectionLess(a, b) {
 			return -1
 		}
-		if b.less(a) {
+		if projectionLess(b, a) {
 			return 1
 		}
 		return 0

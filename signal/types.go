@@ -114,7 +114,7 @@ type Signal struct {
 	Measurement *Measurement
 }
 
-func (s Signal) validate(tenant string) error {
+func validateSignal(s Signal, tenant string) error {
 	if err := checkRef(tenant, s.ContentRef); err != nil {
 		return err
 	}
@@ -133,7 +133,7 @@ func (s Signal) validate(tenant string) error {
 	if err := checkIdentifiers("Subject", s.Subject.Key(), "Type", s.Type, "EventID", s.EventID); err != nil {
 		return err
 	}
-	if err := s.Access.validate(); err != nil {
+	if err := validateAccessContext(s.Access); err != nil {
 		return err
 	}
 	return checkLen("Resume", s.Resume, MaxResumeBytes)
@@ -173,7 +173,7 @@ const (
 	StageVisible  ExposureStage = "visible"
 )
 
-func (s ExposureStage) validate() error {
+func validateStage(s ExposureStage) error {
 	switch s {
 	case StageServed, StageRendered, StageVisible:
 		return nil
@@ -209,11 +209,11 @@ type Exposure struct {
 	OccurredAt  time.Time // required
 }
 
-func (e Exposure) validate(tenant string) error {
+func validateExposure(e Exposure, tenant string) error {
 	if strings.TrimSpace(e.RenderID) == "" {
 		return fmt.Errorf("exposure: RenderID is required")
 	}
-	if err := e.Stage.validate(); err != nil {
+	if err := validateStage(e.Stage); err != nil {
 		return err
 	}
 	if e.OccurredAt.IsZero() {
@@ -230,7 +230,7 @@ func (e Exposure) validate(tenant string) error {
 		if err := checkRef(tenant, p.ContentRef); err != nil {
 			return fmt.Errorf("exposure: placement %d: %w", i, err)
 		}
-		if err := p.Access.validate(); err != nil {
+		if err := validateAccessContext(p.Access); err != nil {
 			return err
 		}
 		if p.Position == 0 {
@@ -425,7 +425,7 @@ func (w Window) String() string {
 }
 
 // predicate renders " AND column >= ? AND column < ?" for the bounded sides.
-func (w Window) predicate(column string) (string, []any) {
+func windowPredicate(w Window, column string) (string, []any) {
 	var (
 		sb   strings.Builder
 		args []any
@@ -442,7 +442,7 @@ func (w Window) predicate(column string) (string, []any) {
 }
 
 // dayPredicate renders the window over a Date column.
-func (w Window) dayPredicate(column string) (string, []any) {
+func windowDayPredicate(w Window, column string) (string, []any) {
 	var (
 		sb   strings.Builder
 		args []any

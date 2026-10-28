@@ -85,7 +85,7 @@ func (s *Store) emit(ctx context.Context, tx pgx.Tx, events ...Event) error {
 		if err != nil {
 			return err
 		}
-		types[i], kinds[i], subjects[i], payloads[i] = e.Type, e.Kind, e.subject(), string(payload)
+		types[i], kinds[i], subjects[i], payloads[i] = e.Type, e.Kind, eventSubject(e), string(payload)
 	}
 	// IDs remain decimal product identifiers. Their allocation is deliberately
 	// independent of committed positions, which the shared flush assigns.
@@ -97,7 +97,7 @@ func (s *Store) emit(ctx context.Context, tx pgx.Tx, events ...Event) error {
 	return err
 }
 
-func (e Event) subject() string {
+func eventSubject(e Event) string {
 	if e.EntityID != "" {
 		return e.EntityID
 	}

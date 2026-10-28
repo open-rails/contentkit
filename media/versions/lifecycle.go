@@ -40,12 +40,12 @@ ON v.content_id = t.content AND (t.version = '' OR v.id = t.version) WHERE v.ten
 			return err
 		}
 	}
-	for kind, versions := range kinds {
+	for kind, vers := range kinds {
 		k, err := s.reg.Kind(kind)
 		if err != nil || !k.Versions {
 			continue
 		}
-		rows, err := tx.Query(ctx, `SELECT id FROM `+s.t.publications+` WHERE tenant_id = $1 AND version_id = ANY($2)`, s.o.Tenant, versions)
+		rows, err := tx.Query(ctx, `SELECT id FROM `+s.t.publications+` WHERE tenant_id = $1 AND version_id = ANY($2)`, s.o.Tenant, vers)
 		if err != nil {
 			return err
 		}
@@ -126,13 +126,13 @@ func (s *Service) ResumeDeletes(ctx context.Context, limit int) (int, error) {
 
 // itemRefs are targets' versions' media items, and their versions by kind.
 func (s *Service) itemRefs(ctx context.Context, q querier, targets []Target) ([]contentref.ContentRef, map[string][]string, error) {
-	contents, versions := make([]string, len(targets)), make([]string, len(targets))
+	contents, vers := make([]string, len(targets)), make([]string, len(targets))
 	for i, t := range targets {
-		contents[i], versions[i] = t.Content, t.Version
+		contents[i], vers[i] = t.Content, t.Version
 	}
 	rows, err := q.Query(ctx, `SELECT c.kind, c.id, v.id FROM unnest($2::text[], $3::text[]) AS t(content, version)
 JOIN `+s.t.items+` c ON c.tenant_id = $1 AND c.id = t.content
-JOIN `+s.t.versions+` v ON v.tenant_id = $1 AND v.content_id = c.id AND (t.version = '' OR v.id = t.version)`, s.o.Tenant, contents, versions)
+JOIN `+s.t.versions+` v ON v.tenant_id = $1 AND v.content_id = c.id AND (t.version = '' OR v.id = t.version)`, s.o.Tenant, contents, vers)
 	if err != nil {
 		return nil, nil, err
 	}

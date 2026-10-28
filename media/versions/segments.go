@@ -31,9 +31,9 @@ func legacyPageRanges(segs []segment) bool {
 }
 
 // segments loads each version's segments in page order.
-func (s *Service) segments(ctx context.Context, q querier, versions []string) (map[string][]segment, error) {
+func (s *Service) segments(ctx context.Context, q querier, vers []string) (map[string][]segment, error) {
 	rows, err := q.Query(ctx, `SELECT version_id, position, title, coalesce(start_index, 0), coalesce(end_index, 0), release_at, coalesce(start_page, ''),id,released_at FROM `+s.t.segments+`
-WHERE tenant_id = $1 AND version_id = ANY($2) ORDER BY version_id, coalesce(start_index, position), position`, s.o.Tenant, versions)
+WHERE tenant_id = $1 AND version_id = ANY($2) ORDER BY version_id, coalesce(start_index, position), position`, s.o.Tenant, vers)
 	if err != nil {
 		return nil, err
 	}
@@ -105,11 +105,11 @@ func sourcePageHash(p page) string {
 // manifest, including drafts whose renditions have not finished. The catalog
 // caller holds the version's source lock before taking its row locks.
 func (s *Service) ValidateChapterStartsTx(ctx context.Context, tx pgx.Tx, target Target, starts []string) error {
-	versions, err := s.versions(ctx, tx, []Target{target})
+	vers, err := s.versions(ctx, tx, []Target{target})
 	if err != nil {
 		return err
 	}
-	v, ok := versions[target]
+	v, ok := vers[target]
 	if !ok {
 		return ErrNotFound
 	}

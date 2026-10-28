@@ -462,7 +462,7 @@ func (s *Store) eraseInteractions(ctx context.Context, tx pgx.Tx, kinds, ids, vi
 const Queue = "contentkit_catalog"
 
 // QueueFor isolates workers bound to different catalog/application scopes.
-func QueueFor(catalog string) string { return jobqueue.For(Queue, catalog) }
+func QueueFor(cat string) string { return jobqueue.For(Queue, cat) }
 
 type purgeDeletedArgs struct{}
 

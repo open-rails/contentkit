@@ -66,9 +66,9 @@ func readerMetaOf(m *media.Manifest) (ReaderMeta, bool) {
 	return rm, err == nil && json.Unmarshal(b, &rm) == nil && rm.SchemaVersion == 1
 }
 
-// filter keeps what names pages and files that exist: anchors on pages,
+// filterReaderMeta keeps what names pages and files that exist: anchors on pages,
 // cues on files and pages or anchors kept.
-func (rm ReaderMeta) filter(pages, files map[string]bool) ReaderMeta {
+func filterReaderMeta(rm ReaderMeta, pages, files map[string]bool) ReaderMeta {
 	out := rm
 	out.Anchors = slices.DeleteFunc(slices.Clone(rm.Anchors), func(a Anchor) bool { return !pages[a.Page] })
 	anchors := map[string]bool{}
@@ -86,10 +86,10 @@ func (rm ReaderMeta) filter(pages, files map[string]bool) ReaderMeta {
 	return out
 }
 
-// hashPages upgrades old stored page-name references to their unique original
+// hashReaderPages upgrades old stored page-name references to their unique original
 // hash in this publication. It never accepts names on new writes or changes
 // stored source metadata; the next explicit save writes only canonical hashes.
-func (rm ReaderMeta) hashPages(source []page) ReaderMeta {
+func hashReaderPages(rm ReaderMeta, source []page) ReaderMeta {
 	counts := map[string]int{}
 	for _, page := range source {
 		counts[sourcePageHash(page)]++
@@ -181,7 +181,7 @@ func (s *Service) SetReaderMeta(ctx context.Context, actor access.Actor, t Targe
 	}
 	_, err = s.m.Manifests.Edit(ctx, ref, func(m *media.Manifest) error {
 		pages, files := names(k, m)
-		if kept := rm.filter(pages, files); len(kept.Anchors) != len(rm.Anchors) || len(kept.Background) != len(rm.Background) ||
+		if kept := filterReaderMeta(rm, pages, files); len(kept.Anchors) != len(rm.Anchors) || len(kept.Background) != len(rm.Background) ||
 			len(kept.Foreground) != len(rm.Foreground) {
 			return fmt.Errorf("%w: the reader metadata names pages, anchors or audio the version does not have", ErrInvalid)
 		}

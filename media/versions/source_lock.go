@@ -12,14 +12,14 @@ import (
 // LockSources serializes source selection and catalog segment writes before
 // either takes row locks. A batch uses one dedicated connection, leaving the
 // caller's pool available for manifest commits and catalog notifications.
-func LockSources(ctx context.Context, pool *pgxpool.Pool, tenant string, versions []string) (func(), error) {
-	if len(versions) == 0 {
+func LockSources(ctx context.Context, pool *pgxpool.Pool, tenant string, vers []string) (func(), error) {
+	if len(vers) == 0 {
 		return func() {}, nil
 	}
 	if pool == nil || tenant == "" {
 		return nil, ErrInvalid
 	}
-	ids := slices.Clone(versions)
+	ids := slices.Clone(vers)
 	slices.Sort(ids)
 	ids = slices.Compact(ids)
 	for _, id := range ids {

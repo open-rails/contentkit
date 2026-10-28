@@ -142,10 +142,7 @@ type Version struct {
 	// Cover is absent when its kind's locked view hides it from the viewer.
 	Cover    *Cover    `json:"cover,omitempty"`
 	Segments []Segment `json:"segments"`
-	// readerSegments is the active publication snapshot, independent of the
-	// author's pending chapter markers. It never leaves the store directly.
-	readerSegments []Segment
-	Decision       Decision `json:"decision"`
+	Decision Decision  `json:"decision"`
 	// Text is every authored language of this edition, for editors.
 	Text map[string]VersionText `json:"text,omitempty"`
 	// Viewer is the signed-in reader's standing with the version.

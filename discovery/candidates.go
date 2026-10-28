@@ -59,7 +59,7 @@ func (f Fallback) ForSubject(ctx context.Context, subject signal.Subject, q Quer
 func (f Fallback) run(limit int, call func(Candidates) ([]Candidate, error)) ([]Candidate, error) {
 	primary, err := call(f.Primary)
 	if err != nil {
-		f.report(err)
+		reportFallback(f, err)
 		return call(f.Secondary)
 	}
 	if len(primary) >= max(limit, 1) {
@@ -70,7 +70,7 @@ func (f Fallback) run(limit int, call func(Candidates) ([]Candidate, error)) ([]
 		if len(primary) == 0 {
 			return nil, err
 		}
-		f.report(err)
+		reportFallback(f, err)
 		return primary, nil
 	}
 	have := make(map[contentref.ContentKey]struct{}, len(primary))
@@ -88,7 +88,7 @@ func (f Fallback) run(limit int, call func(Candidates) ([]Candidate, error)) ([]
 	return primary, nil
 }
 
-func (f Fallback) report(err error) {
+func reportFallback(f Fallback, err error) {
 	if f.OnError != nil {
 		f.OnError(err)
 	}

@@ -24,8 +24,6 @@ type ListingSummary struct {
 	// Truncated makes counts lower bounds for bounded keyword or recommendation
 	// candidate windows. Ordinary lists have exact selection counts.
 	Truncated bool `json:"truncated,omitempty"`
-	// unknown: some access went unsettled (billing unavailable).
-	unknown bool
 }
 
 // summaryCandidates optionally bounds a keyword selection independently before
@@ -38,11 +36,18 @@ type summaryCandidates struct {
 }
 
 func (s *Service) listingSummary(ctx context.Context, filter Filter, selected *sel, sort order, candidates *summaryCandidates) (*ListingSummary, error) {
+	out, _, err := s.settledListingSummary(ctx, filter, selected, sort, candidates)
+	return out, err
+}
+
+// settledListingSummary is listingSummary, and whether some access went
+// unsettled (billing unavailable).
+func (s *Service) settledListingSummary(ctx context.Context, filter Filter, selected *sel, sort order, candidates *summaryCandidates) (*ListingSummary, bool, error) {
 	out := &ListingSummary{FilteredEntities: []ReleaseFilteredEntity{}}
 	reader := selected.reader
 	visible, err := s.compileWithViewer(ctx, reader, filter, selected.viewer)
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if candidates != nil {
 		if candidates.selection != nil {
@@ -52,7 +57,7 @@ func (s *Service) listingSummary(ctx context.Context, filter Filter, selected *s
 		out.Truncated = candidates.truncated
 	}
 	visibleIDs := map[string]struct{}{}
-	out.unknown, err = s.summaryRows(ctx, visible, sort, nil, func(row cardRow) {
+	unknownVisible, err := s.summaryRows(ctx, visible, sort, nil, func(row cardRow) {
 		visibleIDs[row.ID] = struct{}{}
 		if !row.Access.Allowed && !row.Access.Unknown {
 			switch row.Access.Level {
@@ -62,7 +67,7 @@ func (s *Service) listingSummary(ctx context.Context, filter Filter, selected *s
 		}
 	})
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	out.Total = len(visibleIDs)
 	hidden := visible.viewer.HiddenContentFilters()
@@ -78,11 +83,11 @@ func (s *Service) listingSummary(ctx context.Context, filter Filter, selected *s
 		}
 	}
 	if len(ids) == 0 {
-		return out, nil
+		return out, unknownVisible, nil
 	}
 	entities, err := s.o.Entities.Cards(ctx, ids, entities.CardOptions{Language: visible.display})
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	for _, entity := range entities {
 		out.FilteredEntities = append(out.FilteredEntities, ReleaseFilteredEntity{Entity: entity})
@@ -95,7 +100,7 @@ func (s *Service) listingSummary(ctx context.Context, filter Filter, selected *s
 	})
 	relaxed, err := s.compileWithViewer(ctx, reader, filter, selected.viewer.WithoutContentFilters())
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	if candidates != nil {
 		if candidates.selection != nil {
@@ -121,8 +126,7 @@ func (s *Service) listingSummary(ctx context.Context, filter Filter, selected *s
 			}
 		}
 	})
-	out.unknown = out.unknown || unknown
-	return out, err
+	return out, unknownVisible || unknown, err
 }
 
 func summaryCandidateSelection(q *sel, ids []string) *sel {

@@ -109,7 +109,7 @@ func (st *Store) Attribution(ctx context.Context, tenant string, opts Attributio
 	if strings.TrimSpace(tenant) == "" {
 		return page, fmt.Errorf("signal: tenant is required")
 	}
-	if err := opts.Stage.validate(); err != nil {
+	if err := validateStage(opts.Stage); err != nil {
 		return page, err
 	}
 	if err := opts.Window.Validate(); err != nil {
@@ -343,7 +343,7 @@ func (st *Store) renderClicks(ctx context.Context, tenant string, opts Attributi
 // row's render id and c = (occurred_at, position). Superseded and duplicate
 // rows never count, whether or not ClickHouse has merged them.
 func (st *Store) canonicalClicks(tenant string, opts AttributionOptions) (string, []any) {
-	pred, predArgs := opts.Window.predicate("occurred_at")
+	pred, predArgs := windowPredicate(opts.Window, "occurred_at")
 	q := fmt.Sprintf(`SELECT JSONExtractString(argMax(payload, version), '%[1]s') AS render_id,
         %[6]s, subject_kind, subject, event_id,
         argMax(tuple(occurred_at, toUInt32(JSONExtractUInt(payload, '%[2]s'))), version) AS c
@@ -358,7 +358,7 @@ func (st *Store) canonicalClicks(tenant string, opts AttributionOptions) (string
 // exposurePredicate renders the WHERE of the export's exposure rows: tenant,
 // stage, window, surface and the erasure ledger.
 func (st *Store) exposurePredicate(tenant string, opts AttributionOptions) (string, []any) {
-	pred, predArgs := opts.Window.predicate("occurred_at")
+	pred, predArgs := windowPredicate(opts.Window, "occurred_at")
 	sb := "tenant = ? AND stage = ?" + pred
 	args := append([]any{tenant, string(opts.Stage)}, predArgs...)
 	if surface := strings.TrimSpace(opts.Surface); surface != "" {

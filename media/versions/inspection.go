@@ -103,7 +103,7 @@ func (s *Service) inspectionPlan(ctx context.Context, actor access.Actor, k *med
 		}
 	}
 	if metadata, ok := readerMetaOf(grant.Manifest); ok {
-		filtered := metadata.hashPages(pages).filter(readable, playable)
+		filtered := filterReaderMeta(hashReaderPages(metadata, pages), readable, playable)
 		plan.Reader = &filtered
 	}
 	return plan, nil

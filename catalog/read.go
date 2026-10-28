@@ -46,7 +46,8 @@ func (s *Store) contents(ctx context.Context, v *Viewer, ids []string, vid strin
 	if err != nil {
 		return nil, err
 	}
-	versions, err := s.readVersions(ctx, visible, vid)
+	reader := map[string][]Segment{}
+	versions, err := s.readVersions(ctx, visible, vid, reader)
 	if err != nil {
 		return nil, err
 	}
@@ -121,7 +122,7 @@ func (s *Store) contents(ctx context.Context, v *Viewer, ids []string, vid strin
 			if !iv.editor {
 				out.Text, out.State, out.Access = nil, "", nil
 				out.Publication = nil
-				out.Segments = append([]Segment{}, out.readerSegments...)
+				out.Segments = append([]Segment{}, reader[out.ID]...)
 				for i := range out.Segments {
 					out.Segments[i].StartPage = ""
 				}
@@ -387,7 +388,10 @@ func (s *Store) readCreators(ctx context.Context, ids []string) (map[string][]Cr
 
 // readVersions reads every version of the items with its text and segments,
 // or with a non-empty vid only those with that ID or version code.
-func (s *Store) readVersions(ctx context.Context, ids []string, vid string) (map[string]*Version, error) {
+// reader receives each version's active publication snapshot of segments,
+// independent of the author's pending chapter markers; it never leaves the
+// store directly.
+func (s *Store) readVersions(ctx context.Context, ids []string, vid string, reader map[string][]Segment) (map[string]*Version, error) {
 	q := `SELECT id, code, position, languages, traits, label, state, publish_at, published_at, access, attributes,
  pages, duration_ms, width, height, has_audio, ordinal, coalesce(cover->>'image', ''),coalesce(original_title,''),coalesce(original_language,''),
  (SELECT jsonb_build_object('id',r.id,'state',CASE WHEN r.state='retiring' THEN 'running'
@@ -430,10 +434,12 @@ func (s *Store) readVersions(ctx context.Context, ids []string, vid string) (map
 			}
 		}
 		if readerSegments != nil {
-			if err := json.Unmarshal(readerSegments, &v.readerSegments); err != nil {
+			var segments []Segment
+			if err := json.Unmarshal(readerSegments, &segments); err != nil {
 				rows.Close()
 				return nil, err
 			}
+			reader[v.ID] = segments
 		}
 		if err := json.Unmarshal(attrs, &v.Attributes); err != nil {
 			rows.Close()

@@ -165,7 +165,7 @@ func (g *Gate) read(ctx context.Context, actor Actor) *Filter {
 // claimed is the claimable tiers among the actor's token claims.
 func (g *Gate) claimed(actor Actor) map[string]bool {
 	out := map[string]bool{}
-	for _, c := range actor.claims() {
+	for _, c := range claims(actor) {
 		if g.claimable[c] {
 			out[c] = true
 		}
@@ -197,7 +197,7 @@ func (g *Gate) Holds(ctx context.Context, actor Actor, keys []Key) ([]bool, erro
 	kn.filter = kn.memo.loadFilter()
 	need := map[string]bool{}
 	for i, k := range keys {
-		if k.kind != KeyTier && k.tenant != g.tenant {
+		if k.Kind() != KeyTier && k.Tenant() != g.tenant {
 			continue
 		}
 		held, known := kn.lookup(k)
@@ -295,7 +295,7 @@ func (g *Gate) plan(ctx context.Context, items []Item) []itemPlan {
 
 func (g *Gate) planOne(it Item) (itemPlan, error) {
 	p := itemPlan{rule: it.Rule}
-	if err := it.Rule.validateReleases(kinds.Config{Tiers: g.tiers}); err != nil {
+	if err := it.Rule.ValidateReleases(kinds.Config{Tiers: g.tiers}); err != nil {
 		return p, err
 	}
 	var err error
@@ -307,7 +307,11 @@ func (g *Gate) planOne(it Item) (itemPlan, error) {
 	case TierLevel:
 		for _, t := range it.Rule.Tiers {
 			if g.tierSet[t] {
-				p.tiers = append(p.tiers, Key{kind: KeyTier, id: t})
+				k, err := TierKey(t)
+				if err != nil {
+					return p, err
+				}
+				p.tiers = append(p.tiers, k)
 			}
 		}
 	case ChannelLevel, ChannelPPV:
@@ -332,7 +336,11 @@ func (g *Gate) planOne(it Item) (itemPlan, error) {
 				if !g.tierSet[tier] {
 					return p, ErrRule
 				}
-				rp.keys = append(rp.keys, Key{kind: KeyTier, id: tier})
+				k, err := TierKey(tier)
+				if err != nil {
+					return p, err
+				}
+				rp.keys = append(rp.keys, k)
 			}
 		case ChannelLevel:
 			key, err := ChannelKey(g.tenant, release.ChannelID)
@@ -361,7 +369,7 @@ func (kn *knowledge) lookup(k Key) (held, known bool) {
 	if kn.anonymous {
 		return false, true
 	}
-	if k.kind == KeyTier && kn.claimed[k.id] {
+	if k.Kind() == KeyTier && kn.claimed[k.Tier()] {
 		return true, true
 	}
 	if kn.filter != nil {
@@ -486,4 +494,13 @@ func accountSubject(a Actor) string {
 		return a.Account.ID
 	}
 	return a.ID
+}
+
+// claims are the actor's credential entitlements (Entitled), none when
+// anonymous.
+func claims(a Actor) []string {
+	if e, ok := a.Verified.(Entitled); ok && !a.Anonymous {
+		return e.Entitlements()
+	}
+	return nil
 }

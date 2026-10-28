@@ -170,7 +170,7 @@ func (rt *Runtime) ListHeld(ctx context.Context, kind, cursor string, limit int)
 	if err := rt.heldComments(ctx, &page, after, afterID, limit+1, nil); err != nil {
 		return HeldPage{}, err
 	}
-	page.trim(limit)
+	trimHeld(&page, limit)
 	rt.enrichHeld(ctx, page.Items)
 	return page, nil
 }

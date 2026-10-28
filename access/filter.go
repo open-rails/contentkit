@@ -71,23 +71,23 @@ func (f *Filter) Allows(it Item) (allowed, known bool) {
 
 // lookup answers one key from the keyspace it falls in.
 func (f *Filter) lookup(k Key) (held, known bool) {
-	if f.anonymous || k.kind != KeyTier && k.tenant != f.g.tenant {
+	if f.anonymous || k.Kind() != KeyTier && k.Tenant() != f.g.tenant {
 		return false, true
 	}
-	switch k.kind {
+	switch k.Kind() {
 	case KeyTier:
-		if h, ok := f.tiers[k.id]; ok {
+		if h, ok := f.tiers[k.Tier()]; ok {
 			return h, true
 		}
-		return false, !f.g.tierSet[k.id]
+		return false, !f.g.tierSet[k.Tier()]
 	case KeyContent:
-		return f.contents[k.id], f.contents[k.id] || f.contentsComplete && !f.unknown
+		return f.contents[k.Content()], f.contents[k.Content()] || f.contentsComplete && !f.unknown
 	case KeyVersion:
-		parent, present := f.versions[k.version]
-		h := present && parent == k.id
+		parent, present := f.versions[k.Version()]
+		h := present && parent == k.Content()
 		return h, h || f.contentsComplete && !f.unknown
 	case KeyChannel:
-		return f.entities[k.id], f.entities[k.id] || f.entitiesComplete && !f.unknown
+		return f.entities[k.Channel()], f.entities[k.Channel()] || f.entitiesComplete && !f.unknown
 	}
 	return false, true
 }
@@ -106,19 +106,19 @@ func (f *Filter) load(ans Answer, q Query) error {
 		}
 		for _, s := range h.Keys {
 			k, err := ParseKey(s)
-			if err != nil || !strings.HasPrefix(s, p) || k.tenant != f.g.tenant {
+			if err != nil || !strings.HasPrefix(s, p) || k.Tenant() != f.g.tenant {
 				continue
 			}
-			switch k.kind {
+			switch k.Kind() {
 			case KeyContent:
-				f.contents[k.id] = true
+				f.contents[k.Content()] = true
 			case KeyVersion:
-				if parent, exists := f.versions[k.version]; exists && parent != k.id {
-					return fmt.Errorf("entitlements contain conflicting parents for version %q", k.version)
+				if parent, exists := f.versions[k.Version()]; exists && parent != k.Content() {
+					return fmt.Errorf("entitlements contain conflicting parents for version %q", k.Version())
 				}
-				f.versions[k.version] = k.id
+				f.versions[k.Version()] = k.Content()
 			case KeyChannel:
-				f.entities[k.id] = true
+				f.entities[k.Channel()] = true
 			}
 		}
 		if p == ContentPrefix(f.g.tenant) {
