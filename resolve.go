@@ -87,8 +87,13 @@ func (g entityCovers) Covers(ctx context.Context, covers []entities.CoverOf) ([]
 	return g.e.media.versions.EntityCovers().Covers(ctx, covers)
 }
 
-// entityFolders binds durable retirement to the configured media owner.
+// entityFolders binds deletion fences and durable retirement to the
+// configured media owner.
 type entityFolders struct{ e *Engine }
+
+func (g entityFolders) FenceDeleted(ctx context.Context, r entities.Ref, deleted bool) error {
+	return g.e.media.versions.EntityFolders().FenceDeleted(ctx, r, deleted)
+}
 
 func (g entityFolders) RetireTx(ctx context.Context, tx pgx.Tx, refs []entities.Ref) error {
 	return g.e.media.versions.EntityFolders().RetireTx(ctx, tx, refs)

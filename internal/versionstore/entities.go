@@ -270,6 +270,18 @@ func (s *Service) EntityFolders() entitystore.Folders { return entityFolders{s} 
 
 type entityFolders struct{ s *Service }
 
+// FenceDeleted is mediastore.Jobs.FenceDeleted for the entity's media item.
+func (g entityFolders) FenceDeleted(ctx context.Context, r entities.Ref, deleted bool) error {
+	if g.s.m.Jobs == nil {
+		return nil
+	}
+	ref, err := g.s.reg.Ref(r.Kind, string(r.ID))
+	if err != nil {
+		return err
+	}
+	return g.s.m.Jobs.FenceDeleted(ctx, ref, deleted)
+}
+
 // RetireTx commits each entity media item's retirement intent in tx.
 func (g entityFolders) RetireTx(ctx context.Context, tx pgx.Tx, refs []entities.Ref) error {
 	del := make([]media.Deletion, 0, len(refs))

@@ -13,9 +13,13 @@ import (
 	"github.com/open-rails/contentkit/internal/gate"
 )
 
-// Folders records durable retirement and reports its actual storage outcome.
-// PurgeRetired is invoked only by the existing content-deletion sweep.
+// Folders fences entities' media while they are deleted, records durable
+// retirement and reports its actual storage outcome. PurgeRetired is invoked
+// only by the existing content-deletion sweep.
 type Folders interface {
+	// FenceDeleted makes the gateway serve none of the entity's media while
+	// deleted, and lifts that fence, never retirement's, otherwise.
+	FenceDeleted(ctx context.Context, ref entities.Ref, deleted bool) error
 	RetireTx(context.Context, pgx.Tx, []entities.Ref) error
 	RetirementStartedTx(context.Context, pgx.Tx, entities.Ref) (bool, error)
 	RetirementComplete(context.Context, entities.Ref) (bool, error)
