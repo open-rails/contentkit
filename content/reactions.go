@@ -51,7 +51,7 @@ func (r *reactions) applyTx(ctx context.Context, tx pgx.Tx, actor access.Actor, 
 	if !ok {
 		return 0, 0, badRequest("cannot identify reactor (no user id or ip)")
 	}
-	prev, found, err := r.lockExisting(ctx, tx, userID, ip, key)
+	prev, hidden, found, err := r.lockExisting(ctx, tx, userID, ip, key)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -62,26 +62,37 @@ func (r *reactions) applyTx(ctx context.Context, tx pgx.Tx, actor access.Actor, 
 		if err := r.update(ctx, tx, userID, ip, key, value); err != nil {
 			return 0, 0, err
 		}
+		if hidden {
+			return 0, 0, nil
+		}
 		dLikes, dDislikes = delta(prev, value)
 		return r.bumpAndReturn(ctx, tx, key, dLikes, dDislikes)
 	}
 	if value == 0 {
 		return 0, 0, nil
 	}
+	if userID != "" {
+		if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM `+r.rt.hiddenAuthorsTable()+` WHERE tenant_id=$1 AND actor_id=$2)`, r.s.tenant, userID).Scan(&hidden); err != nil {
+			return 0, 0, err
+		}
+	}
 	// ON CONFLICT DO NOTHING makes the losing racer block on the other tx then
 	// no-op; a bare INSERT would abort the whole transaction.
 	tag, err := tx.Exec(ctx, `INSERT INTO `+r.s.t.reactions+`
-		(`+keyCols+`, user_id, ip, value, revision) VALUES ($1, $2, $3, $4, $5, $6, $7, `+r.s.nextRevision()+`)`+onConflict(userID),
-		append(keyArgs(key), nullIf(userID), nullIf(ip), value)...)
+		(`+keyCols+`, user_id, ip, value, revision, author_hidden) VALUES ($1, $2, $3, $4, $5, $6, $7, `+r.s.nextRevision()+`, $8)`+onConflict(userID),
+		append(keyArgs(key), nullIf(userID), nullIf(ip), value, hidden)...)
 	if err != nil {
 		return 0, 0, err
 	}
 	if tag.RowsAffected() == 1 {
+		if hidden {
+			return 0, 0, nil
+		}
 		dLikes, dDislikes = delta(0, value)
 		return r.bumpAndReturn(ctx, tx, key, dLikes, dDislikes)
 	}
 	// Lost the insert race: the row now exists (committed); lock + update it.
-	prev, found, err = r.lockExisting(ctx, tx, userID, ip, key)
+	prev, hidden, found, err = r.lockExisting(ctx, tx, userID, ip, key)
 	if err != nil || !found {
 		return 0, 0, err
 	}
@@ -90,6 +101,9 @@ func (r *reactions) applyTx(ctx context.Context, tx pgx.Tx, actor access.Actor, 
 	}
 	if err := r.update(ctx, tx, userID, ip, key, value); err != nil {
 		return 0, 0, err
+	}
+	if hidden {
+		return 0, 0, nil
 	}
 	dLikes, dDislikes = delta(prev, value)
 	return r.bumpAndReturn(ctx, tx, key, dLikes, dDislikes)
@@ -110,17 +124,17 @@ func (r *reactions) bumpAndReturn(ctx context.Context, tx pgx.Tx, key contentref
 }
 
 // lockExisting selects+locks the caller's current reaction row, if any.
-func (r *reactions) lockExisting(ctx context.Context, tx pgx.Tx, userID, ip string, key contentref.ContentKey) (value int16, found bool, err error) {
-	err = tx.QueryRow(ctx, `SELECT value FROM `+r.s.t.reactions+`
+func (r *reactions) lockExisting(ctx context.Context, tx pgx.Tx, userID, ip string, key contentref.ContentKey) (value int16, hidden, found bool, err error) {
+	err = tx.QueryRow(ctx, `SELECT value,author_hidden FROM `+r.s.t.reactions+`
 		WHERE `+keyPred(1)+` AND `+actorPred(userID, 5)+` FOR UPDATE`,
-		append(keyArgs(key), actorArg(userID, ip))...).Scan(&value)
+		append(keyArgs(key), actorArg(userID, ip))...).Scan(&value, &hidden)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return 0, false, nil
+		return 0, false, false, nil
 	}
 	if err != nil {
-		return 0, false, err
+		return 0, false, false, err
 	}
-	return value, true, nil
+	return value, hidden, true, nil
 }
 
 // react applies the reaction under the canonical reference, which it

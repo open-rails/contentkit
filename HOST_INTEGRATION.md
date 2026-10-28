@@ -387,7 +387,7 @@ Ports (in `content` unless qualified):
 | `Auth` | yes | `auth.Authenticator` (Auth above); the engine fills it from `Deps.Auth` |
 | `UserInfo` | no | `userinfo.Lookup`: authors' names (Authors below); the engine fills it from `Deps.Users` |
 | `Media` | no | poll images and avatars in ContentKit media (see below); absent = image routes answer 501 |
-| `ContentProcessor` | no | rich-text sanitizer for comment bodies (default strips tags) |
+| `ContentProcessor` | no | plain-text processor for comment bodies (default only trims whitespace; render as text) |
 | `ContentModerator` | no | `Screen(ModerationInput) → Verdict{Decision, Reason, Model, PromptVersion, Confidence}` before a comment publishes; absent = publish (see Moderation) |
 
 **Authors.** Comments, replies, the latest-comments feed, held items and
@@ -488,7 +488,7 @@ and `revision`); `POST /v1/moderation/{kind}/{id}/resolve
 final state: `approve` publishes (counts and the keyword index follow),
 `reject` keeps the comment author-visible as `rejected` with the reason. Both
 need `root:moderation:review`.
-`GET /comments/admin` shows every state with real bodies and authors, by content kind or `author`.
+`GET /comments/admin` shows every state with real bodies and authors, by content kind or `author`, including `author_hidden` for accounts hidden during a ban. The review queue also keeps hidden authors’ held comments.
 
 Screening is revision-fenced. A decision must echo the held `revision`, so it
 cannot publish an intervening edit. Edits are screened outside SQL
@@ -501,7 +501,7 @@ Banned words and IP bans are data staff edit (`root:comments:moderate`):
 the default, replaces each word containing it with asterisks; `reject`
 refuses the text) and `GET|POST|DELETE /v1/moderation/ip-bans`
 (`{"network", "reason", "until"}`: an address or CIDR network). They apply to
-every comment before the moderator; an IP-banned write
+every comment body and anonymous name before the moderator; an IP-banned write
 answers `403 comment_banned` with ban scope `ip`, and moderators are exempt.
 
 Doujins adapter (`moderator{svc}` on the old `Moderation` port): implement
@@ -529,7 +529,9 @@ again). Favorites always need a signed-in actor. A refused anonymous attempt is 
 `anonymous`, so a client shows a sign-in prompt or an anonymous form from the
 server's answer. `content.Options.CommentMaxLength` (default 2,200 characters)
 bounds comments and edits: longer is `422 comment_too_long` with
-`details.max`; the standing carries it as `max_length`.
+`details.max`; the standing carries it as `max_length`. An anonymous name is trimmed
+and limited to 60 Unicode characters (`400 invalid_request` beyond that).
+Banned-word rules mask the stored name or reject it with `422 moderation_rejected`.
 
 ## Interaction limits
 
@@ -542,7 +544,7 @@ in any `Per`"; an action with two must pass both.
 
 | Action | Routes | Default |
 |---|---|---|
-| `comment` | `POST /{contents\|entities}/{id}/comments` (top-level and replies) | 5 per 5 minutes and 20 per hour |
+| `comment` | `POST /{contents\|entities}/{id}/comments` (top-level and replies), `PATCH /comments/{cid}` | 5 per 5 minutes and 20 per hour |
 | `comment_reaction` | `POST /comments/{cid}/like\|dislike`, `DELETE /comments/{cid}/reaction` | 30 per minute |
 | `reaction` | `POST /{contents\|entities}/{id}/like\|dislike`, `DELETE …/reaction` | 30 per minute |
 | `favorite` | `POST` and `DELETE /{contents\|entities}/{id}/favorite` | 20 per minute |
@@ -557,6 +559,19 @@ back to the per-process count for a second and adds to the expvar
 `contentkit_content_ratelimit_redis_errors`. A refusal is `429 rate_limited`
 with `Retry-After` and `{"action", "retry_after"}` in the body
 (`*content.RateLimitError`, `errors.Is(err, content.ErrRateLimited)`).
+
+`content.Options.DuplicateWindow` defaults to zero (off). When enabled, a
+signed-in author cannot save the same processed body on the same target,
+reply parent (or top level), and language within that duration. Non-deleted
+comments in every moderation/visibility state participate. Refusals return
+`422 duplicate_comment`; anonymous comments are exempt. The check runs inside
+the insert transaction after parent validation, under the account's existing
+transaction advisory lock, so concurrent creates cannot both pass and failed
+saves leave no duplicate record.
+
+Thread lists, replies, latest comments and the admin list reject offsets above
+10,000 with `400 invalid_request` and `offset is at most 10000`. Other lists
+keep their existing pagination behavior.
 
 ## Comment bans
 
@@ -589,6 +604,26 @@ when both scopes apply it reports the one lasting longer
 commenters have no identity to ban. `AnonymizeAccount` removes the bans of a
 deleted user and of their owner scope, and blanks them as `banned_by`.
 
+For account bans, call `Engine.SetAccountHidden(ctx, accountID, true)` and
+pass `false` when the ban ends. This is separate from scoped comment bans and
+account deletion. It hides that author's comments from other readers, latest
+comments, published counts and account comment statistics. Authors can still
+see their own hidden comments in threads/replies and their standing count,
+just as they see their held comments; the latest feed remains public-only.
+Staff lists keep them. New comments by a hidden author are stored hidden.
+The account's likes and dislikes on comments, content and entities also stop
+counting and notifying until unhidden; favorites and poll votes are unaffected.
+Reactions remain stored, and those hidden at permanent anonymization stay uncounted.
+
+Only approved, undeleted comments with `author_hidden=false` contribute to
+`comment_count` or `reply_count` or publish notices. Hiding withdraws reply
+and like notices; unhiding restores eligible notices with their existing
+identities. Holds, rejections and deletions survive hide/unhide. Approving,
+editing or restoring a hidden comment cannot publish it until unhidden.
+Repeated hide/unhide calls do not change counts again. A like notice uses
+`comment.liked:<comment id>:<liker id>`: unlike withdraws it and re-like
+restores the same notice, without adding another.
+
 ## Polls
 
 Polls accept predefined choices only. `kind` defaults to `multiple_choice`;
@@ -616,7 +651,10 @@ call `ck.SetAccountDeleted(ctx, id, true)`; on restoration pass `false`.
 This changes author display to `<Deleted>` without deleting interactions.
 Comment responses use the existing `anon_name` shape without a profile or
 account id, so older UI clients display the same label. Ownership remains in
-storage until purge and is restored with the account.
+storage until purge and is restored with the account. A deleted account can
+also be hidden; clearing either state does not clear the other. Permanent
+anonymization preserves comment visibility and counts, including hidden
+comments, while removing the hidden-author account marker.
 Check current account state before replaying an old deletion/restoration event.
 
 Pass no `OnPurge` callback: AuthKit purges first and records `user.purged`.

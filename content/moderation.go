@@ -65,7 +65,7 @@ func (rt *Runtime) screen(ctx context.Context, in ModerationInput) (screening, e
 	in.Tenant = rt.tenant
 	v, err := rt.breaker.screen(ctx, rt.moderator, in)
 	if err != nil {
-		rt.log.Warn("content moderator failed; holding for review", "kind", in.Kind)
+		rt.log.Warn("content moderator failed; holding for review", "kind", in.Kind, "err", err)
 		meta, _ := json.Marshal(verdictMeta{Error: "moderator unavailable"})
 		return screening{state: ModerationHeld, reason: ptrTo(heldReason), meta: meta}, nil
 	}
@@ -102,7 +102,7 @@ func viewerID(a access.Actor) string {
 // visiblePred renders the moderation predicate for a reader; n is the
 // placeholder bound to viewerID (an empty id matches no author).
 func visiblePred(n int) string {
-	return "(moderation = '" + ModerationApproved + "' OR user_id = $" + strconv.Itoa(n) + ")"
+	return "((moderation = '" + ModerationApproved + "' AND NOT author_hidden) OR user_id = $" + strconv.Itoa(n) + ")"
 }
 
 // --- review queue ---
@@ -284,23 +284,24 @@ func (c *comments) resolve(ctx context.Context, cid, state string, d ReviewDecis
 	}
 	var replyTo *string
 	var deletedAt *time.Time
+	var hidden bool
 	var k contentref.ContentKey
-	err = tx.QueryRow(ctx, `UPDATE `+c.s.t.comments+` SET published_body = CASE WHEN $3='approved' THEN NULL ELSE published_body END, moderation = $3, moderation_reason = CASE WHEN $3 = 'approved' THEN NULL ELSE coalesce(nullif($4, ''), moderation_reason) END,
+	err = tx.QueryRow(ctx, `UPDATE `+c.s.t.comments+` SET moderation = $3, moderation_reason = CASE WHEN $3 = 'approved' THEN NULL ELSE coalesce(nullif($4, ''), moderation_reason) END,
 		moderated_by = $5, moderated_at = now(), updated_at = now()
 		WHERE id = $1 AND tenant_id = $2 AND moderation = 'held' AND deleted_at IS NULL AND moderation_revision = $6
-		RETURNING reply_to_id::text, deleted_at, `+keyCols, cid, c.s.tenant, state, d.Reason, d.Reviewer, d.Revision).
-		Scan(&replyTo, &deletedAt, &k.TenantID, &k.ContentKind, &k.ContentID, versionid.Into(&k.ContentVersionID))
+		RETURNING reply_to_id::text, deleted_at, author_hidden, `+keyCols, cid, c.s.tenant, state, d.Reason, d.Reviewer, d.Revision).
+		Scan(&replyTo, &deletedAt, &hidden, &k.TenantID, &k.ContentKind, &k.ContentID, versionid.Into(&k.ContentVersionID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
 	}
 	if err != nil {
 		return err
 	}
-	if state == ModerationApproved && deletedAt == nil {
+	if state == ModerationApproved && deletedAt == nil && !hidden {
 		if err := c.count(ctx, tx, replyTo, k, 1); err != nil {
 			return err
 		}
-		if err := c.restoreReplyNotices(ctx, tx, cid); err != nil {
+		if err := c.restoreNotices(ctx, tx, cid); err != nil {
 			return err
 		}
 	}

@@ -244,6 +244,7 @@
           "comments_locked",
           "forbidden",
           "moderation_rejected",
+          "duplicate_comment",
           "not_found",
           "rate_limited",
           "unauthorized"
@@ -413,6 +414,7 @@
           "comments_locked",
           "forbidden",
           "moderation_rejected",
+          "duplicate_comment",
           "not_found",
           "rate_limited",
           "unauthorized"
@@ -582,6 +584,7 @@
           "comments_locked",
           "forbidden",
           "moderation_rejected",
+          "duplicate_comment",
           "not_found",
           "rate_limited",
           "unauthorized"
@@ -938,7 +941,8 @@
           "conflict",
           "forbidden",
           "moderation_rejected",
-          "not_found"
+          "not_found",
+          "rate_limited"
         ],
         "x-contentkit-error-sets": [
           "module:content",
@@ -13033,6 +13037,9 @@
           "deleted_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "author_hidden": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -13047,7 +13054,8 @@
           "updated_at",
           "tenant_id",
           "content_kind",
-          "content_id"
+          "content_id",
+          "author_hidden"
         ]
       },
       "AliasKey": {
@@ -19755,6 +19763,7 @@
           "comments_locked",
           "conflict",
           "download_unavailable",
+          "duplicate_comment",
           "event_cursor_expired",
           "forbidden",
           "gone",
@@ -19998,6 +20007,10 @@
     "download_unavailable": {
       "status": 403,
       "meaning": "The host's download policy refuses this download now: `reason` is its code, `available_at` when it opens if a matter of time. Nothing was charged."
+    },
+    "duplicate_comment": {
+      "status": 422,
+      "meaning": "An identical comment was already saved in the configured duplicate window."
     },
     "event_cursor_expired": {
       "status": 410,

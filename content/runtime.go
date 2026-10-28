@@ -63,7 +63,7 @@ type Options struct {
 	PreferenceSyncOverlap time.Duration
 
 	// Optional ports (nil -> default).
-	Processor ContentProcessor // comments; default: strip tags
+	Processor ContentProcessor // comments; default: trim plain text
 	// Moderator screens comment writes, and the catalog's (Screen); nil
 	// publishes everything.
 	Moderator ContentModerator
@@ -93,6 +93,8 @@ type Options struct {
 	// CommentMaxLength is the longest comment in characters (runes);
 	// default DefaultCommentMaxLength.
 	CommentMaxLength int
+	// DuplicateWindow refuses identical comments within this duration; zero disables it.
+	DuplicateWindow time.Duration
 
 	// NotificationPublisher is AuthKit's scoped account channel. Nil disables
 	// user notifications; ContentKit never constructs its own inbox.
@@ -124,6 +126,7 @@ type Runtime struct {
 	breaker              *moderatorBreaker
 	providerEraser       ProviderDataEraser
 	anonymous            Anonymous
+	duplicateWindow      time.Duration
 	commentMax           int
 	log                  *slog.Logger
 	cfg                  kinds.Config
@@ -176,24 +179,28 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
-	processor := orDefault[ContentProcessor](opts.Processor, stripProcessor{})
+	if opts.DuplicateWindow < 0 {
+		return nil, fmt.Errorf("content: DuplicateWindow must not be negative")
+	}
+	processor := orDefault[ContentProcessor](opts.Processor, trimProcessor{})
 	rt := &Runtime{
-		store:          newStore(opts.Pool, opts.Schema, opts.Tenant),
-		schema:         opts.Schema,
-		tenant:         opts.Tenant,
-		userInfo:       opts.UserInfo,
-		avatars:        opts.Avatars,
-		resolver:       opts.Resolver,
-		media:          media,
-		processor:      processor,
-		moderator:      opts.Moderator,
-		breaker:        newModeratorBreaker(opts.ModeratorTimeout, opts.ModeratorCooldown),
-		providerEraser: opts.ProviderDataEraser,
-		anonymous:      opts.Anonymous,
-		commentMax:     orDefault(opts.CommentMaxLength, DefaultCommentMaxLength),
-		log:            log,
-		cfg:            opts.Kinds,
-		limiters:       limiters,
+		store:           newStore(opts.Pool, opts.Schema, opts.Tenant),
+		schema:          opts.Schema,
+		tenant:          opts.Tenant,
+		userInfo:        opts.UserInfo,
+		avatars:         opts.Avatars,
+		resolver:        opts.Resolver,
+		media:           media,
+		processor:       processor,
+		moderator:       opts.Moderator,
+		breaker:         newModeratorBreaker(opts.ModeratorTimeout, opts.ModeratorCooldown),
+		providerEraser:  opts.ProviderDataEraser,
+		anonymous:       opts.Anonymous,
+		duplicateWindow: opts.DuplicateWindow,
+		commentMax:      orDefault(opts.CommentMaxLength, DefaultCommentMaxLength),
+		log:             log,
+		cfg:             opts.Kinds,
+		limiters:        limiters,
 	}
 	rt.notifier = opts.NotificationPublisher
 	rt.eraseAccountReceipts = opts.EraseAccountReceipts
@@ -217,7 +224,8 @@ func (rt *Runtime) checkSchema(ctx context.Context) error {
 	if _, err := rt.store.pool.Exec(ctx, `SELECT tenant_id, content_kind, content_id, content_version_id FROM `+rt.store.t.counts+` LIMIT 0;
 		SELECT revision FROM `+rt.store.t.reactions+` LIMIT 0; SELECT value, revision FROM `+rt.store.t.favorites+` LIMIT 0;
 		SELECT revision FROM `+rt.store.t.preferenceSync+` LIMIT 0;
-		SELECT moderation FROM `+rt.store.t.comments+` LIMIT 0;
+		SELECT moderation,author_hidden FROM `+rt.store.t.comments+` LIMIT 0;
+		SELECT tenant_id,actor_id FROM `+rt.hiddenAuthorsTable()+` LIMIT 0;
 		SELECT revision,withdrawn FROM `+pgx.Identifier{rt.schema, "content_comment_notifications"}.Sanitize()+` LIMIT 0;
 		SELECT kind, closes_at FROM `+rt.store.t.pollQuestions+` LIMIT 0; SELECT group_id FROM `+rt.store.t.pollAnswers+` LIMIT 0;
 		SELECT scope, until FROM `+rt.store.t.commentBans+` LIMIT 0; SELECT language FROM `+rt.store.t.comments+` LIMIT 0;
