@@ -379,7 +379,8 @@
         "Start markers derive half-open spans from source-file order. Independently released chapters can skip an unreleased middle; copied and inserted files follow their current chapter.",
         "Valid item tokens grant all served private outputs of exactly that edition, never internal/original bytes or unreleased metadata.",
         "An editor reads an unreleased internal/ output through its exact presigned capability with identical bytes; reader item, private-file and absent tokens get 404 from the real gateway for that key.",
-        "When processing hides a page a released edition already serves, its completion re-plans the edition at once; a later chapter keeps its own date."
+        "When processing hides a page a released edition already serves, its completion re-plans the edition at once; a later chapter keeps its own date.",
+        "A wake-up or publish that changes nothing adds no request row and no copy of the live release; a real release removes the finished requests it supersedes, and readers see the same pages, chapters and downloads throughout."
       ],
       "cases": [
         "TestCommerceMediaGrantRevocation/CK-J05-S04_CK-J13-S07_segment_and_audience_deadlines_bound_reads_and_archives",
@@ -393,7 +394,8 @@
         "TestCompletedPublicationReader",
         "TestInternalArea/CK-J05-S04_editors_read_internal_and_readers_cannot",
         "TestScheduledPolicyPublishesWithoutStorageAreaChange",
-        "TestReleaseDuringPageSelectionKeepsCopyPrivate"
+        "TestReleaseDuringPageSelectionKeepsCopyPrivate",
+        "TestUnchangedReleaseLeavesNoRequestCopies"
       ],
       "contract_change": "ContentKit #250 replaces clock-only publication and parent/subset access; preserved scenario identifiers do not preserve obsolete behavior."
     },

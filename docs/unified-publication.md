@@ -10,6 +10,9 @@ copies and verification, activates the completed reader state, records retained
 publication events and schedules the next chapter or audience deadline.
 An empty file plan follows the same lifecycle without storage calls. A storage
 error never turns a configured media release into an empty-file success.
+A run that finds nothing changed completes without copying the live release.
+A completed request that is neither current nor the live release is deleted
+when a newer request supersedes it or a newer release completes.
 
 Processing remains separate from publication. Ingest, image and video workers
 prepare files and wake the publication request when prerequisites are ready.
