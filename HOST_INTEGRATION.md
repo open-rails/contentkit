@@ -364,7 +364,8 @@ open the version.
 Detail, cards (lists, search, typeahead, rails, similar, recommendations,
 entity pages, `me` favorites and history), the reader plan and interactions
 apply it; the media read API lists a locked item's public files alone (its
-cover, and previews where named), never its private files or their count.
+cover, and a version's free preview pages), never its private files or their
+count.
 Staff, creators and primary-channel editors see everything. Sitemaps,
 codes and notifications carry only ids, codes and paths; stats and import
 are staff's. `GET /v1/kinds` spells out each kind's effective `locked`.
@@ -975,7 +976,6 @@ var Gallery = media.Kind{Name: "gallery", KeepOriginals: true,
 	Public: []media.Public{
 		{Name: "cover", From: "cover", To: "cover-{w}.webp", Widths: []int{230, 460, 920},
 			Image: media.Image{Aspect: media.Ratio("46:65")}, Default: "cover.png"},
-		{Name: "preview", From: "originals/{name}", To: "preview-{n}.webp", First: 3, Image: media.Image{Width: 1280}},
 	},
 	Defaults: defaultsFS, // holds cover.png
 }
@@ -1059,16 +1059,10 @@ worker, _ := cfg.MediaRegistry() // the stock worker's MEDIA_KINDS_FILE
   so every name exists). The object carries its `from` and `fp` as metadata.
   The first public preset of an upload bounds its edit: the crop is fitted to
   `Image.Aspect`, and an edit narrower than `MinWidth` fails.
-- **Previews** are public presets with `First: N`: the first N attached
-  uploads of a `{name}` Upload in manifest order, `{n}` in `To` their position
-  from 1, so the URLs
-  (`{BaseURL}/v1/{ns}/{kind}/{id}/public/preview-{n}.webp`) need no manifest.
-  Anyone who can see the item sees them; a hidden item has none. A position
-  is rendered again when another upload takes it (a reorder, an insert, a
-  removal) or its upload is replaced or cropped again; its old image is
-  deleted with that commit, so the name is a 404 until the worker has
-  rendered it, and names past the last upload are deleted. This is the only way to show part
-  of an item: there is no partial access to `private/`.
+- **Previews.** There is no partial access to `private/`. A `Publish`
+  kind shows part of a locked version through its access rule's (or kind's
+  `locked`) `preview`: release copies the leading released pages' renditions
+  to `public/`, and the reader plan lists their URLs.
 - **Originals.** `KeepOriginals` keeps uploads once their private outputs
   exist (otherwise the blob is dropped and the file marked `gone`; public
   presets' sources are always kept). Except a version's declared audio
@@ -1174,16 +1168,15 @@ The media route group serves the read API at `/v1/media`
 (`Config.Media.ReadLimit`):
 
 - `GET /{kind}/{id}?prefix=low-res/&offset=&limit=&download&editor` answers
-  `{access, expires, meta, previews, public, locked, total, hls, files: [{path, type, size, w, h, url}]}`
+  `{access, expires, meta, public, locked, total, hls, files: [{path, type, size, w, h, url}]}`
   in manifest order. `access` is `full` or `none`. With access every listed
   file has a URL: plain under the item cookie
   (`Path=/v1/{ns}/{kind}/{id}/private/`) in cookie mode, with `?t={item
-  token}` in URL mode. Without it there is no URL, token, cookie, meta or
-  file: no path, size or count tells what a locked item holds, only
-  `locked: true` that it holds something. `previews` and `public` are the
-  item's public files (covers; a version's previews only as many as its
-  access rule or kind's `locked.preview` names), for every viewer who can
-  see it. `expires`
+  token}` in URL mode. Without it there is no token, cookie or meta, and the
+  only files listed are public ones: a locked version's free preview pages,
+  delivered publicly at release. Nothing else tells what a locked item holds,
+  only `locked: true` that it holds something. `public` is the item's public
+  files (covers), for every viewer who can see it. `expires`
   is when the token stops working; a read before then answers the same token,
   so clients keep what they have and read again shortly before (the SDK's
   gallery and player do). With `download`, each URL carries the file's

@@ -17622,9 +17622,6 @@
           "min_width": {
             "type": "integer"
           },
-          "first": {
-            "type": "integer"
-          },
           "default": {
             "type": "boolean"
           },
@@ -17926,12 +17923,6 @@
           "meta": {
             "type": "object",
             "additionalProperties": {}
-          },
-          "previews": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
           },
           "public": {
             "type": "array",

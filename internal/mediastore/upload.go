@@ -536,7 +536,6 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 				return err
 			}
 		}
-		item.Kind().syncPreviews(prior, m)
 		mutation.effects.Renames = map[string]string{}
 		for before, after := range o.renames {
 			if before != after {

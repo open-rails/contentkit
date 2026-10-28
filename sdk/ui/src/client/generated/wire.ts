@@ -1563,7 +1563,6 @@ export interface PresetRule {
   widths: number[];
   aspect?: string;
   min_width?: number;
-  first?: number;
   default: boolean;
   stable?: boolean;
 }
@@ -1663,7 +1662,6 @@ export interface ReadResult {
   inspection?: boolean;
   expires: number;
   meta?: Record<string, unknown>;
-  previews?: string[];
   public?: PublicImage[];
   locked?: boolean;
   total: number;
