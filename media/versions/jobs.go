@@ -1,4 +1,4 @@
 package versions
 
-// Queue is the River queue of version publication and optional media jobs.
-const Queue = "contentkit_versions"
+// Queue is the base name of the catalog-scoped River queue of publication jobs.
+const Queue = "contentkit_publication"

@@ -152,34 +152,36 @@ func (s *Service) scheduleReleaseAtTx(ctx context.Context, tx pgx.Tx, target ver
 	}
 	return mediastore.InsertOnce(ctx, func(ctx context.Context, args river.JobArgs, options *river.InsertOpts) (*rivertype.JobInsertResult, error) {
 		return client.InsertTx(ctx, tx, args, options)
-	}, releaseArgs{ID: id, Due: at}, river.InsertOpts{Queue: QueueFor(s.o.Tenant), ScheduledAt: at})
+	}, publicationArgs{ID: id, Due: at}, river.InsertOpts{Queue: QueueFor(s.o.Tenant), ScheduledAt: at})
 }
 
-type releaseArgs struct {
+type publicationArgs struct {
 	ID    string    `json:"id"`
 	Due   time.Time `json:"due"`
 	After int64     `json:"after,omitempty"`
 }
 
-func (releaseArgs) Kind() string { return "contentkit_version_release" }
+func (publicationArgs) Kind() string { return "contentkit_publication" }
 
-func (args releaseArgs) FollowUp(id int64) river.JobArgs {
+func (args publicationArgs) FollowUp(id int64) river.JobArgs {
 	args.After = id
 	return args
 }
 
-type releaseWorker struct {
-	river.WorkerDefaults[releaseArgs]
+type publicationWorker struct {
+	river.WorkerDefaults[publicationArgs]
 	s *Service
 }
 
-func (s *Service) addReleaseWorker(workers *river.Workers) error {
-	return river.AddWorkerSafely(workers, &releaseWorker{s: s})
+func (s *Service) addPublicationWorker(workers *river.Workers) error {
+	return river.AddWorkerSafely(workers, &publicationWorker{s: s})
 }
 
-func (w *releaseWorker) Timeout(*river.Job[releaseArgs]) time.Duration { return 30 * time.Minute }
+func (w *publicationWorker) Timeout(*river.Job[publicationArgs]) time.Duration {
+	return 30 * time.Minute
+}
 
-func (w *releaseWorker) Work(ctx context.Context, job *river.Job[releaseArgs]) error {
+func (w *publicationWorker) Work(ctx context.Context, job *river.Job[publicationArgs]) error {
 	if err := mediastore.WaitFor(ctx, river.ClientFromContext[pgx.Tx](ctx), job.Args.After); err != nil {
 		return err
 	}

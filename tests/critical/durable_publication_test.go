@@ -37,11 +37,11 @@ func TestDurableTextPublication(t *testing.T) {
 	var jobs int
 	must(t, w.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+w.schema+`_river.river_job j
  JOIN `+w.schema+`.content_publication_requests r ON r.id::text=j.args->>'id'
- WHERE j.kind='contentkit_version_release' AND r.content_id=$1 AND j.scheduled_at=$2`, item.ID, due).Scan(&jobs))
+ WHERE j.kind='contentkit_publication' AND r.content_id=$1 AND j.scheduled_at=$2`, item.ID, due).Scan(&jobs))
 	if jobs != 1 {
 		t.Fatalf("accepted publication has %d durable scheduled jobs, want one", jobs)
 	}
-	request := currentReleaseJob(t, a, item.Versions[0].ID)
+	request := currentPublicationJob(t, a, item.Versions[0].ID)
 	if !request.Due.Equal(due) {
 		t.Fatalf("accepted request due=%v, want %v", request.Due, due)
 	}

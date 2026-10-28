@@ -1,7 +1,7 @@
 # One publication workflow
 
 Posts, galleries, videos and other content kinds use the same durable
-`content_publication_requests` lifecycle and `contentkit_version_release` worker.
+`content_publication_requests` lifecycle and `contentkit_publication` worker.
 Scheduling does not depend on whether an item has attachments.
 
 Accepting publication commits its request and River job in the content write's
@@ -15,14 +15,9 @@ Processing remains separate from publication. Ingest, image and video workers
 prepare files and wake the publication request when prerequisites are ready.
 There is no five-minute publication sweep or readiness polling job.
 
-The forward migration replaces owned legacy `contentkit_content_publish_due`
-and `contentkit_catalog_publish_due` obligations with request-ID release jobs.
-Stop incompatible writers/workers before running the explicit migration.
-Published state, future deadlines, old media plans and pending retirement work
-must survive the handoff. Runtime startup only validates that it is complete.
-
-Catalog-scoped version queues and the existing request-ID, due-time and follow-up
-arguments remain stable. The content-purge schedule is independent of release.
+Jobs carry the request ID, due time and follow-up and run in the catalog-scoped
+`contentkit_publication_<catalog hash>` queue. A job whose request row is gone
+cancels itself. The content-purge schedule is independent of publication.
 
 Implementation and upgrade acceptance are tracked in
 [ContentKit #254](https://github.com/open-rails/tracker/blob/master/contentkit/0254-unified-content-release.md).

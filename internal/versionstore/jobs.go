@@ -9,14 +9,14 @@ import (
 	"github.com/riverqueue/river"
 )
 
-// RiverJobs contributes the version release workers and queue to
-// the host's River composition, beside media's own.
+// RiverJobs contributes the publication worker and queue to the host's
+// River composition, beside media's own.
 func (s *Service) RiverJobs() riverhelpers.Contribution {
-	return riverhelpers.NewContribution("contentkit-versions", func(_ context.Context, cfg *river.Config) error {
+	return riverhelpers.NewContribution("contentkit-publication", func(_ context.Context, cfg *river.Config) error {
 		if s.o.MediaConfigured && s.m.Manifests == nil {
 			return errors.New("versions: configured media must be bound before River jobs")
 		}
-		if err := s.addReleaseWorker(cfg.Workers); err != nil {
+		if err := s.addPublicationWorker(cfg.Workers); err != nil {
 			return err
 		}
 		if _, ok := cfg.Queues[QueueFor(s.o.Tenant)]; !ok {

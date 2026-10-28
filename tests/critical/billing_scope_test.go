@@ -349,7 +349,7 @@ func awaitPublicationJobsIdle(t *testing.T, w *world, app *application) {
 		wakeDuePublicationJobs(t, app)
 		var pending int
 		err := w.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+pgx.Identifier{w.schema + "_river", "river_job"}.Sanitize()+`
- WHERE kind='contentkit_version_release' AND state IN ('available','running','retryable')`).Scan(&pending)
+ WHERE kind='contentkit_publication' AND state IN ('available','running','retryable')`).Scan(&pending)
 		must(t, err)
 		return pending == 0
 	})

@@ -29,11 +29,11 @@ func TestServingAndWorkingProcesses(t *testing.T) {
 		must(t, err)
 		_, err = admin.PostContentPublish(t.Context(), item.ID, catalog.PublishInput{})
 		must(t, err)
-		release := currentReleaseJob(t, a, item.Versions[0].ID)
+		release := currentPublicationJob(t, a, item.Versions[0].ID)
 		jobs := pgx.Identifier{publicationRiverSchema(a), "river_job"}.Sanitize()
 		pending := func() int {
 			var n int
-			must(t, w.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+jobs+` WHERE kind='contentkit_version_release' AND args->>'id'=$1
+			must(t, w.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+jobs+` WHERE kind='contentkit_publication' AND args->>'id'=$1
  AND state IN ('available','scheduled','retryable')`, release.ID).Scan(&n))
 			return n
 		}

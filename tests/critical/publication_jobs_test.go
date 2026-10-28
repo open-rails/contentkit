@@ -73,7 +73,7 @@ func TestPublicationRecorderAndParentBoundary(t *testing.T) {
 		}
 		// Duplicate delivery of one accepted request races on the same durable
 		// lifecycle. No broad scan or startup timer is needed to recover it.
-		request := currentReleaseJob(t, a, item.Versions[0].ID)
+		request := currentPublicationJob(t, a, item.Versions[0].ID)
 		wakeDuePublicationJobs(t, a)
 		ids := []int64{}
 		for range 4 {
