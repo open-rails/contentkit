@@ -64,9 +64,9 @@ func StoreFromEnv() (*mediaS3.Store, error) {
 //	MEDIA_HOST_GRACE             the host's sweep grace (default 24h)
 //	MEDIA_WORKER_TMP             scratch dir (default os.TempDir()); size for a video source plus outputs
 //	MEDIA_WORKER_THREADS         ffmpeg threads (default: CPU limit)
-//	MEDIA_WORKER_PRESET          x264/x265 preset of rungs up to 1080 (default fast)
-//	MEDIA_WORKER_TOP_PRESET      x264/x265 preset of the rungs above (default fast)
-//	MEDIA_WORKER_CODECS          the ladder's codecs, preferred first: h264, hevc, av1 (default av1,h264)
+//	MEDIA_WORKER_PRESET          x264 preset of rungs up to 1080 (default fast)
+//	MEDIA_WORKER_TOP_PRESET      x264 preset of the rungs above (default fast)
+//	MEDIA_WORKER_CODECS          the ladder's codecs, preferred first: h264, av1 (default av1,h264)
 //	MEDIA_WORKER_ENCODER         auto (default: per codec NVENC if a probe encode works, else CPU), cpu or nvenc
 //	MEDIA_WORKER_CONCURRENCY     image/video derivative jobs per process (default 1)
 //	MEDIA_WORKER_INGEST_CONCURRENCY  ingest jobs per process (default 2)

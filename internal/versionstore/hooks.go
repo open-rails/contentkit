@@ -230,32 +230,7 @@ func (s *Service) itemProgressed(ctx context.Context, tx pgx.Tx, ref contentref.
 	return s.wakePublicationTx(ctx, tx, v)
 }
 
-// beforeRetire serializes snapshot invalidation with publishers. A publisher
-// that already holds the version row finishes first and is then invalidated;
-// one that follows reads the newly committed manifest. No media lock is taken.
-func (s *Service) beforeRetire(ctx context.Context, ref contentref.ContentRef, current *mediastore.Manifest) error {
-	if ctx.Value(releaseMutationContextKey{}) == true || current.PublicationLayoutReady() {
-		// The completed delivery owns exact reader allocations until the
-		// publisher commits its replacement and retires the old delivery.
-		return nil
-	}
-	k, err := s.reg.Kind(ref.ContentKind)
-	if err != nil || !k.Versions || ref.Version() == "" || k.Publish == nil {
-		return nil
-	}
-	return pgx.BeginFunc(ctx, s.o.Pool, func(tx pgx.Tx) error {
-		v := versions.Target{Content: ref.ContentID, Version: ref.Version()}
-		if err := s.lockTarget(ctx, tx, v); err != nil {
-			return err
-		}
-		_, err := s.withdrawStaleTx(ctx, tx, k, v, current)
-		return err
-	})
-}
-
-// itemCommitted records a changed version's facts, withdraws its
-// publications at once when an edit removed or replaced what they show, and
-// queues its publication.
+// itemCommitted records a changed version's facts and queues its publication.
 func (s *Service) itemCommitted(ctx context.Context, ref contentref.ContentRef) error {
 	if ctx.Value(releaseMutationContextKey{}) == true {
 		return nil
@@ -279,11 +254,6 @@ func (s *Service) itemCommitted(ctx context.Context, ref contentref.ContentRef) 
 		}
 		if err := s.recordFacts(ctx, tx, vk, v, m); err != nil {
 			return err
-		}
-		if !m.PublicationLayoutReady() && vk.Publish != nil {
-			if _, err := s.withdrawStaleTx(ctx, tx, vk, v, m); err != nil {
-				return err
-			}
 		}
 		return s.SchedulePublicationTx(ctx, tx, []versions.Target{v})
 	})

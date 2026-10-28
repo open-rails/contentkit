@@ -18,7 +18,7 @@ ContentKit's tables. The body is an `importer.Batch`; its wire types are in
   (`{"external_id": "folder:123"}`); `target` names a `content`, `version`,
   `group`, `channel` or `comment`, as the section allows.
 - Collections given replace what is stored (creators, version text,
-  names, group text, edges, poll options); omitted ones stay.
+  names, group text, poll options); omitted ones stay.
   Versions not listed stay. `memberships` replace a content item's
   memberships in the group `kinds` they name.
 - Content `code` and group `code` keep an existing content code; a version's
@@ -129,7 +129,7 @@ Each edition's body resolves inline images only from that edition's uploads.
 
 | Section | Record | Keys |
 |---|---|---|
-| `entities` | `EntityRecord` | `external_id`, `kind`, `slug`, `scope`, `parent`, `state`, `names`, `text`, `attributes`, `cover_image` / `cover_content`, `avatar`, `edges`, `code`, times |
+| `entities` | `EntityRecord` | `external_id`, `kind`, `slug`, `scope`, `parent`, `state`, `names`, `text`, `attributes`, `cover_image` / `cover_content`, `avatar`, `code`, times |
 | `channels` | `ChannelRecord` | `external_id`, `slug`, `state`, `names`, `text`, `cover_image` / `cover_content`, `avatar`, `owner_user_id`, `auth_scope`, `code`, times |
 | `contents` | `ContentRecord` | `external_id`, `kind`, `state` (draft, published, deleted), `publish_at`, `published_at`, `deleted_at`, `comments` (open, closed, hidden), `access`, `restrictions`, `attributes`, `channel`, `creators`, `versions`, `code`, times |
 | | `VersionRecord` | `external_id`, `languages`, `traits`, `label`, `state`, times, `access`, `attributes`, `ordinal`, `cover`, `original_title`, `original_language`, `text` |

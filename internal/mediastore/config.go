@@ -56,11 +56,6 @@ type Hooks struct {
 	// processor completion transaction alongside ItemReady, which
 	// reports final completion. Optional; idempotent; an error retries.
 	ItemProgressed func(ctx context.Context, tx pgx.Tx, ref contentref.ContentRef) error
-	// BeforeRetire is the catalog integration barrier. It runs after the
-	// manifest commits and before its removed objects are deleted, including
-	// recovery. It must invalidate references to those objects idempotently.
-	// The manifest lease is held: this callback must not mutate media.
-	BeforeRetire func(ctx context.Context, ref contentref.ContentRef, current *Manifest) error
 	// ItemCommitted reports an item a commit changed, before its processing
 	// runs; ItemReady reports the far end. Idempotent; an error fails the
 	// commit.

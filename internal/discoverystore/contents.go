@@ -18,7 +18,7 @@ import (
 type ListOptions struct {
 	discovery.Reader
 	Filter
-	// Sort is newest, oldest, title, popular[:period], top_rated[:period],
+	// Sort is newest, oldest, title, popular[:period], top_rated,
 	// most_favorited, position or random; the kind's configured
 	// sort, else newest, by default. Popular suffixes are configured bucket IDs.
 	Sort string
@@ -78,10 +78,6 @@ func (s *Service) List(ctx context.Context, o ListOptions) (discovery.ContentPag
 	sort := s.sortName(o.Sort, o.Kind)
 	if custom {
 		sort = historicalSort(o.Kind, window)
-	}
-	o.Filter, err = publicationCursor(o.Filter, o.Cursor, sort)
-	if err != nil {
-		return discovery.ContentPage{Contents: []discovery.Card{}}, err
 	}
 	q, err := s.compile(ctx, o.Reader, o.Filter)
 	if err != nil {

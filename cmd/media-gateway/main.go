@@ -13,7 +13,7 @@
 //	                                            e.g. https://doujins.ai; empty breaks hls.js (warned)
 //	-defaults      MEDIA_GATEWAY_DEFAULTS        public names that fall back to the kind's _default item,
 //	                                            e.g. "doujins/gallery: cover-460.webp=sha256-{64 lowercase hex}.webp"
-//	               MEDIA_GATEWAY_S3_ACCESS_KEY_ID, MEDIA_GATEWAY_S3_SECRET_ACCESS_KEY   key reading only */private/*, */download/* and */public/* of those buckets
+//	               MEDIA_GATEWAY_S3_ACCESS_KEY_ID, MEDIA_GATEWAY_S3_SECRET_ACCESS_KEY   key reading only */private/* and */public/* of those buckets
 //	               MEDIA_GATEWAY_TOKEN_KEY           current signing key "{kid}:{base64 secret}"
 //	               MEDIA_GATEWAY_TOKEN_KEY_PREVIOUS  previous key, accepted during rotation; optional
 package main

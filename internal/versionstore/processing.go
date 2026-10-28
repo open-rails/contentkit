@@ -56,7 +56,7 @@ func ProcessingPublisher(pool *pgxpool.Pool, riverSchema, contentSchema string, 
 func publicationService(pool *pgxpool.Pool, schema, tenant string, reg *mediastore.Registry) *Service {
 	q := func(name string) string { return pgxIdent(schema, name) }
 	return &Service{o: Options{Pool: pool, Schema: schema, Tenant: tenant, Now: time.Now}, reg: reg,
-		t: tables{items: q("content_items"), versions: q("content_versions"), segments: q("content_segments"), publications: q("content_version_publications"), entities: q("content_entities"), facets: q("content_facets")}}
+		t: tables{items: q("content_items"), versions: q("content_versions"), segments: q("content_segments"), entities: q("content_entities"), facets: q("content_facets")}}
 }
 
 // PrepareDerivatives prepares page order and automatic cover inputs inside the

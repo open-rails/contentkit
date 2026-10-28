@@ -6,13 +6,12 @@ import type { ContentKitUiAppearance } from "../../appearance.js";
 import type { ContentKitClient } from "../../client/client.js";
 import { toContentKitError, type ContentKitError } from "../../client/errors.js";
 import { fold, parseAttributes, slugify } from "../../client/entity-fields.js";
-import type { ContentModel, Entity, EntityCard, EntityDetail, EntityKind, EntityUpdate, EntitiesText as Text, MergeReport, Name } from "../../client/generated/wire.js";
+import type { Entity, EntityCard, EntityDetail, EntityKind, EntityUpdate, EntitiesText as Text, MergeReport, Name } from "../../client/generated/wire.js";
 import { useLanguageName, useMessages } from "../../i18n/context.js";
 import { ContentKitContext, type ContentKitErrorHandler } from "../../react/context.js";
 import { useEntity, useKinds, type UseEntity } from "../../react/entities.js";
 import { useDraft } from "../../react/use-draft.js";
 import { ContentKitUiRoot } from "../../scope.js";
-import { Badge } from "#ckui/ui/badge";
 import { Switch } from "#ckui/ui/switch";
 import { Button } from "#ckui/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "#ckui/ui/dropdown-menu";
@@ -26,7 +25,7 @@ import { contentError, ErrorLine, useAction } from "../social/parts.js";
 import { useConfirm } from "../admin/shell.js";
 import { AttributeFields, formOf } from "./fields.js";
 import { EntityImageEditor } from "./banner.js";
-import { EntityPicker, labelOf, useEntityNames, type EntityLike, type Labels } from "./parts.js";
+import { EntityPicker, labelOf, type EntityLike, type Labels } from "./parts.js";
 
 export interface EntityEditorProps {
   /** The entity edited; null creates one of `kind`. */
@@ -58,8 +57,8 @@ export interface EntityEditorProps {
 /**
  * Staff (app:entities:write): creates a entity, or edits one: slug, parent,
  * scope and declared attributes; names and aliases per language; description
- * and sort key per language; cover (an upload, or automatic); edges to other
- * entities; merge into another entity; delete and restore.
+ * and sort key per language; cover (an upload, or automatic); merge into
+ * another entity; delete and restore.
  */
 export function EntityEditor(p: EntityEditorProps) {
   const { t } = useMessages();
@@ -97,7 +96,7 @@ export function EntityEditor(p: EntityEditorProps) {
       );
     return root(<Skeleton className="h-40 w-full" />);
   }
-  return root(<EditForm key={g.entity.id} {...p} entity={g.entity} spec={spec} languages={languages} g={g} kinds={kinds} />);
+  return root(<EditForm key={g.entity.id} {...p} entity={g.entity} spec={spec} languages={languages} g={g} />);
 }
 
 function detailsOf(entity: EntityDetail, spec: EntityKind) {
@@ -117,7 +116,7 @@ function addNames(names: Name[], additions: Name[]): Name[] {
   return next;
 }
 
-function EditForm({ entity, spec, languages, g, kinds, onLeaveGuard, ...p }: EntityEditorProps & { entity: EntityDetail; spec: EntityKind; languages: readonly string[]; g: UseEntity; kinds: ContentModel | null }) {
+function EditForm({ entity, spec, languages, g, onLeaveGuard, ...p }: EntityEditorProps & { entity: EntityDetail; spec: EntityKind; languages: readonly string[]; g: UseEntity }) {
   const m = useMessages();
   const { t } = m;
   const offered = useMemo(() => [...new Set([...languages, ...entity.text.map((x) => x.language)])], [languages, entity.text]);
@@ -219,7 +218,6 @@ function EditForm({ entity, spec, languages, g, kinds, onLeaveGuard, ...p }: Ent
         <aside className="grid min-w-0 gap-6">
           <Details management={p.management} entity={entity} spec={spec} form={details} onChange={(patch) => draft.edit((f) => ({ ...f, details: { ...f.details, ...patch } }))} labels={p.labels} client={p.client} />
           <Images management={p.management} entity={entity} spec={spec} onError={p.onError} client={p.client} />
-          <Edges management={p.management} entity={entity} g={g} kinds={kinds} labels={p.labels} onError={p.onError} client={p.client} />
         </aside>
       </div>
     </>
@@ -356,7 +354,7 @@ export interface EntityMergeDialogProps {
   onOpenChange: (open: boolean) => void;
   /** The entity merged away. */
   entity: EntityDetail;
-  /** Merges into the chosen entity: memberships, names, edges and children move, its code redirects. */
+  /** Merges into the chosen entity: memberships, names and children move, its code redirects. */
   onMerge: (into: EntityCard) => Promise<MergeReport>;
   management?: boolean;
   language?: string;
@@ -884,83 +882,3 @@ function Images({ entity, spec, onError, client, management }: { management?: bo
   );
 }
 
-const RELATION = /^[a-z][a-z0-9_]*$/;
-
-function Edges({ entity, g, kinds, labels, onError, client, management }: { management?: boolean; entity: EntityDetail; g: UseEntity; kinds: ContentModel | null; labels?: Labels; onError?: ContentKitErrorHandler; client?: ContentKitClient }) {
-  const { t } = useMessages();
-  const id = useId();
-  const save = useAction("entity.save", onError);
-  const partners = useEntityNames(
-    entity.edges.map((e) => (e.from === entity.id ? e.to : e.from)),
-    { client, management },
-  );
-  const kindsList = Object.keys(kinds?.entity_kinds ?? {}).sort();
-  const [relation, setRelation] = useState("");
-  const [kind, setKind] = useState(kindsList[0] ?? entity.kind);
-  const out = entity.edges.filter((e) => e.from === entity.id);
-  const incoming = entity.edges.filter((e) => e.to === entity.id);
-  const nameOf = (gid: string) => {
-    const x = partners.get(gid);
-    return x ? x.name || x.slug : gid;
-  };
-  const valid = RELATION.test(relation.trim());
-  return (
-    <Section title={t("entityEditor.edges")} ckui="entity-edges">
-      {out.length + incoming.length ? (
-        <ul className="grid gap-1.5">
-          {out.map((e) => (
-            <li key={`${e.relation}:${e.to}`} className="flex flex-wrap items-center gap-2" data-ckui="entity-edge" data-relation={e.relation}>
-              <Badge variant="secondary">{labelOf(labels, e.relation)}</Badge>
-              <span>{nameOf(e.to)}</span>
-              <Button size="xs" variant="ghost" disabled={save.pending} aria-label={t("entityEditor.removeEdge", { name: nameOf(e.to) })} onClick={() => void save.run(() => g.edges("remove", [{ relation: e.relation, to: e.to }]))}>
-                {t("common.remove")}
-              </Button>
-            </li>
-          ))}
-          {incoming.map((e) => (
-            <li key={`in:${e.relation}:${e.from}`} className="flex flex-wrap items-center gap-2 text-muted-foreground" data-ckui="entity-edge" data-relation={`inverse:${e.relation}`}>
-              <span className="text-foreground">{nameOf(e.from)}</span>
-              <Badge variant="outline">{labelOf(labels, e.relation)}</Badge>
-            </li>
-          ))}
-        </ul>
-      ) : (
-        <p className="text-muted-foreground">{t("entityEditor.noEdges")}</p>
-      )}
-      <div className="flex flex-wrap items-end gap-2">
-        <div className="grid gap-1">
-          <Label htmlFor={`${id}-rel`} className="text-xs text-muted-foreground">
-            {t("entityEditor.relation")}
-          </Label>
-          <Input id={`${id}-rel`} className="h-8 w-40" value={relation} placeholder="member_of" aria-invalid={!!relation && !valid} onChange={(e) => setRelation(e.target.value)} />
-        </div>
-        {kindsList.length > 1 && (
-          <Select value={kind} onValueChange={(v) => setKind(String(v))}>
-            <SelectTrigger size="sm" aria-label={t("entityEditor.edgeKind")}>
-              <SelectValue>{(v: string) => labelOf(labels, v)}</SelectValue>
-            </SelectTrigger>
-            <SelectContent>
-              {kindsList.map((k) => (
-                <SelectItem key={k} value={k}>
-                  {labelOf(labels, k)}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        )}
-        {valid && (
-          <EntityPicker
-            management={management}
-            key={kind}
-            kind={kind}
-            label={t("entityEditor.edgeTarget")}
-            exclude={[entity.id]}
-            client={client}
-            onPick={(to) => void save.run(() => g.edges("add", [{ relation: relation.trim(), to: to.id }])).then((d) => d && setRelation(""))}
-          />
-        )}
-      </div>
-      <ErrorLine error={save.error} />
-    </Section>
-  );
-}

@@ -2,21 +2,16 @@ package mediastore
 
 import (
 	"errors"
-	"slices"
-	"strings"
 
 	media "github.com/open-rails/contentkit/media"
 )
 
-// ArchiveDestination returns this upload's configured image destination. The reader
-// preset's existing mapping remains supported; generic kinds can set ArchiveTo.
+// ArchiveDestination returns the Publish.Pages pattern a Publish.Import
+// upload expands into, or "".
 func (k *RegisteredKind) ArchiveDestination(source string) string {
 	i, _, _, _, ok := k.upload(source)
 	if !ok {
 		return ""
-	}
-	if target := k.Uploads[i].ArchiveTo; target != "" {
-		return target
 	}
 	if k.Publish != nil && k.Uploads[i].Path == k.Publish.Import {
 		return k.Publish.Pages
@@ -57,25 +52,6 @@ func (o *opRun) admitSource(f *media.File, previous int) error {
 		return uploadErr(media.CodeForbidden, "quota-enforced ZIP upload requires an owner")
 	}
 	f.Admission = admission
-	return nil
-}
-
-func validateArchiveDestination(k *RegisteredKind, source media.Upload) error {
-	if source.ArchiveTo == "" {
-		return nil
-	}
-	if !slices.Equal(source.Types, []string{"application/zip"}) {
-		return errors.New("media: archive_to source accepts only application/zip")
-	}
-	target := k.uploadIndex(source.ArchiveTo)
-	if !strings.HasSuffix(source.ArchiveTo, "{name}") || target < 0 {
-		return errors.New("media: archive_to must name a configured {name} image upload")
-	}
-	for _, typ := range k.Uploads[target].Types {
-		if !strings.HasPrefix(typ, "image/") {
-			return errors.New("media: archive_to destination accepts only images")
-		}
-	}
 	return nil
 }
 

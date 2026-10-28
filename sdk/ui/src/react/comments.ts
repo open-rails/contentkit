@@ -1,6 +1,6 @@
 import { useCallback } from "react";
 import type { ContentKitClient } from "../client/client.js";
-import type { BanScope, Decision, HeldKind, Reaction, Sort, Target } from "../client/content/types.js";
+import type { BanScope, Decision, HeldKind, Reaction, Sort, CommentTarget } from "../client/content/types.js";
 import type { ContentKitError } from "../client/errors.js";
 import type { AdminComment, BanInput, BannedWord, BannedWordInput, Comment, CommentBan, CommentStanding, FeedItem, HeldItem, IPBan, IPBanInput, ReactionCounts } from "../client/generated/wire.js";
 import type { Page, ResourceStore } from "./resources.js";
@@ -62,7 +62,7 @@ export interface UseComments extends UseList<Comment> {
 }
 
 /** A target's top-level comments, a page at a time, with every write; new comments and replies land in place. */
-export function useComments(target: Target, o: UseCommentsOptions = {}): UseComments {
+export function useComments(target: CommentTarget, o: UseCommentsOptions = {}): UseComments {
   const { client, store, scope } = useContentScope(o.client);
   const size = o.pageSize ?? 20;
   const sort = o.sort ?? "newest";
@@ -95,7 +95,7 @@ export function useCommentReplies(id: string, o: { pageSize?: number; enabled?: 
 }
 
 /** Commenting permissions and the entire visible thread's count in language, independent of loaded pages. Hidden/locked threads withhold the count. */
-export function useCanComment(target: Target, o: { language?: string; client?: ContentKitClient } = {}) {
+export function useCanComment(target: CommentTarget, o: { language?: string; client?: ContentKitClient } = {}) {
   const { client, store, scope } = useContentScope(o.client);
   const { type, id, version } = target;
   const language = o.language || undefined;

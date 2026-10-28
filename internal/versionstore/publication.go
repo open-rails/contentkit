@@ -3,32 +3,17 @@ package versionstore
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
 	"strings"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/open-rails/contentkit/contentref"
 	mediastore "github.com/open-rails/contentkit/internal/mediastore"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/layout"
 	versions "github.com/open-rails/contentkit/media/versions"
 )
-
-const (
-	kindPages = "pages"
-)
-
-const (
-	kindPlayback = "playback"
-)
-
-// pageCount is a publication row's page count. Publications written before
-// pages were always an array hold null for a version without pages.
-const pageCount = `CASE jsonb_typeof(source->'pages') WHEN 'array' THEN jsonb_array_length(source->'pages') ELSE 0 END`
 
 // pagesSnapshot is a version's pages as a publication freezes them.
 type pagesSnapshot struct {
@@ -190,181 +175,9 @@ func LockSource(ctx context.Context, pool *pgxpool.Pool, tenant, version string)
 	return LockSources(ctx, pool, tenant, []string{version})
 }
 
-// pubRow is one publication.
-type pubRow struct {
-	ID     string
-	State  string
-	Source []byte
-}
-
-func (s *Service) current(ctx context.Context, q querier, v versions.Target, kind string) (*pubRow, error) {
-	p, err := s.readPub(ctx, q, "p.version_id = $2 AND p.kind = $3 AND p.state = 'current'", v.Version, kind)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, nil
-	}
-	return p, err
-}
-
-func (s *Service) readPub(ctx context.Context, q querier, where string, args ...any) (*pubRow, error) {
-	p := &pubRow{}
-	err := q.QueryRow(ctx, `SELECT p.id,p.state,p.source FROM `+s.t.publications+` p WHERE p.tenant_id=$1 AND `+where, append([]any{s.o.Tenant}, args...)...).Scan(&p.ID, &p.State, &p.Source)
-	return p, err
-}
-
-// Retiring metadata never touches a source file or creates a storage job.
-func (s *Service) retireTx(ctx context.Context, tx pgx.Tx, _ *mediastore.RegisteredKind, ids []string) error {
-	if len(ids) == 0 {
-		return nil
-	}
-	_, err := tx.Exec(ctx, `DELETE FROM `+s.t.publications+` WHERE tenant_id=$1 AND id=ANY($2)`, s.o.Tenant, ids)
-	return err
-}
-
-// prepareTx records v's publication of kind showing source: the current one
-// when it already does (true), else the one being built, replacing a build
-// of another source.
-func (s *Service) prepareTx(ctx context.Context, tx pgx.Tx, k *mediastore.RegisteredKind, v versions.Target, kind string, source any) (string, bool, error) {
-	body, err := json.Marshal(source)
-	if err != nil {
-		return "", false, err
-	}
-	rows, err := tx.Query(ctx, `SELECT id, state, source = $4::jsonb FROM `+s.t.publications+`
-WHERE tenant_id = $1 AND version_id = $2 AND kind = $3`, s.o.Tenant, v.Version, kind, body)
-	if err != nil {
-		return "", false, err
-	}
-	var stale []string
-	for rows.Next() {
-		var id, state string
-		var same bool
-		if err := rows.Scan(&id, &state, &same); err != nil {
-			rows.Close()
-			return "", false, err
-		}
-		if same {
-			rows.Close()
-			return id, state == "current", nil
-		}
-		if state == "building" {
-			stale = append(stale, id)
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return "", false, err
-	}
-	if err := s.retireTx(ctx, tx, k, stale); err != nil {
-		return "", false, err
-	}
-	id := contentref.NewID()
-	if _, err := tx.Exec(ctx, `INSERT INTO `+s.t.publications+` (tenant_id, id, version_id, kind, source) VALUES ($1, $2, $3, $4, $5)`,
-		s.o.Tenant, id, v.Version, kind, body); err != nil {
-		return "", false, err
-	}
-	return id, false, nil
-}
-
-// promoteTx makes build id current, retiring the one it replaces; false when
-// the build is gone (an edit retired it meanwhile). Promoting the current one
-// changes nothing, so publishers that raced to build it agree.
-func (s *Service) promoteTx(ctx context.Context, tx pgx.Tx, k *mediastore.RegisteredKind, v versions.Target, kind, id string) (bool, error) {
-	var state string
-	err := tx.QueryRow(ctx, `SELECT state FROM `+s.t.publications+` WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, s.o.Tenant, id).Scan(&state)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return false, nil
-	} else if err != nil || state == "current" {
-		return err == nil, err
-	}
-	rows, err := tx.Query(ctx, `SELECT id FROM `+s.t.publications+` WHERE tenant_id = $1 AND version_id = $2 AND kind = $3 AND state = 'current'`,
-		s.o.Tenant, v.Version, kind)
-	if err != nil {
-		return false, err
-	}
-	old, err := pgx.CollectRows(rows, pgx.RowTo[string])
-	if err != nil {
-		return false, err
-	}
-	// A republication with more pages than the one it replaces added pages
-	// (new chapters in the same edition): cards mark the work updated.
-	if kind == kindPages && len(old) > 0 {
-		if _, err := tx.Exec(ctx, `UPDATE `+s.t.versions+` SET pages_added_at = now() WHERE tenant_id = $1 AND id = $2
- AND (SELECT `+pageCount+` FROM `+s.t.publications+` WHERE tenant_id = $1 AND id = $3) >
-     (SELECT max(`+pageCount+`) FROM `+s.t.publications+` WHERE tenant_id = $1 AND id = ANY($4))`,
-			s.o.Tenant, v.Version, id, old); err != nil {
-			return false, err
-		}
-	}
-	if err := s.retireTx(ctx, tx, k, old); err != nil {
-		return false, err
-	}
-	_, err = tx.Exec(ctx, `UPDATE `+s.t.publications+` SET state = 'current', ready_at = now() WHERE tenant_id = $1 AND id = $2`, s.o.Tenant, id)
-	return err == nil, err
-}
-
 // sameBlob reports two allocations of the same bytes.
 func sameBlob(a, b string) bool {
 	da, okA := layout.BlobDigest(a)
 	db, okB := layout.BlobDigest(b)
 	return a == b || okA && okB && bytes.Equal(da, db)
-}
-
-// withdrawStaleTx withdraws v's publications showing pages or audio m no
-// longer has, as uploaded: a removal, a replacement or an edit. It reports
-// whether the pages snapshot was withdrawn.
-func (s *Service) withdrawStaleTx(ctx context.Context, tx pgx.Tx, k *mediastore.RegisteredKind, v versions.Target, m *mediastore.Manifest) (bool, error) {
-	have := map[string]string{}
-	blobs := map[string]bool{}
-	for _, blob := range m.Blobs() {
-		blobs[blob] = true
-	}
-	for _, f := range m.Files {
-		if f.IsUpload() && !f.Unattached {
-			have[f.Path] = f.Key()
-		}
-	}
-	rows, err := tx.Query(ctx, `SELECT id, kind, source FROM `+s.t.publications+` WHERE tenant_id = $1 AND version_id = $2`, s.o.Tenant, v.Version)
-	if err != nil {
-		return false, err
-	}
-	type row struct {
-		id, kind string
-		source   []byte
-	}
-	all, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (row, error) {
-		var x row
-		err := r.Scan(&x.id, &x.kind, &x.source)
-		return x, err
-	})
-	if err != nil {
-		return false, err
-	}
-	var stale []string
-	pages := false
-	for _, p := range all {
-		gone := false
-		if p.kind == kindPages {
-			var snap pagesSnapshot
-			if err := json.Unmarshal(p.source, &snap); err != nil {
-				return false, err
-			}
-			for _, pg := range snap.Pages {
-				gone = gone || have[pg.Path] != pg.Source
-				for _, file := range pg.Files {
-					gone = gone || !blobs[file.Blob]
-				}
-			}
-			pages = pages || gone
-		} else {
-			var snap playbackSnapshot
-			if err := json.Unmarshal(p.source, &snap); err != nil {
-				return false, err
-			}
-			for _, t := range snap.Tracks {
-				gone = gone || have[t.Upload] != t.Source || !blobs[t.File.Blob]
-			}
-		}
-		if gone {
-			stale = append(stale, p.id)
-		}
-	}
-	return pages, s.retireTx(ctx, tx, k, stale)
 }

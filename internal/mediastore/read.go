@@ -230,9 +230,8 @@ func (g *Grant) Full() bool { return g.item != "" }
 func (g *Grant) Editor() bool { return g.Resolution.Editor }
 
 // Allowed reports whether a read gives this viewer f's URL: with access,
-// every listed file with a blob. Uploads are listed only with
-// ServeOriginals or declared audio assets; HostOnly presets, files in download/ (Kind.Downloads),
-// unattached files and frames not grabbed yet never.
+// every listed file with a blob. Uploads are listed only as declared audio
+// assets; HostOnly presets, unattached files and frames not grabbed yet never.
 func (g *Grant) Allowed(f media.File) bool {
 	if f.Blob == "" || f.Gone {
 		return false
@@ -271,7 +270,7 @@ func (g *Grant) inspectionFile(f media.File) bool {
 		// Only explicitly declared reader assets may pass through. Other
 		// originals, archives and editor-only source views remain unavailable.
 		return !f.Unattached && f.Admission == nil && f.Type != "application/zip" && f.Type != "application/x-zip-compressed" && !strings.EqualFold(path.Ext(f.Path), ".zip") &&
-			(g.Item.Kind().AudioUpload(f) || g.Item.Kind().ServeOriginals)
+			g.Item.Kind().AudioUpload(f)
 	}
 	if area == layout.AreaOriginals {
 		return false
@@ -330,7 +329,7 @@ func (g *Grant) URL(f media.File, dl bool) (string, error) {
 }
 
 // editorSourceURL is used only by explicit editor reads. Retained uploads
-// remain inspectable independently of the viewer's ServeOriginals policy.
+// remain inspectable.
 // Unserved originals/internal objects use a separate short-lived exact-key
 // storage capability; reader gateway tokens never open those areas.
 func (g *Grant) editorSourceURL(f media.File) (string, error) {
@@ -439,7 +438,7 @@ func (g *Grant) url(blob, download string, dl, cookie bool) (string, error) {
 
 // DownloadURL serves a published public/private file as an attachment named
 // name. Private downloads use an exact-file token after the caller's access
-// and quota checks. Originals, internal preparation and legacy download/ objects
+// and quota checks. Originals and internal preparation objects
 // are never exposed through the reader gateway.
 func (r *Reader) DownloadURL(item Item, f media.File, name string, ttl time.Duration) (string, time.Time, error) {
 	key, err := item.Blob(f.Blob)
@@ -698,7 +697,7 @@ func (r *Reader) read(ctx context.Context, ref contentref.ContentRef, actor acce
 }
 
 // listed reports a file a viewer with access is listed: derived files and
-// served uploads (attached only), never one in download/. An editor read
+// served uploads (attached only). An editor read
 // lists every file.
 func (g *Grant) listed(f media.File) bool {
 	if area, _, ok := layout.SplitBlobRef(f.Blob); !ok || area != layout.AreaPublic && area != layout.AreaPrivate {
@@ -708,7 +707,7 @@ func (g *Grant) listed(f media.File) bool {
 		if f.Type == "application/zip" {
 			return false
 		}
-		return !f.Unattached && (g.Item.Kind().ServeOriginals || g.Item.Kind().AudioUpload(f)) && f.Blob != "" && !f.Gone
+		return !f.Unattached && g.Item.Kind().AudioUpload(f) && f.Blob != "" && !f.Gone
 	}
 	if p := g.Item.Kind().private(f.Preset); p != nil && p.HostOnly {
 		return false

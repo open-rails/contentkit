@@ -102,12 +102,24 @@ func TestCopiedPageChapterPlacement(t *testing.T) {
 		})
 	}
 	awaitPaths("reader/01.webp")
+	pagesAdded := func() *time.Time {
+		t.Helper()
+		var at *time.Time
+		must(t, w.pool.QueryRow(t.Context(), `SELECT pages_added_at FROM `+pgx.Identifier{w.schema, "content_versions"}.Sanitize()+` WHERE tenant_id=$1 AND id=$2`, a.cfg.Scope.AppID.String(), ref.Version).Scan(&at))
+		return at
+	}
+	if at := pagesAdded(); at != nil {
+		t.Fatalf("first release marked pages added at %v", at)
+	}
 	// Identical bytes in three source entries must follow their own chapter.
 	// Moving the same-item copy publishes it without exposing the other copy.
 	index := 1
 	_, err = admin.PostMediaUploadCommit(t.Context(), media.CommitBody{Ref: ref, OperationID: uuid.NewString(), Ops: []media.Op{{Op: media.OpMove, Path: "pages/30.png", Index: &index}}})
 	must(t, err)
 	awaitPaths("reader/01.webp", "reader/30.webp")
+	if pagesAdded() == nil {
+		t.Fatal("republication with more pages did not mark pages added")
+	}
 }
 
 func TestChapterPlacementReconciliation(t *testing.T) {

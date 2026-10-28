@@ -113,16 +113,6 @@ func (run *batchRun) entity(r *resolver, i int) (any, string, error) {
 		}
 		in.Cover = &entities.Cover{ContentID: id}
 	}
-	if g.Edges != nil {
-		in.Edges = []entities.Edge{}
-		for _, e := range g.Edges {
-			to, err := r.ref(importer.RecordEntity, e.To)
-			if err != nil {
-				return nil, g.ExternalID, err
-			}
-			in.Edges = append(in.Edges, entities.Edge{Relation: e.Relation, To: entities.EntityID(to)})
-		}
-	}
 	return in, g.ExternalID, nil
 }
 

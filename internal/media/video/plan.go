@@ -200,7 +200,7 @@ func (c WorkerConfig) planUpload(ctx context.Context, item mediastore.Item, f me
 			continue
 		}
 		for _, q := range presets {
-			if q.MP4 != nil && q.MP4.Profile == p.HLS.Profile && slices.Contains(e.c.Codecs, media.CodecH264) &&
+			if q.MP4 != nil && slices.Contains(e.c.Codecs, media.CodecH264) &&
 				slices.IndexFunc(st, func(r rung) bool { return r.n == q.MP4.Rung }) >= done {
 				remuxed[q.Name] = true
 			}
@@ -329,7 +329,7 @@ func (c WorkerConfig) planRuns(ctx context.Context, item mediastore.Item, f medi
 	// when it fits one chunk (the chunk checks its packets).
 	var passthrough media.Codec
 	if src := media.Codec(pl.stream.CodecName); p.HLS != nil && len(st) > 1 && len(bounds[len(bounds)-1]) == 1 &&
-		slices.Contains(codecs, src) && (src == media.CodecH264 || src == media.CodecHEVC) {
+		src == media.CodecH264 && slices.Contains(codecs, src) {
 		codec, ok, why := passthroughCandidate(pl, st[len(st)-1])
 		if ok && slices.Contains(codecs, codec) {
 			passthrough = codec

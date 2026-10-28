@@ -434,15 +434,10 @@ For custom interfaces, pass selection-specific `counts` to
 `ContentFilterSettings` or the controlled `ContentFilterDialog`; omit `counts`
 for ordinary settings without listing totals.
 
-`published_within` filters a listing by publication age independently of its
-ranking window. For example, `{ sort: "popular:7d", published_within: "7d" }`
-ranks only content published during the past seven days.
-
 `<PopularContentGrid query={{ kind: "gallery" }} />` supplies four visible tabs
 for 7-day, 90-day, 365-day and all-time activity and loads further pages as the
 reader scrolls. Publication age is unrestricted, so older content can trend
-again. Supply `query.published_within` only when a release-age cutoff is wanted.
-`period` and `onPeriodChange`
+again. `period` and `onPeriodChange`
 optionally keep its state in the host's URL. For a homepage preview, pass
 `popularQuery("7d", { kind: "gallery", limit: 6 })` to a `ContentRail`'s `list`.
 
@@ -612,8 +607,8 @@ components below).
 
 ```tsx
 const { items, hasMore, loadMore } = useEntities({ kind: "artist", letter: "a", sort: "count" }); // parent, scope, contentKind, language
-const g = useEntity(id);           // g.entity: names, text, attributes, parent, scope, children, edges, counts
-await g.update({ attributes: { artist_type: "circle" } }); // staff: create, names, edges, merge, remove, restore
+const g = useEntity(id);           // g.entity: names, text, attributes, parent, scope, children, counts
+await g.update({ attributes: { artist_type: "circle" } }); // staff: create, names, merge, remove, restore
 await g.uploadCover(file);         // into the entity kind's folder (cover/{name}), then selected
 const members = useEntityMembers(id);       // add, remove, reorder
 const content = useContentEntities(contentId); // content.set(memberships, kinds)

@@ -127,7 +127,7 @@ func (e *Encoder) assembleHLS(ctx context.Context, w runWork, k int, chunks []en
 	var mp4s []*media.Private // MP4 presets remuxed from this rung's H.264
 	if slices.Contains(e.c.Codecs, media.CodecH264) {
 		for _, q := range w.item.Kind().PrivateFor(w.f.Path) {
-			if q.MP4 != nil && q.MP4.Rung == r.n && q.MP4.Profile == w.p.HLS.Profile && e.todo(w.man, w.f, q) {
+			if q.MP4 != nil && q.MP4.Rung == r.n && e.todo(w.man, w.f, q) {
 				mp4s = append(mp4s, q)
 			}
 		}
@@ -291,17 +291,11 @@ func (e *Encoder) muxMP4(ctx context.Context, w runWork, presets []*media.Privat
 	}
 	defer os.Remove(out)
 	fp.set(media.PhaseUploading)
-	area := layout.AreaPrivate
-	for _, q := range presets {
-		if w.item.Kind().Area("", q.Name) == layout.AreaDownload {
-			area = layout.AreaDownload // one blob serves every rung's presets
-		}
-	}
 	var blob string
 	var size int64
 	var err error
 	if !w.item.Kind().Versions {
-		blob, size, err = e.put(ctx, w.item, area, out, "video/mp4", fp)
+		blob, size, err = e.put(ctx, w.item, layout.AreaPrivate, out, "video/mp4", fp)
 		if err != nil {
 			return nil, err
 		}
@@ -312,7 +306,7 @@ func (e *Encoder) muxMP4(ctx context.Context, w runWork, presets []*media.Privat
 			// Presets can have different publication policy (notably HostOnly).
 			// Reuse the encoded bytes, but never share a physical allocation
 			// whose move into public/private would also expose an internal one.
-			blob, size, err = e.put(ctx, w.item, w.item.Kind().Area("", q.Name), out, "video/mp4", fp)
+			blob, size, err = e.put(ctx, w.item, w.item.Kind().Area(q.Name), out, "video/mp4", fp)
 			if err != nil {
 				return nil, err
 			}

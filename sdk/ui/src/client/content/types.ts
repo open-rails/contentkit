@@ -8,6 +8,9 @@ export interface Target {
   version?: string;
 }
 
+/** A target that takes comments and favorites; entities take reactions only. */
+export type CommentTarget = Target & { type: "contents" | "channels" };
+
 /** The same target. */
 export function sameTarget(a?: Target, b?: Target): boolean {
   return !!a && !!b && a.type === b.type && a.id === b.id && (a.version ?? "") === (b.version ?? "");

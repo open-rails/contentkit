@@ -832,7 +832,7 @@ func (c *comments) reactTx(ctx context.Context, actor access.Actor, cid string, 
 
 func commentRoutes() []httpapi.Route[*comments] {
 	var out []httpapi.Route[*comments]
-	for _, typ := range TargetTypes {
+	for _, typ := range commentFavoriteTargets {
 		noun := targetNoun(typ)
 		withheld := ""
 		if typ == content.TargetContent {

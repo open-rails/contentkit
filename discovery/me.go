@@ -4,15 +4,10 @@ import (
 	"time"
 
 	"github.com/open-rails/contentkit/channels"
-	"github.com/open-rails/contentkit/entities"
 )
 
 const (
 	TargetContents = "contents"
-)
-
-const (
-	TargetEntities = "entities"
 )
 
 const (
@@ -22,9 +17,9 @@ const (
 // MineOptions select one page of the signed-in reader's favorites.
 type MineOptions struct {
 	Reader
-	// Target is contents (the default), entities or channels.
+	// Target is contents (the default) or channels.
 	Target string
-	// Kind is one content kind or entity kind; every kind by default.
+	// Kind is one content kind; every kind by default.
 	Kind         string
 	CardEntities []string
 	Cursor       string
@@ -34,12 +29,11 @@ type MineOptions struct {
 	Summary bool
 }
 
-// Interaction is one content item or entity the reader favorited or reacted
+// Interaction is one content item or channel the reader favorited or reacted
 // to, as its card shows it now.
 type Interaction struct {
-	Channel *channels.Card       `json:"channel,omitempty"`
-	Content *Card                `json:"content,omitempty"`
-	Entity  *entities.EntityCard `json:"entity,omitempty"`
+	Channel *channels.Card `json:"channel,omitempty"`
+	Content *Card          `json:"content,omitempty"`
 	// Value is 1 for a favorite.
 	Value int16 `json:"value"`
 	// At is when the reader favorited or last reacted.
