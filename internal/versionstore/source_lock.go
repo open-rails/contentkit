@@ -3,15 +3,14 @@ package versionstore
 import (
 	"context"
 	"slices"
-	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/open-rails/contentkit/internal/pglock"
 )
 
 // LockSources serializes source selection and catalog segment writes before
-// either takes row locks. A batch uses one dedicated connection, leaving the
-// caller's pool available for manifest commits and catalog notifications.
+// either takes row locks. The locks live on the shared lock session, leaving
+// the caller's pool available for manifest commits and catalog notifications.
 func LockSources(ctx context.Context, pool *pgxpool.Pool, tenant string, vers []string) (func(), error) {
 	if len(vers) == 0 {
 		return func() {}, nil
@@ -27,23 +26,21 @@ func LockSources(ctx context.Context, pool *pgxpool.Pool, tenant string, vers []
 			return nil, ErrInvalid
 		}
 	}
-	conn, err := pgx.ConnectConfig(ctx, pool.Config().ConnConfig)
-	if err != nil {
-		return nil, err
-	}
+	releases := make([]func(), 0, len(ids))
 	release := func() {
-		clean, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		_ = conn.Close(clean)
+		for _, r := range slices.Backward(releases) {
+			r()
+		}
 	}
 	for _, id := range ids {
 		// Keep the original media.PGLocker namespace so existing publishers and
 		// upgraded catalog writers contend on exactly the same advisory key.
-		key := "contentkit:media:contentkit:versions:" + tenant + ":" + id
-		if _, err = conn.Exec(ctx, "SELECT pg_advisory_lock(hashtextextended($1, 0))", key); err != nil {
+		r, _, err := pglock.Acquire(ctx, pool, "contentkit:media:contentkit:versions:"+tenant+":"+id, true)
+		if err != nil {
 			release()
 			return nil, err
 		}
+		releases = append(releases, r)
 	}
 	return release, nil
 }

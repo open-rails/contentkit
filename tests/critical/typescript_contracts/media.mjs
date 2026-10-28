@@ -225,8 +225,11 @@ export async function runMediaContracts(group, fixture) {
     assert.match(inline.name, /^i-[a-f0-9-]{36}$/);
     assert.equal(inline.path, "body/" + inline.name + ".png");
     assert.equal(inline.ref, "contentkit:" + inline.name);
-    assert.equal(typeof inline.url, "string");
-    assert.equal((await fetch(inline.url)).status, 200);
+    // The editor view renders once an editor read asks for it, so it may not
+    // exist yet when the upload settles (url is null until then).
+    const preview = inline.url ?? (await owner.media.editorView(imageRef, inline.path)).url;
+    assert.equal(typeof preview, "string");
+    assert.equal((await fetch(preview)).status, 200);
     await owner.contents.updateVersion(imageRef.id, imageRef.version, { text: { en: {
       title: "Inline body",
       body: "Text ![inline](" + inline.ref + ")",
