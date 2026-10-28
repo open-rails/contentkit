@@ -120,8 +120,22 @@ func (r *rules) apply(ctx context.Context, text string) (string, error) {
 	if reject != nil && reject.MatchString(foldWord(text)) {
 		return "", content.RejectedError{Reason: "content violates policy"}
 	}
+	return masked(text, mask), nil
+}
+
+// maskOnly masks the mask words in text without refusing it: imported history
+// is kept, only cleaned.
+func (r *rules) maskOnly(ctx context.Context, text string) (string, error) {
+	mask, _, err := r.load(ctx)
+	if err != nil {
+		return "", err
+	}
+	return masked(text, mask), nil
+}
+
+func masked(text string, mask *regexp.Regexp) string {
 	if mask == nil {
-		return text, nil
+		return text
 	}
 	var b strings.Builder
 	for _, tok := range tokenRe.FindAllString(text, -1) {
@@ -130,7 +144,7 @@ func (r *rules) apply(ctx context.Context, text string) (string, error) {
 		}
 		b.WriteString(tok)
 	}
-	return b.String(), nil
+	return b.String()
 }
 
 // checkIPBan refuses a text write from a banned address, unless the actor
