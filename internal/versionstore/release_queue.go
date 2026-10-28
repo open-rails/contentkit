@@ -3,6 +3,7 @@ package versionstore
 import (
 	"context"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -135,6 +136,9 @@ func (s *Service) scheduleReleaseAtTx(ctx context.Context, tx pgx.Tx, target ver
  WHERE tenant_id=$1 AND id=$2`, s.o.Tenant, currentID); err != nil {
 				return err
 			}
+			if err := s.pruneRequestsTx(ctx, tx, target, false); err != nil {
+				return err
+			}
 		}
 		id = uuid.NewString()
 		err = tx.QueryRow(ctx, `INSERT INTO `+s.releaseRequestsTable()+` (tenant_id,id,content_id,version_id,scheduled_at)
@@ -153,6 +157,21 @@ func (s *Service) scheduleReleaseAtTx(ctx context.Context, tx pgx.Tx, target ver
 	return mediastore.InsertOnce(ctx, func(ctx context.Context, args river.JobArgs, options *river.InsertOpts) (*rivertype.JobInsertResult, error) {
 		return client.InsertTx(ctx, tx, args, options)
 	}, publicationArgs{ID: id, Due: at}, river.InsertOpts{Queue: QueueFor(s.o.Tenant), ScheduledAt: at})
+}
+
+// errRequestGone cancels a job whose request a newer release pruned.
+var errRequestGone = fmt.Errorf("%w: publication request is gone", ErrNotFound)
+
+// pruneRequestsTx deletes an edition's requests that nothing reads: not
+// current, not its live release and not retiring. Readers use the live
+// release, retirement uses retiring rows and media cleanup uses the manifest.
+// Until a release completes, a superseded unfinished request's plan records
+// that storage work started (releaseDueTx), so only completed ones go.
+func (s *Service) pruneRequestsTx(ctx context.Context, tx pgx.Tx, target versions.Target, released bool) error {
+	_, err := tx.Exec(ctx, `DELETE FROM `+s.releaseRequestsTable()+` r
+ WHERE r.tenant_id=$1 AND r.version_id=$2 AND NOT r.current AND (r.state='completed' OR $3 AND r.state<>'retiring')
+ AND r.id IS DISTINCT FROM (SELECT release_id FROM `+s.t.versions+` WHERE tenant_id=$1 AND id=$2)`, s.o.Tenant, target.Version, released)
+	return err
 }
 
 type publicationArgs struct {

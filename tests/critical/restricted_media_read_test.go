@@ -72,13 +72,15 @@ func TestRestrictedMediaReadIsNotEditAuthority(t *testing.T) {
 	if len(ordinary.Files) != 0 {
 		t.Fatal("ordinary media read bypassed completed publication")
 	}
-	publicationCount := func() int {
+	// Superseded requests are deleted, so compare request identities and
+	// deadlines rather than a count a new request plus a delete keeps flat.
+	publicationRequests := func() string {
 		t.Helper()
-		var count int
-		must(t, w.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+w.schema+`.content_publication_requests WHERE tenant_id=$1 AND version_id=$2`, a.cfg.Scope.AppID.String(), ref.Version).Scan(&count))
-		return count
+		var requests string
+		must(t, w.pool.QueryRow(t.Context(), `SELECT coalesce(string_agg(id::text||'@'||scheduled_at::text,',' ORDER BY id),'') FROM `+w.schema+`.content_publication_requests WHERE tenant_id=$1 AND version_id=$2`, a.cfg.Scope.AppID.String(), ref.Version).Scan(&requests))
+		return requests
 	}
-	before := publicationCount()
+	before := publicationRequests()
 	read, err := reader.GetMediaVersion(t.Context(), ref.Kind, ref.ID, ref.Version, ck.GetMediaVersionQuery{Editor: true})
 	must(t, err)
 	var rendition, audioURL string
@@ -139,7 +141,7 @@ func TestRestrictedMediaReadIsNotEditAuthority(t *testing.T) {
 	if pages != 1 {
 		t.Fatalf("auditor reader plan has %d pages, want1", pages)
 	}
-	if plan.Publication != "" || publicationCount() != before {
+	if plan.Publication != "" || publicationRequests() != before {
 		t.Fatal("read-only inspection created or claimed a publication")
 	}
 	if plan.Playback == nil || !plan.Playback.Inspection || len(plan.Playback.Tracks) != 1 || plan.Playback.Tracks[0].Path != "audio/voice.wav" {

@@ -32,8 +32,9 @@ func TestRestrictedDraftHLSInspection(t *testing.T) {
 	requireError(t, err, 404, "not_found")
 	_, err = reader.GetMediaVersionHls(t.Context(), ref.Kind, ref.ID, ref.Version, f.MasterPath, ck.GetMediaVersionHlsQuery{})
 	requireError(t, err, 404, "not_found")
-	before := 0
-	must(t, f.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+f.schema+`.content_publication_requests WHERE tenant_id=$1 AND version_id=$2`, f.app.cfg.Scope.AppID.String(), ref.Version).Scan(&before))
+	// Compare request identities: a new request plus a delete keeps a count flat.
+	before := ""
+	must(t, f.pool.QueryRow(t.Context(), `SELECT coalesce(string_agg(id::text||'@'||scheduled_at::text,',' ORDER BY id),'') FROM `+f.schema+`.content_publication_requests WHERE tenant_id=$1 AND version_id=$2`, f.app.cfg.Scope.AppID.String(), ref.Version).Scan(&before))
 	read, err := reader.GetMediaVersion(t.Context(), ref.Kind, ref.ID, ref.Version, ck.GetMediaVersionQuery{Editor: true})
 	must(t, err)
 	if !read.Inspection || read.Cookie != nil || len(read.HLS) != 1 || len(read.Uploads) != 0 {
@@ -75,9 +76,9 @@ func TestRestrictedDraftHLSInspection(t *testing.T) {
 	}
 	_, err = reader.GetMediaVersionHls(t.Context(), ref.Kind, ref.ID, ref.Version, childPath, ck.GetMediaVersionHlsQuery{})
 	requireError(t, err, 404, "not_found")
-	after := 0
+	after := ""
 	var released bool
-	must(t, f.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+f.schema+`.content_publication_requests WHERE tenant_id=$1 AND version_id=$2`, f.app.cfg.Scope.AppID.String(), ref.Version).Scan(&after))
+	must(t, f.pool.QueryRow(t.Context(), `SELECT coalesce(string_agg(id::text||'@'||scheduled_at::text,',' ORDER BY id),'') FROM `+f.schema+`.content_publication_requests WHERE tenant_id=$1 AND version_id=$2`, f.app.cfg.Scope.AppID.String(), ref.Version).Scan(&after))
 	must(t, f.pool.QueryRow(t.Context(), `SELECT released FROM `+f.schema+`.content_versions WHERE tenant_id=$1 AND id=$2`, f.app.cfg.Scope.AppID.String(), ref.Version).Scan(&released))
 	if before != after || released {
 		t.Fatal("auditor HLS inspection changed publication state")
