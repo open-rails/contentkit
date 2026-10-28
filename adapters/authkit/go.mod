@@ -5,7 +5,7 @@ go 1.26.10
 require (
 	github.com/google/uuid v1.6.0
 	github.com/jackc/pgx/v5 v5.11.0
-	github.com/open-rails/authkit v1.41.0
+	github.com/open-rails/authkit v1.43.0
 	github.com/open-rails/contentkit v0.131.0
 )
 
@@ -17,7 +17,7 @@ require (
 	github.com/fxamacker/cbor/v2 v2.9.6 // indirect
 	github.com/go-faster/city v1.0.1 // indirect
 	github.com/go-faster/errors v0.7.1 // indirect
-	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
+	github.com/go-jose/go-jose/v4 v4.1.6 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect

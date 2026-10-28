@@ -5,9 +5,9 @@ go 1.26.10
 require (
 	github.com/goccy/go-yaml v1.19.2
 	github.com/jackc/pgx/v5 v5.11.0
-	github.com/open-rails/authkit v1.41.0
-	github.com/open-rails/contentkit v0.131.1
-	github.com/open-rails/contentkit/adapters/openrails v0.10.0
+	github.com/open-rails/authkit v1.43.0
+	github.com/open-rails/contentkit v0.135.0
+	github.com/open-rails/contentkit/adapters/openrails v0.11.0
 	github.com/open-rails/helpers v1.18.0
 	github.com/open-rails/openrails v0.266.0
 	github.com/redis/go-redis/v9 v9.23.0
@@ -46,7 +46,7 @@ require (
 	github.com/gagliardetto/treeout v0.1.4 // indirect
 	github.com/go-faster/city v1.0.1 // indirect
 	github.com/go-faster/errors v0.7.1 // indirect
-	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
+	github.com/go-jose/go-jose/v4 v4.1.6 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-playground/locales v0.14.1 // indirect
