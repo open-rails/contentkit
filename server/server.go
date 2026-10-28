@@ -11,14 +11,12 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"slices"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/open-rails/authkit"
 	"github.com/open-rails/authkit/iam"
-	"github.com/open-rails/authkit/userinfo"
 	"github.com/open-rails/helpers/deps"
 	"github.com/open-rails/openrails"
 	"github.com/redis/go-redis/v9"
@@ -28,8 +26,8 @@ import (
 	mediaS3 "github.com/open-rails/contentkit/media/s3"
 )
 
-// StaffRole names the declared ContentKit staff role. Legacy deployments use
-// root:staff; scoped deployments use app:staff and native inherited authority.
+// StaffRole names the declared ContentKit staff role: app:staff with native
+// inherited authority.
 const StaffRole = "staff"
 
 // Config is a standalone deployment: plain data. Secrets are read from the
@@ -42,12 +40,11 @@ type Config struct {
 	// issuer in RemoteApplications. It mints nothing unless Keys says so;
 	// its tables live in Database.Schema (default "contentkit_auth").
 	Auth authkit.Config `yaml:"auth"`
-	// Authorization binds a scoped engine to explicitly provisioned AuthKit
-	// groups and a verified tenant identity directory. Required with Scope.
+	// Authorization binds the engine to explicitly provisioned AuthKit groups
+	// and a verified tenant identity directory. Required.
 	Authorization *AuthorizationConfig `yaml:"authorization"`
-	// UsersIssuer is the trusted issuer whose directory names authors. Legacy
-	// mode can infer the only RemoteApplication; scoped mode uses Authorization
-	// and refuses a conflicting UsersIssuer.
+	// UsersIssuer is the trusted issuer whose directory names authors; the
+	// engine uses Authorization and refuses a conflicting UsersIssuer.
 	UsersIssuer string `yaml:"users_issuer"`
 	// OpenRails is where entitlements are read; an empty BaseURL runs
 	// without billing.
@@ -156,14 +153,8 @@ func New(ctx context.Context, cfg Config, d Deps) (_ *Server, err error) {
 	}
 
 	engineDeps := contentkit.Deps{Postgres: d.Postgres, Redis: d.Redis, Auth: s.auth.Authenticator(), Logger: s.log}
-	if cfg.Engine.Scope != nil {
-		if err := s.scopedAuthorization(ctx, cfg, ak, &engineDeps); err != nil {
-			return nil, err
-		}
-	} else {
-		if engineDeps.Users, err = s.users(ak); err != nil {
-			return nil, err
-		}
+	if err := s.scopedAuthorization(ctx, cfg, ak, &engineDeps); err != nil {
+		return nil, err
 	}
 	if cfg.OpenRails.BaseURL != "" {
 		billing, err := openrails.NewRemoteMerchant(cfg.OpenRails.BaseURL, openrails.RemoteCredential{APIKey: cfg.OpenRails.APIKey})
@@ -204,21 +195,6 @@ func New(ctx context.Context, cfg Config, d Deps) (_ *Server, err error) {
 	}
 	s.handler = mux
 	return s, nil
-}
-
-// users is the trusted issuer's directory in the root group.
-func (s *Server) users(ak authkit.Config) (userinfo.Lookup, error) {
-	issuer := s.cfg.UsersIssuer
-	if issuer == "" {
-		if len(ak.RemoteApplications) != 1 {
-			return nil, nil
-		}
-		issuer = ak.RemoteApplications[0].Issuer
-	}
-	if !slices.ContainsFunc(ak.RemoteApplications, func(a authkit.RemoteApplicationConfig) bool { return a.Issuer == issuer }) {
-		return nil, fmt.Errorf("server: users_issuer %q is not a declared remote application", issuer)
-	}
-	return s.auth.RemoteUserInfo(iam.RootGroup(), issuer), nil
 }
 
 // Reconcile repairs the engine's derived catalog state (Engine.Reconcile).

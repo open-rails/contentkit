@@ -72,7 +72,6 @@ type EntityDetail struct {
 	Parent       *EntityCard  `json:"parent,omitempty"`
 	Scope        *EntityCard  `json:"scope,omitempty"`
 	Children     []EntityCard `json:"children"`
-	Edges        []Edge       `json:"edges"`
 	Counts       []Count      `json:"counts"`
 	// Access is an entitlement-backed entity's key and the
 	// viewer's standing.

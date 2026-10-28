@@ -167,7 +167,7 @@ func (f *faults) storageParent(path string) string {
 		return ""
 	}
 	parsed, ok := layout.Parse(key)
-	if !ok || parsed.Namespace != tenant || parsed.Version != "" {
+	if !ok || parsed.Scope != mediaScope || parsed.Version != "" {
 		return ""
 	}
 	return f.h.items.versionOwner(parsed.Kind, parsed.ID)

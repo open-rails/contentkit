@@ -97,6 +97,48 @@ func TestFixedSiteChannelPolicy(t *testing.T) {
 	if got.ChannelID != string(official.ID) || !got.Decision.Allowed {
 		t.Fatalf("import did not apply fixed free channel: %+v", got)
 	}
+	t.Run("TestFixedSiteChannelStaffRevocation", func(t *testing.T) {
+		err := ck.MigratePostgres(t.Context(), w.pool, a.cfg, ck.MigrationOptions{Scopes: a.deps.Scopes})
+		must(t, err)
+		author, token := w.person(t, 0)
+		authtest.GrantRole(t, w.tenant[0], a.group, iam.UserSubject(author.ID), w.writer)
+		writer := a.client(token)
+		input := catalog.ContentInput{Kind: "article", Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: "Staff authored", Body: "Official text"}}}}}
+		draft, err := writer.PostContents(t.Context(), input)
+		must(t, err)
+		published, err := writer.PostContents(t.Context(), input)
+		must(t, err)
+		published, err = writer.PostContentPublish(t.Context(), published.ID, catalog.PublishInput{})
+		must(t, err)
+		awaitEditionPublication(t, a, writer, published.ID, published.Versions[0].ID)
+		if len(draft.Creators) != 1 || draft.Creators[0].UserID != author.ID {
+			t.Fatalf("fixture lacks author credit: %+v", draft.Creators)
+		}
+		authtest.RevokeRole(t, w.tenant[0], a.group, iam.UserSubject(author.ID), w.writer)
+		_, err = writer.GetContent(t.Context(), draft.ID, ck.GetContentQuery{})
+		requireError(t, err, 404, "not_found")
+		_, err = writer.PatchContent(t.Context(), published.ID, catalog.ContentPatch{Access: &access.Rule{Level: access.Public}})
+		requireError(t, err, 403, "forbidden")
+		err = writer.DeleteContentVersion(t.Context(), published.ID, published.Versions[0].ID)
+		requireError(t, err, 403, "forbidden")
+		visible, err := writer.GetContent(t.Context(), published.ID, ck.GetContentQuery{})
+		must(t, err)
+		if visible.Editor || !visible.Decision.Allowed || visible.Body != "Official text" {
+			t.Fatalf("revoked author did not become an ordinary public reader: %+v", visible)
+		}
+		// Personal account blocks must not become moderation grants over the site's channel.
+		reader, readerToken := w.person(t, 0)
+		_, err = writer.PutCommentBan(t.Context(), reader.ID, content.BanInput{Reason: "Personal block"})
+		must(t, err)
+		standing, err := writer.GetContentCanComment(t.Context(), published.ID, ck.GetContentCanCommentQuery{})
+		must(t, err)
+		for _, scope := range standing.BanScopes {
+			if scope == content.BanOwner {
+				t.Fatal("former site author acquired personal moderation over the official channel")
+			}
+		}
+		postComment(t, a.client(readerToken), published.ID, "Channel moderation remains with staff")
+	})
 }
 
 func TestFixedSiteChannelMigration(t *testing.T) {
@@ -162,60 +204,6 @@ func TestFixedSiteChannelMigration(t *testing.T) {
 	if again.Revision != after.Revision || again.Body != after.Body {
 		t.Fatal("idempotent migration changed retained content")
 	}
-}
-
-// A staff author's credit and immutable creator identity must not become a
-// personal editing grant after the staff role is revoked.
-func TestFixedSiteChannelStaffRevocation(t *testing.T) {
-	w := newWorld(t, func(cfg *ck.Config) {
-		cfg.Content.Channels = &kinds.Channels{Creation: "staff", Route: "channels"}
-		kind := cfg.Content.Kinds["article"]
-		kind.Channel = &kinds.ChannelPolicy{Fixed: "blog"}
-		kind.AccessLevels = []string{"public"}
-		cfg.Content.Kinds["article"] = kind
-	})
-	a := w.apps[0]
-	err := ck.MigratePostgres(t.Context(), w.pool, a.cfg, ck.MigrationOptions{Scopes: a.deps.Scopes})
-	must(t, err)
-	author, token := w.person(t, 0)
-	authtest.GrantRole(t, w.tenant[0], a.group, iam.UserSubject(author.ID), w.writer)
-	writer := a.client(token)
-	input := catalog.ContentInput{Kind: "article", Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: "Staff authored", Body: "Official text"}}}}}
-	draft, err := writer.PostContents(t.Context(), input)
-	must(t, err)
-	published, err := writer.PostContents(t.Context(), input)
-	must(t, err)
-	startPublicationRuntime(t, a)
-	published, err = writer.PostContentPublish(t.Context(), published.ID, catalog.PublishInput{})
-	must(t, err)
-	awaitEditionPublication(t, a, writer, published.ID, published.Versions[0].ID)
-	if len(draft.Creators) != 1 || draft.Creators[0].UserID != author.ID {
-		t.Fatalf("fixture lacks author credit: %+v", draft.Creators)
-	}
-	authtest.RevokeRole(t, w.tenant[0], a.group, iam.UserSubject(author.ID), w.writer)
-	_, err = writer.GetContent(t.Context(), draft.ID, ck.GetContentQuery{})
-	requireError(t, err, 404, "not_found")
-	_, err = writer.PatchContent(t.Context(), published.ID, catalog.ContentPatch{Access: &access.Rule{Level: access.Public}})
-	requireError(t, err, 403, "forbidden")
-	err = writer.DeleteContentVersion(t.Context(), published.ID, published.Versions[0].ID)
-	requireError(t, err, 403, "forbidden")
-	visible, err := writer.GetContent(t.Context(), published.ID, ck.GetContentQuery{})
-	must(t, err)
-	if visible.Editor || !visible.Decision.Allowed || visible.Body != "Official text" {
-		t.Fatalf("revoked author did not become an ordinary public reader: %+v", visible)
-	}
-	// Personal account blocks must not become moderation grants over the site's channel.
-	reader, readerToken := w.person(t, 0)
-	_, err = writer.PutCommentBan(t.Context(), reader.ID, content.BanInput{Reason: "Personal block"})
-	must(t, err)
-	standing, err := writer.GetContentCanComment(t.Context(), published.ID, ck.GetContentCanCommentQuery{})
-	must(t, err)
-	for _, scope := range standing.BanScopes {
-		if scope == content.BanOwner {
-			t.Fatal("former site author acquired personal moderation over the official channel")
-		}
-	}
-	postComment(t, a.client(readerToken), published.ID, "Channel moderation remains with staff")
 }
 
 // A fixed destination does not dictate which AuthKit roles may publish there.

@@ -187,7 +187,7 @@ func (w *world) newApplication(t *testing.T, tenant *authkit.Client, tid iam.Ten
 	inboxOwner := authtest.Replica(t, w.auth, authtest.WithConfig(func(c *authkit.Config) {
 		c.Notifications = &authkit.NotificationsConfig{Schema: inboxSchema,
 			Scopes: map[string]string{tid.String(): "contentkit:" + (layout.Scope{TenantID: tid.String()}).Partition()},
-			AppID:  aid.String(), LegacyOrigins: []notify.OriginScope{{System: "contentkit", Scope: aid.String()}, {System: "critical-shared", Scope: tid.String()}},
+			AppID:  aid.String(),
 			Producers: []authkit.NotificationProducer{
 				{Name: "contentkit", TenantID: tid, Origin: notify.OriginScope{System: "contentkit", Scope: aid.String()}, Visibility: notify.VisibilityApp, AppID: aid.String()},
 				{Name: "application", TenantID: tid, Origin: notify.OriginScope{System: "critical", Scope: aid.String()}, Visibility: notify.VisibilityApp, AppID: aid.String()},

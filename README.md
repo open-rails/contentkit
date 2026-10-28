@@ -51,8 +51,8 @@ See [Go module retractions](https://go.dev/ref/mod#go-mod-file-retract).
 A language is metadata on a document or version, never part of a reference.
 Each engine serves the app pinned by `Scope`. Apps can share tenant-owned
 account data without sharing their catalogs. `ContentRef.TenantID` retains the
-catalog partition key: it is the app ID by default, or `LegacyCatalogKey` when
-adopting an existing catalog. It is not the business's `Scope.TenantID`.
+catalog partition key: it is `Scope.AppID`, distinct from the business's
+`Scope.TenantID`. `Scope` is required.
 A reference to another catalog is an error, never remapped. See [scope.go](scope.go).
 
 ## Packages
@@ -75,7 +75,7 @@ bodies' wire and data types and its ports; its implementation is the
 | `adapters/authkit`, `adapters/openrails` | their own modules: AuthKit auth and scopes, `access.Billing` over OpenRails |
 | `server` | its own module: the standalone `contentkit` binary (`server/cmd/contentkit`) |
 | `internal/catalogstore` | content items, versions, `content_facets`, the one visibility rule, the `content_events` log ([cursor reads](docs/events.md)), search documents, totals, retention jobs |
-| `internal/entitystore`, `internal/channelstore` | entities by kind and channels: names, text, covers, scopes, edges, merges, memberships |
+| `internal/entitystore`, `internal/channelstore` | entities by kind and channels: names, text, covers, scopes, merges, memberships |
 | `internal/contentstore` | comments, reactions, favorites, polls, bans, moderation, interaction limits |
 | `internal/discoverystore`, `internal/search`, `internal/popularity` | public reads: lists, search, typeahead, similar and recommended, release dates, history; keyword search; ranking policy |
 | `internal/signalstore` | the ClickHouse signal plane |
@@ -93,7 +93,6 @@ one `Start`, routes the host mounts.
 ```go
 ck, _ := contentkit.New(ctx, contentkit.Config{
 	Scope:            &contentkit.Scope{TenantID: tenantID, AppID: appID}, // stable provisioned IDs
-	LegacyCatalogKey: "doujins", // adopting an existing catalog; omit for a new app
 	Database:   contentkit.DatabaseConfig{Schema: "doujins_contentkit", SkipMigrations: true}, // River: doujins_contentkit_river
 	Content:    siteKinds, // kinds.Config: languages, tiers, content and entity kinds
 	Media:      &contentkit.MediaConfig{Config: registry, Delivery: contentkit.DeliveryConfig{SigningKey: key}},
@@ -322,7 +321,6 @@ HOST_INTEGRATION "Media" covers the registry, commit ops, reads and exposure.
 ```text
 tenant/{tenant}/app/{app}/{kind}/{owner}/manifest.json
                                        /private/{blob}
-                                       /download/{blob}
                                        /public/{name}
                                        /temp/{name}
 ```
@@ -332,8 +330,7 @@ only in the database and has no media folder. Covers, pages and body images
 belong to the version. Domain APIs still use `{kind, content, version}` for
 authorization and relationships; storage addressing does not duplicate that
 parent relationship. Other kinds use their own item ID. Shared account media
-uses `tenant/{tenant}/account/` instead of an app root. Legacy single-namespace
-configurations use the same flat owner rule under `{namespace}/`.
+uses `tenant/{tenant}/account/` instead of an app root.
 
 Private blobs are content-addressed and immutable; public names carry a
 generation. Media URLs add `/v1/` before the storage key. `media/versions`
@@ -532,8 +529,13 @@ copy, repartition or rename image objects. A ready-file snapshot references the
 version's existing immutable renditions; every chapter reads that same version
 item. The server evaluates released pages and access when a reader asks, signs
 only requested authorized files, and excludes original uploads and archives
-from ordinary reader grants. Preview pages use those same existing renditions.
-Reader plans expose their signed-preview expiry so clients can refresh URLs.
+from ordinary reader grants. A locked version's free preview pages (its
+rule's `preview`, else its kind's) are the same for every reader who does not
+open it, so its release copies those leading released pages' renditions to the
+version's public area: the reader plan lists them as plain, cacheable public
+URLs without a grant, and a later release with fewer preview pages (or none)
+retires the copies it no longer lists. Scheduled chapters never contribute
+preview pages before they release.
 Media reads accept up to 64 repeated `path` query parameters to sign the
 selected permitted files without changing their manifest order. The SDK
 batches larger selections and refreshes active grants before expiry.
@@ -806,4 +808,4 @@ Previously observed backend capabilities (not replacement-suite qualification):
 | Ceph 19.2 / 20.2 standalone `dbstore` RGW | no | no | wrong Range bytes; not representative of RADOS-backed RGW |
 | production Ceph RGW (RADOS, 2026-09-24) | no (`If-Match` yes, `If-None-Match: *` ignored) | no | Range, `response-content-disposition`, versioning, lifecycle (incl. `AbortIncompleteMultipartUpload`) and multipart work; hosts wire `PGLocker` |
 
-AuthKit owns user inboxes and their UI. ContentKit publishes or withdraws native comment notices through its injected two-method publisher. See [notifications](docs/notifications.md) for source identities and the explicit legacy adoption procedure.
+AuthKit owns user inboxes and their UI. ContentKit publishes or withdraws native comment notices through its injected two-method publisher. See [notifications](docs/notifications.md) for source identities and publisher configuration.

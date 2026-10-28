@@ -61,7 +61,7 @@ func (j *Jobs) Restore(ctx context.Context, snap Snapshot, o RestoreOptions) (*M
 	versions := make(map[string]media.ObjectVersion, len(snap.Objects))
 	for _, object := range snap.Objects {
 		key, ok := layout.Parse(object.Key)
-		if !ok || key.Folder() != item.Prefix() || (key.Area != layout.AreaPrivate && key.Area != layout.AreaDownload && key.Area != layout.AreaTemp && key.Area != layout.AreaTmp && key.Area != layout.AreaOriginals && key.Area != layout.AreaInternal && key.Area != layout.AreaPublic) ||
+		if !ok || key.Folder() != item.Prefix() || (key.Area != layout.AreaPrivate && key.Area != layout.AreaTemp && key.Area != layout.AreaTmp && key.Area != layout.AreaOriginals && key.Area != layout.AreaInternal && key.Area != layout.AreaPublic) ||
 			object.VersionID == "" || object.VersionID == "null" {
 			return nil, errors.New("media: snapshot contains an invalid object version")
 		}

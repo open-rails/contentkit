@@ -210,7 +210,7 @@ func TestCommerceMediaGrantRevocation(t *testing.T) {
 				if err == nil && len(read.Files) == count && read.Total == count {
 					return
 				}
-				time.Sleep(550 * time.Millisecond)
+				time.Sleep(50 * time.Millisecond)
 			}
 			assertFiles(client, count)
 		}

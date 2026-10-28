@@ -17,6 +17,17 @@ import (
 // grants and every served file at the gateway, at once. The purchases stay,
 // and a restore reopens the edition to the same grants with no new purchase.
 func TestDeletedEditionClosedUntilRestore(t *testing.T) {
+	configure := func(c *ck.Config) {
+		k := c.Content.Kinds["article"]
+		k.Versions.Hidden = false
+		c.Content.Kinds["article"] = k
+	}
+	galleryWorld := newWorld(t, configure)
+	galleryApp := galleryWorld.apps[0]
+	galleryBilling := attachBilling(t, galleryWorld, galleryApp)
+	attachMedia(t, galleryWorld, galleryApp, func(c *ck.Config) {
+		c.Media.Kinds[0].Publish = &media.Publish{Pages: "pages/{name}", Renditions: []string{"reader"}}
+	})
 	for _, test := range []struct {
 		name, kind string
 		level      access.Level
@@ -27,18 +38,11 @@ func TestDeletedEditionClosedUntilRestore(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			kind := test.kind
-			w := newWorld(t, func(c *ck.Config) {
-				k := c.Content.Kinds["article"]
-				k.Versions.Hidden = false
-				c.Content.Kinds["article"] = k
-			})
-			a := w.apps[0]
-			b := attachBilling(t, w, a)
-			if kind == "gallery" {
-				attachMedia(t, w, a, func(c *ck.Config) {
-					c.Media.Kinds[0].Publish = &media.Publish{Pages: "pages/{name}", Renditions: []string{"reader"}}
-				})
-			} else {
+			w, a, b := galleryWorld, galleryApp, galleryBilling
+			if kind == "article" {
+				w = newWorld(t, configure)
+				a = w.apps[0]
+				b = attachBilling(t, w, a)
 				startPublicationRuntime(t, a)
 			}
 			admin := a.engine.Client()

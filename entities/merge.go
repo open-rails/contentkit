@@ -17,6 +17,5 @@ type MergeReport struct {
 	Into             EntityID `json:"into"`
 	MembershipsMoved int64    `json:"memberships_moved"`
 	NamesMoved       int64    `json:"names_moved"`
-	EdgesMoved       int64    `json:"edges_moved"`
 	EntitiesMoved    int64    `json:"groups_moved"`
 }

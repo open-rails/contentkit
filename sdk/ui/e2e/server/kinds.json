@@ -1,5 +1,5 @@
 {
-  "namespace": "e2e",
+  "scope": {"tenant_id": "00000000-0000-4000-8000-000000000201", "app_id": "00000000-0000-4000-8000-000000000202"},
   "avatars": {
     "kind": "user",
     "preset": "avatar"
@@ -191,20 +191,6 @@
           }
         }
       ],
-      "public": [
-        {
-          "name": "preview",
-          "from": "images/{name}",
-          "to": "preview-{n}.webp",
-          "first": 1,
-          "image": {
-            "width": 960,
-            "height": 960,
-            "quality": 70,
-            "blur": 24
-          }
-        }
-      ],
       "versions": true
     },
     {
@@ -307,7 +293,7 @@
     },
     {
       "name": "user",
-      "namespace": "accounts",
+      "account": true,
       "keep_originals": true,
       "uploads": [
         {
@@ -482,7 +468,6 @@
           "low",
           "thumb"
         ],
-        "previews": "preview",
         "download": "zip",
         "import": "import/{name}"
       },
@@ -505,14 +490,6 @@
             "image/jpeg"
           ],
           "max_bytes": 10485760
-        },
-        {
-          "path": "previews/{name}",
-          "types": [
-            "image/webp"
-          ],
-          "max_bytes": 10485760,
-          "max": 3
         },
         {
           "path": "import/{name}",
@@ -566,12 +543,6 @@
             230,
             460
           ]
-        },
-        {
-          "name": "preview",
-          "from": "previews/{name}",
-          "to": "preview-{n}.webp",
-          "first": 3
         }
       ]
     },

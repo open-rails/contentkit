@@ -38,10 +38,8 @@ func (e *Engine) newAvatars(deps Deps) (*engineAvatars, error) {
 		return nil, nil
 	}
 	kind, preset := a.kind()
-	if e.scope != nil {
-		kind.Namespace = ""
-		kind.Account = true
-	}
+	kind.Namespace = ""
+	kind.Account = true
 	out := &engineAvatars{urls: e.media.reg}
 	if a.Primary != "" {
 		// Its media host serves the primary's files: URLs are built at it.
@@ -238,9 +236,6 @@ func (f *avatarForward) rehost(body []byte) []byte {
 		for j := range r.Public[i].Renditions {
 			at(&r.Public[i].Renditions[j].URL)
 		}
-	}
-	for i := range r.Previews {
-		at(&r.Previews[i])
 	}
 	out, err := json.Marshal(r)
 	if err != nil {

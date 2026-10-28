@@ -249,7 +249,7 @@ func (p *Processor) todo(ctx context.Context, item mediastore.Item, m *mediastor
 				stale := job.Force || slices.Contains(f.Pending, pu.Name)
 				if !stale {
 					var err error
-					if stale, err = p.publicStale(ctx, item, m, f, pu); err != nil {
+					if stale, err = p.publicStale(ctx, item, f, pu); err != nil {
 						return nil, err
 					}
 				}
@@ -273,12 +273,9 @@ func (p *Processor) todo(ctx context.Context, item mediastore.Item, m *mediastor
 
 // publicStale reports a public preset whose names are missing or carry
 // another fingerprint.
-func (p *Processor) publicStale(ctx context.Context, item mediastore.Item, m *mediastore.Manifest, f media.File, pu *media.Public) (bool, error) {
+func (p *Processor) publicStale(ctx context.Context, item mediastore.Item, f media.File, pu *media.Public) (bool, error) {
 	fp := publicFP(f, pu)
-	if len(item.Kind().PublicNames(m, pu, f.Path)) == 0 {
-		return false, nil
-	}
-	pub, ok := item.Kind().Publication(m, f, pu)
+	pub, ok := item.Kind().Publication(f, pu)
 	if !ok || !pub.Ready() || pub.FP != fp {
 		return true, nil
 	}
@@ -556,10 +553,7 @@ func (p *Processor) render(ctx context.Context, item mediastore.Item, m *mediast
 	}
 	k := item.Kind()
 	for _, pu := range w.public {
-		names := k.PublicNames(m, pu, w.src.Path)
-		if len(names) == 0 {
-			continue // past a preview's First by now: nothing to render
-		}
+		names := k.PublicNames(pu, w.src.Path)
 		outs, dims, err := encodePublic(src, w.src.Type, pu, names, w.src.Edit, p.rules(pu.Image.Animation))
 		if d.dims = dims; err != nil {
 			return p.permanent(d, err)
@@ -582,11 +576,11 @@ func (p *Processor) render(ctx context.Context, item mediastore.Item, m *mediast
 			if !ok || f.Unattached {
 				return nil
 			}
-			if f.Blob != w.src.Blob || f.Edit.Hash() != w.src.Edit.Hash() || !slices.Equal(k.PublicNames(cur, pu, w.src.Path), names) {
-				return nil // changed, or moved to another preview position
+			if f.Blob != w.src.Blob || f.Edit.Hash() != w.src.Edit.Hash() || !slices.Equal(k.PublicNames(pu, w.src.Path), names) {
+				return nil // changed
 			}
 			fp := publicFP(w.src, pu)
-			if old, ok := k.Publication(cur, f, pu); ok && !old.Ready() && old.FP == fp {
+			if old, ok := k.Publication(f, pu); ok && !old.Ready() && old.FP == fp {
 				publication = old // interrupted PUTs retry the active reservation
 				return nil
 			}
@@ -664,7 +658,7 @@ func (p *Processor) render(ctx context.Context, item mediastore.Item, m *mediast
 		}
 		typ := outputType(s, w.src.Type)
 		blob := w.src.Blob
-		area := k.Area("", pr.Name)
+		area := k.Area(pr.Name)
 		sourceArea, _, _ := layout.SplitBlobRef(blob)
 		if s.Format != media.ImageFormatSource || !bytes.Equal(out, src) || sourceArea != area {
 			blob, err = p.putBlob(ctx, item, area, bytes.NewReader(out), int64(len(out)), sha(out), typ)

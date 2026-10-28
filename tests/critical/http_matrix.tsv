@@ -3,8 +3,6 @@ CK-API-001	GET	/v1/kinds	open		included-critical functionality and security
 CK-API-002	GET	/v1/config	open		included-critical functionality and security
 CK-API-003	GET	/v1/contents/{id}/comments	public		partial-security-only; positive/full functionality deferred P1
 CK-API-004	POST	/v1/contents/{id}/comments	public		partial-security-only; positive/full functionality deferred P1
-CK-API-005	GET	/v1/entities/{id}/comments	public		partial-security-only; positive/full functionality deferred P1
-CK-API-006	POST	/v1/entities/{id}/comments	public		partial-security-only; positive/full functionality deferred P1
 CK-API-007	GET	/v1/comments/latest	public		partial-security-only; positive/full functionality deferred P1
 CK-API-008	GET	/v1/comments/admin	staff	root:comments:moderate	partial-security-only; positive/full functionality deferred P1
 CK-API-009	POST	/v1/comments/{cid}/restore	staff	root:comments:moderate	partial-security-only; positive/full functionality deferred P1
@@ -27,9 +25,6 @@ CK-API-025	GET	/v1/entities/{id}/reaction	public		partial-security-only; positiv
 CK-API-026	POST	/v1/contents/{id}/favorite	user		partial-security-only; positive/full functionality deferred P1
 CK-API-027	DELETE	/v1/contents/{id}/favorite	user		partial-security-only; positive/full functionality deferred P1
 CK-API-028	GET	/v1/contents/{id}/favorite	public		partial-security-only; positive/full functionality deferred P1
-CK-API-029	POST	/v1/entities/{id}/favorite	user		partial-security-only; positive/full functionality deferred P1
-CK-API-030	DELETE	/v1/entities/{id}/favorite	user		partial-security-only; positive/full functionality deferred P1
-CK-API-031	GET	/v1/entities/{id}/favorite	public		partial-security-only; positive/full functionality deferred P1
 CK-API-032	GET	/v1/polls	public		partial-security-only; positive/full functionality deferred P1
 CK-API-033	POST	/v1/polls	staff	root:polls:write	partial-security-only; positive/full functionality deferred P1
 CK-API-034	GET	/v1/polls/admin	staff	root:polls:write	partial-security-only; positive/full functionality deferred P1
@@ -54,7 +49,6 @@ CK-API-053	GET	/v1/channels/{id}/comment-bans	person		included-critical function
 CK-API-054	PUT	/v1/channels/{id}/comment-bans/{user}	person		included-critical functionality and security
 CK-API-055	DELETE	/v1/channels/{id}/comment-bans/{user}	person		included-critical functionality and security
 CK-API-056	GET	/v1/contents/{id}/can-comment	public		included-critical functionality and security
-CK-API-057	GET	/v1/entities/{id}/can-comment	public		included-critical functionality and security
 CK-API-058	GET	/v1/moderation/held	staff	root:moderation:review	included-critical functionality and security
 CK-API-059	POST	/v1/moderation/{kind}/{id}/resolve	staff	root:moderation:review	included-critical functionality and security
 CK-API-060	GET	/v1/moderation/banned-words	staff	root:comments:moderate	included-critical functionality and security
@@ -109,8 +103,6 @@ CK-API-111	GET	/v1/me/channels	user		included-critical functionality and securit
 CK-API-112	PUT	/v1/entities/{id}/names	staff	root:entities:write	partial-security-only; positive/full functionality deferred P1
 CK-API-113	POST	/v1/entities/{id}/names	staff	root:entities:write	partial-security-only; positive/full functionality deferred P1
 CK-API-114	DELETE	/v1/entities/{id}/names	staff	root:entities:write	partial-security-only; positive/full functionality deferred P1
-CK-API-115	POST	/v1/entities/{id}/edges	staff	root:entities:write	partial-security-only; positive/full functionality deferred P1
-CK-API-116	DELETE	/v1/entities/{id}/edges	staff	root:entities:write	partial-security-only; positive/full functionality deferred P1
 CK-API-117	POST	/v1/entities/{id}/merge	staff	root:entities:write	partial-security-only; positive/full functionality deferred P1
 CK-API-118	GET	/v1/entities/{id}/members	staff	root:entities:write	partial-security-only; positive/full functionality deferred P1
 CK-API-119	POST	/v1/entities/{id}/members	staff	root:entities:write	partial-security-only; positive/full functionality deferred P1

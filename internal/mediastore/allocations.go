@@ -55,7 +55,7 @@ func (m *Manifests) ReserveTemporary(ctx context.Context, ref contentref.Content
 }
 
 // NewBlobs records ownership, in one journal step, before a writer sends
-// bytes to fresh allocations in area (private/ or download/, Kind.Area): one
+// bytes to fresh allocations in area (Kind.Area): one
 // blob reference per digest, in order. The digest identifies the bytes; the
 // UUID isolates their lifetime. This does not publish the objects: a later
 // manifest edit must adopt them.
@@ -64,7 +64,7 @@ func (m *Manifests) NewBlobs(ctx context.Context, ref contentref.ContentRef, are
 	if err != nil {
 		return nil, err
 	}
-	if item.Kind().Versions && (area == layout.AreaPrivate || area == layout.AreaDownload) {
+	if item.Kind().Versions && area == layout.AreaPrivate {
 		area = layout.AreaInternal
 	}
 	return m.newBlobs(ctx, ref, area, sums)
@@ -77,7 +77,7 @@ func (m *Manifests) newBlobs(ctx context.Context, ref contentref.ContentRef, are
 	if err != nil {
 		return nil, err
 	}
-	if area != layout.AreaPrivate && area != layout.AreaDownload && area != layout.AreaOriginals && area != layout.AreaInternal && area != layout.AreaPublic {
+	if area != layout.AreaPrivate && area != layout.AreaOriginals && area != layout.AreaInternal && area != layout.AreaPublic {
 		return nil, fmt.Errorf("media: no blobs in area %q", area)
 	}
 	names, keys := make([]string, len(sums)), make([]string, len(sums))

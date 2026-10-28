@@ -80,10 +80,6 @@ func (s *Service) Search(ctx context.Context, o SearchOptions) (result discovery
 	if sortName == "" {
 		sortName = discovery.SortRelevance
 	}
-	o.Filter, err = publicationCursor(o.Filter, o.Cursor, sortName)
-	if err != nil {
-		return empty, err
-	}
 	if o.Filter.named, err = s.namedEntities(ctx, text); err != nil {
 		return empty, err
 	}
@@ -171,7 +167,7 @@ func (s *Service) Search(ctx context.Context, o SearchOptions) (result discovery
 	cards, err := s.cards(ctx, q, picks, cardOptions{chips: o.CardEntities})
 	out := discovery.SearchPage{ContentPage: discovery.ContentPage{Contents: cards}}
 	if res.HasMore && len(res.Hits) > 0 {
-		out.NextCursor = cursor{Sort: discovery.SortRelevance, Value: strconv.Itoa(offset + len(res.Hits)), ID: ids[len(ids)-1], AsOf: q.asOf}.encode()
+		out.NextCursor = cursor{Sort: discovery.SortRelevance, Value: strconv.Itoa(offset + len(res.Hits)), ID: ids[len(ids)-1]}.encode()
 	}
 	return out, err
 }

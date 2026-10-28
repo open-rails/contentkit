@@ -18,9 +18,6 @@ var ErrUnknownKind = errors.New("media: unknown kind")
 // maxWidth bounds a public width.
 const maxWidth = 8192
 
-// maxFirst bounds a preview's uploads.
-const maxFirst = 100
-
 // Registry is a validated Config with the app's Hooks.
 type Registry struct {
 	cfg      media.Config
@@ -206,9 +203,6 @@ func (i Item) ManifestKey() string { return i.prefix + layout.ManifestName }
 
 func (i Item) PrivatePrefix() string { return i.prefix + layout.AreaPrivate + "/" }
 
-// DownloadPrefix is the folder's download/: files the gateway never serves.
-func (i Item) DownloadPrefix() string { return i.prefix + layout.AreaDownload + "/" }
-
 func (i Item) PublicPrefix() string { return i.prefix + layout.AreaPublic + "/" }
 
 func (i Item) OriginalsPrefix() string { return i.prefix + layout.AreaOriginals + "/" }
@@ -223,7 +217,7 @@ func (i Item) TempPrefix() string {
 }
 
 // Blob is the key of an allocation by its reference: "sha256-{hex}-{uuid}"
-// in private/, "download/sha256-{hex}-{uuid}" in download/.
+// in private/, "{area}/sha256-{hex}-{uuid}" in another area.
 func (i Item) Blob(ref string) (string, error) {
 	area, name, ok := layout.SplitBlobRef(ref)
 	if !ok {
@@ -293,7 +287,7 @@ func (r *Registry) PresetRules() []media.PresetRule {
 	for _, k := range r.all {
 		for _, p := range k.Public {
 			out = append(out, media.PresetRule{Kind: k.Name, Name: p.Name, From: p.From, Base: strings.TrimRight(r.cfg.BaseURL, "/"),
-				Namespace: k.ns, Root: k.root(), To: p.To, Widths: append([]int{}, p.Widths...), Aspect: p.Image.Aspect, MinWidth: p.Image.MinWidth, First: p.First,
+				Namespace: k.ns, Root: k.root(), To: p.To, Widths: append([]int{}, p.Widths...), Aspect: p.Image.Aspect, MinWidth: p.Image.MinWidth,
 				Default: hasDefault(&p), Stable: p.Stable})
 		}
 	}

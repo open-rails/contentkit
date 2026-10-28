@@ -10,7 +10,7 @@ import (
 
 // Merge folds each From into its Into in one transaction: memberships move
 // (duplicates collapse, an accepted membership wins over a proposed one),
-// names become aliases of Into, edges, children and scoped entities re-point,
+// names become aliases of Into, children and scoped entities re-point,
 // From becomes merged and its code redirects to Into's. Entities of a
 // user-owned or entitlement-backed kind are never merged (ErrConflict).
 func (s *Store) Merge(ctx context.Context, merges []entities.Merge) ([]entities.MergeReport, error) {
@@ -154,17 +154,6 @@ func (s *Store) merge(ctx context.Context, q Querier, src, dst entities.Entity) 
 	if _, err := q.Exec(ctx, fmt.Sprintf(`INSERT INTO %[1]s (tenant_id, entity_id, language, description, sort_key)
  SELECT tenant_id, $3, language, description, sort_key FROM %[1]s WHERE tenant_id = $1 AND entity_id = $2
  ON CONFLICT (tenant_id, entity_id, language) DO NOTHING`, text), s.tenant, from, into); err != nil {
-		return r, nil, err
-	}
-	edges := s.table("content_entity_edges")
-	if tag, err = q.Exec(ctx, fmt.Sprintf(`INSERT INTO %[1]s (tenant_id, from_id, relation, to_id)
- SELECT tenant_id, CASE WHEN from_id = $2 THEN $3 ELSE from_id END, relation, CASE WHEN to_id = $2 THEN $3 ELSE to_id END
- FROM %[1]s WHERE tenant_id = $1 AND (from_id = $2 OR to_id = $2) AND from_id <> $3 AND to_id <> $3
- ON CONFLICT DO NOTHING`, edges), s.tenant, from, into); err != nil {
-		return r, nil, err
-	}
-	r.EdgesMoved = tag.RowsAffected()
-	if _, err := q.Exec(ctx, fmt.Sprintf(`DELETE FROM %s WHERE tenant_id = $1 AND (from_id = $2 OR to_id = $2)`, edges), s.tenant, from); err != nil {
 		return r, nil, err
 	}
 	g := s.table("content_entities")

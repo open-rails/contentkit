@@ -51,9 +51,6 @@ type ImportVersion struct {
 	OriginalTitle    *string
 	OriginalLanguage *string
 	Text             map[string]VersionText
-	// Segments must be nil. Use PutVersions after importing source media so
-	// chapter changes hold the recovered manifest lock through commit.
-	Segments  []Segment
-	CreatedAt *time.Time
-	UpdatedAt *time.Time
+	CreatedAt        *time.Time
+	UpdatedAt        *time.Time
 }

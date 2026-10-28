@@ -16,7 +16,7 @@ import (
 	"github.com/open-rails/contentkit/server"
 )
 
-func TestStandaloneParityAndDrain(t *testing.T) {
+func TestStandaloneParity(t *testing.T) {
 	w := newWorld(t)
 	a := w.apps[0]
 	item := publishedArticle(t, a, "Drain keeps accepted work")

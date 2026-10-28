@@ -153,7 +153,7 @@ type Failure struct {
 // is its own private blob, Index (a TrackIndex), cached by hash.
 type Track struct {
 	Kind      string `json:"kind"`             // TrackVideo, TrackAudio, TrackSubs, TrackSprite
-	Codec     string `json:"codec,omitempty"`  // video: h264, hevc, av1
+	Codec     string `json:"codec,omitempty"`  // video: h264, av1
 	Codecs    string `json:"codecs,omitempty"` // RFC 6381
 	Bandwidth int    `json:"bw,omitempty"`
 	Average   int    `json:"avg,omitempty"`

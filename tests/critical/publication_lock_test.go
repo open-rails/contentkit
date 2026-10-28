@@ -51,6 +51,20 @@ func TestPublicationSchedulingLocksParentBeforeRequest(t *testing.T) {
 	// The actual app consumes and completes every accepted request below.
 	_, err = riverhelpers.New(t.Context(), w.pool, &river.Config{Schema: w.schema + "_river", Queues: map[string]river.QueueConfig{}}, service.RiverJobs())
 	must(t, err)
+	// A later processing wake can supersede the accepted request once it
+	// completes, and superseded completed requests are deleted. Record each
+	// completion as it happens instead of reading the row afterwards.
+	requests := pgx.Identifier{w.schema, "content_publication_requests"}.Sanitize()
+	completions, record := pgx.Identifier{w.schema, "critical_completed_requests"}.Sanitize(), pgx.Identifier{w.schema, "critical_record_completion"}.Sanitize()
+	_, err = w.pool.Exec(t.Context(), `CREATE TABLE `+completions+` (id uuid NOT NULL);
+CREATE FUNCTION `+record+`() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF NEW.state='completed' THEN INSERT INTO `+completions+` VALUES (NEW.id); END IF;
+  RETURN NEW;
+END $$;
+CREATE TRIGGER critical_record_completion AFTER UPDATE OF state ON `+requests+`
+ FOR EACH ROW EXECUTE FUNCTION `+record+`()`)
+	must(t, err)
 	ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
 	defer cancel()
 	writer, err := w.pool.Begin(ctx)
@@ -98,9 +112,11 @@ func TestPublicationSchedulingLocksParentBeforeRequest(t *testing.T) {
 		t.Fatal("scheduler never accepted a new durable reconciliation")
 	}
 	awaitPublicationJobsIdle(t, w, a)
+	var completed bool
 	var state string
-	must(t, w.pool.QueryRow(t.Context(), `SELECT state FROM `+pgx.Identifier{w.schema, "content_publication_requests"}.Sanitize()+` WHERE tenant_id=$1 AND id=$2::uuid`, tenant, accepted).Scan(&state))
-	if state != "completed" {
+	must(t, w.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM `+completions+` WHERE id=$2::uuid),
+ coalesce((SELECT state FROM `+requests+` WHERE tenant_id=$1 AND id=$2::uuid),'deleted')`, tenant, accepted).Scan(&completed, &state))
+	if !completed {
 		t.Fatalf("accepted reconciliation did not complete: %s", state)
 	}
 	read, err := a.client("").GetMediaVersion(t.Context(), ref.Kind, ref.ID, ref.Version, ck.GetMediaVersionQuery{})

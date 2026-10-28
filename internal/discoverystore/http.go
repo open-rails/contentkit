@@ -67,7 +67,6 @@ var (
 		httpapi.Text("kind", "only this content kind"),
 		httpapi.List("ids", "bounded public card hydration: 1-100 content ids, under all current visibility, domain and reader filters"),
 		httpapi.List("groups", "group ids every listed version is in; a position sort orders by the first"),
-		httpapi.List("exclude_groups", "group ids no listed version is in"),
 		httpapi.List("channel_id", "primary channel ids: only content one of them owns"),
 		httpapi.List("creators", "user ids: only content one of them is credited on"),
 		httpapi.List("access", "public (what anyone opens now), tier, group, ppv or group_ppv (what stays locked at that level): only content at one of them"),
@@ -75,7 +74,6 @@ var (
 		httpapi.List("traits", "version traits every listed version has"),
 		httpapi.Repeated("attribute", "name:value of one of the kind's filterable attributes; repeat for more"),
 		httpapi.Text("released_on", "published on this day (YYYY-MM-DD) or month (YYYY-MM)"),
-		httpapi.Text("published_within", "only currently live publications in 7d, 30d, 90d, 365d or all (whole UTC calendar days); independent of the sort's score window"),
 		httpapi.Text("tz", "the IANA time zone of released_on and release dates; UTC by default"),
 		httpapi.Text("view_status", "the signed-in reader's unseen, in_progress or completed contents"),
 	}
@@ -94,7 +92,7 @@ var (
 )
 
 var (
-	sortParam = httpapi.Text("sort", "newest, oldest, title, popular[:bucket], top_rated[:period], most_favorited, position or random (periods: 7d, 30d, 90d, 365d, all); the kind's default, else newest")
+	sortParam = httpapi.Text("sort", "newest, oldest, title, popular[:bucket], top_rated, most_favorited, position or random; the kind's default, else newest")
 )
 
 var (
@@ -254,8 +252,8 @@ func filterOf(r *http.Request) Filter {
 	if values, ok := q["ids"]; ok && (len(values) != 1 || q.Get("ids") == "") {
 		ids = []string{}
 	}
-	return Filter{Kind: q.Get("kind"), IDs: ids, Entities: list(q.Get("groups")), ExcludeEntities: list(q.Get("exclude_groups")), Traits: list(q.Get("traits")),
-		Attributes: q["attribute"], ReleasedOn: q.Get("released_on"), PublishedWithin: q.Get("published_within"), TimeZone: q.Get("tz"), ViewStatus: q.Get("view_status"),
+	return Filter{Kind: q.Get("kind"), IDs: ids, Entities: list(q.Get("groups")), Traits: list(q.Get("traits")),
+		Attributes: q["attribute"], ReleasedOn: q.Get("released_on"), TimeZone: q.Get("tz"), ViewStatus: q.Get("view_status"),
 		ChannelIDs: list(q.Get("channel_id")), Creators: list(q.Get("creators")), Access: list(q.Get("access")), Tiers: list(q.Get("tiers"))}
 }
 

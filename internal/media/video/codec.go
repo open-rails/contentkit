@@ -3,10 +3,8 @@ package video
 import (
 	"bytes"
 	"context"
-	"encoding/binary"
 	"errors"
 	"fmt"
-	"math/bits"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -23,14 +21,14 @@ var DefaultCodecs = []media.Codec{media.CodecAV1, media.CodecH264}
 // Config.Encoder values.
 const (
 	EncoderAuto  = "auto"  // per codec: NVENC when a probe encode works, else the CPU encoder
-	EncoderCPU   = "cpu"   // libx264, libx265, SVT-AV1
+	EncoderCPU   = "cpu"   // libx264, SVT-AV1
 	EncoderNVENC = "nvenc" // NVENC for every codec; decoding and scaling stay on the CPU
 )
 
 // cpuEncoders and nvencEncoders are each codec's ffmpeg encoders.
 var (
-	cpuEncoders   = map[media.Codec]string{media.CodecH264: "libx264", media.CodecHEVC: "libx265", media.CodecAV1: "libsvtav1"}
-	nvencEncoders = map[media.Codec]string{media.CodecH264: "h264_nvenc", media.CodecHEVC: "hevc_nvenc", media.CodecAV1: "av1_nvenc"}
+	cpuEncoders   = map[media.Codec]string{media.CodecH264: "libx264", media.CodecAV1: "libsvtav1"}
+	nvencEncoders = map[media.Codec]string{media.CodecH264: "h264_nvenc", media.CodecAV1: "av1_nvenc"}
 )
 
 // svtAV1Preset is SVT-AV1's speed: at 1080p it takes 1.34× x264 fast's time
@@ -40,22 +38,20 @@ const svtAV1Preset = 8
 // nvencCQOffset maps a rung's CRF to an NVENC CQ of about the same top-rung
 // VMAF; lower rungs cost NVENC 30-60% more bits (bench_test.go). AV1's CQ
 // scale sits 6 above SVT-AV1's CRF (CQ 38 ≈ CRF 32 at 1080p).
-var nvencCQOffset = map[media.Codec]int{media.CodecH264: 4, media.CodecHEVC: 4, media.CodecAV1: 6}
+var nvencCQOffset = map[media.Codec]int{media.CodecH264: 4, media.CodecAV1: 6}
 
 // encoding is how a file's renditions are encoded.
 type encoding struct {
 	encoders  map[media.Codec]string // ffmpeg encoder per codec
 	threads   int
-	preset    string // x264/x265 preset of rungs up to 1080
-	topPreset string // x264/x265 preset of the rungs above
-	animation bool
+	preset    string // x264 preset of rungs up to 1080
+	topPreset string // x264 preset of the rungs above
 }
 
 // streamArgs are output stream i's settings: rung r in codec c at the rung's
 // capped CRF (NVENC: CQ) with a 2 s VBV buffer, closed GOPs and no scene-cut
 // keyframes, so every rendition has its keyframes where -force_key_frames
-// puts them. HEVC is tagged hvc1 (parameter sets in the sample entry), which
-// Safari requires.
+// puts them.
 func (e encoding) streamArgs(i int, r rung, c media.Codec) []string {
 	o := func(name string) string { return fmt.Sprintf("-%s:v:%d", name, i) }
 	rt := r.rate(c)
@@ -80,20 +76,6 @@ func (e encoding) streamArgs(i int, r rung, c media.Codec) []string {
 			return append(append(args, nvenc(rt.crf+nvencCQOffset[c])...), o("bf"), "3", o("b_ref_mode"), "middle")
 		}
 		args = append(args, o("preset"), preset, o("crf"), strconv.Itoa(rt.crf), o("sc_threshold"), "0", o("threads"), threads)
-		if e.animation {
-			args = append(args, o("tune"), "animation")
-		}
-	case "libx265":
-		// x265 sizes its pool by the host's cores, not -threads.
-		// Main tier: players decode High tier less widely; x265 raises the level instead.
-		params := "pools=" + threads + ":open-gop=0:scenecut=0:high-tier=0:log-level=error"
-		args = append(args, o("profile"), "main", o("tag"), "hvc1", o("preset"), preset, o("crf"), strconv.Itoa(rt.crf), o("forced-idr"), "1",
-			o("x265-params"), params)
-		if e.animation {
-			args = append(args, o("tune"), "animation")
-		}
-	case "hevc_nvenc":
-		args = append(append(args, o("profile"), "main", o("tag"), "hvc1"), nvenc(rt.crf+nvencCQOffset[c])...)
 	case "libsvtav1":
 		// SVT ignores -threads. Native lp levels above 3 allocate extra in-flight mini-GOPs.
 		args = append(args, o("preset"), strconv.Itoa(svtAV1Preset), o("crf"), strconv.Itoa(rt.crf),
@@ -185,9 +167,6 @@ func codecString(path string) (string, error) {
 	if r := rec("avcC", 4); r != nil {
 		return fmt.Sprintf("avc1.%02x%02x%02x", r[1], r[2], r[3]), nil
 	}
-	if r := rec("hvcC", 13); r != nil {
-		return hvcCodec(r), nil
-	}
 	if r := rec("av1C", 3); r != nil {
 		depth := 8
 		if r[2]&0x40 != 0 {
@@ -195,22 +174,5 @@ func codecString(path string) (string, error) {
 		}
 		return fmt.Sprintf("av01.%d.%02d%s.%02d", r[1]>>5, r[1]&0x1f, map[bool]string{false: "M", true: "H"}[r[2]&0x80 != 0], depth), nil
 	}
-	return "", fmt.Errorf("%s: no avcC, hvcC or av1C", path)
-}
-
-// hvcCodec formats an HEVCDecoderConfigurationRecord's profile, tier, level
-// and constraints (ISO/IEC 14496-15 Annex E), e.g. "hvc1.1.6.L120.90".
-func hvcCodec(r []byte) string {
-	space := []string{"", "A", "B", "C"}[r[1]>>6]
-	tier := map[bool]string{false: "L", true: "H"}[r[1]&0x20 != 0]
-	compat := bits.Reverse32(binary.BigEndian.Uint32(r[2:6]))
-	cons := r[6:12]
-	for len(cons) > 0 && cons[len(cons)-1] == 0 {
-		cons = cons[:len(cons)-1]
-	}
-	s := fmt.Sprintf("hvc1.%s%d.%x.%s%d", space, r[1]&0x1f, compat, tier, r[12])
-	for _, c := range cons {
-		s += fmt.Sprintf(".%x", c)
-	}
-	return s
+	return "", fmt.Errorf("%s: no avcC or av1C", path)
 }

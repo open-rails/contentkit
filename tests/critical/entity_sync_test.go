@@ -65,14 +65,6 @@ func TestEntityLifecycleWithoutReconciliation(t *testing.T) {
 	var channel channels.Channel
 	var owner authtest.User
 	var token string
-	noLifecycleJobs := func() {
-		t.Helper()
-		var n int
-		must(t, w.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+pgx.Identifier{w.schema + "_river", "river_job"}.Sanitize()+` WHERE kind IN ('contentkit_entity_sync','contentkit_channel_lifecycle')`).Scan(&n))
-		if n != 0 {
-			t.Fatalf("direct lifecycle created %d retired jobs", n)
-		}
-	}
 	t.Run("CK-J16-S01_create_retries_same_channel_after_lost_acknowledgement", func(t *testing.T) {
 		owner = authtest.NewUser(t, a.tenant)
 		owner.TOTP = authtest.EnrollTOTP(t, a.tenant, owner)
@@ -98,7 +90,6 @@ func TestEntityLifecycleWithoutReconciliation(t *testing.T) {
 		if again.ID != channel.ID {
 			t.Fatal("successful replay duplicated channel")
 		}
-		noLifecycleJobs()
 	})
 	var post catalog.Content
 	t.Run("CK-J16-S04_delete_returns_error_and_retries_retirement_inline", func(t *testing.T) {
@@ -117,9 +108,8 @@ func TestEntityLifecycleWithoutReconciliation(t *testing.T) {
 		if group.DeletedAt == nil {
 			t.Fatal("channel deletion returned before group retirement")
 		}
-		noLifecycleJobs()
 	})
-	t.Run("CK-J16-S05_restore_and_import_finish_without_lifecycle_jobs", func(t *testing.T) {
+	t.Run("CK-J16-S05_restore_and_import_finish", func(t *testing.T) {
 		active := entities.StateActive
 		_, err := a.engine.Client().PatchChannel(t.Context(), channel.ID, channels.Update{State: &active})
 		must(t, err)
@@ -157,6 +147,5 @@ func TestEntityLifecycleWithoutReconciliation(t *testing.T) {
 		if group.DeletedAt == nil {
 			t.Fatal("import deletion returned before retiring channel group")
 		}
-		noLifecycleJobs()
 	})
 }

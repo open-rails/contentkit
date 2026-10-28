@@ -134,9 +134,9 @@ func (t interactionTargets) Resolve(ctx context.Context, refs []contentref.Conte
 	for _, ref := range refs {
 		if _, ok := cfg.Kinds[ref.ContentKind]; ok {
 			items = append(items, ref)
-		} else if ref.ContentKind == "channel" && cfg.Channels != nil && ref.ContentVersionID == nil && ref.TenantID == t.e.cfg.Tenant {
+		} else if ref.ContentKind == "channel" && cfg.Channels != nil && ref.ContentVersionID == nil && ref.TenantID == t.e.cfg.Scope.AppID.String() {
 			channelIDs = append(channelIDs, ref.ContentID)
-		} else if _, ok := cfg.EntityKinds[ref.ContentKind]; ok && ref.ContentVersionID == nil && ref.TenantID == t.e.cfg.Tenant {
+		} else if _, ok := cfg.EntityKinds[ref.ContentKind]; ok && ref.ContentVersionID == nil && ref.TenantID == t.e.cfg.Scope.AppID.String() {
 			ids = append(ids, entities.EntityID(ref.ContentID))
 		}
 	}
@@ -191,7 +191,7 @@ func (t interactionTargets) Resolve(ctx context.Context, refs []contentref.Conte
 		if g.State != entities.StateActive || g.Internal {
 			continue
 		}
-		res := resolve.Resolution{Ref: contentref.New(t.e.cfg.Tenant, g.Kind, string(g.ID)), Visible: true, Accessible: true, Owner: g.OwnerUserID}
+		res := resolve.Resolution{Ref: contentref.New(t.e.cfg.Scope.AppID.String(), g.Kind, string(g.ID)), Visible: true, Accessible: true, Owner: g.OwnerUserID}
 		if g.Kind == "channel" {
 			// Scoped channel threads use group moderation, not personal account blocks.
 			res.Owner = ""

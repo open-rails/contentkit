@@ -218,7 +218,7 @@ func TestUploadAcceptanceAndRetry(t *testing.T) {
 		var read media.ReadResult
 		waitForWithin(t, 45*time.Second, func() bool {
 			wakeDuePublicationJobs(t, a)
-			time.Sleep(550 * time.Millisecond)
+			time.Sleep(50 * time.Millisecond)
 			read, err = a.client("").GetMediaVersion(t.Context(), ref.Kind, ref.ID, ref.Version, ck.GetMediaVersionQuery{})
 			return err == nil && len(read.Files) == 1 && read.Files[0].Path == "reader/one.webp" && read.Files[0].W == 32 && read.Files[0].H == 48
 		})

@@ -97,8 +97,6 @@ type EntityRecord struct {
 	CoverContent *Ref   `json:"cover_content,omitempty"`
 	// Avatar is an image of the entity's media folder.
 	Avatar string `json:"avatar,omitempty"`
-	// Edges replace the entity's edges to other entities.
-	Edges []EdgeRecord `json:"edges,omitempty"`
 	// Code keeps a content code the entity had (9 characters); one is
 	// generated otherwise. A code never changes once given.
 	Code      string     `json:"code,omitempty"`
@@ -124,12 +122,6 @@ type ChannelRecord struct {
 	Code         string          `json:"code,omitempty"`
 	CreatedAt    *time.Time      `json:"created_at,omitempty"`
 	UpdatedAt    *time.Time      `json:"updated_at,omitempty"`
-}
-
-// EdgeRecord is a relation from the entity to another.
-type EdgeRecord struct {
-	Relation string `json:"relation"`
-	To       Ref    `json:"to"`
 }
 
 // ContentRecord is a content item with its text, creators and versions. Nil
@@ -188,11 +180,8 @@ type VersionRecord struct {
 	Text             map[string]catalog.VersionText `json:"text,omitempty"`
 	OriginalTitle    *string                        `json:"original_title,omitempty"`
 	OriginalLanguage *string                        `json:"original_language,omitempty"`
-	// Segments must be omitted. Use the version segments route with virtual
-	// start_page markers after importing content and source media.
-	Segments  []catalog.Segment `json:"segments,omitempty"`
-	CreatedAt *time.Time        `json:"created_at,omitempty"`
-	UpdatedAt *time.Time        `json:"updated_at,omitempty"`
+	CreatedAt        *time.Time                     `json:"created_at,omitempty"`
+	UpdatedAt        *time.Time                     `json:"updated_at,omitempty"`
 }
 
 // MembershipSet replaces a content item's memberships in the listed entity

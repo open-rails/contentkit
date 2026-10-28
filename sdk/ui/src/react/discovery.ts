@@ -267,14 +267,14 @@ export function useRecentSearches(o: { limit?: number; enabled?: boolean; client
     : { searches: r.data ?? NO_SEARCHES, loading: !!key && (r.loading || !r.loaded), error: r.error, clear };
 }
 
-/** A favorite or reaction with its content's or group's id. */
+/** A favorite or reaction with its content's or channel's id. */
 export type MyInteraction = Interaction & { id: string };
 
-const interactions = (p: InteractionPage) => ({ items: p.items.map((x) => ({ ...x, id: x.content?.id ?? x.entity?.id ?? x.channel?.id ?? "" })), next: p.next_cursor ?? null, metadata: p.summary });
+const interactions = (p: InteractionPage) => ({ items: p.items.map((x) => ({ ...x, id: x.content?.id ?? x.channel?.id ?? "" })), next: p.next_cursor ?? null, metadata: p.summary });
 
 export interface UseInteractions extends UseList<MyInteraction, InteractionPage["summary"]> { summary?: InteractionPage["summary"] }
 
-/** The signed-in reader's favorites, most recent first: content cards or groups. */
+/** The signed-in reader's favorites, most recent first: content cards or channels. */
 export function useMyFavorites(q: MineQuery = {}, o: { client?: ContentKitClient } = {}): UseInteractions {
   const { client, store, scope, viewer } = useContentScope(o.client);
   const query = useDisplay(q)!;

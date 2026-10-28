@@ -197,7 +197,7 @@ func (rt *Runtime) enrichBans(ctx context.Context, bans []content.CommentBan) {
 
 func banRoutes() []httpapi.Route[*Runtime] {
 	out := append(append([]httpapi.Route[*Runtime](nil), userBanRoutes...), entityModerationRoutes...)
-	for _, typ := range TargetTypes {
+	for _, typ := range commentFavoriteTargets {
 		out = append(out, httpapi.Route[*Runtime]{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/" + string(typ) + "/{id}/can-comment", Resource: "bans", Auth: httpapi.Public,
 			Doc:       "Whether the caller may comment on " + targetNoun(typ) + ", the ban that stops it, and the authoritative visible top-level comment count. Counts include tombstones and the author's held/rejected rows; omitted when comments are hidden or locked.",
 			Query:     targetQuery(typ, httpapi.Text("language", "only this language's thread; all languages by default")),

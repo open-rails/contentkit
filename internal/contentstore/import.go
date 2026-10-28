@@ -117,6 +117,9 @@ func (rt *Runtime) ImportComments(ctx context.Context, tx pgx.Tx, in []content.I
 			r.UserID = &user
 			users = append(users, user)
 		case anon != "":
+			if anon, err = rt.rules.maskOnly(ctx, anon); err != nil {
+				return err
+			}
 			r.AnonName = &anon
 		default:
 			return invalidImport("comment %s needs a user_id or an anon_name", c.ID)
@@ -130,6 +133,8 @@ func (rt *Runtime) ImportComments(ctx context.Context, tx pgx.Tx, in []content.I
 		}
 		if r.Body = strings.TrimSpace(r.Body); r.Body == "" {
 			r.Body = commentTombstone
+		} else if r.Body, err = rt.rules.maskOnly(ctx, r.Body); err != nil {
+			return err
 		}
 		if c.ReplyToID != "" {
 			if err := contentref.ValidateID(c.ReplyToID); err != nil {
@@ -487,7 +492,6 @@ func (rt *Runtime) ImportPolls(ctx context.Context, tx pgx.Tx, in []content.Impo
 	}
 	type row struct {
 		ID        string     `json:"id"`
-		Kind      string     `json:"kind"`
 		Question  string     `json:"question"`
 		Language  string     `json:"language"`
 		Active    bool       `json:"active"`
@@ -513,13 +517,9 @@ func (rt *Runtime) ImportPolls(ctx context.Context, tx pgx.Tx, in []content.Impo
 			return invalidImport("poll %s is imported twice", p.ID)
 		}
 		ids = append(ids, p.ID)
-		r := row{ID: p.ID, Kind: p.Kind, Question: strings.TrimSpace(p.Question), Language: strings.TrimSpace(p.Language), Active: p.Active,
+		r := row{ID: p.ID, Question: strings.TrimSpace(p.Question), Language: strings.TrimSpace(p.Language), Active: p.Active,
 			ClosesAt: p.ClosesAt, DeletedAt: p.DeletedAt}
-		switch r.Kind {
-		case "":
-			r.Kind = content.PollMultipleChoice
-		case content.PollMultipleChoice:
-		default:
+		if p.Kind != "" && p.Kind != content.PollMultipleChoice {
 			return invalidImport("poll kind %q", p.Kind)
 		}
 		if r.Question == "" {
@@ -550,26 +550,19 @@ func (rt *Runtime) ImportPolls(ctx context.Context, tx pgx.Tx, in []content.Impo
 	if foreign != "" {
 		return fmt.Errorf("%w: poll %s belongs to another tenant", ErrConflict, foreign)
 	}
-	var unsupported string
-	if err := tx.QueryRow(ctx, `SELECT coalesce(min(id::text), '') FROM `+s.t.pollQuestions+` WHERE tenant_id=$1 AND id=ANY($2::uuid[]) AND kind<>$3`, rt.tenant, ids, content.PollMultipleChoice).Scan(&unsupported); err != nil {
-		return err
-	}
-	if unsupported != "" {
-		return invalidImport("poll %s has an unsupported historical kind", unsupported)
-	}
 	data, err := json.Marshal(rows)
 	if err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `INSERT INTO `+s.t.pollQuestions+` AS q (id, tenant_id, kind, question, language, is_active, live_at, closes_at, deleted_at,
+	if _, err := tx.Exec(ctx, `INSERT INTO `+s.t.pollQuestions+` AS q (id, tenant_id, question, language, is_active, live_at, closes_at, deleted_at,
  created_at, updated_at)
- SELECT r.id::uuid, $1, r.kind, r.question, r.language, r.active, r.live_at, r.closes_at, r.deleted_at, r.created_at, r.updated_at
- FROM jsonb_to_recordset($2::jsonb) AS r(id text, kind text, question text, language text, active bool, live_at timestamptz, closes_at timestamptz,
+ SELECT r.id::uuid, $1, r.question, r.language, r.active, r.live_at, r.closes_at, r.deleted_at, r.created_at, r.updated_at
+ FROM jsonb_to_recordset($2::jsonb) AS r(id text, question text, language text, active bool, live_at timestamptz, closes_at timestamptz,
   deleted_at timestamptz, created_at timestamptz, updated_at timestamptz)
- ON CONFLICT (tenant_id, id) DO UPDATE SET kind = EXCLUDED.kind, question = EXCLUDED.question, language = EXCLUDED.language, is_active = EXCLUDED.is_active,
+ ON CONFLICT (tenant_id, id) DO UPDATE SET question = EXCLUDED.question, language = EXCLUDED.language, is_active = EXCLUDED.is_active,
   live_at = EXCLUDED.live_at, closes_at = EXCLUDED.closes_at, deleted_at = EXCLUDED.deleted_at, created_at = EXCLUDED.created_at, updated_at = EXCLUDED.updated_at
- WHERE q.tenant_id = $1 AND (q.kind, q.question, q.language, q.is_active, q.live_at, q.closes_at, q.deleted_at, q.created_at)
-  IS DISTINCT FROM (EXCLUDED.kind, EXCLUDED.question, EXCLUDED.language, EXCLUDED.is_active, EXCLUDED.live_at, EXCLUDED.closes_at, EXCLUDED.deleted_at,
+ WHERE q.tenant_id = $1 AND (q.question, q.language, q.is_active, q.live_at, q.closes_at, q.deleted_at, q.created_at)
+  IS DISTINCT FROM (EXCLUDED.question, EXCLUDED.language, EXCLUDED.is_active, EXCLUDED.live_at, EXCLUDED.closes_at, EXCLUDED.deleted_at,
   EXCLUDED.created_at)`, rt.tenant, string(data)); err != nil {
 		return err
 	}
@@ -650,8 +643,8 @@ func (rt *Runtime) ImportVotes(ctx context.Context, tx pgx.Tx, in []content.Impo
 	}
 	var bad string
 	if err := tx.QueryRow(ctx, `SELECT coalesce(min(r.option_id), '') FROM jsonb_to_recordset($1::jsonb) AS r(poll_id text, option_id text)
- WHERE NOT EXISTS (SELECT 1 FROM `+s.t.pollOptions+` o JOIN `+s.t.pollQuestions+` q ON q.tenant_id = o.tenant_id AND q.id = o.question_id
-  WHERE o.tenant_id = $2 AND o.id = r.option_id::uuid AND o.question_id = r.poll_id::uuid AND q.kind = $3)`, string(all), rt.tenant, content.PollMultipleChoice).Scan(&bad); err != nil {
+ WHERE NOT EXISTS (SELECT 1 FROM `+s.t.pollOptions+` o
+  WHERE o.tenant_id = $2 AND o.id = r.option_id::uuid AND o.question_id = r.poll_id::uuid)`, string(all), rt.tenant).Scan(&bad); err != nil {
 		return err
 	}
 	if bad != "" {

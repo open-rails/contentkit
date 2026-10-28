@@ -24,9 +24,6 @@ func (e *Engine) validateEntityScopes(provider entities.Scopes) error {
 	if e.cfg.Content.Channels != nil && provider == nil {
 		return errors.New("contentkit: channels require Deps.Scopes")
 	}
-	if e.scope == nil {
-		return nil
-	}
 	if e.cfg.Content.Channels != nil {
 		return e.validateScopeBinding(provider)
 	}
@@ -36,9 +33,6 @@ func (e *Engine) validateEntityScopes(provider entities.Scopes) error {
 // validateScopeBinding is shared by runtime and explicit provisioning; neither
 // may use another app's authorization-group identities.
 func (e *Engine) validateScopeBinding(provider entities.ScopeProvisioner) error {
-	if e.scope == nil {
-		return nil
-	}
 	bound, ok := provider.(entities.AppBinding)
 	if !ok {
 		return errors.New("contentkit: scoped authorization groups require an app-bound Scopes provider")
@@ -95,12 +89,6 @@ func (e *Engine) authorization(a auth.Authenticator, policy Authorization) (auth
 	if err := gate.Check(a); err != nil {
 		return nil, err
 	}
-	if e.scope == nil {
-		if !nilAuthorization(policy) {
-			return nil, errors.New("contentkit: Deps.Authorization requires Config.Scope")
-		}
-		return a, nil
-	}
 	if nilAuthorization(policy) {
 		return nil, errors.New("contentkit: Config.Scope requires Deps.Authorization")
 	}
@@ -136,7 +124,7 @@ func (a scopeAuthenticator) Authorize(ctx context.Context, v auth.Verified, enti
 			return false, auth.ErrUnavailable
 		}
 		var local bool
-		err := a.engine.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM `+pgx.Identifier{a.engine.schema, "content_entities"}.Sanitize()+` WHERE tenant_id=$1 AND kind='channel' AND auth_scope=$2 AND state='active')`, a.engine.cfg.Tenant, entity).Scan(&local)
+		err := a.engine.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM `+pgx.Identifier{a.engine.schema, "content_entities"}.Sanitize()+` WHERE tenant_id=$1 AND kind='channel' AND auth_scope=$2 AND state='active')`, a.engine.cfg.Scope.AppID.String(), entity).Scan(&local)
 		if err != nil {
 			return false, err
 		}

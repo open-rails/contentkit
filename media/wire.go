@@ -132,7 +132,7 @@ const (
 )
 
 const (
-	AccessNone = "none" // public files only (previews)
+	AccessNone = "none" // public files only
 )
 
 // ReadResult is the read API's answer: the files under the requested prefix
@@ -146,9 +146,6 @@ type ReadResult struct {
 	// client keeps what it has and reads again shortly before.
 	Expires int64          `json:"expires"`
 	Meta    map[string]any `json:"meta,omitempty"`
-	// Previews are the item's public preview images in order (a Public
-	// preset with First): every viewer who can see the item gets them.
-	Previews []string `json:"previews,omitempty"`
 	// Public lists the exact published renditions. Clients must not infer a
 	// current cover or avatar's physical filename from the preset template.
 	Public []PublicImage `json:"public,omitempty"`
@@ -261,8 +258,6 @@ type PresetRule struct {
 	Aspect Aspect `json:"aspect,omitzero"`
 	// MinWidth is the narrowest edit the preset accepts.
 	MinWidth int `json:"min_width,omitempty"`
-	// First makes it a preview: the first First uploads, {n} in To.
-	First int `json:"first,omitempty"`
 	// Default: the gateway serves the kind's default image at the template's
 	// names while an item has no publication (Registry.DefaultImage).
 	Default bool `json:"default"`

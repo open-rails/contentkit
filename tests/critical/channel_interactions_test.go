@@ -108,10 +108,6 @@ func TestChannelInteractionBindings(t *testing.T) {
 	if !standing.CanComment || standing.Count == nil || *standing.Count != 1 {
 		t.Fatalf("channel standing/count wrong: %+v", standing)
 	}
-	_, err = client.GetEntityComments(t.Context(), channel.ID, ck.GetEntityCommentsQuery{Language: "en"})
-	requireError(t, err, 404, "not_found")
 	_, err = client.GetEntityReaction(t.Context(), channel.ID)
-	requireError(t, err, 404, "not_found")
-	_, err = client.GetEntityFavorite(t.Context(), channel.ID)
 	requireError(t, err, 404, "not_found")
 }

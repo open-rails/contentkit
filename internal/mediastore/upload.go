@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/ratelimit"
 	media "github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/layout"
 	"github.com/open-rails/contentkit/media/token"
@@ -49,7 +50,7 @@ type UploadOptions struct {
 type Uploads struct {
 	o       UploadOptions
 	reg     *Registry
-	commits rateLimiter
+	commits *ratelimit.Limiter
 }
 
 func NewUploads(o UploadOptions) (*Uploads, error) {
@@ -115,7 +116,7 @@ func (u *Uploads) Presign(ctx context.Context, actor access.Actor, r media.Presi
 	if err != nil {
 		return media.Presigned{}, err
 	}
-	views, area := u.reg.editorViews(current), item.Kind().Area(path, "")
+	views, area := u.reg.editorViews(current), item.Kind().Area("")
 	for _, blob := range current.Blobs() {
 		sum, ok := layout.BlobDigest(blob)
 		if a, _, _ := layout.SplitBlobRef(blob); !ok || !bytes.Equal(sum, r.SHA256) || views[blob] || a != area {
@@ -397,7 +398,7 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 			return nil, uploadErr(media.CodeForbidden, "forced regeneration needs an exempt grant")
 		}
 		if u.commits != nil {
-			if ok, wait := u.commits.allow(ctx, uploaderID(actor)); !ok {
+			if ok, wait := u.commits.Allow(ctx, uploaderID(actor)); !ok {
 				return nil, &media.UploadError{Code: media.CodeRate, Message: "commit rate limit", RetryAfter: wait}
 			}
 		}
@@ -536,7 +537,6 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 				return err
 			}
 		}
-		item.Kind().syncPreviews(prior, m)
 		mutation.effects.Renames = map[string]string{}
 		for before, after := range o.renames {
 			if before != after {
@@ -848,7 +848,7 @@ func (u *Uploads) copies(ctx context.Context, actor access.Actor, grant media.Up
 			files = files[:1]
 		}
 		sc := source{n: n, from: from, files: files, first: len(sums)}
-		for _, b := range copyBlobs(item.Kind(), cmpOr(op.To, op.From.Path), files) {
+		for _, b := range copyBlobs(item.Kind(), files) {
 			srcKey, _ := from.Blob(b[0])
 			if _, seen := names[copyKey{n, srcKey, b[1]}]; seen {
 				continue
@@ -864,7 +864,7 @@ func (u *Uploads) copies(ctx context.Context, actor access.Actor, grant media.Up
 	}
 	// Each copy lands in its destination file's area.
 	allocated := make([]string, len(sums))
-	for _, area := range []string{layout.AreaPrivate, layout.AreaDownload, layout.AreaOriginals, layout.AreaInternal} {
+	for _, area := range []string{layout.AreaPrivate, layout.AreaOriginals, layout.AreaInternal} {
 		var at []int
 		var of [][]byte
 		for i, a := range areas {
@@ -922,12 +922,12 @@ func (u *Uploads) copies(ctx context.Context, actor access.Actor, grant media.Up
 	}
 	out := make(map[int][]media.File, len(sources))
 	for _, sc := range sources {
-		files, op := sc.files, ops[sc.n]
+		files := sc.files
 		for i := range files {
 			files[i].Editor = nil // editor views belong to their original item's allocation
 			if !files[i].Gone && files[i].Blob != "" {
 				from, _ := sc.from.Blob(files[i].Blob)
-				files[i].Blob = names[copyKey{sc.n, from, copyArea(item.Kind(), cmpOr(op.To, op.From.Path), i, files[i])}]
+				files[i].Blob = names[copyKey{sc.n, from, copyArea(item.Kind(), i, files[i])}]
 			}
 			if files[i].Track != nil && files[i].Track.Index != "" {
 				track := *files[i].Track
@@ -943,13 +943,13 @@ func (u *Uploads) copies(ctx context.Context, actor access.Actor, grant media.Up
 
 // fileBlobs are the blobs files reference.
 // copyBlobs are the blobs of a copy's files, each with the area it lands in
-// at the destination: the upload's at to, an output's by its preset; track
-// indexes in the destination's prepared-output area.
-func copyBlobs(k *RegisteredKind, to string, files []media.File) [][2]string {
+// at the destination: the upload's, an output's by its preset; track indexes
+// in the destination's prepared-output area.
+func copyBlobs(k *RegisteredKind, files []media.File) [][2]string {
 	var out [][2]string
 	for i, f := range files {
 		if f.Blob != "" && !f.Gone {
-			out = append(out, [2]string{f.Blob, copyArea(k, to, i, f)})
+			out = append(out, [2]string{f.Blob, copyArea(k, i, f)})
 		}
 		if f.Track != nil && f.Track.Index != "" {
 			out = append(out, [2]string{f.Track.Index, copyIndexArea(k)})
@@ -965,12 +965,12 @@ func copyIndexArea(k *RegisteredKind) string {
 	return layout.AreaPrivate
 }
 
-// copyArea is the area the i-th file of a copy to path to lands in.
-func copyArea(k *RegisteredKind, to string, i int, f media.File) string {
+// copyArea is the area the i-th file of a copy lands in.
+func copyArea(k *RegisteredKind, i int, f media.File) string {
 	if i == 0 {
-		return k.Area(to, "")
+		return k.Area("")
 	}
-	return k.Area("", f.Preset)
+	return k.Area(f.Preset)
 }
 
 func fileBlobs(files []media.File) []string {

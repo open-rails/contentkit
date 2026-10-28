@@ -79,27 +79,14 @@ type importVersionTextRow struct {
 	catalog.VersionText
 }
 
-type importSegmentRow struct {
-	ID        string     `json:"id"`
-	VersionID string     `json:"version_id"`
-	Position  int        `json:"position"`
-	Title     string     `json:"title"`
-	Start     *int       `json:"start_index"`
-	End       *int       `json:"end_index"`
-	StartPage *string    `json:"start_page"`
-	ReleaseAt *time.Time `json:"release_at"`
-}
-
 // importBatch is one Import's rows.
 type importBatch struct {
 	items     []importItemRow
 	versions  []importVersionRow
 	creators  []importCreatorRow
 	vtexts    []importVersionTextRow
-	segments  []importSegmentRow
 	creatorID []string // items whose creators are replaced
 	vtextIDs  []string // versions whose text is replaced
-	segIDs    []string // versions whose segments are replaced
 	fresh     map[string]bool
 	keep      map[codes.Key]string
 }
@@ -360,16 +347,6 @@ func (s *Store) importRows(in []catalog.ImportContent, items, stored map[string]
 					b.vtexts = append(b.vtexts, importVersionTextRow{VersionID: v.ID, Language: l, VersionText: t})
 				}
 			}
-			if v.Segments != nil {
-				b.segIDs = append(b.segIDs, v.ID)
-				for _, sg := range v.Segments {
-					row := importSegmentRow{ID: sg.ID, VersionID: v.ID, Position: sg.Position, Title: sg.Title, Start: &sg.Start, End: &sg.End, ReleaseAt: sg.ReleaseAt}
-					if sg.StartPage != "" {
-						row.Start, row.End, row.StartPage = nil, nil, &sg.StartPage
-					}
-					b.segments = append(b.segments, row)
-				}
-			}
 		}
 	}
 	return b, rules, owners, nil
@@ -454,35 +431,6 @@ func (s *Store) writeImport(ctx context.Context, tx pgx.Tx, b importBatch) (chan
  ON CONFLICT (tenant_id, version_id, language) DO UPDATE SET title=EXCLUDED.title,description=EXCLUDED.description,slug=EXCLUDED.slug,body=EXCLUDED.body,sort_key=EXCLUDED.sort_key,aliases=EXCLUDED.aliases,updated_at=clock_timestamp()
  WHERE (t.title,t.description,t.slug,t.body,t.sort_key,t.aliases) IS DISTINCT FROM (EXCLUDED.title,EXCLUDED.description,EXCLUDED.slug,EXCLUDED.body,EXCLUDED.sort_key,EXCLUDED.aliases)`), s.tenant, data(b.vtexts)); err != nil {
 			return nil, err
-		}
-	}
-	if len(b.segIDs) > 0 {
-		for _, version := range b.segIDs {
-			var chapters []catalog.Segment
-			for _, row := range b.segments {
-				if row.VersionID != version {
-					continue
-				}
-				chapter := catalog.Segment{ID: row.ID, Position: row.Position, Title: row.Title, ReleaseAt: row.ReleaseAt}
-				if row.StartPage != nil {
-					chapter.StartPage = *row.StartPage
-				} else if row.Start != nil && row.End != nil {
-					chapter.Start, chapter.End = *row.Start, *row.End
-				}
-				chapters = append(chapters, chapter)
-			}
-			updated, err := s.writeChaptersTx(ctx, tx, version, chapters)
-			if err != nil {
-				return nil, err
-			}
-			if updated {
-				for _, row := range b.versions {
-					if row.ID == version {
-						changed[row.ContentID] = true
-						break
-					}
-				}
-			}
 		}
 	}
 	return changed, nil
@@ -727,17 +675,6 @@ func (s *Store) checkImportVersion(ctx context.Context, kind string, parentDelet
 		return err
 	}
 	v.Text, v.OriginalTitle, v.OriginalLanguage = prepared.Text, prepared.OriginalTitle, prepared.OriginalLanguage
-	if v.Segments != nil {
-		for i, chapter := range v.Segments {
-			if chapter.StartPage == "" || chapter.Start != 0 || chapter.End != 0 {
-				return invalid("chapter %d: start_page must name a virtual manifest file; numeric ranges are migration-only", i+1)
-			}
-		}
-		// Import's transaction belongs to its caller and may already hold
-		// catalog rows. Taking a manifest lock here would invert upload's lock
-		// order; omitting it would race source removal and marker validation.
-		return invalid("import content and source media first, then update chapters with PUT /contents/{id}/versions/{version}/segments using start_page; bulk import cannot safely mutate chapters")
-	}
 	return nil
 }
 

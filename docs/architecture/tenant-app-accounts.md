@@ -57,16 +57,16 @@ that a release or deployment contains all of it.
 
 | Source | Current behavior | Target implication |
 | --- | --- | --- |
-| [`config.go`](../../config.go), [`engine.go`](../../engine.go) | `Config.Tenant` pins a catalog, access gate, signal scope and media setup | Its current value is a legacy **app** key, not the new business tenant |
-| [`scope.go`](../../scope.go) | Local typed tenant/app scope and immutable app/account-storage claims | Establishes compatible ownership metadata; it does not grant app permissions |
-| [`accounts.go`](../../accounts.go) | Scoped `AccountsConfig{Schema, Avatars}` derives the tenant account root; legacy `Namespace` remains a migration input | Shared account/avatar coordinates do not configure an inbox |
+| [`config.go`](../../config.go), [`engine.go`](../../engine.go) | `Config.Scope.AppID` pins a catalog, access gate and signal scope; media roots derive from Scope | The catalog key is distinct from the business tenant |
+| [`scope.go`](../../scope.go) | Local typed tenant/app scope and immutable app ownership claims | Establishes compatible ownership metadata; it does not grant app permissions |
+| [`accounts.go`](../../accounts.go) | Scoped `AccountsConfig{Schema, Avatars}` derives the tenant account root | Shared account/avatar coordinates do not configure an inbox |
 | [`account_erasure_receipts.go`](../../account_erasure_receipts.go) | Existing account-erasure fences use AuthKit-owned storage | Normal notification publication uses only AuthKit's publisher; ContentKit has no inbox reader or fallback store |
 | [`notifications.md`](../notifications.md) | AuthKit-owned inbox with an injected transactional publisher | Keep general event logs independent; OpenRails owns selected billing notices and their resolution |
 | [`avatars.go`](../../avatars.go), [`media/avatar`](../../media/avatar) | One avatar writer; secondary app forwards authenticated self-only edits | Keep one canonical manifest and processing flow |
 | [`discovery/stats.go`](../../discovery/stats.go), [`adapters/openrails/tenure.go`](../../adapters/openrails/tenure.go) | App comments/completions plus a thin adapter to OpenRails' native access-tenure query | Keep counters app-scoped; expose billing-derived tenure through ContentKit |
-| [`media/layout/layout.go`](../../media/layout/layout.go) | Scoped paths include the tenant and optional app; legacy paths remain explicit compatibility inputs | Registry, tokens, gateway and workers share the same scope |
-| [`access/keys.go`](../../access/keys.go), [`content/runtime.go`](../../content/runtime.go) | Legacy tenant values occur in durable keys, references and query predicates | A config rename must not rewrite existing catalog/access identities |
-| [`internal/gate/gate.go`](../../internal/gate/gate.go), [`adapters/authkit/authorization.go`](../../adapters/authkit/authorization.go) | Legacy staff checks retain root scope; scoped engines require the app authorization port and explicit AuthKit grants | Host role/key adoption remains separate from the implemented adapter |
+| [`media/layout/layout.go`](../../media/layout/layout.go) | Paths include the tenant and optional app | Registry, tokens, gateway and workers share the same scope |
+| [`access/keys.go`](../../access/keys.go), [`content/runtime.go`](../../content/runtime.go) | App IDs occur in durable keys, references and query predicates | Scope-configured catalog/access identities stay unchanged |
+| [`internal/gate/gate.go`](../../internal/gate/gate.go), [`adapters/authkit/authorization.go`](../../adapters/authkit/authorization.go) | Engines require the app authorization port and explicit AuthKit grants | Host role/key adoption remains separate from the implemented adapter |
 
 The existing [design notes](../DESIGN.md) use "tenant" for the catalog
 isolation key. That accurately describes the current implementation, but
@@ -81,35 +81,27 @@ opaque, stable typed IDs, represented as UUIDs in new provisioning. Slugs
 such as `doujins` and `hentai0` are readable names for display/routing, with
 tenant-scoped app uniqueness; they are not foreign keys or authorization.
 
-The in-progress embedded interface uses typed IDs and an explicit migration
-key. This is source work, not a published-version claim:
+The embedded interface requires typed IDs:
 
 ```go
 cfg.Scope = &contentkit.Scope{
     TenantID: tenantID, // same business in both apps
     AppID:    appID,    // different for Doujins and Hentai0
 }
-cfg.LegacyCatalogKey = "doujins" // existing catalog only; omit for a new app
 ```
 
 `ParseTenantID` and `ParseAppID` accept persisted canonical UUIDs. `NewTenantID`
 and `NewAppID` are provisioning helpers; never call them on every startup.
-`Config.Tenant` remains the legacy-only spelling. Combining it with `Scope`
-is rejected instead of silently deciding what "tenant" meant. Adopting an
-existing app explicitly moves its old `Tenant` value to `LegacyCatalogKey`.
-Omitting that key uses the new app ID for a new catalog; it does not discover
-or migrate an older catalog automatically.
+`Scope` is required. Its app ID is the catalog key. Account and media roots
+are derived from the scope.
 
-The first scope slice records immutable app-to-tenant/catalog bindings in the
-catalog schema and account-storage-to-tenant bindings in the effective account
-schema. An account namespace belongs to one tenant, and one tenant uses one
-namespace within that account schema. App and account claims commit together;
-replicas serialize claims and database constraints reject collisions. A
-current-source legacy-only runtime refuses to open a claimed catalog or account
-store. Across separate databases/account schemas, consistent tenant identity
-still depends on trusted deployment configuration or the future hosted registry.
-This metadata does not implement issuer validation, app roles or hosted
-provisioning authority by itself.
+ContentKit records immutable app-to-tenant/catalog bindings in the catalog
+schema. Replicas serialize claims and database constraints reject collisions.
+The shared account key is always `tenant_<TenantID>`, derived from `Scope`;
+account storage has no separate key binding. Across separate databases/account
+schemas, consistent tenant identity depends on trusted deployment configuration
+or the future hosted registry. This metadata does not implement issuer
+validation, app roles or hosted provisioning authority by itself.
 
 Scoped runtimes also require an explicit `Deps.Authorization` binding. Its
 `ResolveActor` maps the original verified credential to a tenant account or
@@ -117,8 +109,7 @@ scoped service identity, and `Authorize` checks a permission in the fixed app
 and optional content group. A missing binding fails startup. The binding must
 preserve credential ceilings, revocation and app restrictions; changing an
 AuthKit scope string alone is not sufficient because provider-wide root
-grants may be inherited. Legacy-only runtimes retain their existing authority
-contract. The local AuthKit adapter uses exact-group `CanDirect` checks and
+grants may be inherited. The local AuthKit adapter uses effective `Can` checks and
 verifies its configured group personas; published delivery and host role/key
 adoption remain #141 gates.
 
@@ -133,17 +124,16 @@ Provisioning or trusted embedded configuration resolves the context to:
 
 - the tenant's account directory, profile/avatar store and inbox store;
 - the app's catalog and activity stores and app authority;
-- the linked merchant and verified customer-to-account mapping;
-- existing compatibility identifiers where applicable.
+- the linked merchant and verified customer-to-account mapping.
 
-Schema names, bucket names, old catalog keys and storage paths belong to
-deployment/migration configuration, not an extra public "account namespace".
+Schema names, bucket names and storage paths belong to
+deployment configuration, not an extra public "account namespace".
 Embedded deployments still need to configure PostgreSQL and object storage;
 the point is that these do not decide whose records may be shared. No service
 discovery system or new process is required for embedded use.
 
-New APIs must reject zero IDs, a pair whose app belongs to another tenant,
-and conflicting new/legacy declarations. Trusted initialization must verify
+New APIs must reject zero IDs and a pair whose app belongs to another tenant.
+Trusted initialization must verify
 the configured pair and bindings; naming an existing app is not authority
 to access it. Avoid probing tenant/app existence in unauthenticated errors.
 
@@ -364,21 +354,15 @@ edits do not by themselves establish that an issue is delivered or released.
 
 ### A. Context and compatibility
 
-Introduce typed tenant/app context, registered app-to-tenant and
-merchant-to-tenant bindings, explicit account identity mapping, and validation.
-Adapt existing catalog keys and account sharing fields internally. Keep the
-old exported fields for a documented deprecation period and reject ambiguous
-configuration. No automatic SQL-key, access-key or object rename occurs here.
-The initial #140 slice establishes scope/configuration and durable app/account
-storage claims; merchant identity, verified account mapping and app authority
-remain separate delivery gates. It deliberately keeps the existing
-`Accounts.Namespace` compatibility setting until #142 supplies the complete
-shared-account configuration surface.
+Typed tenant/app context and immutable app-to-tenant/catalog bindings identify
+the deployment. `Config.Scope` is required; its `AppID` is the catalog key and
+its `TenantID` derives the account key. No legacy catalog or account-key
+configuration is supported. Merchant identity, verified account mapping and
+app authority remain separate delivery gates.
 
-Gate: old configs read existing fixtures without changed keys; new configs
-resolve two app contexts to one account store and separate catalogs; conflicting
-bindings and cross-tenant pairs fail. Record exact source/version and test
-commands before describing a release as ready.
+Gate: two app contexts resolve to one tenant account store and separate catalogs;
+conflicting app bindings and cross-tenant pairs fail. Record exact source/version
+and test commands before describing a release as ready.
 
 ### B. Tenant resources and billing integration
 
@@ -405,20 +389,16 @@ Avoid adding empty per-app account or membership rows.
 Gate: a role/ban in one app cannot affect another; identical content IDs and
 subject IDs in unrelated scopes cannot collide; private signed media and
 foreign cursors are refused; tenant erasure reaches every app and delayed
-events cannot recreate shared records. Existing entitlements still resolve
-under their exact legacy keys until explicitly migrated.
+events cannot recreate shared records. Entitlement keys use the app ID.
 
-### D. Storage consolidation and optional layout migration
+### D. Storage layout
 
-Complete the approved local shared-bucket copy/verification/mapping cutover
-while preserving source buckets. Separately implement versioned parsing and
-explicit migration to tenant/app-derived keys only when all readers and workers
-support it. Keep checkpoint and rollback manifests outside disposable temp
-state. Source removal is a separate owner decision.
+Catalog media uses tenant/app-derived roots; account media uses the tenant's
+account root. Databases are recreated. Schema changes use forward migrations;
+there are no catalog adoption or layout conversion paths.
 
-Gate: verified checksums and manifest references, authenticated/private/public
-and default-media reads, upload/edit/delete processing, worker restart and
-rollback to legacy mappings. A healthy container alone is not media evidence.
+Gate: manifest references, authenticated/private/public and default-media
+reads, upload/edit/delete processing and worker restart all use the same scope.
 
 ### E. Hosted wrapper, when productized
 
@@ -436,19 +416,10 @@ that a hosted SaaS product exists.
 
 ## Rollout and unresolved implementation choices
 
-Register the current shared business and its two apps without changing account
-IDs. Back up and inspect existing catalog, inbox, avatar and authority records.
-Deploy readers that understand old and new scope metadata before new writers;
-then migrate declarations and verified records in bounded, resumable batches.
-Never merge by matching email. Start writers only when their destination and
-consumer identities agree. Validate both app UIs and worker paths before
-changing production configuration; source completion, local development,
-published packages and production are separate evidence levels.
-Older released writers do not know the new binding tables and cannot enforce
-these claims. Quiesce every old writer/worker before adopting the new scoped
-configuration; a successfully bound new process does not fence a previously
-running old binary. Downgrade requires an explicit compatible cutover, not
-simply restarting an old version against claimed storage.
+Provision the shared business and its two apps with stable canonical IDs.
+Validate both app UIs and worker paths before changing deployment configuration;
+source completion, local development, published packages and production are
+separate evidence levels.
 
 The ownership decisions are settled. These mechanical choices remain bounded
 implementation decisions, not reasons to reopen shared registration:

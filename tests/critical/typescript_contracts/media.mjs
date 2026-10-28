@@ -225,8 +225,11 @@ export async function runMediaContracts(group, fixture) {
     assert.match(inline.name, /^i-[a-f0-9-]{36}$/);
     assert.equal(inline.path, "body/" + inline.name + ".png");
     assert.equal(inline.ref, "contentkit:" + inline.name);
-    assert.equal(typeof inline.url, "string");
-    assert.equal((await fetch(inline.url)).status, 200);
+    // The editor view renders once an editor read asks for it, so it may not
+    // exist yet when the upload settles (url is null until then).
+    const preview = inline.url ?? (await owner.media.editorView(imageRef, inline.path)).url;
+    assert.equal(typeof preview, "string");
+    assert.equal((await fetch(preview)).status, 200);
     await owner.contents.updateVersion(imageRef.id, imageRef.version, { text: { en: {
       title: "Inline body",
       body: "Text ![inline](" + inline.ref + ")",
@@ -239,7 +242,7 @@ export async function runMediaContracts(group, fixture) {
         const content = await anonymous.contents.get(imageRef.id);
         const url = content.images?.[inline.name];
         if (typeof url === "string" && url !== previous) return content;
-        await new Promise((resolve) => setTimeout(resolve, 550));
+        await new Promise((resolve) => setTimeout(resolve, 50));
       } while (Date.now() < deadline);
       assert.fail("inline image did not reach the completed reader projection");
     };
@@ -314,7 +317,7 @@ export async function runMediaContracts(group, fixture) {
       const edition = await owner.contents.version(imageRef.id, imageRef.version);
       locked = await anonymous.contents.get(imageRef.id);
       if (edition.publication?.state === "completed" && !locked.decision.allowed) break;
-      await new Promise((resolve) => setTimeout(resolve, 550));
+      await new Promise((resolve) => setTimeout(resolve, 50));
     } while (Date.now() < privateDeadline);
     assert.equal(locked.decision.allowed, false);
     assert.equal(locked.body ?? "", "");

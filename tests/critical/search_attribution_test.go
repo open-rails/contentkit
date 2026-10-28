@@ -28,11 +28,9 @@ type attributedBrowserVisit struct {
 }
 
 func TestBrowserSearchEngagementAttribution(t *testing.T) {
-	dist := t.TempDir()
-	build := exec.CommandContext(t.Context(), "pnpm", "--dir", "../../sdk/ui", "exec", "vite", "build", "--config", "../../tests/critical/browser/search-attribution.config.mjs")
-	build.Env = append(os.Environ(), "CONTENTKIT_ATTRIBUTION_DIST="+dist, "RAYON_NUM_THREADS=1")
-	if output, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build shipped attribution harness: %v\n%s", err, output)
+	dist := ".search-attribution-dist"
+	if _, err := os.Stat(dist + "/search-attribution.html"); err != nil {
+		t.Fatal("build the shipped UI and search-attribution harness before this selected test: pnpm --dir ../../sdk/ui build; pnpm --dir ../../sdk/ui exec vite build --config ../../tests/critical/browser/search-attribution.config.mjs")
 	}
 	w := newWorld(t)
 	a := w.apps[0]

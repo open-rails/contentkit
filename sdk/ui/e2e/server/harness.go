@@ -19,19 +19,22 @@ import (
 
 	"github.com/open-rails/authkit"
 	"github.com/open-rails/authkit/authtest"
+	"github.com/open-rails/authkit/iam"
 
 	contentkit "github.com/open-rails/contentkit"
+	ckauth "github.com/open-rails/contentkit/adapters/authkit"
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/internal/media/workqueue"
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/media/layout"
 	mediaS3 "github.com/open-rails/contentkit/media/s3"
 	"github.com/open-rails/contentkit/media/token"
 )
 
 // The deployment's names; compose.yaml gives the worker the same ones.
 const (
-	tenant       = "e2e" // the ContentKit tenant and media namespace
+	appID        = "00000000-0000-4000-8000-000000000202"
 	schema       = "e2e" // ContentKit's tables
 	authSchema   = "auth"
 	riverSchema  = "e2e_river"        // ContentKit's own River
@@ -44,6 +47,8 @@ const (
 	// membersPrefix serves a ContentKit that takes nothing anonymous.
 	membersPrefix = "/api/contentkit-members"
 )
+
+var mediaScope = layout.Scope{TenantID: accountTenantID, AppID: appID}
 
 type harness struct {
 	cleanupSignals func(context.Context) error
@@ -138,8 +143,25 @@ func newHarness(ctx context.Context, c config, mediaOrigin string) (_ *harness, 
 		return nil, err
 	}
 
-	// One ContentKit per mount, over one schema, AuthKit passed straight in.
-	cfg := contentkit.Config{Tenant: tenant, Database: contentkit.DatabaseConfig{Schema: schema, RiverSchema: riverSchema}, Content: site(),
+	// One ContentKit per mount, over one schema and app scope.
+	tenantID, err := contentkit.ParseTenantID(accountTenantID)
+	if err != nil {
+		return nil, err
+	}
+	catalogID, err := contentkit.ParseAppID(appID)
+	if err != nil {
+		return nil, err
+	}
+	scope := contentkit.Scope{TenantID: tenantID, AppID: catalogID}
+	permissionScope, err := h.auth.Scope(ctx, iam.GroupByID(appID))
+	if err != nil {
+		return nil, err
+	}
+	policy, err := ckauth.NewAuthorization(ctx, h.auth, ckauth.AuthorizationConfig{Scope: scope, Issuer: c.origin, AppScope: permissionScope})
+	if err != nil {
+		return nil, err
+	}
+	cfg := contentkit.Config{Scope: &scope, Accounts: &contentkit.AccountsConfig{Schema: "e2e_accounts"}, Database: contentkit.DatabaseConfig{Schema: schema, RiverSchema: riverSchema}, Content: site(),
 		Interactions: contentkit.InteractionsConfig{
 			Anonymous: content.Anonymous{Comments: true, Reactions: true, Votes: true},
 			// The suites test the bound; the default may change.
@@ -157,7 +179,7 @@ func newHarness(ctx context.Context, c config, mediaOrigin string) (_ *harness, 
 	if h.cleanupSignals, err = prepareSignals(ctx, c, &cfg); err != nil {
 		return nil, fmt.Errorf("signal fixture: %w", err)
 	}
-	deps := contentkit.Deps{Postgres: h.pool, Auth: h.auth.Authenticator(), Users: h.auth.UserInfo(), Store: h.store,
+	deps := contentkit.Deps{Postgres: h.pool, Auth: h.auth.Authenticator(), Authorization: policy, Users: h.auth.UserInfo(), Store: h.store,
 		Moderator: moderator{}, BodyProcessor: newPostHTML()}
 	if h.ck, err = contentkit.New(ctx, cfg, deps); err != nil {
 		return nil, err
@@ -178,15 +200,26 @@ func newHarness(ctx context.Context, c config, mediaOrigin string) (_ *harness, 
 	if err != nil {
 		return nil, err
 	}
-	fixture.Namespace = tenant
 	if h.reg, err = mediastore.NewRegistry(fixture, mediastore.Hooks{}); err != nil {
 		return nil, err
 	}
-	queue, err := workqueue.New(h.pool, h.reg, workerSchema)
+	accountStorage, _, err := cfg.AccountMedia()
+	if err != nil {
+		return nil, err
+	}
+	queue, err := workqueue.NewWithAccounts(h.pool, h.reg, workerSchema, accountStorage.WorkerSchema)
 	if err != nil {
 		return nil, err
 	}
 	journal, err := mediastore.NewPGJournal(h.pool, schema, queue)
+	if err != nil {
+		return nil, err
+	}
+	accountJournal, err := mediastore.NewPGJournal(h.pool, accountStorage.Schema, queue)
+	if err != nil {
+		return nil, err
+	}
+	journal, err = mediastore.RouteJournal(journal, accountJournal, (layout.Scope{TenantID: accountTenantID}).Partition())
 	if err != nil {
 		return nil, err
 	}

@@ -331,8 +331,8 @@ func TestCommerceEntitlementBoundaries(t *testing.T) {
 	})
 }
 
-// Await completion through the editor's actual version read. Slow polling
-// stays below HTTP issuance limits while the real River worker runs.
+// Await completion through the editor's actual version read. Catalog reads
+// are not subject to the media HTTP read limiter.
 func awaitEditionPublication(t *testing.T, app *application, client *ck.Client, content, version string) {
 	t.Helper()
 	deadline := time.Now().Add(45 * time.Second)
@@ -344,7 +344,7 @@ func awaitEditionPublication(t *testing.T, app *application, client *ck.Client, 
 		if err == nil && last.Live {
 			return
 		}
-		time.Sleep(550 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond)
 	}
 	t.Fatalf("edition publication did not complete: version=%s current=%+v error=%v", version, last, err)
 }

@@ -18,13 +18,13 @@ import (
 	"github.com/open-rails/contentkit/media"
 )
 
-// The public media read API is rate limited. Observe publication at under two
-// requests per second rather than turning a storage wait into a 429 burst.
+// Media fixtures disable the HTTP read limiter so publication can be polled
+// promptly while retaining the full worker timeout.
 func waitForChapterPublication(t *testing.T, ready func() bool) {
 	t.Helper()
 	deadline := time.NewTimer(45 * time.Second)
 	defer deadline.Stop()
-	tick := time.NewTicker(550 * time.Millisecond)
+	tick := time.NewTicker(50 * time.Millisecond)
 	defer tick.Stop()
 	for {
 		if ready() {
@@ -300,10 +300,22 @@ func TestReleaseDuringPageSelectionKeepsCopyPrivate(t *testing.T) {
 			return n == want
 		})
 	}
-	completed := func() (n int, leaked bool) {
-		must(t, m.pool.QueryRow(t.Context(), `SELECT count(*), coalesce(bool_or(result->'pages'->'pages' @> '[{"path":"pages/30.png"}]'), false) FROM `+pgx.Identifier{m.schema, "content_publication_requests"}.Sanitize()+`
- WHERE tenant_id=$1 AND version_id=$2 AND state='completed'`, tenant, ref.Version).Scan(&n, &leaked))
-		return n, leaked
+	// A newer release deletes the request rows it supersedes, so record every
+	// release result naming the copy as it is written.
+	leaks, record := pgx.Identifier{m.schema, "critical_leaked_releases"}.Sanitize(), pgx.Identifier{m.schema, "critical_record_leak"}.Sanitize()
+	_, err = m.pool.Exec(t.Context(), `CREATE TABLE `+leaks+` (id uuid NOT NULL);
+CREATE FUNCTION `+record+`() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF NEW.result->'pages'->'pages' @> '[{"path":"pages/30.png"}]' THEN INSERT INTO `+leaks+` VALUES (NEW.id); END IF;
+  RETURN NEW;
+END $$;
+CREATE TRIGGER critical_record_leak AFTER INSERT OR UPDATE OF result ON `+pgx.Identifier{m.schema, "content_publication_requests"}.Sanitize()+`
+ FOR EACH ROW EXECUTE FUNCTION `+record+`()`)
+	must(t, err)
+	completed := func() (live string, leaked bool) {
+		must(t, m.pool.QueryRow(t.Context(), `SELECT coalesce((SELECT release_id::text FROM `+pgx.Identifier{m.schema, "content_versions"}.Sanitize()+`
+ WHERE tenant_id=$1 AND id=$2),''),EXISTS(SELECT 1 FROM `+leaks+`)`, tenant, ref.Version).Scan(&live, &leaked))
+		return live, leaked
 	}
 	before, _ := completed()
 	// Publishing again queues a release ahead of the derivative job's page selection.
@@ -314,17 +326,16 @@ func TestReleaseDuringPageSelectionKeepsCopyPrivate(t *testing.T) {
 	queued(2)
 	unlock()
 	waitForWithin(t, 45*time.Second, func() bool {
-		n, leaked := completed()
+		live, leaked := completed()
 		if leaked {
 			t.Fatal("a release planned before the page selection was saved published the copy of chapter two")
 		}
-		return n > before
+		return live != before
 	})
-	for range 4 {
+	for stable := time.Now().Add(2 * time.Second); time.Now().Before(stable); time.Sleep(50 * time.Millisecond) {
 		if paths := served(); !slices.Equal(paths, []string{"reader/01.webp"}) {
 			t.Fatalf("copy of chapter two became readable before its date: %v", paths)
 		}
-		time.Sleep(550 * time.Millisecond)
 	}
 	deadline := time.Now().Add(15 * time.Second)
 	for due := currentPublicationJob(t, m.app, ref.Version).Due; !due.Equal(future); due = currentPublicationJob(t, m.app, ref.Version).Due {

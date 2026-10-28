@@ -25,10 +25,7 @@ type AuthorizationConfig struct {
 
 func validateAuthorizationConfig(cfg Config, ak authkit.Config) error {
 	if cfg.Engine.Scope == nil {
-		if cfg.Authorization != nil {
-			return errors.New("server: authorization requires engine.scope")
-		}
-		return nil
+		return errors.New("server: engine.scope is required")
 	}
 	if err := cfg.Engine.Scope.Validate(); err != nil {
 		return err
@@ -66,15 +63,7 @@ func serverRoles(engine contentkit.Config) *authkit.Roles {
 	r := authkit.NewRoles(authkit.RemoteApplications, authkit.APIKeys)
 	// The engine's permission catalog still uses these stable operation names;
 	// scoped policy maps them to app/tenant permissions instead of granting root.
-	rootPermissions := r.Root.Declare(access.Names(access.Permissions()...)...)
-	if engine.Scope == nil {
-		var grants []iam.Grant
-		for _, p := range rootPermissions {
-			grants = append(grants, p)
-		}
-		r.Root.Role(StaffRole, grants...)
-		return r
-	}
+	r.Root.Declare(access.Names(access.Permissions()...)...)
 	app := r.Persona("app", authkit.RemoteApplications, authkit.APIKeys)
 	tenant := r.Tenant
 	var appGrants, tenantGrants []iam.Grant

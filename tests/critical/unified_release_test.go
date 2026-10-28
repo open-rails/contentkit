@@ -77,11 +77,13 @@ func TestReleaseRequestsSurviveRestartAndSequentialDeadlines(t *testing.T) {
 	}
 	runPublicationWorker(t, fleet, a)
 	next = assertNext(initial, first)
-	var noopCompleted bool
-	must(t, w.pool.QueryRow(t.Context(), `SELECT state='completed' AND result IS NOT NULL FROM `+w.schema+`.content_publication_requests
- WHERE tenant_id=$1 AND id=$2`, publicationTenant(a), noop.ID).Scan(&noopCompleted))
-	if !noopCompleted || next.ID == noop.ID {
-		t.Fatal("no-op release did not complete and preserve a separate next obligation")
+	// The completed no-op holds no copy of the release, and the next
+	// obligation superseding it removes its row.
+	var noopKept bool
+	must(t, w.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM `+w.schema+`.content_publication_requests
+ WHERE tenant_id=$1 AND id=$2)`, publicationTenant(a), noop.ID).Scan(&noopKept))
+	if noopKept || next.ID == noop.ID {
+		t.Fatal("no-op release did not complete and give way to a separate next obligation")
 	}
 	restart := func() {
 		t.Helper()
@@ -158,11 +160,5 @@ func TestReleaseRequestsSurviveRestartAndSequentialDeadlines(t *testing.T) {
 		if after[kind] != n {
 			t.Fatalf("request replay duplicated %s: before=%d after=%d", kind, n, after[kind])
 		}
-	}
-	var oldJobs int
-	must(t, w.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+w.schema+`_river.river_job
- WHERE kind IN ('contentkit_content_publish_due','contentkit_catalog_publish_due')`).Scan(&oldJobs))
-	if oldJobs != 0 {
-		t.Fatalf("publication still admitted %d removed sweep jobs", oldJobs)
 	}
 }

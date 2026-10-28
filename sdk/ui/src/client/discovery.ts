@@ -25,7 +25,7 @@ import { browserSearchHistory, type BrowserSearchHistory } from "./browser-searc
 /** A popularity period. */
 export type Period = "7d" | "30d" | "90d" | "365d" | "all";
 /** A list's order; position orders by the first of `groups` (an ordered group). */
-export type ListSort = "newest" | "oldest" | "title" | "popular" | `popular:${string}` | "top_rated" | `top_rated:${Period}` | "most_favorited" | "position" | "random";
+export type ListSort = "newest" | "oldest" | "title" | "popular" | `popular:${string}` | "top_rated" | "most_favorited" | "position" | "random";
 /** How locked contents list: marked (lock, the default) or left out (hide). */
 export type AccessMode = "lock" | "hide";
 
@@ -36,8 +36,6 @@ export interface ContentFilterQuery {
   ids?: readonly string[];
   /** Entity ids every listed version is in. */
   groups?: readonly string[];
-  /** Entity ids no listed version is in. */
-  exclude_groups?: readonly string[];
   /** Only contents this group owns: a channel's feed. */
   channel_id?: string;
   /** User ids: only contents one of them is credited on. */
@@ -52,8 +50,6 @@ export interface ContentFilterQuery {
   attribute?: readonly string[];
   /** Published on this day (YYYY-MM-DD) or month (YYYY-MM). */
   released_on?: string;
-  /** Only contents published within this age window; independent of the popularity score window. */
-  published_within?: Period;
   /** IANA time zone of released_on and release dates; UTC by default. */
   tz?: string;
   /** The signed-in reader's unseen, in-progress or completed contents. */
@@ -163,7 +159,7 @@ export interface AdminSuggestionsQuery {
 }
 
 // Comma-joined list parameters; `attribute` repeats instead.
-const LISTS = new Set(["ids", "groups", "exclude_groups", "creators", "access", "tiers", "traits", "card_entities", "entity_kinds", "content_kinds"]);
+const LISTS = new Set(["ids", "groups", "creators", "access", "tiers", "traits", "card_entities", "entity_kinds", "content_kinds"]);
 
 /** A query with its list parameters comma-joined, as discovery routes read them. */
 export function query(q: object): Record<string, string | number | boolean | readonly string[] | undefined> {

@@ -356,12 +356,16 @@ preview, counts or comments. With it, exactly what it names.
 | `views` | view counts (cards, detail) |
 | `comments` | comments, as below |
 
-Hidden counts are absent, never zero. `preview` is the free pages or
-segments when the access rule names none; a rule's own `preview` wins.
+Hidden counts are absent, never zero. `preview` is the free leading pages
+when the access rule names none; a rule's own `preview` wins. Release copies
+those released pages' reading renditions to the version's public area, and the
+reader plan lists them as unsigned public URLs to every reader who does not
+open the version.
 Detail, cards (lists, search, typeahead, rails, similar, recommendations,
 entity pages, `me` favorites and history), the reader plan and interactions
 apply it; the media read API lists a locked item's public files alone (its
-cover, and previews where named), never its private files or their count.
+cover, and a version's free preview pages), never its private files or their
+count.
 Staff, creators and primary-channel editors see everything. Sitemaps,
 codes and notifications carry only ids, codes and paths; stats and import
 are staff's. `GET /v1/kinds` spells out each kind's effective `locked`.
@@ -420,8 +424,8 @@ ContentKit's `content_*` interaction tables. They target ContentKit's own
 content items (optionally one version, `?version=`) and entities, stored under
 the target's kind from `kinds.Config` and its id: `(tenant_id, content_kind,
 content_id, content_version_id)`. Routes are
-`/v1/contents/{id}/comments|like|dislike|reaction|favorite|can-comment` and
-the same under `/v1/entities/{id}/`, then `/comments/{cid}/...`,
+`/v1/contents/{id}/comments|like|dislike|reaction|favorite|can-comment`,
+`/v1/entities/{id}/like|dislike|reaction` (entities take reactions only), then `/comments/{cid}/...`,
 `/comments/latest`, `/comments/admin?content_kind=&author=`, `/polls...`,
 `/moderation/...`, `/comment-bans...` and `/global-comment-bans...`. A merged
 entity answers as its survivor; a deleted one, or content the request's site
@@ -563,6 +567,8 @@ refuses the text) and `GET|POST|DELETE /v1/moderation/ip-bans`
 (`{"network", "reason", "until"}`: an address or CIDR network). They apply to
 every comment body and anonymous name before the moderator; an IP-banned write
 answers `403 comment_banned` with ban scope `ip`, and moderators are exempt.
+Imported comments get the mask words too, but a reject word never refuses
+imported history.
 
 Doujins adapter (`moderator{svc}` on the old `Moderation` port): implement
 `Screen` instead of `Check`; return `Verdict{Decision: DecisionReject, Reason}`
@@ -604,10 +610,10 @@ in any `Per`"; an action with two must pass both.
 
 | Action | Routes | Default |
 |---|---|---|
-| `comment` | `POST /{contents\|entities}/{id}/comments` (top-level and replies), `PATCH /comments/{cid}` | 5 per 5 minutes and 20 per hour |
+| `comment` | `POST /{contents\|channels}/{id}/comments` (top-level and replies), `PATCH /comments/{cid}` | 5 per 5 minutes and 20 per hour |
 | `comment_reaction` | `POST /comments/{cid}/like\|dislike`, `DELETE /comments/{cid}/reaction` | 30 per minute |
 | `reaction` | `POST /{contents\|entities}/{id}/like\|dislike`, `DELETE …/reaction` | 30 per minute |
-| `favorite` | `POST` and `DELETE /{contents\|entities}/{id}/favorite` | 20 per minute |
+| `favorite` | `POST` and `DELETE /{contents\|channels}/{id}/favorite` | 20 per minute |
 | `poll_vote` | `POST /polls/{id}/vote` | 30 per minute |
 
 Override any of them in `content.Options.Limits` (`Comment`, `CommentReaction`,
@@ -687,7 +693,7 @@ restores the same notice, without adding another.
 ## Polls
 
 Polls accept predefined choices only. `kind` defaults to `multiple_choice`;
-other kinds, including `free_text`, are rejected with `400 invalid_request`.
+other kinds are rejected with `400 invalid_request`.
 Create a poll with two to ten options in one of the site's languages (a
 question of at most 300 characters, options of at most 200), then vote through
 `POST /polls/{id}/vote`. A vote is final: concurrent retries never add another
@@ -700,9 +706,8 @@ close a poll for voting; its results remain readable, on its own link too.
 visible only to staff until their opening time.
 
 Free-text submission, automatic grouping and classifier dependencies are
-removed. Historical free-text questions and answers remain stored but are not
-exposed by current poll routes or modified by imports. Account deletion
-detaches a subject's historical answers from the account. No classification worker is registered.
+removed. The database stores only choice polls; questions have no kind column
+or answer table.
 
 ## Account lifecycle and interaction erasure
 
@@ -764,8 +769,8 @@ Content anonymization commits atomically:
 - a permanent tenant/subject fence in `content_erased_subjects`; later writes by
   that subject fail with `content.ErrSubjectErased`;
 - the subject's reactions, favorites and poll votes move to the anonymous key
-  with counts unchanged; comments (shown as `<Deleted>`), historical free-text
-  answers, authored items, owned entities and reposts lose the account id;
+  with counts unchanged; comments (shown as `<Deleted>`), authored items,
+  owned entities and reposts lose the account id;
 - removal of the subject's comment notifications, creator profile, content
   filter preferences and comment bans of them or in their owner scope (bans
   they set stay, without their id).
@@ -818,7 +823,7 @@ visibility rule (access, site scope, content filters, listing and language)
 over `content_facets`, and answers one card per content item with the version
 that fits the reader (`display_language` first, then position).
 
-- `GET /contents`: `kind`, `groups` (all of), `exclude_groups`, `owner_group`,
+- `GET /contents`: `kind`, `groups` (all of), `owner_group`,
   `creators` (credited user ids), `access` (`public`: what anyone opens now;
   `tier`, `group`, `ppv`, `group_ppv`: what stays locked at that level),
   `tiers` (locked behind one of them: a subscribe page's premium), `traits`,
@@ -827,7 +832,7 @@ that fits the reader (`display_language` first, then position).
   (`unseen|in_progress|completed`, signed in), `language` (only content
   serving it), `display_language`, `mode` (`lock` marks locked cards,
   `hide` lists only what the reader opens), `sort` (`newest`, `oldest`,
-  `title`, `popular[:period]`, `top_rated[:period]`, `most_favorited`,
+  `title`, `popular[:period]`, `top_rated`, `most_favorited`,
   `position` in the first of `groups`, which must be of an ordered entity
   kind, `random`), `cursor`, `limit`. A reader's content filters never hide
   an entity's content from a list requiring that entity: a hidden tag's page
@@ -853,11 +858,8 @@ that fits the reader (`display_language` first, then position).
   days, defaults to 10 and UTC, and has no item count cap or cursor. Reveal
   cards from that response in the browser; mount thumbnails only as needed.
   Future, unlisted and deleted publications are excluded.
-- Lists/search accept `published_within=7d|30d|90d|365d|all` independently of
-  the sort's score period. To rank this week's releases, pair
-  `sort=popular:7d` with `published_within=7d`; old releases with recent views
-  then stay out. The cursor pins the publication cutoff while paging. Popular
-  ordering uses the shared ContentKit quality score, not personal affinity.
+- Popular ordering uses the shared ContentKit quality score, not personal
+  affinity.
 - `GET /content-filters` (public): the configured `content_filters`, their
   entrypoint defaults and the current reader's effective settings.
   `PATCH /me/content-filters` atomically merges submitted shared entity choices,
@@ -877,7 +879,7 @@ that fits the reader (`display_language` first, then position).
 - `GET|DELETE /me/history`, `POST /signals` (explicit clicks; signed out,
   `session` names the browser), `POST /exposures`.
 - `GET /me/favorites`: what the reader favorited, contents as cards or
-  entities, most recent first.
+  channels, most recent first.
 - `GET /sitemap/contents?kind=`, `GET /sitemap/entities?kind=` (open): the
   request site's live, listed pages by id (`cursor`, up to 10000 a page),
   each with `lastmod` and its path per language it serves. Content filters
@@ -926,10 +928,10 @@ table records what media exists. The app declares everything in one registry
 at startup (`media.Config`); ContentKit hard-codes no kinds, names or
 layouts.
 
-- **Items.** An item is `{namespace}/{kind}/{id}/`, or for a content kind
-  (`Kind.Versions`, derived from the kinds config by `media.ForContent`) a
-  version's `{namespace}/{kind}/{content}/{version}/`; a content has no item
-  of its own. An item holds
+- **Items.** App media uses `tenant/{tenant}/app/{app}/{kind}/{id}/`.
+  For a content kind, `id` is the version ID; a content has no item of its
+  own. Account media uses `tenant/{tenant}/account/{kind}/{id}/`.
+  Both roots derive from `Config.Scope`. An item holds
   `manifest.json` (gzip JSON, never served), `private/` (hash-named blobs:
   uploads, derived files, editor views), `public/` (published renditions
   such as `cover-460-{generation}.webp`) and `temp/` (in-flight server-side
@@ -954,7 +956,7 @@ layouts.
   exactly when the fingerprint no longer matches. Each upload records its
   public publications: the current generation of each preset and, while
   the worker writes one, its successor.
-- **URLs.** `https://media.<site>/v1/{namespace}/{kind}/{id}[/{version}]/{public|private|download}/{name}`.
+- **URLs.** `https://media.<site>/v1/tenant/{tenant}/app/{app}/{kind}/{id}/{public|private|download}/{name}`.
   Public names carry a generation that changes on every render, so a URL
   built from a preset's `to` template is never valid: it serves the kind's
   default image, or 404 when the preset declares no `Default`. Build public
@@ -976,7 +978,6 @@ var Gallery = media.Kind{Name: "gallery", KeepOriginals: true,
 	Public: []media.Public{
 		{Name: "cover", From: "cover", To: "cover-{w}.webp", Widths: []int{230, 460, 920},
 			Image: media.Image{Aspect: media.Ratio("46:65")}, Default: "cover.png"},
-		{Name: "preview", From: "originals/{name}", To: "preview-{n}.webp", First: 3, Image: media.Image{Width: 1280}},
 	},
 	Defaults: defaultsFS, // holds cover.png
 }
@@ -1060,43 +1061,27 @@ worker, _ := cfg.MediaRegistry() // the stock worker's MEDIA_KINDS_FILE
   so every name exists). The object carries its `from` and `fp` as metadata.
   The first public preset of an upload bounds its edit: the crop is fitted to
   `Image.Aspect`, and an edit narrower than `MinWidth` fails.
-- **Previews** are public presets with `First: N`: the first N attached
-  uploads of a `{name}` Upload in manifest order, `{n}` in `To` their position
-  from 1, so the URLs
-  (`{BaseURL}/v1/{ns}/{kind}/{id}/public/preview-{n}.webp`) need no manifest.
-  Anyone who can see the item sees them; a hidden item has none. A position
-  is rendered again when another upload takes it (a reorder, an insert, a
-  removal) or its upload is replaced or cropped again; its old image is
-  deleted with that commit, so the name is a 404 until the worker has
-  rendered it, and names past the last upload are deleted. This is the only way to show part
-  of an item: there is no partial access to `private/`.
+- **Previews.** There is no partial access to `private/`. A `Publish`
+  kind shows part of a locked version through its access rule's (or kind's
+  `locked`) `preview`: release copies the leading released pages' renditions
+  to `public/`, and the reader plan lists their URLs.
 - **Originals.** `KeepOriginals` keeps uploads once their private outputs
   exist (otherwise the blob is dropped and the file marked `gone`; public
-  presets' sources are always kept). `ServeOriginals` lists uploads in reads
-  for viewers with access; otherwise the read API never returns an upload's
-  path or URL.
+  presets' sources are always kept). Except a version's declared audio
+  (`Publish.Playback`), the read API never returns an upload's path or URL
+  to viewers.
 - **Host-only presets.** `Private.HostOnly` keeps an output out of generic
   reads, downloads and playlists.
 - **`private/` is all or nothing.** One token per item opens every private
-  file of it. `ServeOriginals` and `HostOnly` decide what reads list, not
-  what the token reaches: a viewer with access who learns a blob's hash can
-  fetch it.
-- **`download/`.** `Kind.Downloads` names the uploads and presets (Image,
-  MP4, Zip) whose files live in `download/`: no item token or cookie opens
-  them, reads never list them, and only the version download route's token
-  opens one, that one key, for minutes (`media.downloads.ttl`, default 5m).
-  `media.ForContent` fills it for content kinds: page uploads and imports,
-  the zip and the presets it packs, videos' HLS sources, the served MP4.
-  Workers read them with storage credentials as before.
+  file of it. `HostOnly` decides what reads list, not what the token
+  reaches: a viewer with access who learns a blob's hash can fetch it.
 - **Defaults.** A kind's `Defaults` (an `fs.FS`, e.g. `go:embed`) holds the
   images its public presets name in `Public.Default`; the registry checks
   they exist. A shared kind ships its own, so importing apps merge nothing.
-- **Shared kinds.** A kind with `Namespace: "accounts"` lives at
-  `accounts/{kind}/{id}/` and is served on every site's media host
-  (account avatars). An app's own namespace is never a shared one. One app
-  holds a shared namespace, in its bucket and journal, processed by its
-  worker; other sites reach it through its API (Avatars below) and serve
-  its files from their media hosts (`MEDIA_GATEWAY_BUCKETS`).
+- **Shared kinds.** Account avatars use `tenant/{tenant}/account/{kind}/{id}/`.
+  One app owns the shared avatar journal and worker; other sites reach it
+  through its API (Avatars below) and serve its files from their media hosts
+  (`MEDIA_GATEWAY_BUCKETS`). The root is derived from `Config.Scope`.
 - The stock worker reads the registry as JSON (`MEDIA_KINDS_FILE`; hooks
   are not included): an engine's is `Config.MediaKinds()`, printed
   by `contentkit media-config`.
@@ -1185,16 +1170,15 @@ The media route group serves the read API at `/v1/media`
 (`Config.Media.ReadLimit`):
 
 - `GET /{kind}/{id}?prefix=low-res/&offset=&limit=&download&editor` answers
-  `{access, expires, meta, previews, public, locked, total, hls, files: [{path, type, size, w, h, url}]}`
+  `{access, expires, meta, public, locked, total, hls, files: [{path, type, size, w, h, url}]}`
   in manifest order. `access` is `full` or `none`. With access every listed
   file has a URL: plain under the item cookie
   (`Path=/v1/{ns}/{kind}/{id}/private/`) in cookie mode, with `?t={item
-  token}` in URL mode. Without it there is no URL, token, cookie, meta or
-  file: no path, size or count tells what a locked item holds, only
-  `locked: true` that it holds something. `previews` and `public` are the
-  item's public files (covers; a version's previews only as many as its
-  access rule or kind's `locked.preview` names), for every viewer who can
-  see it. `expires`
+  token}` in URL mode. Without it there is no token, cookie or meta, and the
+  only files listed are public ones: a locked version's free preview pages,
+  delivered publicly at release. Nothing else tells what a locked item holds,
+  only `locked: true` that it holds something. `public` is the item's public
+  files (covers), for every viewer who can see it. `expires`
   is when the token stops working; a read before then answers the same token,
   so clients keep what they have and read again shortly before (the SDK's
   gallery and player do). With `download`, each URL carries the file's
@@ -1420,10 +1404,10 @@ the host's periodic jobs. The worker migrates its schema itself.
   Either way one item token opens the whole item's `private/`, and viewers
   without access get none.
 - **Media gateway config**: `MEDIA_GATEWAY_HOSTS` maps each media host to the
-  namespaces it serves (`media.<domain>=<tenant>,accounts`) and
-  `MEDIA_GATEWAY_BUCKETS` each namespace's bucket (`accounts` is in the avatar
-  primary's); URLs are
-  `https://media.<domain>/v1/{ns}/{kind}/{id}/{public|private}/{name}`.
+  partitions it serves (`tenant_<tenant-id>_app_<app-id>` and
+  `tenant_<tenant-id>` for account media). `MEDIA_GATEWAY_BUCKETS` maps each
+  partition to its bucket; the account partition uses the avatar primary's
+  bucket. URL paths use the tenant/app or tenant/account roots above.
   `MEDIA_GATEWAY_CORS_ORIGINS` exactly your sites' origins
   (`https://<domain>,https://www.<domain>`; no wildcards, no third parties);
   `MEDIA_GATEWAY_DEFAULTS` the public names that fall back to a kind's
@@ -1460,16 +1444,17 @@ the host's periodic jobs. The worker migrates its schema itself.
     process). It is enforced in `Reader.Grant`, so reads and playlists
     pass it (downloads have their own `media.downloads` quotas); over the limit the read API answers 429
     `rate_limited` with `Retry-After`, and `Grant` returns a `LimitError`
-    (`ErrRateLimited`). Opening the same item again within the hour is free;
+    (`ErrRateLimited`). Opening the same item again within an hour of first
+    opening it is free;
     viewers without access, the item's editors and `Issuance.Exempt` actors
     (staff) are not counted. An anonymous viewer is counted by `Actor.IP`
     (an IPv6 address by its /64). The read API fills it from `RemoteAddr`;
     a host route that calls `Grant` or `Read` itself for an anonymous actor
     must set it, or the grant fails with `ErrNoViewerKey` rather than put
-    every anonymous viewer in one count. The per-process count holds at most
-    65,536 viewers; past that it forgets some, who start again.
-  - `HandlerOptions.Limit` bounds requests to the read API (default 2/s,
-    burst 120 per viewer).
+    every anonymous viewer in one count. The per-process count forgets some
+    viewers once it is full, and they start again.
+  - `HandlerOptions.Limit` bounds requests to the read API (at most `Burst`
+    per `Burst/PerSecond` per viewer; default 120 per minute).
   - The ingress of the media host limits downloads per IP (Traefik's
     `rateLimit`). Clients treat its 429 as "over the limit" and do not retry
     in a loop (the SDK does not).
@@ -1481,9 +1466,9 @@ the host's periodic jobs. The worker migrates its schema itself.
 - **Multiple replicas**: the limit is per process unless `Limit.Redis` is set
   (logged at startup), so N replicas allow N times it. Pass the host's
   go-redis client for Redis or Microsoft Garnet (`Limit.KeyPrefix`, default
-  `contentkit:media:rl:`); replicas then share one sliding-window count per
-  viewer (at most `Burst` per `Burst/PerSecond` window; plain INCR/PEXPIRE/GET
-  in MULTI, no Lua, keys expire after two windows; replica clocks need NTP).
+  `contentkit:media:rl:`); replicas then share one sliding window per viewer
+  (sorted-set commands in MULTI, no Lua, keys expire a window after their last
+  request; replica clocks need NTP).
   A Redis error fails open to the per-process limit for 1 s, logs a warning
   once per outage and increments expvar
   `contentkit_media_ratelimit_redis_errors`: the limit is abuse protection,
@@ -1508,7 +1493,7 @@ Keyword documents enrich content with active associations and their ancestors.
 Collection associations remain active until explicitly changed; subscription
 and rental expiry belong to the entitlement provider.
 
-Stable descriptive membership fields (`groups`, `exclude_groups`) and channel
+Stable descriptive membership fields (`groups`) and channel
 access-rule fields (`group_id`),
 access values (`group`, `group_ppv`), billing key namespaces (`:group:`) and
 AuthKit permission strings and deterministic scope identities retain their

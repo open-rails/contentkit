@@ -8,7 +8,7 @@ Reader snapshots wake from durable commit and media progress/ready notifications
 
 ## Configure ZIP sources
 
-A media upload accepting `application/zip` can set `archive_to` to another configured `{name}` image upload. This works without a catalog or reader kind, including named body-image destinations. Existing reader `Publish.Import` / `Publish.Pages` mappings are also supported.
+A reader kind's `Publish.Import` upload (`application/zip`) expands into its `Publish.Pages` `{name}` image upload.
 
 The existing upload authorizer must explicitly return `UploadGrant.ArchiveTo` equal to that destination pattern. Permission to store the ZIP alone does not authorize arbitrary generated filenames. The destination, quota owner and accepted quota policy are recorded by the server on the source file; clients cannot supply this admission through upload metadata. Default ContentKit version/entity editors already have full item authority and approve their configured destination. Custom path-sensitive authorizers must make that decision explicitly.
 

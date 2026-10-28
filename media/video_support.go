@@ -13,10 +13,6 @@ const (
 )
 
 const (
-	CodecHEVC Codec = "hevc"
-)
-
-const (
 	CodecAV1 Codec = "av1"
 )
 
