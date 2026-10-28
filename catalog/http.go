@@ -21,8 +21,6 @@ import (
 	"github.com/open-rails/contentkit/media/versions"
 )
 
-// totalsPath is the totals route under a ContentKit mount.
-var totalsPath = httpapi.Contents.Prefix() + "/catalog/totals"
 
 func init() { routes = append(routes, repostRoutes...); httpapi.Register(httpapi.Contents, routes) }
 

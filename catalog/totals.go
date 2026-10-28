@@ -2,12 +2,7 @@ package catalog
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
-	"io"
 	"maps"
-	"net/http"
-	"net/url"
 	"slices"
 	"strings"
 	"time"
@@ -24,9 +19,6 @@ var (
 	// Store.Totals: one count per site, reloaded in the background every ten
 	// minutes; the last good count serves for a day.
 	totalsPolicy = cache.Options{Name: "contentkit.catalog_totals", RefreshAfter: 10 * time.Minute, MaxStale: 24 * time.Hour, LoadTimeout: 30 * time.Second}
-	// TotalsClient: a sibling deployment's totals, which its route lets any
-	// cache keep for ten minutes.
-	remoteTotalsPolicy = cache.Options{Name: "contentkit.remote_catalog_totals", RefreshAfter: 10 * time.Minute, MaxStale: 24 * time.Hour}
 )
 
 // TotalsQuery selects the kinds and languages to total.
@@ -259,89 +251,4 @@ func (s *Store) countTotals(ctx context.Context, site kinds.Domain, kindNames []
 		t.Languages[language] = lt
 	}
 	return out, rows.Err()
-}
-
-// TotalsClient reads another deployment's catalog totals (GET
-// /v1/catalog/totals), such as a sibling site's, server to server, cached
-// per kind like Store.Totals.
-type TotalsClient struct {
-	url    string
-	http   *http.Client
-	totals *cache.Cache[string, Total]
-}
-
-// NewTotalsClient reads the deployment whose ContentKit is mounted at baseURL,
-// e.g. "https://hentai0.com/api/v1/contentkit". A nil hc has a ten-second
-// timeout.
-func NewTotalsClient(baseURL string, hc *http.Client) (*TotalsClient, error) {
-	u, err := url.Parse(strings.TrimRight(strings.TrimSpace(baseURL), "/"))
-	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		return nil, invalid("TotalsClient base URL %q must be absolute http(s)", baseURL)
-	}
-	if hc == nil {
-		hc = &http.Client{Timeout: 10 * time.Second}
-	}
-	c := &TotalsClient{url: u.String() + totalsPath, http: hc}
-	if c.totals, err = cache.New(remoteTotalsPolicy, c.load); err != nil {
-		return nil, err
-	}
-	return c, nil
-}
-
-// Close releases the cache's goroutines.
-func (c *TotalsClient) Close() { c.totals.Close() }
-
-// Totals reads the remote's totals as Store.Totals answers them, in the site
-// the remote derives from its host: q.Kinds is required and q.Domain empty.
-func (c *TotalsClient) Totals(ctx context.Context, q TotalsQuery) (Totals, error) {
-	out := Totals{Kinds: map[string]Total{}}
-	if len(q.Kinds) == 0 || q.Domain != "" {
-		return out, invalid("TotalsClient needs kinds and no site")
-	}
-	languages := []string{}
-	for _, l := range q.Languages {
-		if l = strings.TrimSpace(l); l != "" && !slices.Contains(languages, l) {
-			languages = append(languages, l)
-		}
-	}
-	got, err := c.totals.Get(ctx, q.Kinds)
-	if err != nil {
-		return out, err
-	}
-	for _, k := range q.Kinds {
-		t, ok := got[k]
-		if !ok {
-			return out, fmt.Errorf("catalog: %s answered no total for %q", c.url, k)
-		}
-		out.Kinds[k] = t.only(languages, slices.Sorted(maps.Keys(t.Tiers)))
-	}
-	return out, nil
-}
-
-func (c *TotalsClient) load(ctx context.Context, kinds []string) (map[string]Total, error) {
-	kinds = slices.Compact(slices.Sorted(slices.Values(kinds)))
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.url+"?kinds="+url.QueryEscape(strings.Join(kinds, ",")), nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Accept", "application/json")
-	resp, err := c.http.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("catalog: totals: %w", err)
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
-	if err != nil {
-		return nil, fmt.Errorf("catalog: totals: %w", err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		var e errorBody
-		_ = json.Unmarshal(body, &e)
-		return nil, fmt.Errorf("catalog: totals: %s answered %d %s", c.url, resp.StatusCode, e.Code)
-	}
-	var t Totals
-	if err := json.Unmarshal(body, &t); err != nil {
-		return nil, fmt.Errorf("catalog: totals: %w", err)
-	}
-	return t.Kinds, nil
 }
