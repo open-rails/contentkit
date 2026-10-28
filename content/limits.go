@@ -26,7 +26,7 @@ const (
 )
 
 const (
-	ActionPollVote Action = "poll_vote" // multiple-choice votes and free-text answers
+	ActionPollVote Action = "poll_vote" // multiple-choice votes
 )
 
 // Rate allows at most Count interactions in any Per (a sliding window).

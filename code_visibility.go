@@ -25,7 +25,7 @@ func (e *Engine) codeVisibility(req *http.Request, links []contenturl.Link) ([]c
 			continue
 		}
 		visible[i] = contenturl.Hidden
-		if e.cfg.Content.Channels == nil || link.TenantID != e.cfg.Tenant {
+		if e.cfg.Content.Channels == nil || link.TenantID != e.cfg.Scope.AppID.String() {
 			continue
 		}
 		if _, ok := channelIndices[link.ContentID]; !ok {
@@ -54,7 +54,7 @@ func (e *Engine) codeVisibility(req *http.Request, links []contenturl.Link) ([]c
 			continue
 		}
 		visible[i] = contenturl.Hidden
-		if link.TenantID != e.cfg.Tenant {
+		if link.TenantID != e.cfg.Scope.AppID.String() {
 			continue
 		}
 		id := entities.EntityID(link.ContentID)

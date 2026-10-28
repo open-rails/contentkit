@@ -100,10 +100,10 @@ waits for required media before making the completed version reader-visible.
 Import content and source media first, then write chapter start markers with
 `PUT /v1/contents/{id}/versions/{vid}/segments` (`Client.PutContentVersionSegments`).
 Each `start_page` is the source file's virtual manifest path; the chapter runs
-until the next marker in manifest order. Omit `VersionRecord.segments` from bulk
+until the next marker in manifest order. Chapters are not part of bulk
 imports: the chapter route holds the source and recovered manifest locks through
 the catalog commit, while an import's caller-owned transaction cannot safely
-acquire them. Numeric ranges are accepted only by explicit legacy migration.
+acquire them.
 
 Every file lives in a version; versions share none. A legacy record's one
 cover is ingested into each version's folder (a `Named` cover upload) and
@@ -144,5 +144,5 @@ Each edition's body resolves inline images only from that edition's uploads.
 | `legacy_reading` | `LegacyReadingRecord` | `target` (content, version), `user_id` / `anon_key`, `first_read_at`, `last_read_at`, `progress`, `progress_max`, `completed`, `resume`, `revision` |
 | `deletes` | `DeleteRecord` | `entity` (content, version, group, comment, poll), `external_id` |
 
-Poll imports support `multiple_choice` only. Free-text polls and the removed
-`answers` section are rejected; historical free-text records are not converted.
+Poll imports support `multiple_choice` only. Import options with the poll,
+and import votes through the `votes` section.

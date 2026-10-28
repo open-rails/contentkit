@@ -5,12 +5,18 @@ Each store has one baseline; later schema changes are numbered migrations after 
 | Store | Embedded filesystem | File | Contents |
 |---|---|---|---|
 | PostgreSQL catalog | `migrations.Postgres` | `postgres/0001_baseline.up.sql` | content, versions, entities, memberships, facets, the event log, import ids, codes, interactions, polls, search, preferences, erasure and media state |
-| PostgreSQL accounts | `migrations.Accounts` | `accounts/0001_baseline.up.sql` | tenant bindings, account media, avatar placement and account erasure records |
+| PostgreSQL accounts | `migrations.Accounts` | `accounts/0001_baseline.up.sql` | account media, avatar placement and account erasure records |
 | ClickHouse | `migrations.ClickHouse` | `clickhouse/0001_baseline.up.sql` | signals, measured engagement, exposures, popularity and erasure fences |
 
 No checksum is silently accepted or rewritten; a database recorded by an
 earlier migration history is recreated, not converted. A version id is NULL for
 the work itself in PostgreSQL and `''` in ClickHouse, whose sorting keys hold it.
+
+Account keys are derived from `Config.Scope.TenantID` as `tenant_<TenantID>`.
+The accounts migration `0002_remove_account_bindings.up.sql` removes
+ContentKit's obsolete key-binding table and its three dependent foreign keys.
+AuthKit's inbox tables are unchanged. No account-key conversion or row rewrite
+runs during migration or startup.
 
 ## Content model configuration
 

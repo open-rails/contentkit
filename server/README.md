@@ -63,8 +63,5 @@ Existing `contentkit` and `contentkit-tenant` personas require an explicit
 AuthKit migration preserving IDs, assignments and credential bounds before
 startup; see [the authorization contract](../docs/architecture/app-authorization.md).
 
-Legacy configurations without `engine.scope` retain the existing root
-`staff` policy and trusted-root directory behavior. They must omit the
-`authorization` section. Adopting existing data requires the engine's explicit
-scope/account migration procedure; changing a namespace or regenerating IDs
-is not an adoption strategy.
+`engine.scope` and `authorization` are required. The catalog key is the app ID;
+account and media roots are derived from the canonical scope.

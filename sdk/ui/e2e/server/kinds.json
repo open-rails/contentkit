@@ -1,5 +1,5 @@
 {
-  "namespace": "e2e",
+  "scope": {"tenant_id": "00000000-0000-4000-8000-000000000201", "app_id": "00000000-0000-4000-8000-000000000202"},
   "avatars": {
     "kind": "user",
     "preset": "avatar"
@@ -307,7 +307,7 @@
     },
     {
       "name": "user",
-      "namespace": "accounts",
+      "account": true,
       "keep_originals": true,
       "uploads": [
         {

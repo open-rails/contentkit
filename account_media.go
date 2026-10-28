@@ -18,7 +18,7 @@ import (
 type AccountMediaStorage struct{ Schema, WorkerSchema string }
 
 // AccountMedia returns the storage the avatar primary's worker must use in
-// addition to its app media storage. Legacy engines retain their existing setup.
+// addition to its app media storage.
 func (c Config) AccountMedia() (AccountMediaStorage, bool, error) {
 	e := Engine{cfg: c}
 	if err := e.configureStorage(); err != nil {
@@ -28,7 +28,7 @@ func (c Config) AccountMedia() (AccountMediaStorage, bool, error) {
 	return s, ok, nil
 }
 func (e *Engine) accountMediaStorage() (AccountMediaStorage, bool) {
-	if e.scope == nil || e.cfg.Media == nil || e.cfg.Avatars == nil || e.cfg.Avatars.Primary != "" {
+	if e.cfg.Media == nil || e.cfg.Avatars == nil || e.cfg.Avatars.Primary != "" {
 		return AccountMediaStorage{}, false
 	}
 	schema, _ := e.accountStorage()
@@ -43,7 +43,7 @@ func (e *Engine) accountMediaPartition() string {
 var ErrAvatarPlacement = errors.New("contentkit: tenant avatar primary placement conflicts")
 
 func (e *Engine) avatarPlacement(ctx context.Context, claim bool) error {
-	if e.scope == nil || e.cfg.Media == nil || e.cfg.Avatars == nil {
+	if e.cfg.Media == nil || e.cfg.Avatars == nil {
 		return nil
 	}
 	schema, _ := e.accountStorage()
@@ -72,9 +72,6 @@ func (e *Engine) avatarPlacement(ctx context.Context, claim bool) error {
 // log. Trusted account integrations own their cursors; no app receives a copy
 // of a shared-avatar event. Application media uses Client.EventReader.
 func (e *Engine) AccountMediaEvents() (eventlog.Reader, error) {
-	if e.scope == nil {
-		return nil, errors.New("contentkit: shared account media is not configured")
-	}
 	schema, _ := e.accountStorage()
 	return eventpg.New(e.pool, eventpg.Config{Schema: schema, Source: "contentkit", Scope: e.accountMediaPartition()})
 }

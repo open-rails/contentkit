@@ -29,12 +29,6 @@ func currentPublicationJob(t *testing.T, a *application, version string) publica
 }
 
 func publicationTenant(a *application) string {
-	if a.cfg.Scope == nil {
-		return a.cfg.Tenant
-	}
-	if a.cfg.LegacyCatalogKey != "" {
-		return a.cfg.LegacyCatalogKey
-	}
 	return a.cfg.Scope.AppID.String()
 }
 

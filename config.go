@@ -4,10 +4,8 @@ import (
 	"cmp"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"log/slog"
 	"slices"
-	"strings"
 	"time"
 
 	mediastore "github.com/open-rails/contentkit/internal/mediastore"
@@ -32,15 +30,8 @@ import (
 // Config is the engine's configuration: plain data.
 type Config struct {
 	// Scope is the business and app this engine serves. It is a trusted
-	// deployment binding, not request authorization. Nil preserves legacy config.
-	Scope *Scope `yaml:"scope,omitempty" json:"scope,omitempty"`
-	// LegacyCatalogKey preserves an adopted app's existing row and access
-	// keys, and the rollback layout's old media root. With Scope, empty uses AppID. This never renames existing data.
-	LegacyCatalogKey string `yaml:"legacy_catalog_key,omitempty" json:"legacy_catalog_key,omitempty"`
-	// Tenant is the legacy app/catalog key, not a business identity.
-	// Deprecated: use Scope, with LegacyCatalogKey for an existing catalog.
-	// It cannot be combined with Scope.
-	Tenant   string         `yaml:"tenant,omitempty" json:"tenant,omitempty"`
+	// deployment binding, not request authorization. Required.
+	Scope    *Scope         `yaml:"scope" json:"scope"`
 	Database DatabaseConfig `yaml:"database" json:"database"`
 	// Content is the site's content model: languages, tiers, content kinds
 	// (commentable and indexed) and entity kinds. Required.
@@ -120,8 +111,8 @@ type Rate struct {
 	Per   time.Duration `yaml:"per" json:"per"`
 }
 
-// MediaConfig is the media registry (media.Config: its Namespace is the
-// tenant; content kinds' media are their versions', and each entity kind
+// MediaConfig is the media registry (media.Config, rooted at the engine's
+// Scope; content kinds' media are their versions', and each entity kind
 // gains cover media, media.ForContent) and how ContentKit serves it.
 type MediaConfig struct {
 	media.Config `yaml:",inline"`
@@ -185,29 +176,14 @@ func (c Config) MediaKinds() (media.Config, error) {
 	if c.Media == nil {
 		return media.Config{}, errors.New("contentkit: Config.Media is not set")
 	}
-	mc, tenant := c.Media.Config, strings.TrimSpace(c.Tenant)
-	if !mc.Scope.IsZero() {
-		if mc.Namespace != "" {
-			return media.Config{}, errors.New("contentkit: scoped media derives its root; remove Media.Namespace")
-		}
-	} else {
-		switch mc.Namespace {
-		case "":
-			mc.Namespace = tenant
-		case tenant:
-		default:
-			return media.Config{}, fmt.Errorf("contentkit: Config.Media.Namespace %q is not the tenant %q", mc.Namespace, tenant)
-		}
-	}
+	mc := c.Media.Config
 	if mc.Avatars != (media.Avatars{}) {
 		return media.Config{}, errors.New("contentkit: people's avatars are Config.Avatars, not Config.Media.Avatars")
 	}
 	if a := c.Avatars; a != nil && a.Primary == "" {
 		kind, preset := a.kind()
-		if !mc.Scope.IsZero() {
-			kind.Namespace = ""
-			kind.Account = true
-		}
+		kind.Namespace = ""
+		kind.Account = true
 		mc.Kinds = append(slices.Clone(mc.Kinds), kind)
 		mc.Avatars = media.Avatars{Kind: kind.Name, Preset: preset}
 	}
@@ -291,16 +267,15 @@ type Deps struct {
 	Redis redis.UniversalClient
 
 	// Auth says who a request is (authkit/auth; AuthKit's
-	// ak.Authenticator()). It names its root scope (auth.Root), where staff
-	// hold access.Permissions() in legacy mode. Required.
+	// ak.Authenticator()). Required.
 	Auth auth.Authenticator
 	// Authorization binds verified identities and permissions to Scope.
-	// Required with Config.Scope; legacy-only engines do not use it.
+	// Required.
 	Authorization Authorization
 	// Users is the directory (authkit/userinfo; AuthKit's ak.UserInfo()):
-	// authors' names. In scoped mode it must be restricted to Scope.TenantID
+	// authors' names. It must be restricted to Scope.TenantID
 	// (AuthKit's ForTenant client); it also verifies privileged avatar targets.
-	// Nil shows authors by id and refuses scoped avatar edits. The notification
+	// Nil shows authors by id and refuses avatar edits. The notification
 	// publisher independently validates recipient ownership in its transaction.
 	Users userinfo.Lookup
 	// Notifications publishes native notices through the account inbox owner.
