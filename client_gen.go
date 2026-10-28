@@ -1418,7 +1418,7 @@ func (c *Client) PatchContentVersion(ctx context.Context, id string, vid string,
 	return out, err
 }
 
-// DeleteContentVersion is DELETE /v1/contents/{id}/versions/{vid} (public). Soft-deletes a version, including a kind's single hidden version. Deleting the last undeleted version also soft-deletes its parent. Restoring a version restores an automatically deleted parent. Purchased content remains accessible to its holders until the deletion retention expires and physical purge removes its media. Billing products and purchase history remain archived. The authenticated author with current edit-own permission in the relevant app/channel, current channel content:write holders, or app content:write holders only. Author credits do not grant authority.
+// DeleteContentVersion is DELETE /v1/contents/{id}/versions/{vid} (public). Soft-deletes a version, including a kind's single hidden version. Deleting the last undeleted version also soft-deletes its parent. Restoring a version restores an automatically deleted parent. Deleted content and its media are unavailable to everyone, buyers included, until restored; restoring reopens it to the same purchases. Purge erases its media after the deletion retention. Billing products and purchase history remain. The authenticated author with current edit-own permission in the relevant app/channel, current channel content:write holders, or app content:write holders only. Author credits do not grant authority.
 func (c *Client) DeleteContentVersion(ctx context.Context, id string, vid string) error {
 	return c.call(ctx, http.MethodDelete, expand("/v1/contents/{id}/versions/{vid}", "{id}", url.PathEscape(id), "{vid}", url.PathEscape(vid)), nil, nil, nil)
 }
@@ -3447,7 +3447,7 @@ func (q PatchMeContentFiltersQuery) values() url.Values {
 	return v
 }
 
-// PatchMeContentFilters is PATCH /v1/me/content-filters (user). Atomically changes only submitted shared entity choices and optional include_deleted. Omitted choices remain unchanged. Each choice sets visible or default:true.
+// PatchMeContentFilters is PATCH /v1/me/content-filters (user). Atomically changes only submitted shared entity choices. Omitted choices remain unchanged. Each choice sets visible or default:true.
 func (c *Client) PatchMeContentFilters(ctx context.Context, body discovery.ContentFiltersUpdate, q PatchMeContentFiltersQuery) (discovery.ContentFilters, error) {
 	var out discovery.ContentFilters
 	err := c.call(ctx, http.MethodPatch, "/v1/me/content-filters", q.values(), body, &out)

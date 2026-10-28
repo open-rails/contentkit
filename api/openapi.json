@@ -5012,7 +5012,7 @@
         "tags": [
           "contents"
         ],
-        "summary": "Soft-deletes a version, including a kind's single hidden version. Deleting the last undeleted version also soft-deletes its parent. Restoring a version restores an automatically deleted parent. Purchased content remains accessible to its holders until the deletion retention expires and physical purge removes its media. Billing products and purchase history remain archived. The authenticated author with current edit-own permission in the relevant app/channel, current channel content:write holders, or app content:write holders only. Author credits do not grant authority.",
+        "summary": "Soft-deletes a version, including a kind's single hidden version. Deleting the last undeleted version also soft-deletes its parent. Restoring a version restores an automatically deleted parent. Deleted content and its media are unavailable to everyone, buyers included, until restored; restoring reopens it to the same purchases. Purge erases its media after the deletion retention. Billing products and purchase history remain. The authenticated author with current edit-own permission in the relevant app/channel, current channel content:write holders, or app content:write holders only. Author credits do not grant authority.",
         "parameters": [
           {
             "name": "id",
@@ -12086,7 +12086,7 @@
         "tags": [
           "discovery"
         ],
-        "summary": "Atomically changes only submitted shared entity choices and optional include_deleted. Omitted choices remain unchanged. Each choice sets visible or default:true.",
+        "summary": "Atomically changes only submitted shared entity choices. Omitted choices remain unchanged. Each choice sets visible or default:true.",
         "parameters": [
           {
             "name": "language",
@@ -14779,15 +14779,11 @@
             "items": {
               "$ref": "#/components/schemas/ContentFilterState"
             }
-          },
-          "include_deleted": {
-            "type": "boolean"
           }
         },
         "required": [
           "applies_to",
-          "filters",
-          "include_deleted"
+          "filters"
         ]
       },
       "ContentFiltersInitialization": {
@@ -14801,9 +14797,6 @@
             "items": {
               "$ref": "#/components/schemas/GuestFilterSetting"
             }
-          },
-          "include_deleted": {
-            "type": "boolean"
           }
         }
       },
@@ -14815,9 +14808,6 @@
             "items": {
               "$ref": "#/components/schemas/GuestFilterSetting"
             }
-          },
-          "include_deleted": {
-            "type": "boolean"
           }
         }
       },

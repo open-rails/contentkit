@@ -505,18 +505,15 @@ export interface ContentFilterState {
 export interface ContentFilters {
   applies_to: string[];
   filters: ContentFilterState[];
-  include_deleted: boolean;
 }
 
 export interface ContentFiltersInitialization {
   account_id: string;
   filters: GuestFilterSetting[];
-  include_deleted: boolean;
 }
 
 export interface ContentFiltersUpdate {
   filters?: GuestFilterSetting[];
-  include_deleted?: boolean;
 }
 
 export interface ContentInput {

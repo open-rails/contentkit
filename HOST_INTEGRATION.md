@@ -860,8 +860,8 @@ that fits the reader (`display_language` first, then position).
   ordering uses the shared ContentKit quality score, not personal affinity.
 - `GET /content-filters` (public): the configured `content_filters`, their
   entrypoint defaults and the current reader's effective settings.
-  `PATCH /me/content-filters` atomically merges submitted shared entity choices
-  and optional `include_deleted`, preserving omitted values. One entity choice
+  `PATCH /me/content-filters` atomically merges submitted shared entity choices,
+  preserving omitted values. One entity choice
   applies across the configured `content_filters.applies_to` content kinds.
   `POST /me/content-filters/initialize` adopts a new account's guest choices
   only when no saved settings exist; its `account_id` must match the signed-in

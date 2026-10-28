@@ -181,7 +181,7 @@ export class ReaderPreferencesClient {
         // Registration initializes account-wide choices. Only the server knows
         // which saved entities are toggleable on another domain or now stale.
         await call<"POST", "/me/content-filters/initialize", ContentFilters>(this.http, "POST", "/me/content-filters/initialize", {
-          body: { account_id: account, filters: [...pending.filters], include_deleted: false },
+          body: { account_id: account, filters: [...pending.filters] },
         });
         if (generation !== this.generation) return;
         this.browser.complete(account, "filters");

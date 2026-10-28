@@ -413,8 +413,9 @@ authorized item token or exact-file token (`private, immutable`). An item token
 opens every private file of its item or none. Versioned reader grants use exact-file
 tokens in `?t=` so an older grant cannot open newly uploaded or unreleased
 pages; ordinary whole-item grants may use the `mt` cookie. `?dl={name}` serves the file as a download
-under that name when it has the file's type. Everything else and every denial
-is one `no-store` 404. It keeps no state: rate limit the media host at the
+under that name when it has the file's type. A soft-deleted or erased item's
+reserved `public/_contentkit_erased` fence refuses all of its files, checked with
+one HEAD per read. Everything else and every denial is one `no-store` 404. It keeps no state: rate limit the media host at the
 ingress; the read API limits the items a viewer opens per hour
 (`ReaderOptions.Issuance`). It needs `MEDIA_GATEWAY_S3_ENDPOINT`, a key
 reading only `*/private/*` and `*/public/*`, `MEDIA_GATEWAY_TOKEN_KEY` and
@@ -700,9 +701,10 @@ through `access.Rule.Facet`, entities through `EffectiveEntities`), marks search
 documents dirty, queues `content_events` and calls media (republish,
 delete). Content edits do not rename or reprice billing products. Published with a
 future `publish_at` is publication intent; readers see the completed release
-after its deadline and required media preparation finish. A deleted item
-stays readable to holders of its own keys; its media is erased after
-`DeletedRetention`. OpenRails retains product and purchase identity after
+after its deadline and required media preparation finish. A deleted item is
+unavailable to everyone, buyers included: reads hide it and the media gateway
+answers 404 for its files at once. Restoring reopens it to the same purchases;
+otherwise its media is erased after `DeletedRetention`. OpenRails retains product and purchase identity after
 content and media are gone; deleting content does not delete billing history. A
 product can grant multiple entitlements, so content deletion does not implicitly
 archive products or cancel subscriptions. Hosts explicitly retire affected

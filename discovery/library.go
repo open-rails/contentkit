@@ -14,7 +14,8 @@ type LibraryItem struct {
 	Kind      string `json:"kind"`
 	Title     string `json:"title"`
 	Language  string `json:"language,omitempty"`
-	// Deleted content stays readable to its buyers.
+	// Deleted marks a purchase whose content is deleted: it stays in the
+	// buyer's library but is unreadable unless restored.
 	Deleted bool `json:"deleted"`
 	// Whole is always false: a gallery parent does not grant audience access.
 	// VersionIDs lists only currently eligible, individually granted editions.

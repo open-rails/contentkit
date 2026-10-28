@@ -35,7 +35,7 @@ export function ContentFilterDialog({ open, onOpenChange, description, returnFoc
           <DialogTitle>{t("readerSettings.filterTitle")}</DialogTitle>
           <DialogDescription>{description ?? t("readerSettings.filterDescription")}</DialogDescription>
         </DialogHeader>
-        <ContentFilterSettings {...settings} includeDeleted={settings.includeDeleted ?? false} />
+        <ContentFilterSettings {...settings} />
       </DialogContent>
     </Dialog>
   </AppearanceContext.Provider>;

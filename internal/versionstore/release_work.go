@@ -278,19 +278,20 @@ func (s *Service) planRelease(ctx context.Context, tx pgx.Tx, t versions.Target)
 	if prior != nil && prior.Released && (m == nil || !m.Deleted) && (state == "deleted" || parentState == "deleted") &&
 		(state == "published" || state == "deleted") && (parentState == "published" || parentState == "deleted") {
 		// Retention freezes exactly the completed snapshot, including chapter
-		// membership and source revisions. Authoring edits and future deadlines
-		// cannot add files while either this edition or its parent is deleted.
+		// membership and source revisions, for a restore. Authoring edits and
+		// future deadlines cannot add files while either this edition or its
+		// parent is deleted. Its served files stay where they are; the gateway
+		// fence (SyncFences) keeps them from everyone until the restore.
 		prior.Copies, prior.Previous = nil, plan.Previous
 		prior.Waiting, prior.NextAt, prior.Retained = false, nil, true
-		prior.EffectiveAccess = access.Rule{Level: access.PPV}
 		prior.Fingerprint = "retained:" + strings.TrimPrefix(prior.Fingerprint, "retained:")
 		if prior.View != nil {
-			pin := func(blob, area string) error {
+			pin := func(blob string) error {
 				if blob == "" {
 					return nil
 				}
-				sourceArea, _, valid := layout.SplitBlobRef(blob)
-				if !valid || sourceArea != layout.AreaPublic && sourceArea != layout.AreaPrivate {
+				area, _, valid := layout.SplitBlobRef(blob)
+				if !valid || area != layout.AreaPublic && area != layout.AreaPrivate {
 					return fmt.Errorf("%w: retained publication contains unserved media", ErrInvalid)
 				}
 				copy := mediastore.Promotion{Source: blob, Area: area}
@@ -301,20 +302,18 @@ func (s *Service) planRelease(ctx context.Context, tx pgx.Tx, t versions.Target)
 			}
 			for _, f := range prior.View.Files {
 				if !f.IsUpload() || k.AudioUpload(f) || k.ServeOriginals && f.Type != "application/zip" {
-					if err := pin(f.Blob, layout.AreaPrivate); err != nil {
+					if err := pin(f.Blob); err != nil {
 						return nil, err
 					}
 				}
 				if f.Track != nil {
-					if err := pin(f.Track.Index, layout.AreaPrivate); err != nil {
+					if err := pin(f.Track.Index); err != nil {
 						return nil, err
 					}
 				}
-				// Configured public previews remain public, just as for a paid
-				// edition. Ordinary reader files move to private before completion.
 				for _, pub := range f.Public {
 					for _, blob := range pub.Blobs {
-						if err := pin(blob, layout.AreaPublic); err != nil {
+						if err := pin(blob); err != nil {
 							return nil, err
 						}
 					}

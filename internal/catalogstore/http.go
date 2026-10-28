@@ -126,7 +126,7 @@ var routes = []httpapi.Route[*Store]{
 		Request: catalog.VersionInput{}, Responses: []httpapi.Reply{httpapi.OK(catalog.Version{})}, Errors: []string{httpapi.CodeForbidden, httpapi.CodeNotFound}},
 		Serve: httpapi.H((*Store).handleUpdateVersion)},
 	{Spec: httpapi.Spec{Method: httpapi.DELETE, Path: "/contents/{id}/versions/{vid}", Resource: "contents", Auth: httpapi.Public,
-		Doc:       "Soft-deletes a version, including a kind's single hidden version. Deleting the last undeleted version also soft-deletes its parent. Restoring a version restores an automatically deleted parent. Purchased content remains accessible to its holders until the deletion retention expires and physical purge removes its media. Billing products and purchase history remain archived." + editorsDoc,
+		Doc:       "Soft-deletes a version, including a kind's single hidden version. Deleting the last undeleted version also soft-deletes its parent. Restoring a version restores an automatically deleted parent. Deleted content and its media are unavailable to everyone, buyers included, until restored; restoring reopens it to the same purchases. Purge erases its media after the deletion retention. Billing products and purchase history remain." + editorsDoc,
 		Responses: []httpapi.Reply{httpapi.NoContent}, Errors: []string{httpapi.CodeConflict, httpapi.CodeForbidden, httpapi.CodeNotFound}},
 		Serve: httpapi.H((*Store).handleDeleteVersion)},
 	{Spec: httpapi.Spec{Method: httpapi.PUT, Path: "/contents/{id}/versions/{vid}/segments", Resource: "contents", Auth: httpapi.Public,
