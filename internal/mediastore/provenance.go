@@ -143,7 +143,7 @@ func (k *RegisteredKind) Normalize(m *Manifest) {
 			}
 			f.Public = slices.DeleteFunc(slices.Clone(f.Public), func(pub media.Publication) bool {
 				p := k.public(pub.Preset)
-				return p == nil || !k.owned(m, *f, p, pub)
+				return p == nil || !k.owned(*f, p, pub)
 			})
 			if len(f.Public) == 0 {
 				f.Public = nil
