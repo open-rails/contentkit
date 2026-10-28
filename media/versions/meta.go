@@ -202,7 +202,7 @@ func (s *Service) SetReaderMeta(ctx context.Context, actor access.Actor, t Targe
 }
 
 // names are the {name}s of m's attached pages and audio uploads.
-func names(k *media.Kind, m *media.Manifest) (pages, files map[string]bool) {
+func names(k *media.RegisteredKind, m *media.Manifest) (pages, files map[string]bool) {
 	pages, files = map[string]bool{}, map[string]bool{}
 	duplicates := map[string]bool{}
 	var audio string

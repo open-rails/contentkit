@@ -267,7 +267,7 @@ func (r *Registry) folderItem(prefix string) (Item, error) {
 
 // itemFolders lists the item folders of kind k in key order: each item's,
 // and each content's versions' before its own.
-func (j *Jobs) itemFolders(ctx context.Context, k *Kind) iter.Seq2[contentref.ContentRef, error] {
+func (j *Jobs) itemFolders(ctx context.Context, k *RegisteredKind) iter.Seq2[contentref.ContentRef, error] {
 	return func(yield func(contentref.ContentRef, error) bool) {
 		last := ""
 		for o, err := range j.cfg.Store.List(ctx, k.root()+k.Name+"/") {

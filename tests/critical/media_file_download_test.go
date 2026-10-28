@@ -108,7 +108,7 @@ func TestPublishedSingleFileDownload(t *testing.T) {
 			}
 			config, err := a.cfg.MediaKinds()
 			must(t, err)
-			reg, err := media.NewRegistry(config)
+			reg, err := media.NewRegistry(config, media.Hooks{})
 			must(t, err)
 			ref, err := reg.VersionRef(f.Ref.Kind, f.Ref.ID, f.Ref.Version)
 			must(t, err)

@@ -68,7 +68,7 @@ func run(log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	kinds, err := media.NewRegistry(declared)
+	kinds, err := media.NewRegistry(declared, media.Hooks{})
 	if err != nil {
 		return fmt.Errorf("MEDIA_KINDS_FILE: %w", err)
 	}

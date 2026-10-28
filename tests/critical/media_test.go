@@ -152,7 +152,7 @@ func attachMedia(t *testing.T, w *world, a *application, configure ...func(*ck.C
 	a.server = httptest.NewServer(mux)
 	config, err := a.cfg.MediaKinds()
 	must(t, err)
-	registry, err := media.NewRegistry(config)
+	registry, err := media.NewRegistry(config, media.Hooks{})
 	must(t, err)
 	workerConfig := worker.Config{Pool: w.pool, Schema: a.cfg.Media.WorkerSchema, ContentSchema: w.schema, HostSchema: w.schema + "_river", Store: m.store, Kinds: registry, Threads: 1, IngestWorkers: 1, ImageSources: 1, DerivativeWorkers: 1, ShutdownGrace: time.Second}
 	if accountPrimary {

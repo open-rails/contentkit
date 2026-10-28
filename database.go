@@ -218,7 +218,7 @@ func (e *Engine) cleanupStorage() (*media.Registry, *media.PGJournal, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	reg, err := media.NewRegistry(cfg)
+	reg, err := media.NewRegistry(cfg, media.Hooks{})
 	if err != nil {
 		return nil, nil, err
 	}

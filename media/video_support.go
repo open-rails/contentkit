@@ -15,7 +15,7 @@ const (
 )
 
 // UploadOf is the Upload a file path belongs to.
-func (k *Kind) UploadOf(path string) (Upload, bool) {
+func (k *RegisteredKind) UploadOf(path string) (Upload, bool) {
 	i, _, _, _, ok := k.upload(path)
 	if !ok {
 		return Upload{}, false
@@ -25,7 +25,7 @@ func (k *Kind) UploadOf(path string) (Upload, bool) {
 
 // FramesVideo is the video upload the upload at path is grabbed from (its
 // Upload.Frames), if the manifest has one.
-func (k *Kind) FramesVideo(m *Manifest, path string) (File, bool) {
+func (k *RegisteredKind) FramesVideo(m *Manifest, path string) (File, bool) {
 	u, ok := k.UploadOf(path)
 	if !ok || u.Frames == "" {
 		return File{}, false

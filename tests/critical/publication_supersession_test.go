@@ -96,7 +96,7 @@ func TestSupersededPublicCopyReturnsToPrivate(t *testing.T) {
 	})
 	config, err := a.cfg.MediaKinds()
 	must(t, err)
-	registry, err := media.NewRegistry(config)
+	registry, err := media.NewRegistry(config, media.Hooks{})
 	must(t, err)
 	logical, err := registry.VersionRef(ref.Kind, ref.ID, ref.Version)
 	must(t, err)

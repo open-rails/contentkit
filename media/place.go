@@ -126,7 +126,7 @@ func (m *Manifests) Place(ctx context.Context, ref contentref.ContentRef) (int, 
 	} else if err != nil {
 		return 0, err
 	}
-	if h := m.reg.cfg.Hooks.Failed; h != nil {
+	if h := m.reg.hooks.Failed; h != nil {
 		for _, p := range failed {
 			h(ctx, ref, p, errors.New("media: the staged upload is gone or changed"))
 		}

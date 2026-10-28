@@ -44,7 +44,7 @@ func TestAccountMediaEventReader(t *testing.T) {
 		// finish its manifest. Readiness and event visibility are separate commits.
 		mediaConfig, err := a.cfg.MediaKinds()
 		must(t, err)
-		registry, err := media.NewRegistry(mediaConfig)
+		registry, err := media.NewRegistry(mediaConfig, media.Hooks{})
 		must(t, err)
 		accountRef, err := registry.Ref("user", user.ID)
 		must(t, err)

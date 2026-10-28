@@ -91,7 +91,7 @@ type decision struct {
 	now      time.Time
 }
 
-func previewPageCount(k *media.Kind, d decision, total int) int {
+func previewPageCount(k *media.RegisteredKind, d decision, total int) int {
 	if k.Publish.Previews == "" {
 		return 0
 	}

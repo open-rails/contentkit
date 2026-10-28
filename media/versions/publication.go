@@ -73,7 +73,7 @@ type track struct {
 // publishes until an edit fixes them.
 var errFailed = errors.New("versions: media failed to process")
 
-func private(k *media.Kind, name string) *media.Private {
+func private(k *media.RegisteredKind, name string) *media.Private {
 	for i := range k.Private {
 		if k.Private[i].Name == name {
 			return &k.Private[i]
@@ -82,7 +82,7 @@ func private(k *media.Kind, name string) *media.Private {
 	return nil
 }
 
-func public(k *media.Kind, name string) *media.Public {
+func public(k *media.RegisteredKind, name string) *media.Public {
 	for i := range k.Public {
 		if k.Public[i].Name == name {
 			return &k.Public[i]
@@ -92,7 +92,7 @@ func public(k *media.Kind, name string) *media.Public {
 }
 
 // imports are the attached archives Publish.Import has yet to expand.
-func imports(k *media.Kind, m *media.Manifest) []media.File {
+func imports(k *media.RegisteredKind, m *media.Manifest) []media.File {
 	var out []media.File
 	for _, f := range m.Files {
 		if k.Publish.Import != "" && f.IsUpload() && !f.Unattached && f.Fail() == nil && (f.Meta["archive_completed_sha256"] == nil || f.Meta["archive_completed_sha256"] != pageDigest(f)) && inPattern(k.Publish.Import, f.Path) {
@@ -103,7 +103,7 @@ func imports(k *media.Kind, m *media.Manifest) []media.File {
 }
 
 // pagesOf is m's pages ready to publish.
-func pagesOf(k *media.Kind, m *media.Manifest) ([]page, error) {
+func pagesOf(k *media.RegisteredKind, m *media.Manifest) ([]page, error) {
 	if len(imports(k, m)) > 0 {
 		return nil, ErrNotReady
 	}
@@ -143,7 +143,7 @@ func pagesOf(k *media.Kind, m *media.Manifest) ([]page, error) {
 }
 
 // tracksOf is m's audio ready to publish.
-func tracksOf(k *media.Kind, m *media.Manifest) ([]track, error) {
+func tracksOf(k *media.RegisteredKind, m *media.Manifest) ([]track, error) {
 	out := []track{}
 	for _, f := range m.Files {
 		if !f.IsUpload() || f.Unattached || !inPattern(k.Publish.Playback, f.Path) {
@@ -210,7 +210,7 @@ func (s *Service) readPub(ctx context.Context, q querier, where string, args ...
 }
 
 // Retiring metadata never touches a source file or creates a storage job.
-func (s *Service) retireTx(ctx context.Context, tx pgx.Tx, _ *media.Kind, ids []string) error {
+func (s *Service) retireTx(ctx context.Context, tx pgx.Tx, _ *media.RegisteredKind, ids []string) error {
 	if len(ids) == 0 {
 		return nil
 	}
@@ -221,7 +221,7 @@ func (s *Service) retireTx(ctx context.Context, tx pgx.Tx, _ *media.Kind, ids []
 // prepareTx records v's publication of kind showing source: the current one
 // when it already does (true), else the one being built, replacing a build
 // of another source.
-func (s *Service) prepareTx(ctx context.Context, tx pgx.Tx, k *media.Kind, v Target, kind string, source any) (string, bool, error) {
+func (s *Service) prepareTx(ctx context.Context, tx pgx.Tx, k *media.RegisteredKind, v Target, kind string, source any) (string, bool, error) {
 	body, err := json.Marshal(source)
 	if err != nil {
 		return "", false, err
@@ -264,7 +264,7 @@ WHERE tenant_id = $1 AND version_id = $2 AND kind = $3`, s.o.Tenant, v.Version, 
 // promoteTx makes build id current, retiring the one it replaces; false when
 // the build is gone (an edit retired it meanwhile). Promoting the current one
 // changes nothing, so publishers that raced to build it agree.
-func (s *Service) promoteTx(ctx context.Context, tx pgx.Tx, k *media.Kind, v Target, kind, id string) (bool, error) {
+func (s *Service) promoteTx(ctx context.Context, tx pgx.Tx, k *media.RegisteredKind, v Target, kind, id string) (bool, error) {
 	var state string
 	err := tx.QueryRow(ctx, `SELECT state FROM `+s.t.publications+` WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, s.o.Tenant, id).Scan(&state)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -308,7 +308,7 @@ func sameBlob(a, b string) bool {
 // withdrawStaleTx withdraws v's publications showing pages or audio m no
 // longer has, as uploaded: a removal, a replacement or an edit. It reports
 // whether the pages snapshot was withdrawn.
-func (s *Service) withdrawStaleTx(ctx context.Context, tx pgx.Tx, k *media.Kind, v Target, m *media.Manifest) (bool, error) {
+func (s *Service) withdrawStaleTx(ctx context.Context, tx pgx.Tx, k *media.RegisteredKind, v Target, m *media.Manifest) (bool, error) {
 	have := map[string]string{}
 	blobs := map[string]bool{}
 	for _, blob := range m.Blobs() {

@@ -244,10 +244,6 @@ func (e *Engine) validate(deps Deps) error {
 		if _, err := cfg.MediaKinds(); err != nil {
 			return err
 		}
-		h := cfg.Media.Hooks
-		if h.Resolver != nil || h.CanUpload != nil || h.ItemReady != nil || h.ItemProgressed != nil || h.ItemCommitted != nil || h.BeforeRetire != nil || h.Failed != nil {
-			return errors.New("contentkit: Config.Media.Hooks is set: media's providers come from Deps")
-		}
 		if deps.Store == nil {
 			return errors.New("contentkit: Config.Media needs Deps.Store")
 		}
@@ -388,8 +384,7 @@ func (e *Engine) newMedia(ctx context.Context, deps Deps, now func() time.Time) 
 		declared[k.Name] = true
 	}
 	m.polls = declared[pollFolder]
-	reg.Hooks = m.versions.Hooks()
-	if m.reg, err = media.NewRegistry(reg); err != nil {
+	if m.reg, err = media.NewRegistry(reg, m.versions.Hooks()); err != nil {
 		return nil, err
 	}
 	accountStorage, sharedAccounts := e.accountMediaStorage()

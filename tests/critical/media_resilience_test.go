@@ -296,7 +296,7 @@ func newResilientMedia(t *testing.T, configure ...func(*ck.Config)) *resilientMe
 	a.server = mountEngine(t, a.engine)
 	config, err := a.cfg.MediaKinds()
 	must(t, err)
-	registry, err := media.NewRegistry(config)
+	registry, err := media.NewRegistry(config, media.Hooks{})
 	must(t, err)
 	must(t, a.engine.StartJobs(t.Context()))
 	t.Cleanup(func() {
@@ -574,7 +574,7 @@ func TestMediaWorkerProcess(t *testing.T) {
 	defer pool.Close()
 	store, err := medias3.New(medias3.Config{Bucket: c.Bucket, Endpoint: c.Endpoint, AccessKeyID: os.Getenv("CONTENTKIT_CRITICAL_S3_USER"), SecretAccessKey: os.Getenv("CONTENTKIT_CRITICAL_S3_PASSWORD"), UsePathStyle: true})
 	must(t, err)
-	registry, err := media.NewRegistry(c.Kinds)
+	registry, err := media.NewRegistry(c.Kinds, media.Hooks{})
 	must(t, err)
 	config := worker.Config{Pool: pool, Schema: c.Schema, ContentSchema: c.ContentSchema, HostSchema: c.HostSchema, Store: store, Kinds: registry, Threads: 1, IngestWorkers: 1, ImageSources: 1, DerivativeWorkers: 1, ShutdownGrace: time.Second, MaxPixels: c.MaxPixels}
 	if c.AfterImage != "" {

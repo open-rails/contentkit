@@ -167,7 +167,7 @@ func (q *Queue) EnqueueTx(ctx context.Context, tx pgx.Tx, job media.ProcessJob) 
 type Families struct{ Image, Video bool }
 
 // FamiliesOf maps k's presets (only preset, when set) to producer families.
-func FamiliesOf(k *media.Kind, preset string) Families {
+func FamiliesOf(k *media.RegisteredKind, preset string) Families {
 	var f Families
 	for _, p := range k.Private {
 		if preset != "" && p.Name != preset {

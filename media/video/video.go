@@ -176,7 +176,7 @@ func (e *Encoder) failed(ctx context.Context, item media.Item, path, blob string
 	} else if err != nil {
 		return err
 	}
-	if h := e.ms.Registry().Config().Hooks.Failed; h != nil {
+	if h := e.ms.Registry().Hooks().Failed; h != nil {
 		h(ctx, item.Ref(), path, cause)
 	}
 	return nil

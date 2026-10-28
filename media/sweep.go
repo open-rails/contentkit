@@ -275,7 +275,6 @@ type OrphanSweep struct {
 type OrphanFolder struct {
 	Prefix  string
 	ID      string
-	ref     contentref.ContentRef
 	ValidID bool
 	Objects int
 	Newest  time.Time
@@ -308,10 +307,8 @@ func (j *Jobs) SweepOrphans(ctx context.Context, s OrphanSweep) (OrphanReport, e
 			return rep, err
 		}
 		prefix, id := "", ""
-		ref := contentref.ContentRef{}
 		if key, ok := layout.Parse(o.Key); ok && key.Kind == k.Name && key.ID != layout.DefaultID {
 			prefix, id = key.Folder(), cmpOr(key.Version, key.ID)
-			ref, _ = parseFolder(prefix)
 		} else if first, _, ok := strings.Cut(strings.TrimPrefix(o.Key, root), "/"); ok && first != "" && first != layout.DefaultID {
 			prefix, id = root+first+"/", first
 		} else {
@@ -319,11 +316,8 @@ func (j *Jobs) SweepOrphans(ctx context.Context, s OrphanSweep) (OrphanReport, e
 		}
 		f := folders[prefix]
 		if f == nil {
-			item, err := j.itemForFolder(ctx, prefix)
-			if err == nil {
-				ref = item.Ref()
-			}
-			f = &OrphanFolder{Prefix: prefix, ID: id, ref: ref, ValidID: err == nil}
+			_, err := j.itemForFolder(ctx, prefix)
+			f = &OrphanFolder{Prefix: prefix, ID: id, ValidID: err == nil}
 			folders[prefix] = f
 		}
 		f.Objects++

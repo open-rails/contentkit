@@ -42,14 +42,14 @@ func TestImageShapePresets(t *testing.T) {
 		reader := func(shapes ...media.Shape) media.Private {
 			return media.Private{Name: "reader", From: "pages/{name}", To: "reader/{name}.webp", Image: &shapeBase, Shapes: shapes}
 		}
-		registry, err := media.NewRegistry(kind(reader(readerShapes...)))
+		registry, err := media.NewRegistry(kind(reader(readerShapes...)), media.Hooks{})
 		must(t, err)
 		gallery, err := registry.Kind("gallery")
 		must(t, err)
 		if got := gallery.Private[0].ImageFor(media.Dims{}); got != shapeBase {
 			t.Fatalf("an unmeasured upload rendered %+v, not the preset image", got)
 		}
-		_, err = media.NewRegistry(kind(reader(media.Shape{NoWiderThan: media.Square, Image: shapeTall}, media.Shape{WiderThan: media.Square, Image: shapeWide})))
+		_, err = media.NewRegistry(kind(reader(media.Shape{NoWiderThan: media.Square, Image: shapeTall}, media.Shape{WiderThan: media.Square, Image: shapeWide})), media.Hooks{})
 		must(t, err) // touching ranges: square belongs to the first
 		source := shapeTall
 		source.Format = media.ImageFormatSource
@@ -66,7 +66,7 @@ func TestImageShapePresets(t *testing.T) {
 			"no image producer": kind(media.Private{Name: "pages", Zip: "reader/", To: "pages.zip", Shapes: readerShapes}),
 		}
 		for name, config := range invalid {
-			if _, err := media.NewRegistry(config); err == nil {
+			if _, err := media.NewRegistry(config, media.Hooks{}); err == nil {
 				t.Errorf("%s: registry accepted invalid shapes", name)
 			}
 		}
@@ -87,7 +87,7 @@ func TestImageShapePresets(t *testing.T) {
 		}
 		parsed, err := media.ParseConfig(printed)
 		must(t, err)
-		registry, err := media.NewRegistry(parsed)
+		registry, err := media.NewRegistry(parsed, media.Hooks{})
 		must(t, err)
 		gallery, err := registry.Kind("gallery")
 		must(t, err)

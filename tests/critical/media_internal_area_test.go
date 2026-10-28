@@ -37,7 +37,7 @@ func TestInternalArea(t *testing.T) {
 	awaitMediaReady(t, admin, ref)
 	config, err := a.cfg.MediaKinds()
 	must(t, err)
-	registry, err := media.NewRegistry(config)
+	registry, err := media.NewRegistry(config, media.Hooks{})
 	must(t, err)
 	journal, err := media.NewPGJournal(w.pool, w.schema, nil)
 	must(t, err)

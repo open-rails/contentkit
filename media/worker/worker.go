@@ -185,14 +185,14 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 	}
 	// A stock worker can replace published renditions too. Install the same
 	// synchronous catalog barrier as embedded writers before any DELETE.
-	registryConfig := c.Kinds.Config()
-	registryConfig.Hooks.CanUpload = preparationUploads{}
+	mediaHooks := c.Kinds.Hooks()
+	mediaHooks.CanUpload = preparationUploads{}
 
-	registryConfig.Hooks.BeforeRetire = versions.RetirementBarrier(c.Pool, c.ContentSchema, c.Kinds)
+	mediaHooks.BeforeRetire = versions.RetirementBarrier(c.Pool, c.ContentSchema, c.Kinds)
 	paths := versions.ChapterPathHooks(c.Pool, c.ContentSchema, c.Kinds, publish)
-	registryConfig.Hooks.ValidatePathsChanged = paths.ValidatePathsChanged
-	registryConfig.Hooks.PathsChanged = paths.PathsChanged
-	c.Kinds, err = media.NewRegistry(registryConfig)
+	mediaHooks.ValidatePathsChanged = paths.ValidatePathsChanged
+	mediaHooks.PathsChanged = paths.PathsChanged
+	c.Kinds, err = media.NewRegistry(c.Kinds.Config(), mediaHooks)
 	if err != nil {
 		return nil, err
 	}

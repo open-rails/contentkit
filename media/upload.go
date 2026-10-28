@@ -74,7 +74,7 @@ func NewUploads(o UploadOptions) (*Uploads, error) {
 		return nil, errors.New("media: upload quota must use the journal's pool and ContentKit schema")
 	}
 	reg := o.Manifests.Registry()
-	if reg.cfg.Hooks.CanUpload == nil {
+	if reg.hooks.CanUpload == nil {
 		return nil, errors.New("media: Uploads needs Hooks.CanUpload")
 	}
 	if o.PresignTTL <= 0 {
@@ -222,7 +222,7 @@ func NewStaged() string { return layout.StagedPrefix + uuid.NewString() }
 // uploadPath is the path to commit for a requested one: its {name} cleaned
 // (or chosen, for a Named upload) and an extension from the type when it
 // has none; g is its Upload.
-func (u *Uploads) uploadPath(k *Kind, path, contentType string) (string, int, error) {
+func (u *Uploads) uploadPath(k *RegisteredKind, path, contentType string) (string, int, error) {
 	stem, ext := splitExt(path)
 	dir, name := "", stem
 	if i := strings.LastIndexByte(stem, '/'); i >= 0 {
@@ -438,7 +438,7 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 		ops = clientUploadOps(ops)
 	}
 	for _, op := range ops {
-		if err := op.validate(); err != nil {
+		if err := validateOp(op); err != nil {
 			return nil, err
 		}
 	}
@@ -664,7 +664,7 @@ func missing(before, after []string) []string {
 
 // publicPending reports an upload of a visible item waiting for a public
 // preset.
-func publicPending(k *Kind, m *Manifest) bool {
+func publicPending(k *RegisteredKind, m *Manifest) bool {
 	return slices.ContainsFunc(m.Files, func(f File) bool {
 		return f.IsUpload() && slices.ContainsFunc(f.Pending, func(p string) bool { return k.public(p) != nil })
 	})
@@ -1002,7 +1002,7 @@ func (u *Uploads) copies(ctx context.Context, actor access.Actor, grant UploadGr
 // copyBlobs are the blobs of a copy's files, each with the area it lands in
 // at the destination: the upload's at to, an output's by its preset; track
 // indexes in the destination's prepared-output area.
-func copyBlobs(k *Kind, to string, files []File) [][2]string {
+func copyBlobs(k *RegisteredKind, to string, files []File) [][2]string {
 	var out [][2]string
 	for i, f := range files {
 		if f.Blob != "" && !f.Gone {
@@ -1015,7 +1015,7 @@ func copyBlobs(k *Kind, to string, files []File) [][2]string {
 	return out
 }
 
-func copyIndexArea(k *Kind) string {
+func copyIndexArea(k *RegisteredKind) string {
 	if k.Versions {
 		return layout.AreaInternal
 	}
@@ -1023,7 +1023,7 @@ func copyIndexArea(k *Kind) string {
 }
 
 // copyArea is the area the i-th file of a copy to path to lands in.
-func copyArea(k *Kind, to string, i int, f File) string {
+func copyArea(k *RegisteredKind, to string, i int, f File) string {
 	if i == 0 {
 		return k.Area(to, "")
 	}
@@ -1081,7 +1081,7 @@ func (u *Uploads) item(ref contentref.ContentRef) (Item, error) {
 }
 
 func (u *Uploads) authorize(ctx context.Context, actor access.Actor, t UploadTarget) (UploadGrant, error) {
-	g, err := u.reg.cfg.Hooks.CanUpload.CanUpload(ctx, actor, t)
+	g, err := u.reg.hooks.CanUpload.CanUpload(ctx, actor, t)
 	if err != nil {
 		return UploadGrant{}, fmt.Errorf("media: upload permission check: %w", err)
 	}

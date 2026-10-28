@@ -31,7 +31,7 @@ func publishDefaults(ctx context.Context, out io.Writer) error {
 	for i := range kinds.Kinds {
 		kinds.Kinds[i].Defaults = images
 	}
-	reg, err := media.NewRegistry(kinds)
+	reg, err := media.NewRegistry(kinds, media.Hooks{})
 	if err != nil {
 		return fmt.Errorf("MEDIA_KINDS_FILE: %w", err)
 	}

@@ -550,7 +550,7 @@ func (m *Manifests) editOperation(ctx context.Context, ref contentref.ContentRef
 		if err == nil {
 			proj = projectionOf(item, out) // unchanged and read under the lock
 		}
-		err = errors.Join(err, m.journal.finish(ctx, mutation.commit, err == nil, proj, m.reg.cfg.Hooks.PathsChanged))
+		err = errors.Join(err, m.journal.finish(ctx, mutation.commit, err == nil, proj, m.reg.hooks.PathsChanged))
 	}
 	return out, err
 }
@@ -656,7 +656,7 @@ func (m *Manifests) try(ctx context.Context, item Item, existing bool, b bound, 
 	if err != nil {
 		return nil, false, err
 	}
-	if hook := m.reg.cfg.Hooks.ValidatePathsChanged; hook != nil && (len(mutation.effects.Renames) > 0 || len(mutation.effects.RemovedPaths) > 0) {
+	if hook := m.reg.hooks.ValidatePathsChanged; hook != nil && (len(mutation.effects.Renames) > 0 || len(mutation.effects.RemovedPaths) > 0) {
 		if err := hook(ctx, item.Ref(), mutation.effects.Renames, mutation.effects.RemovedPaths); err != nil {
 			return nil, false, err
 		}
@@ -804,7 +804,7 @@ func (m *Manifests) recoverAttemptLocked(ctx context.Context, item Item, operati
 func (m *Manifests) finishCommit(ctx context.Context, item Item, commit manifestCommit, applied bool, current *Manifest) error {
 	proj := projectionOf(item, current)
 	if applied {
-		if hook := m.reg.cfg.Hooks.BeforeRetire; hook != nil && (len(commit.Effects.Public) > 0 || len(commit.Effects.Private) > 0) {
+		if hook := m.reg.hooks.BeforeRetire; hook != nil && (len(commit.Effects.Public) > 0 || len(commit.Effects.Private) > 0) {
 			if current == nil {
 				var err error
 				current, _, err = m.get(ctx, item.ManifestKey())
@@ -836,7 +836,7 @@ func (m *Manifests) finishCommit(ctx context.Context, item Item, commit manifest
 		}
 
 	}
-	return m.journal.finish(ctx, commit, applied, proj, m.reg.cfg.Hooks.PathsChanged)
+	return m.journal.finish(ctx, commit, applied, proj, m.reg.hooks.PathsChanged)
 }
 
 // A failed integration leaves the journal pending and every source intact.
@@ -888,7 +888,7 @@ func (m *Manifests) CompleteCommit(ctx context.Context, ref contentref.ContentRe
 // notifyCommit is a direct, idempotent callback owned by the request or ingest
 // attempt. Stock workers publish metadata as part of processing completion.
 func (m *Manifests) notifyCommit(ctx context.Context, commit manifestCommit) error {
-	if hook := m.reg.cfg.Hooks.ItemCommitted; hook != nil {
+	if hook := m.reg.hooks.ItemCommitted; hook != nil {
 		if err := hook(ctx, commit.Ref); err != nil {
 			return fmt.Errorf("media: ItemCommitted: %w", err)
 		}

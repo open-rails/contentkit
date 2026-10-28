@@ -33,7 +33,7 @@ const ZipRecipe = "zip-source-names-2"
 
 // ZipInputs are the files a Zip preset packs: the files under its prefix
 // whose upload is attached, in manifest order.
-func (k *Kind) ZipInputs(m *Manifest, p *Private) []File {
+func (k *RegisteredKind) ZipInputs(m *Manifest, p *Private) []File {
 	var out []File
 	for _, f := range m.Files {
 		if strings.HasPrefix(f.Path, p.Zip) && f.Blob != "" && !f.Gone && k.attached(m, f) {
@@ -54,13 +54,13 @@ func ZipFP(inputs []File) string {
 
 // LazyZip reports a reader download archive assembled on demand, rather than
 // a processing output. Other Zip presets still build with their producer.
-func (k *Kind) LazyZip(p *Private) bool {
+func (k *RegisteredKind) LazyZip(p *Private) bool {
 	return p.Zip != "" && k.Publish != nil && k.Publish.Download == p.Name
 }
 
 // ZipStale reports a Zip preset whose output does not pack its current
 // inputs: missing with inputs, kept without, or another fingerprint.
-func (k *Kind) ZipStale(m *Manifest, p *Private) bool {
+func (k *RegisteredKind) ZipStale(m *Manifest, p *Private) bool {
 	in := k.ZipInputs(m, p)
 	outs := m.Outputs(p.Zip, p.Name)
 	if len(in) == 0 {
@@ -71,7 +71,7 @@ func (k *Kind) ZipStale(m *Manifest, p *Private) bool {
 
 // attached reports a file that is part of the item: an attached upload, or
 // a derived file of one.
-func (k *Kind) attached(m *Manifest, f File) bool {
+func (k *RegisteredKind) attached(m *Manifest, f File) bool {
 	if f.IsUpload() {
 		return !f.Unattached && PageIncluded(f)
 	}
@@ -104,17 +104,17 @@ type Readiness struct {
 func (r Readiness) Ready() bool { return r.State == StateReady }
 
 // Readiness is the manifest's readiness under k.
-func (k *Kind) Readiness(m *Manifest) Readiness {
+func (k *RegisteredKind) Readiness(m *Manifest) Readiness {
 	return k.readiness(m, false)
 }
 
 // NeedsProcessing includes staged uploads, whose private renditions can be
 // prepared before Save. Public renditions still wait for attachment.
-func (k *Kind) NeedsProcessing(m *Manifest) bool {
+func (k *RegisteredKind) NeedsProcessing(m *Manifest) bool {
 	return len(k.readiness(m, true).Processing) != 0
 }
 
-func (k *Kind) readiness(m *Manifest, includeUnattached bool) Readiness {
+func (k *RegisteredKind) readiness(m *Manifest, includeUnattached bool) Readiness {
 	var r Readiness
 	for _, f := range m.Files {
 		if !f.IsUpload() || f.Unattached && !includeUnattached {
@@ -150,7 +150,7 @@ func (k *Kind) readiness(m *Manifest, includeUnattached bool) Readiness {
 
 // Normalize brings m to its canonical form under k after an edit: the
 // file order, the download names, and dropped originals (Gone).
-func (k *Kind) Normalize(m *Manifest) {
+func (k *RegisteredKind) Normalize(m *Manifest) {
 	k.order(m)
 	vars := metaVars(m.Meta)
 	for i := range m.Files {
@@ -189,7 +189,7 @@ func (k *Kind) Normalize(m *Manifest) {
 // not keep originals, it feeds private presets but no public preset or
 // frame, it is no body image (new versions copy those, editors view them),
 // and nothing is pending or failed from it.
-func (k *Kind) droppable(m *Manifest, f File) bool {
+func (k *RegisteredKind) droppable(m *Manifest, f File) bool {
 	if k.Versions || k.KeepOriginals || k.IsPageUpload(f) || k.audioOriginal(f) || f.Blob == "" || len(f.Pending) > 0 || f.Fail() != nil || len(k.PublicFor(f.Path)) > 0 {
 		return false
 	}
@@ -203,7 +203,7 @@ func (k *Kind) droppable(m *Manifest, f File) bool {
 // order sorts m.Files canonically: each Upload's files in declaration
 // order (attached before unattached, otherwise as they are), then each
 // private preset's outputs in their uploads' order, then unknown files.
-func (k *Kind) order(m *Manifest) {
+func (k *RegisteredKind) order(m *Manifest) {
 	unknown := 2*len(k.Uploads) + len(k.Private)
 	ranks := make(map[string]int, len(m.Files))
 	var uploads []File
@@ -236,7 +236,7 @@ func (k *Kind) order(m *Manifest) {
 	m.index = nil
 }
 
-func (k *Kind) rank(f File, unknown int) int {
+func (k *RegisteredKind) rank(f File, unknown int) int {
 	if f.IsUpload() {
 		if u, _, _, _, ok := k.upload(f.Path); ok {
 			if f.Unattached {

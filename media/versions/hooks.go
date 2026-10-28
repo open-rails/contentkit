@@ -156,7 +156,7 @@ func (u uploads) CanUpload(ctx context.Context, actor access.Actor, t media.Uplo
 	return media.UploadGrant{}, nil
 }
 
-func (s *Service) canEdit(ctx context.Context, actor access.Actor, k *media.Kind, t media.UploadTarget) (media.UploadGrant, error) {
+func (s *Service) canEdit(ctx context.Context, actor access.Actor, k *media.RegisteredKind, t media.UploadTarget) (media.UploadGrant, error) {
 	if actor.Anonymous || actor.ID == "" {
 		return media.UploadGrant{}, nil
 	}

@@ -130,9 +130,7 @@ func New(o Options) (*Service, error) {
 	return s, nil
 }
 
-// Hooks are media's hooks over the content model; set them as
-// media.Config.Hooks before building the
-// registry.
+// Hooks are media's hooks over the content model, for media.NewRegistry.
 func (s *Service) Hooks() media.Hooks {
 	return media.Hooks{Resolver: resolver{s}, ReaderManifest: s.readerManifest, CanUpload: uploads{s}, ValidatePathsChanged: s.validatePathsChanged, PathsChanged: s.pathsChanged, ItemReady: s.itemReady, ItemProgressed: s.itemProgressed, ItemCommitted: s.itemCommitted, BeforeRetire: s.beforeRetire, Failed: s.failed}
 }
@@ -219,7 +217,7 @@ func (s *Service) one(ctx context.Context, t Target) (version, error) {
 }
 
 // published is a version's kind, which must publish.
-func (s *Service) published(v version) (*media.Kind, error) {
+func (s *Service) published(v version) (*media.RegisteredKind, error) {
 	k, err := s.reg.Kind(v.Kind)
 	if err != nil || !k.Versions || k.Publish == nil {
 		return nil, fmt.Errorf("%w: kind %q publishes no versions", ErrNotFound, v.Kind)

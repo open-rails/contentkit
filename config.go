@@ -351,7 +351,7 @@ func (c Config) MediaRegistry() ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	reg, err := media.NewRegistry(mc)
+	reg, err := media.NewRegistry(mc, media.Hooks{})
 	if err != nil {
 		return nil, err
 	}

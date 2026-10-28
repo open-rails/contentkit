@@ -14,8 +14,10 @@ import (
 	"github.com/open-rails/contentkit/media/layout"
 )
 
-// kindState is what NewRegistry compiles into a Kind.
-type kindState struct {
+// RegisteredKind is a Kind NewRegistry validated and placed in its
+// namespace and scope.
+type RegisteredKind struct {
+	Kind
 	ns       string
 	scope    layout.Scope
 	patterns []pattern // parallel to Uploads
@@ -23,7 +25,7 @@ type kindState struct {
 
 // levels validates a Versions kind's downloads and body images and derives
 // its reader publication configuration.
-func (k *Kind) levels() error {
+func (k *RegisteredKind) levels() error {
 	if !k.Versions {
 		if slices.ContainsFunc(k.Uploads, func(u Upload) bool { return u.Body }) || k.Publish != nil {
 			return errors.New("Body uploads and Publish need Versions")
@@ -54,7 +56,7 @@ func (k *Kind) levels() error {
 
 // validatePublish checks the existing version renditions; it creates no media
 // kind or storage folder. Chapter boundaries are reader metadata only.
-func (k *Kind) validatePublish() error {
+func (k *RegisteredKind) validatePublish() error {
 	p := k.Publish
 	pages := k.uploadIndex(p.Pages)
 	if pages < 0 || k.patterns[pages].literal != "" || k.Uploads[pages].Named || !k.feedsImages(p.Pages) {
@@ -98,7 +100,7 @@ func (k *Kind) validatePublish() error {
 // upload finds the Upload a path (stem plus optional extension) belongs to:
 // a literal stem wins over a pattern. It returns the Upload's index, the
 // stem, its {name} and the extension.
-func (k *Kind) upload(path string) (i int, stem, name, ext string, ok bool) {
+func (k *RegisteredKind) upload(path string) (i int, stem, name, ext string, ok bool) {
 	stem, ext = splitExt(path)
 	for _, literal := range []bool{true, false} {
 		for j, p := range k.patterns {
@@ -114,18 +116,11 @@ func (k *Kind) upload(path string) (i int, stem, name, ext string, ok bool) {
 }
 
 // uploadIndex is the index of the Upload whose Path is from, or -1.
-func (k *Kind) uploadIndex(from string) int {
-	return slices.IndexFunc(k.Uploads, func(u Upload) bool { return u.Path == from })
-}
+func (k *RegisteredKind) uploadIndex(from string) int { return findUpload(k.Uploads, from) }
 
-func (k *Kind) private(name string) *Private {
-	if i := slices.IndexFunc(k.Private, func(p Private) bool { return p.Name == name }); i >= 0 {
-		return &k.Private[i]
-	}
-	return nil
-}
+func (k *RegisteredKind) private(name string) *Private { return findPrivate(k.Private, name) }
 
-func (k *Kind) public(name string) *Public {
+func (k *RegisteredKind) public(name string) *Public {
 	if i := slices.IndexFunc(k.Public, func(p Public) bool { return p.Name == name }); i >= 0 {
 		return &k.Public[i]
 	}
@@ -135,7 +130,7 @@ func (k *Kind) public(name string) *Public {
 // Presets are the names of the presets an upload at path feeds: the private
 // ones, then (unless unattached) the public ones. Zips are not listed; they
 // follow their inputs.
-func (k *Kind) Presets(path string, unattached bool) []string {
+func (k *RegisteredKind) Presets(path string, unattached bool) []string {
 	i, _, _, _, ok := k.upload(path)
 	if !ok {
 		return nil
@@ -155,7 +150,7 @@ func (k *Kind) Presets(path string, unattached bool) []string {
 }
 
 // PrivateFor lists the private presets fed by the upload at path.
-func (k *Kind) PrivateFor(path string) []*Private {
+func (k *RegisteredKind) PrivateFor(path string) []*Private {
 	i, _, _, _, ok := k.upload(path)
 	if !ok {
 		return nil
@@ -170,7 +165,7 @@ func (k *Kind) PrivateFor(path string) []*Private {
 }
 
 // PublicFor lists the public presets fed by the upload at path.
-func (k *Kind) PublicFor(path string) []*Public {
+func (k *RegisteredKind) PublicFor(path string) []*Public {
 	i, _, _, _, ok := k.upload(path)
 	if !ok {
 		return nil
@@ -186,18 +181,18 @@ func (k *Kind) PublicFor(path string) []*Public {
 
 // NameOf is the {name} of an upload path ("originals/001.png" is "001",
 // "cover.png" is "cover").
-func (k *Kind) NameOf(path string) string {
+func (k *RegisteredKind) NameOf(path string) string {
 	_, _, name, _, _ := k.upload(path)
 	return name
 }
 
 // AudioUpload is an attached audio asset declared by this kind. It may be
 // played with an ordinary media grant without exposing other original uploads.
-func (k *Kind) AudioUpload(f File) bool {
+func (k *RegisteredKind) AudioUpload(f File) bool {
 	return !f.Unattached && k.audioOriginal(f)
 }
 
-func (k *Kind) audioOriginal(f File) bool {
+func (k *RegisteredKind) audioOriginal(f File) bool {
 	if !f.IsUpload() || f.Gone || f.Blob == "" || !isAudioType(f.Type) {
 		return false
 	}
@@ -207,14 +202,14 @@ func (k *Kind) audioOriginal(f File) bool {
 
 // OutputPath is p's output path (a file, or a directory ending in "/") for
 // the upload at path.
-func (k *Kind) OutputPath(p *Private, uploadPath string) string {
+func (k *RegisteredKind) OutputPath(p *Private, uploadPath string) string {
 	return fill(p.To, map[string]string{"name": k.NameOf(uploadPath), "ext": path.Ext(uploadPath)})
 }
 
 // PublicNames are p's public names in m for the upload at path, one per
 // width: none for an upload outside a preview's First. m may be nil for a
 // preset without First.
-func (k *Kind) PublicNames(m *Manifest, p *Public, path string) []string {
+func (k *RegisteredKind) PublicNames(m *Manifest, p *Public, path string) []string {
 	vars := map[string]string{"name": k.NameOf(path)}
 	if p.First > 0 {
 		n := slices.Index(k.firsts(m, p), path)
@@ -236,7 +231,7 @@ func (k *Kind) PublicNames(m *Manifest, p *Public, path string) []string {
 
 // firsts are the paths of the uploads preview p renders, in order: the
 // first p.First attached uploads of its From.
-func (k *Kind) firsts(m *Manifest, p *Public) []string {
+func (k *RegisteredKind) firsts(m *Manifest, p *Public) []string {
 	var out []string
 	if m == nil {
 		return nil
@@ -260,7 +255,7 @@ func rendered(f File, p *Public) bool {
 }
 
 // previewNames lists m's published preview generations in order.
-func (k *Kind) previewNames(m *Manifest) []string {
+func (k *RegisteredKind) previewNames(m *Manifest) []string {
 	var out []string
 	for i := range k.Public {
 		p := &k.Public[i]
@@ -286,19 +281,19 @@ func (k *Kind) previewNames(m *Manifest) []string {
 // Publication returns the latest generation still owned by the source and
 // position: a reservation (cleanup must protect it while PUTs run), else
 // the current generation.
-func (k *Kind) Publication(m *Manifest, f File, p *Public) (Publication, bool) {
+func (k *RegisteredKind) Publication(m *Manifest, f File, p *Public) (Publication, bool) {
 	pub, ok := f.Publication(p.Name)
 	return pub, ok && k.owned(m, f, p, pub)
 }
 
 // Current returns the ready generation still owned by the source and
 // position: what readers are shown.
-func (k *Kind) Current(m *Manifest, f File, p *Public) (Publication, bool) {
+func (k *RegisteredKind) Current(m *Manifest, f File, p *Public) (Publication, bool) {
 	pub, ok := f.Current(p.Name)
 	return pub, ok && k.owned(m, f, p, pub)
 }
 
-func (k *Kind) owned(m *Manifest, f File, p *Public, pub Publication) bool {
+func (k *RegisteredKind) owned(m *Manifest, f File, p *Public, pub Publication) bool {
 	return !f.Unattached && f.Fail() == nil && pub.Source == f.Key() &&
 		slices.Equal(pub.Names, k.PublicNames(m, p, f.Path))
 }
@@ -307,7 +302,7 @@ func (k *Kind) owned(m *Manifest, f File, p *Public, pub Publication) bool {
 // ones included, and an active reservation, plus a Stable preset's logical
 // names while one is current. Any other generation's name is permanently
 // retired; no later worker may reuse it.
-func (k *Kind) PublicKept(m *Manifest) []string {
+func (k *RegisteredKind) PublicKept(m *Manifest) []string {
 	if k.Versions {
 		var out []string
 		for _, blob := range m.Blobs() {
@@ -345,7 +340,7 @@ type Mirror struct {
 // mirrors are the copies an edit from cur to next makes: each Stable
 // preset's current generation that next newly makes current, to its logical
 // names. Cleanup (PublicKept) removes them once none is current.
-func (k *Kind) mirrors(item Item, cur, next *Manifest) []Mirror {
+func (k *RegisteredKind) mirrors(item Item, cur, next *Manifest) []Mirror {
 	if k.Versions {
 		return nil
 	}
@@ -377,7 +372,7 @@ func (k *Kind) mirrors(item Item, cur, next *Manifest) []Mirror {
 // syncPreviews keeps each preview preset pending on exactly the uploads
 // whose position's file is not the one before did (a reorder, an insert, a
 // removal, a new source or edit); uploads past First carry none.
-func (k *Kind) syncPreviews(before, m *Manifest) {
+func (k *RegisteredKind) syncPreviews(before, m *Manifest) {
 	for i := range k.Public {
 		p := &k.Public[i]
 		if p.First == 0 {
@@ -416,7 +411,7 @@ func (k *Kind) syncPreviews(before, m *Manifest) {
 }
 
 // UploadRules are the kind's upload paths with the rules a client checks.
-func (k *Kind) UploadRules() []UploadRule {
+func (k *RegisteredKind) UploadRules() []UploadRule {
 	out := make([]UploadRule, 0, len(k.Uploads))
 	for _, u := range k.Uploads {
 		r := UploadRule{Path: u.Path, Types: slices.Clone(u.Types), MaxBytes: u.MaxBytes, Max: u.Max, Named: u.Named, Body: u.Body, Frames: u.Frames}
@@ -447,14 +442,14 @@ func (k *Kind) UploadRules() []UploadRule {
 
 // EditBounds is the image that bounds an edit of the upload at path: its
 // first public preset's, else a native one.
-func (k *Kind) EditBounds(path string) Image {
+func (k *RegisteredKind) EditBounds(path string) Image {
 	if ps := k.PublicFor(path); len(ps) > 0 {
 		return ps[0].Image
 	}
 	return Image{}
 }
 
-func (k *Kind) validate() error {
+func (k *RegisteredKind) validate() error {
 	if !layout.ValidSegment(k.Name) || strings.HasPrefix(k.Name, "_") {
 		return errors.New("invalid name")
 	}
@@ -482,7 +477,7 @@ func (k *Kind) validate() error {
 		if err := validateArchiveDestination(k, u); err != nil {
 			return err
 		}
-		if err := u.Video.validate(u.Types); err != nil {
+		if err := validateVideo(u.Video, u.Types); err != nil {
 			return fmt.Errorf("upload %q: %w", u.Path, err)
 		}
 	}
@@ -518,7 +513,7 @@ func (k *Kind) validate() error {
 }
 
 // validateDownloads checks Downloads and Download.
-func (k *Kind) validateDownloads() error {
+func (k *RegisteredKind) validateDownloads() error {
 	for i, d := range k.Downloads {
 		p := k.private(d)
 		switch {
@@ -542,7 +537,7 @@ func (k *Kind) validateDownloads() error {
 
 // Area is the area of the allocation of a file at path (an upload's) or of
 // preset (a derived file's): download/ for Downloads, else private/.
-func (k *Kind) Area(path, preset string) string {
+func (k *RegisteredKind) Area(path, preset string) string {
 	if k.Versions {
 		if preset == "" {
 			return layout.AreaOriginals
@@ -561,7 +556,7 @@ func (k *Kind) Area(path, preset string) string {
 	return layout.AreaPrivate
 }
 
-func (l *VideoLimits) validate(types []string) error {
+func validateVideo(l *VideoLimits, types []string) error {
 	if l == nil {
 		return nil
 	}
@@ -576,12 +571,12 @@ func (l *VideoLimits) validate(types []string) error {
 }
 
 // feedsImages reports an upload some image preset (private or public) decodes.
-func (k *Kind) feedsImages(path string) bool {
+func (k *RegisteredKind) feedsImages(path string) bool {
 	return slices.ContainsFunc(k.Private, func(p Private) bool { return p.Image != nil && p.From == path }) ||
 		slices.ContainsFunc(k.Public, func(p Public) bool { return p.From == path })
 }
 
-func (k *Kind) validatePrivate(p Private, names map[string]bool) error {
+func (k *RegisteredKind) validatePrivate(p Private, names map[string]bool) error {
 	if !layout.ValidSegment(p.Name) || names[p.Name] {
 		return errors.New("invalid or duplicate name")
 	}
@@ -627,12 +622,12 @@ func (k *Kind) validatePrivate(p Private, names map[string]bool) error {
 	}
 	switch {
 	case p.Image != nil:
-		if err := p.Image.validate(); err != nil {
+		if err := validateImage(*p.Image); err != nil {
 			return err
 		}
 		return validateShapes(*p.Image, p.Shapes)
 	case p.HLS != nil:
-		return p.HLS.validate()
+		return validateHLS(p.HLS)
 	case p.MP4 != nil:
 		if p.MP4.Rung < 2 || p.MP4.Rung > 4320 || p.MP4.Rung%2 != 0 || !validProfile(p.MP4.Profile) {
 			return fmt.Errorf("invalid MP4 rung %d or profile", p.MP4.Rung)
@@ -642,7 +637,7 @@ func (k *Kind) validatePrivate(p Private, names map[string]bool) error {
 	return nil
 }
 
-func (k *Kind) validatePublic(p *Public, names map[string]bool) error {
+func (k *RegisteredKind) validatePublic(p *Public, names map[string]bool) error {
 	if p.Image.Format != ImageFormatWebP {
 		return errors.New("public image presets use WebP; source format is private-only")
 	}
@@ -683,7 +678,7 @@ func (k *Kind) validatePublic(p *Public, names map[string]bool) error {
 			return fmt.Errorf("invalid width %d", w)
 		}
 	}
-	return p.Image.validate()
+	return validateImage(p.Image)
 }
 
 // validTemplate accepts a relative app path: no empty, "." or ".." segment;
@@ -700,7 +695,7 @@ func validTemplate(t string, dir bool) bool {
 	return true
 }
 
-func (im Image) validate() error {
+func validateImage(im Image) error {
 	if im.Format != ImageFormatWebP && im.Format != ImageFormatSource {
 		return fmt.Errorf("invalid image format %q", im.Format)
 	}
@@ -723,7 +718,7 @@ func validateShapes(base Image, shapes []Shape) error {
 		if s.Image.Format != base.Format || s.Image.Animation != base.Animation {
 			return fmt.Errorf("shape %d: keep the preset's format and animation", i)
 		}
-		if err := s.Image.validate(); err != nil {
+		if err := validateImage(s.Image); err != nil {
 			return fmt.Errorf("shape %d: %w", i, err)
 		}
 		for j, o := range shapes[:i] {
@@ -755,7 +750,7 @@ func (h *HLS) Aspects() (lo, hi float64) {
 	return lo, hi
 }
 
-func (h *HLS) validate() error {
+func validateHLS(h *HLS) error {
 	for i, n := range h.Ladder {
 		if n < 2 || n > 4320 || n%2 != 0 || i > 0 && n >= h.Ladder[i-1] {
 			return fmt.Errorf("invalid ladder %v", h.Ladder)
@@ -819,7 +814,7 @@ const (
 // Then the zips and the public presets' pending names.
 // Commits bound the manifest with it; an item whose outputs still overrun
 // it is marked Full by the worker.
-func (k *Kind) Unwritten(m *Manifest) int64 {
+func (k *RegisteredKind) Unwritten(m *Manifest) int64 {
 	written := map[[2]string]int64{}
 	for _, f := range m.Files {
 		if !f.IsUpload() {
@@ -904,7 +899,7 @@ const (
 
 // DownloadFile is the file k.Download serves in m: its literal upload, or
 // its MP4 preset's output of the attached source. A Zip's is its own route's.
-func (k *Kind) DownloadFile(m *Manifest) (File, DownloadState) {
+func (k *RegisteredKind) DownloadFile(m *Manifest) (File, DownloadState) {
 	from, p := k.Download, k.private(k.Download)
 	if p != nil {
 		if p.MP4 == nil {

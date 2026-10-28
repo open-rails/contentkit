@@ -23,7 +23,7 @@ type SourceAdmission struct {
 
 // ArchiveDestination returns this upload's configured image destination. The reader
 // preset's existing mapping remains supported; generic kinds can set ArchiveTo.
-func (k *Kind) ArchiveDestination(source string) string {
+func (k *RegisteredKind) ArchiveDestination(source string) string {
 	i, _, _, _, ok := k.upload(source)
 	if !ok {
 		return ""
@@ -73,7 +73,7 @@ func (o *opRun) admitSource(f *File, previous int) error {
 	return nil
 }
 
-func validateArchiveDestination(k *Kind, source Upload) error {
+func validateArchiveDestination(k *RegisteredKind, source Upload) error {
 	if source.ArchiveTo == "" {
 		return nil
 	}
@@ -92,7 +92,7 @@ func validateArchiveDestination(k *Kind, source Upload) error {
 	return nil
 }
 
-func (k *Kind) pendingArchives(m *Manifest) bool {
+func (k *RegisteredKind) pendingArchives(m *Manifest) bool {
 	for _, f := range m.Files {
 		if f.IsUpload() && f.Fail() == nil && k.ArchiveDestination(f.Path) != "" && (f.Blob == "" || f.Meta["archive_completed_sha256"] != sourceDigest(f)) {
 			return true
@@ -103,7 +103,7 @@ func (k *Kind) pendingArchives(m *Manifest) bool {
 
 // archiveBatch identifies only this source's admitted destination within the
 // same manifest; a matching SHA in another target is a different batch.
-func (k *Kind) archiveBatch(source File) (string, string) {
+func (k *RegisteredKind) archiveBatch(source File) (string, string) {
 	if source.Type != "application/zip" {
 		return "", ""
 	}
@@ -113,7 +113,7 @@ func (k *Kind) archiveBatch(source File) (string, string) {
 	}
 	return target, sourceDigest(source)
 }
-func (k *Kind) archiveChild(file File, target, digest string) bool {
+func (k *RegisteredKind) archiveChild(file File, target, digest string) bool {
 	if !file.IsUpload() || digest == "" {
 		return false
 	}

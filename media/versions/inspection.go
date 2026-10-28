@@ -12,7 +12,7 @@ import (
 // It lists only prepared reader derivatives that the same explicit inspection
 // media request will authorize. Declared reader audio can pass through, but
 // this view cannot obtain other source exports or download-only renditions.
-func (s *Service) inspectionPlan(ctx context.Context, actor access.Actor, k *media.Kind, target Target) (*ReaderPlan, error) {
+func (s *Service) inspectionPlan(ctx context.Context, actor access.Actor, k *media.RegisteredKind, target Target) (*ReaderPlan, error) {
 	if s.m.Reader == nil {
 		return nil, ErrNotReady
 	}

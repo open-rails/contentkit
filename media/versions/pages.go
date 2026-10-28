@@ -135,12 +135,12 @@ func writePageMeta(f *media.File, value pageMetadata) {
 	f.Meta["page"] = fields
 }
 
-func pageID(k *media.Kind, f media.File) string {
+func pageID(k *media.RegisteredKind, f media.File) string {
 	return k.PageID(f)
 }
 
 // pageName is display/path metadata only. Page identity is the original hash.
-func pageName(k *media.Kind, f media.File) string {
+func pageName(k *media.RegisteredKind, f media.File) string {
 	if n := pageMeta(f).Name; n != "" {
 		return n
 	}
@@ -150,7 +150,7 @@ func pageName(k *media.Kind, f media.File) string {
 	return strings.TrimSuffix(path.Base(f.Path), path.Ext(f.Path))
 }
 
-func sourcePages(k *media.Kind, m *media.Manifest) []media.File {
+func sourcePages(k *media.RegisteredKind, m *media.Manifest) []media.File {
 	var out []media.File
 	for _, f := range m.Files {
 		if k.IsPageUpload(f) && !f.Unattached {
@@ -164,7 +164,7 @@ func sourcePages(k *media.Kind, m *media.Manifest) []media.File {
 // Until membership is keyed by page identity, QA cannot change those slots.
 // Freeze the prior effective inclusion, rather than restoring pages excluded
 // before an editor authored segments against the selected sequence.
-func guardSegmentedPages(k *media.Kind, m *media.Manifest, segmented bool) {
+func guardSegmentedPages(k *media.RegisteredKind, m *media.Manifest, segmented bool) {
 	for i, f := range m.Files {
 		if !k.IsPageUpload(f) || f.Unattached {
 			continue
@@ -182,7 +182,7 @@ func guardSegmentedPages(k *media.Kind, m *media.Manifest, segmented bool) {
 	}
 }
 
-func selectionOf(k *media.Kind, m *media.Manifest) pageSelection {
+func selectionOf(k *media.RegisteredKind, m *media.Manifest) pageSelection {
 	files := sourcePages(k, m)
 	out := pageSelection{Pages: make([]selectedPage, 0, len(files))}
 	for _, f := range files {
@@ -348,7 +348,7 @@ func selectionOf(k *media.Kind, m *media.Manifest) pageSelection {
 
 // pageEditorAccess opens a version's manifest for one of its editors, its
 // pages' selection frozen while explicit segments name them.
-func (s *Service) pageEditorAccess(ctx context.Context, actor access.Actor, t Target) (*media.Kind, *media.Manifest, contentref.ContentRef, error) {
+func (s *Service) pageEditorAccess(ctx context.Context, actor access.Actor, t Target) (*media.RegisteredKind, *media.Manifest, contentref.ContentRef, error) {
 	v, err := s.one(ctx, t)
 	if err != nil {
 		return nil, nil, contentref.ContentRef{}, err
@@ -385,7 +385,7 @@ var noticePageReason = map[string]string{"blank": "blank", "duplicate": "duplica
 
 // noticesOf derives the version's notices from its current selection; a
 // changed selection is a new notice, so a dismissal never hides it.
-func noticesOf(k *media.Kind, m *media.Manifest) []PageNotice {
+func noticesOf(k *media.RegisteredKind, m *media.Manifest) []PageNotice {
 	sel := selectionOf(k, m)
 	var out []PageNotice
 	var removed []NoticePage
@@ -577,7 +577,7 @@ func (s *Service) dismissNotice(ctx context.Context, t Target, id string) error 
 	return err
 }
 
-func persistPageSelection(k *media.Kind, m *media.Manifest) {
+func persistPageSelection(k *media.RegisteredKind, m *media.Manifest) {
 	r := selectionOf(k, m)
 	byPath := map[string]selectedPage{}
 	for _, p := range r.Pages {
@@ -595,7 +595,7 @@ func persistPageSelection(k *media.Kind, m *media.Manifest) {
 
 // preparePageSelection allocates new upload IDs once. Legacy uploads whose
 // metadata only contains native analysis keep their existing reader keys.
-func (s *Service) preparePageSelection(ctx context.Context, k *media.Kind, t Target) error {
+func (s *Service) preparePageSelection(ctx context.Context, k *media.RegisteredKind, t Target) error {
 	unlock, err := s.lockSource(ctx, t)
 	if err != nil {
 		return err

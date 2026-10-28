@@ -102,7 +102,7 @@ func NewReader(o ReaderOptions) (*Reader, error) {
 		return nil, errors.New("media: Reader needs Manifests")
 	}
 	reg := o.Manifests.Registry()
-	if reg.cfg.BaseURL == "" || reg.cfg.Hooks.Resolver == nil {
+	if reg.cfg.BaseURL == "" || reg.hooks.Resolver == nil {
 		return nil, errors.New("media: Reader needs the registry's BaseURL and Hooks.Resolver")
 	}
 	d := &o.Delivery
@@ -171,7 +171,7 @@ func (r *Reader) Grant(ctx context.Context, ref contentref.ContentRef, actor acc
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrNotVisible, err)
 	}
-	res, err := resolve.One(ctx, r.reg.cfg.Hooks.Resolver, ref, actor)
+	res, err := resolve.One(ctx, r.reg.hooks.Resolver, ref, actor)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrResolve, err)
 	}
@@ -199,10 +199,10 @@ func (r *Reader) Grant(ctx context.Context, ref contentref.ContentRef, actor acc
 		}
 	}
 	if item.Kind().Versions && !editorRead && !inspectionRead {
-		if r.reg.cfg.Hooks.ReaderManifest == nil {
+		if r.reg.hooks.ReaderManifest == nil {
 			return nil, fmt.Errorf("%w: version reader manifest is not configured", ErrResolve)
 		}
-		man, err = r.reg.cfg.Hooks.ReaderManifest(ctx, ref, actor, man)
+		man, err = r.reg.hooks.ReaderManifest(ctx, ref, actor, man)
 		if err != nil {
 			return nil, err
 		}

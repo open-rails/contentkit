@@ -191,7 +191,7 @@ func (h uploadHandler) commit(w http.ResponseWriter, r *http.Request) {
 }
 
 // uploadInfo is an upload as an editor reads it, without URLs.
-func uploadInfo(f File, k *Kind) FileInfo {
+func uploadInfo(f File, k *RegisteredKind) FileInfo {
 	pending := slices.DeleteFunc(slices.Clone(f.Pending), func(name string) bool { return k.private(name) == nil && k.public(name) == nil })
 	if statusArchivePending(k, f) {
 		pending = append(pending, "extract")

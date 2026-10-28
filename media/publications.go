@@ -130,14 +130,14 @@ func (r *Registry) Avatars(ids ...string) []PublicImage {
 }
 
 // DefaultImage is preset's default image for ref, which the media gateway
-// serves while the item has no publication (Public.hasDefault). From is empty and heights follow the preset's
-// aspect (0 without one).
+// serves while the item has no publication (hasDefault). From is empty and
+// heights follow the preset's aspect (0 without one).
 func (r *Registry) DefaultImage(ref contentref.ContentRef, preset string) (PublicImage, bool) {
 	item, err := r.Item(ref)
 	if err != nil {
 		return PublicImage{}, false
 	}
-	if p := item.Kind().public(preset); p == nil || !p.hasDefault() {
+	if p := item.Kind().public(preset); p == nil || !hasDefault(p) {
 		return PublicImage{}, false
 	}
 	return r.logicalImage(ref, preset)
@@ -172,7 +172,7 @@ func (r *Registry) logicalImage(ref contentref.ContentRef, preset string) (Publi
 
 // hasDefault reports a default image at the preset's names: a preset
 // declaring Default, neither a preview nor per upload ({name}).
-func (p *Public) hasDefault() bool {
+func hasDefault(p *Public) bool {
 	return p.Default != "" && p.First == 0 && !strings.Contains(p.To, "{name}")
 }
 
@@ -194,7 +194,7 @@ type projectedRendition struct {
 
 // publications lists m's current publications in reading order: uploads in
 // manifest order, each one's presets in declaration order.
-func (k *Kind) publications(m *Manifest) []publication {
+func (k *RegisteredKind) publications(m *Manifest) []publication {
 	var out []publication
 	for _, f := range m.Files {
 		if !f.IsUpload() {

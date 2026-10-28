@@ -20,16 +20,17 @@ const maxWidth = 8192
 // maxFirst bounds a preview's uploads.
 const maxFirst = 100
 
-// Registry is a validated Config.
+// Registry is a validated Config with the app's Hooks.
 type Registry struct {
 	cfg      Config
+	hooks    Hooks
 	declared int // cfg.Kinds[:declared] are c's
-	kinds    map[string]*Kind
-	all      []*Kind // declared storage kinds
+	kinds    map[string]*RegisteredKind
+	all      []*RegisteredKind // declared storage kinds
 }
 
 // NewRegistry validates c and its version reader configuration.
-func NewRegistry(c Config) (*Registry, error) {
+func NewRegistry(c Config, hooks Hooks) (*Registry, error) {
 	if !c.Scope.IsZero() {
 		if !c.Scope.Valid() || c.Scope.AppID == "" || c.Namespace != "" && c.Namespace != c.Scope.Partition() {
 			return nil, errors.New("media: Scope requires tenant and app IDs and no legacy Namespace")
@@ -48,16 +49,17 @@ func NewRegistry(c Config) (*Registry, error) {
 	if c.Editor == (Image{}) {
 		c.Editor = DefaultEditor
 	}
-	if err := c.Editor.validate(); err != nil {
+	if err := validateImage(c.Editor); err != nil {
 		return nil, fmt.Errorf("media: Editor: %w", err)
 	}
 	if c.Editor.Format != ImageFormatWebP {
 		return nil, errors.New("media: Editor images use WebP")
 	}
 	kinds := slices.Clone(c.Kinds)
-	r := &Registry{cfg: c, declared: len(c.Kinds), kinds: make(map[string]*Kind, len(kinds))}
+	r := &Registry{cfg: c, hooks: hooks, declared: len(c.Kinds), kinds: make(map[string]*RegisteredKind, len(kinds))}
 	r.cfg.Kinds = make([]Kind, len(kinds))
-	for i, k := range kinds {
+	for i, decl := range kinds {
+		k := &RegisteredKind{Kind: decl}
 		if _, dup := r.kinds[k.Name]; dup {
 			return nil, fmt.Errorf("media: duplicate kind %q", k.Name)
 		}
@@ -84,9 +86,9 @@ func NewRegistry(c Config) (*Registry, error) {
 		if err := k.levels(); err != nil {
 			return nil, fmt.Errorf("media: kind %q: %w", k.Name, err)
 		}
-		r.cfg.Kinds[i] = k
-		r.kinds[k.Name] = &r.cfg.Kinds[i]
-		r.all = append(r.all, &r.cfg.Kinds[i])
+		r.cfg.Kinds[i] = k.Kind
+		r.kinds[k.Name] = k
+		r.all = append(r.all, k)
 	}
 	if a := c.Avatars; a != (Avatars{}) {
 		k, ok := r.kinds[a.Kind]
@@ -107,11 +109,14 @@ func cmpOr(a, b string) string {
 // Config is the registry's configuration, normalized.
 func (r *Registry) Config() Config { return r.cfg }
 
+// Hooks are the app's callbacks the registry was built with.
+func (r *Registry) Hooks() Hooks { return r.hooks }
+
 // Namespace is the app's own namespace.
 func (r *Registry) Namespace() string { return r.cfg.Namespace }
 
 // Kind returns a registered kind.
-func (r *Registry) Kind(name string) (*Kind, error) {
+func (r *Registry) Kind(name string) (*RegisteredKind, error) {
 	k, ok := r.kinds[name]
 	if !ok {
 		return nil, fmt.Errorf("%w %q", ErrUnknownKind, name)
@@ -120,7 +125,7 @@ func (r *Registry) Kind(name string) (*Kind, error) {
 }
 
 // Kinds are the declared storage kinds; reader chapters create no kinds.
-func (r *Registry) Kinds() []*Kind { return slices.Clone(r.all) }
+func (r *Registry) Kinds() []*RegisteredKind { return slices.Clone(r.all) }
 
 // Namespaces are the namespaces the app's items live in: its own, then the
 // shared ones it imports.
@@ -156,7 +161,7 @@ func (r *Registry) VersionRef(kind, id, version string) (contentref.ContentRef, 
 // and its folder's keys.
 type Item struct {
 	ref    contentref.ContentRef
-	kind   *Kind
+	kind   *RegisteredKind
 	prefix string
 }
 
@@ -189,7 +194,7 @@ func (r *Registry) Item(ref contentref.ContentRef) (Item, error) {
 }
 
 func (i Item) Ref() contentref.ContentRef { return i.ref }
-func (i Item) Kind() *Kind                { return i.kind }
+func (i Item) Kind() *RegisteredKind      { return i.kind }
 
 // Prefix is the physical owner folder. Versioned kinds use the version ID;
 // the parent content ID remains only in Ref and the catalog.
@@ -258,12 +263,12 @@ func (i Item) PublicationKey(p Publication, index int) (string, error) {
 }
 
 // DefaultKey is the key of the kind's default public image name.
-func (k *Kind) DefaultKey(name string) string {
+func (k *RegisteredKind) DefaultKey(name string) string {
 	return k.prefix(layout.DefaultID, "") + layout.AreaPublic + "/" + name
 }
 
 // NS is the namespace the kind's items live in.
-func (k *Kind) NS() string { return k.ns }
+func (k *RegisteredKind) NS() string { return k.ns }
 
 // PublicURL is the URL of item ref's public name at the registry's BaseURL.
 func (r *Registry) PublicURL(ref contentref.ContentRef, name string) string {
@@ -281,7 +286,7 @@ func (r *Registry) PresetRules() []PresetRule {
 		for _, p := range k.Public {
 			out = append(out, PresetRule{Kind: k.Name, Name: p.Name, From: p.From, Base: strings.TrimRight(r.cfg.BaseURL, "/"),
 				Namespace: k.ns, Root: k.root(), To: p.To, Widths: append([]int{}, p.Widths...), Aspect: p.Image.Aspect, MinWidth: p.Image.MinWidth, First: p.First,
-				Default: p.hasDefault(), Stable: p.Stable})
+				Default: hasDefault(&p), Stable: p.Stable})
 		}
 	}
 	return out
@@ -311,13 +316,13 @@ func (r *Registry) IsAccount(ref contentref.ContentRef) bool {
 	k, e := r.Kind(ref.ContentKind)
 	return e == nil && k.Account && ref.TenantID == k.ns
 }
-func (k *Kind) root() string {
+func (k *RegisteredKind) root() string {
 	if !k.scope.IsZero() {
 		return k.scope.Root()
 	}
 	return k.ns + "/"
 }
-func (k *Kind) prefix(id, version string) string {
+func (k *RegisteredKind) prefix(id, version string) string {
 	if k.Versions && version != "" {
 		id, version = version, ""
 	}
@@ -326,7 +331,7 @@ func (k *Kind) prefix(id, version string) string {
 
 // nestedPrefix is the historical path shape, used only to verify migrations
 // and cleanup receipts. A version's live storage owner is its version ID.
-func (k *Kind) nestedPrefix(id, version string) string {
+func (k *RegisteredKind) nestedPrefix(id, version string) string {
 	if !k.scope.IsZero() {
 		return k.scope.Prefix(k.Name, id, version)
 	}

@@ -52,7 +52,7 @@ type PageAnalysisMetrics struct {
 
 // IsPageUpload restricts analysis to the original upload pattern of a
 // versioned reader kind. Covers, avatars and derived images are never pages.
-func (k *Kind) IsPageUpload(f File) bool {
+func (k *RegisteredKind) IsPageUpload(f File) bool {
 	if k.Publish == nil || !f.IsUpload() {
 		return false
 	}
@@ -126,7 +126,7 @@ func PageAnalysisFits(meta map[string]any) bool {
 
 // PageAnalysisCapacity reserves evidence only after existing rendition and
 // failure records. Optional analysis must never make an item unpublishable.
-func (k *Kind) PageAnalysisCapacity(m *Manifest) int {
+func (k *RegisteredKind) PageAnalysisCapacity(m *Manifest) int {
 	if m.Full {
 		return 0
 	}

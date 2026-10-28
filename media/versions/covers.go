@@ -18,7 +18,7 @@ import (
 
 // applyCover brings version t's automatic cover to its source page, removing
 // it when the source page is removed. Release dates do not alter public files.
-func (s *Service) applyCover(ctx context.Context, k *media.Kind, t Target) error {
+func (s *Service) applyCover(ctx context.Context, k *media.RegisteredKind, t Target) error {
 	cover := public(k, media.CoverPreset)
 	if cover == nil {
 		return nil
@@ -106,7 +106,7 @@ func coverPath(pattern, p string) bool {
 
 // coverTo is where the automatic cover goes: the cover path, or under a
 // {name} pattern, auto's place or a new name.
-func coverTo(k *media.Kind, pattern string, auto *media.File) string {
+func coverTo(k *media.RegisteredKind, pattern string, auto *media.File) string {
 	dir, named := strings.CutSuffix(pattern, "{name}")
 	switch {
 	case !named:

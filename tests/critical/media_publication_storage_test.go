@@ -72,7 +72,7 @@ func TestPublicationStorage(t *testing.T) {
 	must(t, err)
 	config, err := a.cfg.MediaKinds()
 	must(t, err)
-	registry, err := media.NewRegistry(config)
+	registry, err := media.NewRegistry(config, media.Hooks{})
 	must(t, err)
 	target, err := registry.VersionRef(ref.Kind, ref.ID, ref.Version)
 	must(t, err)

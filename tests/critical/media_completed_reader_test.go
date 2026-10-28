@@ -53,9 +53,9 @@ func TestCompletedPublicationReader(t *testing.T) {
 			Uploads: []media.Upload{{Path: "source", Types: []string{"video/mp4"}, MaxBytes: 1 << 20}, {Path: "archive", Types: []string{"application/zip"}, MaxBytes: 1 << 20}},
 			Private: []media.Private{{Name: "stream", From: "source", To: "streams/", HLS: &media.HLS{Ladder: []int{144}}}},
 		}},
-		Hooks: media.Hooks{Resolver: authority},
 	}
-	cfg.Hooks.ReaderManifest = func(_ context.Context, _ contentref.ContentRef, _ access.Actor, current *media.Manifest) (*media.Manifest, error) {
+	hooks := media.Hooks{Resolver: authority}
+	hooks.ReaderManifest = func(_ context.Context, _ contentref.ContentRef, _ access.Actor, current *media.Manifest) (*media.Manifest, error) {
 		out := current.Clone()
 		out.Deliveries = nil
 		if leakPreparation {
@@ -98,7 +98,7 @@ func TestCompletedPublicationReader(t *testing.T) {
 		}
 		return out, nil
 	}
-	registry, err := media.NewRegistry(cfg)
+	registry, err := media.NewRegistry(cfg, hooks)
 	must(t, err)
 	parent, err := uuid.NewV7()
 	must(t, err)

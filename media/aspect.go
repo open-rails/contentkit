@@ -91,7 +91,7 @@ func AspectOf(w, h int) Aspect {
 		return AspectNative
 	}
 	g := gcd(w, h)
-	return Aspect{w / g, h / g}
+	return Aspect{W: w / g, H: h / g}
 }
 
 // MarshalText writes "W:H" (native: empty), so JSON and config carry the string.

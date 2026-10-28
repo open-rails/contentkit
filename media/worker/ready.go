@@ -47,7 +47,7 @@ func (h *completionHook) WorkEnd(ctx context.Context, job *rivertype.JobRow, err
 	if err := json.Unmarshal(job.EncodedArgs, &args); err != nil {
 		return workErr
 	}
-	hooks := h.manifests.Registry().Config().Hooks
+	hooks := h.manifests.Registry().Hooks()
 	err = media.CompleteProcessing(ctx, h.manifests, args.Ref, func(ctx context.Context, tx pgx.Tx, r media.Readiness) error {
 		if err := h.publish(ctx, tx, args.Ref); err != nil {
 			return err

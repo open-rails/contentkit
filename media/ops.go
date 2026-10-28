@@ -86,7 +86,7 @@ func ValidNamed(name string) bool {
 	return err == nil && u.String() == id
 }
 
-func (op Op) validate() error {
+func validateOp(op Op) error {
 	bad := func(format string, a ...any) error {
 		return uploadErr(CodeInvalid, "%s %q: "+format, append([]any{op.Op, op.Path}, a...)...)
 	}
@@ -139,7 +139,7 @@ func (op Op) validate() error {
 	if op.Replace && (op.Op != OpPut || op.CreateID != "") {
 		return bad("replace requires a put without create_id")
 	}
-	if limit := op.metaLimit(); metaBytes(op.Meta) > limit {
+	if limit := metaLimit(op); metaBytes(op.Meta) > limit {
 		return uploadErr(CodeTooLarge, "%s %q: meta is at most %d bytes of JSON", op.Op, op.Path, limit)
 	}
 	if err := op.Edit.Check(0, 0); err != nil {
@@ -149,7 +149,7 @@ func (op Op) validate() error {
 }
 
 // metaLimit bounds op.Meta: the item's for a meta op, else an upload's.
-func (op Op) metaLimit() int {
+func metaLimit(op Op) int {
 	if op.Op == OpMeta {
 		return MaxItemMetaBytes
 	}
@@ -160,7 +160,7 @@ func (op Op) metaLimit() int {
 type opRun struct {
 	renames map[string]string
 	removed []string
-	k       *Kind
+	k       *RegisteredKind
 	m       *Manifest
 	ref     contentref.ContentRef
 	// objects are the put names, HEAD-checked in the item's folder.

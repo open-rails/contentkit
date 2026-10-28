@@ -32,8 +32,7 @@ func PublishDefaults(ctx context.Context, store media.Store, reg *media.Registry
 	if err := start(); err != nil {
 		return result, fmt.Errorf("media/image: libvips: %w", err)
 	}
-	cfg := reg.Config()
-	for _, k := range cfg.Kinds {
+	for _, k := range reg.Kinds() {
 		d := layout.Default{Namespace: k.NS(), Kind: k.Name, Files: map[string]string{}}
 		for i := range k.Public {
 			p := &k.Public[i]

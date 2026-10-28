@@ -46,7 +46,7 @@ func withPageSource(meta map[string]any, name, source string) map[string]any {
 
 // PageID is the SHA-256 of a reader page's stored original bytes, independent
 // of virtual filename, reading position, edits and generated renditions.
-func (k *Kind) PageID(f File) string {
+func (k *RegisteredKind) PageID(f File) string {
 	if !k.IsPageUpload(f) {
 		return ""
 	}
@@ -57,7 +57,7 @@ func (k *Kind) PageID(f File) string {
 	return hex.EncodeToString(digest)
 }
 
-func pageNameUsed(k *Kind, m *Manifest, name string) bool {
+func pageNameUsed(k *RegisteredKind, m *Manifest, name string) bool {
 	for _, f := range m.Files {
 		if !k.IsPageUpload(f) {
 			continue
@@ -124,7 +124,7 @@ func PageIncluded(f File) bool {
 
 // nextPagePath resolves a real collision inside the locked manifest without
 // replacing a meaningful filename with a positional number.
-func nextPagePath(k *Kind, m *Manifest, requested string) string {
+func nextPagePath(k *RegisteredKind, m *Manifest, requested string) string {
 	used := map[string]bool{}
 	for _, f := range m.Files {
 		if !k.IsPageUpload(f) {

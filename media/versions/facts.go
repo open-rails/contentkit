@@ -23,7 +23,7 @@ type facts struct {
 	HasAudio bool
 }
 
-func factsOf(k *media.Kind, m *media.Manifest) facts {
+func factsOf(k *media.RegisteredKind, m *media.Manifest) facts {
 	var f facts
 	var pages int
 	var first *media.File
@@ -86,7 +86,7 @@ func (s *Service) lockTarget(ctx context.Context, tx pgx.Tx, v Target) error {
 }
 
 // recordFacts writes v's facts and refreshes its facets when they changed.
-func (s *Service) recordFacts(ctx context.Context, tx pgx.Tx, k *media.Kind, v Target, m *media.Manifest) error {
+func (s *Service) recordFacts(ctx context.Context, tx pgx.Tx, k *media.RegisteredKind, v Target, m *media.Manifest) error {
 	// Catalog edits lock the parent before the version and derive access in
 	// a later statement. Hold that same parent lock through the facet callback
 	// so media facts cannot restore an access snapshot read before an edit.

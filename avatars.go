@@ -45,7 +45,7 @@ func (e *Engine) newAvatars(deps Deps) (*engineAvatars, error) {
 		// Its media host serves the primary's files: URLs are built at it.
 		var err error
 		if out.urls, err = media.NewRegistry(media.Config{Namespace: e.media.reg.Config().Namespace, Scope: e.media.reg.Config().Scope, BaseURL: e.media.reg.Config().BaseURL,
-			Kinds: []media.Kind{kind}, Avatars: media.Avatars{Kind: kind.Name, Preset: preset}}); err != nil {
+			Kinds: []media.Kind{kind}, Avatars: media.Avatars{Kind: kind.Name, Preset: preset}}, media.Hooks{}); err != nil {
 			return nil, fmt.Errorf("contentkit: Config.Avatars: %w", err)
 		}
 		if out.forward, err = newAvatarForward(e, deps, kind, a); err != nil {

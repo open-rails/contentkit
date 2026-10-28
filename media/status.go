@@ -69,7 +69,7 @@ func (r *Reader) Status(ctx context.Context, ref contentref.ContentRef, actor ac
 	if err != nil {
 		return nil, ErrNotVisible
 	}
-	res, err := resolve.One(resolve.WithEditorRead(ctx), r.reg.cfg.Hooks.Resolver, ref, actor)
+	res, err := resolve.One(resolve.WithEditorRead(ctx), r.reg.hooks.Resolver, ref, actor)
 	if err != nil {
 		return nil, errors.Join(ErrResolve, err)
 	}
@@ -128,7 +128,7 @@ func (r *Reader) statusProgress(ctx context.Context, ref contentref.ContentRef, 
 	return EncodeStatus{}
 }
 
-func statusOf(k *Kind, m *Manifest, progress EncodeStatus) *MediaStatus {
+func statusOf(k *RegisteredKind, m *Manifest, progress EncodeStatus) *MediaStatus {
 	out := &MediaStatus{State: k.Readiness(m).State, Presets: []PresetStatus{}, Failures: []ProcessingFailure{}}
 	if slices.ContainsFunc(m.Files, func(f File) bool {
 		return f.IsUpload() && statusHasPending(k, m, f) && isVideoType(f.Type)
@@ -259,17 +259,17 @@ func statusOf(k *Kind, m *Manifest, progress EncodeStatus) *MediaStatus {
 	return out
 }
 
-func statusHasPending(k *Kind, m *Manifest, f File) bool {
+func statusHasPending(k *RegisteredKind, m *Manifest, f File) bool {
 	return slices.ContainsFunc(f.Pending, func(name string) bool {
 		return k.private(name) != nil || !f.Unattached && k.public(name) != nil
 	})
 }
 
-func isArchiveUpload(k *Kind, f File) bool {
+func isArchiveUpload(k *RegisteredKind, f File) bool {
 	return f.IsUpload() && k.ArchiveDestination(f.Path) != ""
 }
 
-func statusArchivePending(k *Kind, f File) bool {
+func statusArchivePending(k *RegisteredKind, f File) bool {
 	if !isArchiveUpload(k, f) || f.Gone || f.Fail() != nil {
 		return false
 	}

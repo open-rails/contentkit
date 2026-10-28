@@ -177,7 +177,7 @@ func newHarness(ctx context.Context, c config, mediaOrigin string) (_ *harness, 
 		return nil, err
 	}
 	fixture.Namespace = tenant
-	if h.reg, err = media.NewRegistry(fixture); err != nil {
+	if h.reg, err = media.NewRegistry(fixture, media.Hooks{}); err != nil {
 		return nil, err
 	}
 	queue, err := workqueue.New(h.pool, h.reg, workerSchema)

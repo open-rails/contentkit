@@ -73,7 +73,7 @@ func (p *releasePlan) storageSettled(active *releasePlan) bool {
 
 // releaseMedia returns only an explicitly configured kind. Absence is an
 // ordinary publication without storage; a configured runtime must be bound.
-func (s *Service) releaseMedia(kind string) (*media.Kind, error) {
+func (s *Service) releaseMedia(kind string) (*media.RegisteredKind, error) {
 	if _, exists := s.o.Kinds.Kinds[kind]; !exists {
 		return nil, fmt.Errorf("%w: publication kind %q is not configured", ErrInvalid, kind)
 	}
@@ -92,7 +92,7 @@ func (s *Service) releaseMedia(kind string) (*media.Kind, error) {
 
 // releasePlanMedia keeps frozen file obligations authoritative across changes
 // to configuration. A historical media plan cannot become a storage-free one.
-func (s *Service) releasePlanMedia(plan *releasePlan) (*media.Kind, error) {
+func (s *Service) releasePlanMedia(plan *releasePlan) (*media.RegisteredKind, error) {
 	if plan.View == nil {
 		if len(plan.Copies) != 0 || len(plan.Previous) != 0 {
 			return nil, errors.New("versions: publication file operations require a manifest snapshot")
@@ -111,7 +111,7 @@ func (s *Service) releasePlanMedia(plan *releasePlan) (*media.Kind, error) {
 
 // Download-only renditions stay internal. A whole-item reader token must not
 // bypass a host's delayed-download or personalized-watermark policy.
-func downloadOnly(k *media.Kind, f media.File) bool {
+func downloadOnly(k *media.RegisteredKind, f media.File) bool {
 	z := private(k, k.Download)
 	return z != nil && z.HostOnly && z.Zip != "" && strings.HasPrefix(f.Path, z.Zip)
 }

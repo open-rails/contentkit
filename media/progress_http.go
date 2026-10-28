@@ -42,7 +42,7 @@ func (h readHandler) progress(w http.ResponseWriter, req *http.Request) {
 		if err != nil {
 			return err
 		}
-		res, err := resolve.One(resolve.WithEditorRead(ctx), h.r.reg.cfg.Hooks.Resolver, ref, actor)
+		res, err := resolve.One(resolve.WithEditorRead(ctx), h.r.reg.hooks.Resolver, ref, actor)
 		if err != nil {
 			return errors.Join(ErrResolve, err)
 		}

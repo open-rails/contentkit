@@ -86,7 +86,7 @@ func runSpec(p *media.Private, fp string) string { return p.Name + "@" + fp }
 
 // runPreset is the encode preset of upload f whose current fingerprint is
 // the run's spec; false when the upload, the preset or its spec changed.
-func (e *Encoder) runPreset(k *media.Kind, f media.File, spec string) (*media.Private, string, bool) {
+func (e *Encoder) runPreset(k *media.RegisteredKind, f media.File, spec string) (*media.Private, string, bool) {
 	name, fp, _ := strings.Cut(spec, "@")
 	for _, p := range k.PrivateFor(f.Path) {
 		if p.Name == name && isEncode(p) && e.fp(p, f) == fp {

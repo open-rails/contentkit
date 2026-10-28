@@ -543,7 +543,7 @@ WHERE c.tenant_id=$1 AND c.id=$2 AND v.id=$3`, s.o.Tenant, t.Content, t.Version)
 // downloadSnapshot refuses to combine a draft manifest's sources with another
 // publication's chapter release positions. Every source and its order must match
 // the same frozen publication used by decisions. Pending edits wait for publish.
-func (s *Service) downloadSnapshot(ctx context.Context, k *media.Kind, t Target, m *media.Manifest) (map[Target]pagesSnapshot, error) {
+func (s *Service) downloadSnapshot(ctx context.Context, k *media.RegisteredKind, t Target, m *media.Manifest) (map[Target]pagesSnapshot, error) {
 	if k.Publish == nil {
 		return nil, nil
 	}
@@ -685,7 +685,7 @@ func splitPages(s string) ([]int, bool) {
 
 // downloadKind is t's version and its kind's version view, which serves a
 // download.
-func (s *Service) downloadKind(ctx context.Context, t Target) (version, *media.Kind, error) {
+func (s *Service) downloadKind(ctx context.Context, t Target) (version, *media.RegisteredKind, error) {
 	v, err := s.one(ctx, t)
 	if err != nil {
 		return version{}, nil, err
@@ -698,7 +698,7 @@ func (s *Service) downloadKind(ctx context.Context, t Target) (version, *media.K
 }
 
 // downloadItem is t's media item and manifest under k.
-func (s *Service) downloadItem(ctx context.Context, k *media.Kind, t Target) (media.Item, *media.Manifest, error) {
+func (s *Service) downloadItem(ctx context.Context, k *media.RegisteredKind, t Target) (media.Item, *media.Manifest, error) {
 	ref, err := s.ref(k.Name, t)
 	if err != nil {
 		return media.Item{}, nil, err
@@ -781,7 +781,7 @@ func (s *Service) downloadItem(ctx context.Context, k *media.Kind, t Target) (me
 // zipPages are the files the archive zips, in manifest order: each page's
 // original or output under the zip's prefix. ErrNoDownload once one failed,
 // ErrNotReady while one is missing.
-func zipPages(k *media.Kind, z *media.Private, m *media.Manifest) ([]media.File, error) {
+func zipPages(k *media.RegisteredKind, z *media.Private, m *media.Manifest) ([]media.File, error) {
 	var out []media.File
 	for _, f := range m.Files {
 		if !f.IsUpload() || f.Unattached || f.Gone || !inPattern(k.Publish.Pages, f.Path) || !media.PageIncluded(f) {

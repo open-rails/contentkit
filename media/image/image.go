@@ -796,7 +796,7 @@ func (p *Processor) putBlob(ctx context.Context, item media.Item, area string, b
 // read reads upload f's blob: one stored larger than f may be (its Upload's
 // MaxBytes, or a grabbed frame's recorded size) is refused unread. Blobs are
 // hashed when placed or produced, so the bytes are not hashed again.
-func (p *Processor) read(ctx context.Context, key string, f media.File, k *media.Kind) ([]byte, error) {
+func (p *Processor) read(ctx context.Context, key string, f media.File, k *media.RegisteredKind) ([]byte, error) {
 	u, _ := k.UploadOf(f.Path)
 	limit := u.MaxBytes
 	if f.Frame != nil && f.Frame.Of != "" {
@@ -828,7 +828,7 @@ func (p *Processor) read(ctx context.Context, key string, f media.File, k *media
 }
 
 func (p *Processor) failed(ctx context.Context, item media.Item, path string, err error) {
-	if h := p.reg.Config().Hooks.Failed; h != nil {
+	if h := p.reg.Hooks().Failed; h != nil {
 		h(ctx, item.Ref(), path, err)
 	}
 }

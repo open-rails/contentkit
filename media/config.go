@@ -12,6 +12,7 @@ package media
 import (
 	"context"
 	"io/fs"
+	"slices"
 
 	"github.com/jackc/pgx/v5"
 
@@ -21,7 +22,7 @@ import (
 	"github.com/open-rails/contentkit/media/layout"
 )
 
-// Config is the app's media registry (NewRegistry).
+// Config is the app's media registry, as data (NewRegistry).
 type Config struct {
 	// Namespace is the app's own namespace, e.g. "doujins": its kinds' items
 	// live under {Namespace}/{kind}/{id}/.
@@ -39,7 +40,6 @@ type Config struct {
 	// Editor is how editor views render (the whole oriented source the
 	// cropper draws on); zero is DefaultEditor.
 	Editor Image `json:"editor,omitzero"`
-	Hooks  Hooks `json:"-"`
 }
 
 // Avatars is Config.Avatars: Kind's items are people's accounts, keyed by the
@@ -53,8 +53,9 @@ type Avatars struct {
 // DefaultEditor renders editor views.
 var DefaultEditor = Image{Width: 2048, Height: 2048, Quality: 82}
 
-// Kind is one kind of item: what may be uploaded, what is derived from the
-// uploads in private/, and which public images it has.
+// Kind declares one kind of item: what may be uploaded, what is derived from
+// the uploads in private/, and which public images it has. NewRegistry
+// validates it into a RegisteredKind.
 type Kind struct {
 	Name string `json:"name"`
 	// Namespace is "" for Config.Namespace, or a shared one such as
@@ -94,8 +95,19 @@ type Kind struct {
 	// Public.Default, so a shared kind ships its own (go:embed). A registry
 	// read from JSON (the stock worker) has none; PublishDefaults needs them.
 	Defaults fs.FS `json:"-"`
+}
 
-	kindState
+// findUpload is the index of the Upload in us whose Path is path, or -1.
+func findUpload(us []Upload, path string) int {
+	return slices.IndexFunc(us, func(u Upload) bool { return u.Path == path })
+}
+
+// findPrivate is the preset in ps named name, or nil.
+func findPrivate(ps []Private, name string) *Private {
+	if i := slices.IndexFunc(ps, func(p Private) bool { return p.Name == name }); i >= 0 {
+		return &ps[i]
+	}
+	return nil
 }
 
 // Upload is an app path that may be uploaded: a literal ("cover") or a
@@ -343,7 +355,7 @@ func Fit(n int) *Image { return &Image{Width: n, Height: n} }
 // Rung is an MP4 at short side n.
 func Rung(n int) *MP4 { return &MP4{Rung: n} }
 
-// Hooks are the app's callbacks.
+// Hooks are the app's callbacks, given to NewRegistry beside its Config.
 type Hooks struct {
 	// Resolver authorizes media reads. Declared public presets do not depend
 	// on publication visibility.
