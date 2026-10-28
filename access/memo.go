@@ -27,9 +27,8 @@ type memoEntry struct {
 
 // WithMemo returns ctx with a request memo: within it a viewer's Filter is
 // read once and Decide answers from it (or from keys already read), so
-// Filter then Decide is one billing read. ContentKit's content and media
-// handlers install it; a host installs it in its own middleware. A ctx
-// that already has one is returned unchanged.
+// Filter then Decide is one billing read. The engine installs it on every
+// request. A ctx that already has one is returned unchanged.
 func WithMemo(ctx context.Context) context.Context {
 	if _, ok := ctx.Value(memoCtxKey{}).(*requestMemo); ok {
 		return ctx

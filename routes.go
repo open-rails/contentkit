@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/internal/httpapi"
 )
 
@@ -166,6 +167,7 @@ func (e *Engine) dispatch(prefix string, modules map[httpapi.Module]http.Handler
 			_, _ = w.Write([]byte(`{"error":"not found","code":"not_found"}` + "\n"))
 			return
 		}
-		h.ServeHTTP(w, r)
+		// One billing read per request, whatever the module.
+		h.ServeHTTP(w, r.WithContext(access.WithMemo(r.Context())))
 	})
 }
