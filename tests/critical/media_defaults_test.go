@@ -25,14 +25,13 @@ import (
 // its JSON (no database, no host code): ContentKit's avatar silhouette and a
 // host default from MEDIA_DEFAULTS_DIR. Hosts link no libvips for this.
 func TestWorkerPublishesDefaults(t *testing.T) {
+	worker, err := filepath.Abs(".bin/media-worker")
+	must(t, err)
+	if info, err := os.Stat(worker); err != nil || info.Mode()&0o111 == 0 {
+		t.Fatal("build the stock worker before this selected test: GOWORK=off CGO_ENABLED=1 go build -o .bin/media-worker github.com/open-rails/contentkit/cmd/media-worker")
+	}
 	m := newMediaStorage(t, ck.Scope{TenantID: ck.NewTenantID(), AppID: ck.NewAppID()})
 	dir := t.TempDir()
-	worker := filepath.Join(dir, "media-worker")
-	build := exec.CommandContext(t.Context(), "go", "build", "-o", worker, "github.com/open-rails/contentkit/cmd/media-worker")
-	build.Env = append(os.Environ(), "GOWORK=off", "CGO_ENABLED=1")
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build the stock worker: %v\n%s", err, out)
-	}
 	images := filepath.Join(dir, "defaults")
 	must(t, os.Mkdir(images, 0o700))
 	must(t, os.WriteFile(filepath.Join(images, "series.png"), imageBytes(t), 0o600))

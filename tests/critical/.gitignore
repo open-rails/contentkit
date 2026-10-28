@@ -1,3 +1,6 @@
 .browser-dist/
 results/
 __pycache__/
+.search-attribution-dist/
+.media-sse-upload-dist/
+.bin/

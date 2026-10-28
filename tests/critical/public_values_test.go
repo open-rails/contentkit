@@ -118,9 +118,6 @@ func TestPublicContentKindsConfig(t *testing.T) {
 			if fields["content_kinds"] == nil || fields["entity_kinds"] == nil {
 				t.Fatalf("missing explicit kind families: %s", encoded)
 			}
-			if _, old := fields["kinds"]; old {
-				t.Fatalf("retired config key emitted: %s", encoded)
-			}
 			var decoded kinds.Config
 			must(t, codec.unmarshal(encoded, &decoded))
 			must(t, decoded.Validate())
@@ -132,37 +129,28 @@ func TestPublicContentKindsConfig(t *testing.T) {
 				t.Fatal("content model changed during configuration round trip")
 			}
 		})
-		for _, both := range []bool{false, true} {
-			label := "_reject_old_key"
-			if both {
-				label = "_reject_both_keys"
+		t.Run(name+"_reject_unknown_key", func(t *testing.T) {
+			encoded, err := codec.marshal(model)
+			must(t, err)
+			var fields map[string]any
+			must(t, codec.unmarshal(encoded, &fields))
+			fields["unknown_config_key"] = true
+			bad, err := codec.marshal(fields)
+			must(t, err)
+			unchanged := model
+			if err := codec.unmarshal(bad, &unchanged); err == nil {
+				t.Fatal("unknown config key silently accepted")
 			}
-			t.Run(name+label, func(t *testing.T) {
-				encoded, err := codec.marshal(model)
-				must(t, err)
-				var fields map[string]any
-				must(t, codec.unmarshal(encoded, &fields))
-				fields["kinds"] = fields["content_kinds"]
-				if !both {
-					delete(fields, "content_kinds")
-				}
-				bad, err := codec.marshal(fields)
-				must(t, err)
-				unchanged := model
-				if err := codec.unmarshal(bad, &unchanged); err == nil {
-					t.Fatal("retired kinds config silently accepted")
-				}
-				if !reflect.DeepEqual(unchanged, model) {
-					t.Fatal("rejected configuration changed the existing model")
-				}
-				// A permissive host wrapper must not bypass the model's strict decoder.
-				wrapped, err := codec.marshal(map[string]any{"content": fields})
-				must(t, err)
-				var host ck.Config
-				if err := codec.unmarshal(wrapped, &host); err == nil {
-					t.Fatal("host wrapper accepted the retired config key")
-				}
-			})
-		}
+			if !reflect.DeepEqual(unchanged, model) {
+				t.Fatal("rejected configuration changed the existing model")
+			}
+			// A permissive host wrapper must not bypass the model's strict decoder.
+			wrapped, err := codec.marshal(map[string]any{"content": fields})
+			must(t, err)
+			var host ck.Config
+			if err := codec.unmarshal(wrapped, &host); err == nil {
+				t.Fatal("host wrapper accepted an unknown config key")
+			}
+		})
 	}
 }

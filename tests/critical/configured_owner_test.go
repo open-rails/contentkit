@@ -195,13 +195,7 @@ func TestConfiguredOwnerProvisioning(t *testing.T) {
 	}
 }
 
-func TestConfiguredOwnerRechecksAfterProvisioning(t *testing.T) {
-	w := newWorld(t, func(c *ck.Config) {
-		c.Content.Channels = &kinds.Channels{Creation: "staff", Route: "channels"}
-		kind := c.Content.Kinds["article"]
-		kind.Channel = &kinds.ChannelPolicy{Fixed: "blog"}
-		c.Content.Kinds["article"] = kind
-	})
+func configuredOwnerRechecksAfterProvisioning(t *testing.T, w *world) {
 	a := w.apps[0]
 	provider := configuredScopes{ScopeProvisioner: a.deps.Scopes, scope: *a.cfg.Scope, after: func(ctx context.Context) error {
 		_, err := w.pool.Exec(ctx, `UPDATE `+pgx.Identifier{w.schema, "content_entities"}.Sanitize()+` SET state='deleted',deleted_at=clock_timestamp() WHERE tenant_id=$1 AND kind='channel' AND slug='blog'`, a.cfg.Scope.AppID.String())
@@ -217,14 +211,8 @@ func TestConfiguredOwnerRechecksAfterProvisioning(t *testing.T) {
 	}
 }
 
-func TestConfiguredOwnerKeylessAdapter(t *testing.T) {
-	w := newWorld(t, func(c *ck.Config) {
-		c.Content.Channels = &kinds.Channels{Creation: "staff", Route: "channels"}
-		kind := c.Content.Kinds["article"]
-		kind.Channel = &kinds.ChannelPolicy{Fixed: "blog"}
-		c.Content.Kinds["article"] = kind
-	})
-	a := w.apps[0]
+func configuredOwnerKeylessAdapter(t *testing.T, w *world) {
+	a := w.apps[1]
 	var authConfig authkit.Config
 	// Capture the real fixture's public store configuration; the provisioning
 	// adapter receives only store/role data, no keys or runtime dependencies.
@@ -275,4 +263,15 @@ func TestConfiguredOwnerKeylessAdapter(t *testing.T) {
 	if group.DeletedAt == nil {
 		t.Fatal("keyless migration removed the group tombstone")
 	}
+}
+
+func TestConfiguredOwnerAdapters(t *testing.T) {
+	w := newWorld(t, func(c *ck.Config) {
+		c.Content.Channels = &kinds.Channels{Creation: "staff", Route: "channels"}
+		kind := c.Content.Kinds["article"]
+		kind.Channel = &kinds.ChannelPolicy{Fixed: "blog"}
+		c.Content.Kinds["article"] = kind
+	})
+	t.Run("TestConfiguredOwnerRechecksAfterProvisioning", func(t *testing.T) { configuredOwnerRechecksAfterProvisioning(t, w) })
+	t.Run("TestConfiguredOwnerKeylessAdapter", func(t *testing.T) { configuredOwnerKeylessAdapter(t, w) })
 }

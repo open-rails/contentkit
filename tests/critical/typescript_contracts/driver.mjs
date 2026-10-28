@@ -38,7 +38,7 @@ async function released(id) {
   do {
     const item = await owner.contents.get(id);
     if (item.live) return item;
-    await new Promise((resolve) => setTimeout(resolve, 550));
+    await new Promise((resolve) => setTimeout(resolve, 50));
   } while (Date.now() < deadline);
   assert.fail(`durable publication did not complete for ${id}`);
 }

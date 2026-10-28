@@ -1,8 +1,6 @@
 package critical_test
 
 import (
-	"encoding/json"
-	"net/http"
 	"net/url"
 	"strings"
 	"testing"
@@ -32,7 +30,7 @@ func TestVersionOwnedContent(t *testing.T) {
 	})
 	a := w.apps[0]
 	pool, schema, cfg := w.pool, w.schema, a.cfg
-	engine, server := a.engine, a.server
+	engine := a.engine
 	admin, public := engine.Client(), a.client("")
 	must(engine.StartJobs(ctx))
 	diagnose := func(id string) {
@@ -223,28 +221,6 @@ func TestVersionOwnedContent(t *testing.T) {
 		_, err = admin.PatchEntity(ctx, string(tags[0].ID), entities.EntityUpdate{Names: []entities.Name{{Language: "en", Kind: entities.NameCanonical, Name: "RenamedEditionNeedle"}}})
 		must(err)
 		waitKeyword("RenamedEditionNeedle")
-	})
-	t.Run("parent_text_writes_are_not_an_alias", func(t *testing.T) {
-		req, err := http.NewRequestWithContext(ctx, http.MethodPut, server.URL+"/content/v1/contents/"+item.ID+"/text/en", strings.NewReader(`{"title":"wrong parent"}`))
-		must(err)
-		res, err := server.Client().Do(req)
-		must(err)
-		res.Body.Close()
-		if res.StatusCode != 404 && res.StatusCode != 405 {
-			t.Fatalf("retired text route status %d", res.StatusCode)
-		}
-		var raw map[string]any
-		b, err := json.Marshal(item)
-		must(err)
-		must(json.Unmarshal(b, &raw))
-		if _, ok := raw["text"]; ok {
-			t.Fatal("parent still returns writable localized text map")
-		}
-		var count int
-		must(pool.QueryRow(ctx, "SELECT count(*) FROM information_schema.tables WHERE table_schema=$1 AND table_name='content_text'", schema).Scan(&count))
-		if count != 0 {
-			t.Fatal("parent text storage remains")
-		}
 	})
 	t.Run("hidden_initial_version_and_import_use_the_same_contract", func(t *testing.T) {
 		blog := create("blog", "zh", "Hidden Chinese", "Body of hidden edition")

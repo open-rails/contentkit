@@ -37,6 +37,10 @@ import (
 // AuthKit identity, S3 boundary and processor. Holding the ninth original PUT
 // leaves a real durable partial result; no progress snapshot is fabricated.
 func TestMediaSSEUpload(t *testing.T) {
+	buildDirectory := ".media-sse-upload-dist"
+	if _, err := os.Stat(buildDirectory + "/media-sse-upload.html"); err != nil {
+		t.Fatal("build the shipped UI and media-sse-upload harness before this selected test: pnpm --dir ../../sdk/ui build; pnpm --dir ../../sdk/ui exec vite build --config ../../tests/critical/browser/media-sse-upload.config.mjs")
+	}
 	// Real private media uses same-origin delivery here: IP-only loopback
 	// origins on different ports do not satisfy the gateway's same-site CORP.
 	mux := http.NewServeMux()
@@ -82,12 +86,7 @@ func TestMediaSSEUpload(t *testing.T) {
 	archive := mediaSSEArchive(t)
 	archivePath := filepath.Join(t.TempDir(), "Progress_25_pages.zip")
 	must(t, os.WriteFile(archivePath, archive, 0600))
-	buildDirectory := t.TempDir()
-	build := exec.CommandContext(t.Context(), "pnpm", "--dir", "../../sdk/ui", "exec", "vite", "build", "--config", "../../tests/critical/browser/media-sse-upload.config.mjs")
-	build.Env = append(os.Environ(), "CONTENTKIT_MEDIA_SSE_DIST="+buildDirectory, "RAYON_NUM_THREADS=1")
-	if output, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build real shared admin harness: %v\n%s", err, output)
-	}
+
 	observed := make(chan media.RefBody, 1)
 	checked := make(chan struct{})
 	base, err := url.Parse(m.app.server.URL)

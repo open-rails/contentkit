@@ -15,6 +15,7 @@ func TestOptionalInboxRestoreErasure(t *testing.T) {
 	cfg, deps, engine := a.cfg, a.deps, a.engine
 	user, token := w.person(t, 0)
 	item := publishedArticle(t, a, "Optional inbox erasure restore")
+	comment := postComment(t, a.client(token), item.ID, "Keep the discussion")
 	_, err := a.client(token).PostContentFavorite(t.Context(), item.ID, ck.PostContentFavoriteQuery{})
 	must(t, err)
 	sibling := newOptionalInboxApplication(t, w, w.apps[1])
@@ -28,9 +29,14 @@ func TestOptionalInboxRestoreErasure(t *testing.T) {
 		must(t, err)
 	}
 	must(t, engine.AnonymizeAccount(t.Context(), user.ID))
+	must(t, engine.AnonymizeAccount(t.Context(), user.ID))
+	got := readComment(t, a, item.ID, comment.ID)
+	if got.UserID != "" || got.AnonName != "<Deleted>" || got.Body != comment.Body {
+		t.Fatalf("anonymization changed retained discussion: %+v", got)
+	}
 	state, err := a.client(token).GetContentFavorite(t.Context(), item.ID, ck.GetContentFavoriteQuery{})
 	must(t, err)
-	if state.Favorited {
+	if state.Favorited || state.Count == nil || *state.Count != 1 {
 		t.Fatal("account deletion kept favorite attribution")
 	}
 	a.server.Close()
@@ -44,6 +50,13 @@ func TestOptionalInboxRestoreErasure(t *testing.T) {
 		must(t, err)
 	}
 	must(t, tx.Commit(t.Context()))
+	bad, err := ck.New(t.Context(), cfg, deps)
+	if bad != nil {
+		defer bad.Close(context.Background())
+	}
+	if bad != nil || !errors.Is(err, ck.ErrErasureReplayRequired) {
+		t.Fatalf("restored attribution served after anonymization: engine=%v error=%v", bad != nil, err)
+	}
 	cfg.Database.SkipMigrations = true
 	candidate, err := ck.New(t.Context(), cfg, deps)
 	if candidate != nil {
@@ -124,49 +137,6 @@ CREATE TRIGGER fail_erasure BEFORE UPDATE ON `+qs+`.content_favorites FOR EACH R
 	must(t, err)
 	if state.Count == nil || *state.Count != 1 {
 		t.Fatalf("retried deletion lost the anonymous contribution: %+v", state)
-	}
-}
-
-func TestOptionalInboxAnonymizationRestore(t *testing.T) {
-	w, a := newOptionalInboxWorld(t)
-	user, token := w.person(t, 0)
-	item := publishedArticle(t, a, "Anonymization keeps contributions")
-	comment := postComment(t, a.client(token), item.ID, "Keep the discussion")
-	_, err := a.client(token).PostContentFavorite(t.Context(), item.ID, ck.PostContentFavoriteQuery{})
-	must(t, err)
-	qs := pgx.Identifier{a.cfg.Database.Schema}.Sanitize()
-	for _, table := range []string{"content_favorites", "content_erased_subjects", "content_account_lifecycle"} {
-		_, err = w.pool.Exec(t.Context(), `CREATE TABLE `+qs+`.`+pgx.Identifier{"backup_" + table}.Sanitize()+` AS TABLE `+qs+`.`+pgx.Identifier{table}.Sanitize())
-		must(t, err)
-	}
-	must(t, a.engine.AnonymizeAccount(t.Context(), user.ID))
-	must(t, a.engine.AnonymizeAccount(t.Context(), user.ID))
-	state, err := a.client(token).GetContentFavorite(t.Context(), item.ID, ck.GetContentFavoriteQuery{})
-	must(t, err)
-	if state.Favorited || state.Count == nil || *state.Count != 1 {
-		t.Fatalf("anonymization removed a contribution: %+v", state)
-	}
-	got := readComment(t, a, item.ID, comment.ID)
-	if got.UserID != "" || got.AnonName != "<Deleted>" || got.Body != comment.Body {
-		t.Fatalf("anonymization changed retained discussion: %+v", got)
-	}
-	a.server.Close()
-	must(t, a.engine.Close(t.Context()))
-	tx, err := w.pool.Begin(t.Context())
-	must(t, err)
-	defer tx.Rollback(context.Background())
-	for _, table := range []string{"content_favorites", "content_erased_subjects", "content_account_lifecycle"} {
-		tableName := qs + "." + pgx.Identifier{table}.Sanitize()
-		_, err = tx.Exec(t.Context(), `DELETE FROM `+tableName+`; INSERT INTO `+tableName+` SELECT * FROM `+qs+`.`+pgx.Identifier{"backup_" + table}.Sanitize())
-		must(t, err)
-	}
-	must(t, tx.Commit(t.Context()))
-	bad, err := ck.New(t.Context(), a.cfg, a.deps)
-	if bad != nil {
-		defer bad.Close(context.Background())
-	}
-	if bad != nil || !errors.Is(err, ck.ErrErasureReplayRequired) {
-		t.Fatalf("restored attribution served after anonymization: engine=%v error=%v", bad != nil, err)
 	}
 }
 

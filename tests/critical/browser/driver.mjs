@@ -1,11 +1,15 @@
 import assert from "node:assert/strict";
 import { chromium } from "../../../sdk/ui/node_modules/@playwright/test/index.mjs";
 import { resolveInlineImageReferences } from "../../../sdk/ui/dist/client.js";
-const fixture=JSON.parse(process.env.CONTENTKIT_BROWSER_FIXTURE);
-const scenario=process.argv[2];
+const input=JSON.parse(process.env.CONTENTKIT_BROWSER_FIXTURE);
+const scenarios=process.argv[2]==="batch" ? input : [{scenario:process.argv[2],fixture:input}];
 const browser=await chromium.launch({headless:true, ...(process.env.CONTENTKIT_CRITICAL_CHROMIUM?{executablePath:process.env.CONTENTKIT_CRITICAL_CHROMIUM}:{})});
 try {
-  const page=await browser.newPage();
+  const receipts=[];
+  for (const {scenario,fixture} of scenarios) {
+  const context=await browser.newContext();
+  try {
+  const page=await context.newPage();
   const debug=[];
   const account=request=>{const bearer=request.headers().authorization;return bearer===`Bearer ${fixture.aliceToken}`?"alice":bearer===`Bearer ${fixture.bobToken}`?"bob":"other";};
   page.on("request",request=>{if(request.url().includes("/favorite"))debug.push({event:"request",method:request.method(),account:account(request)});});
@@ -122,5 +126,8 @@ try {
     await page.evaluate(version=>window.critical.mountVersionReader(version),fixture.enVersion);
     await page.waitForFunction(version=>{const el=document.querySelector("#version-reader");return el?.dataset.version===version&&el.dataset.loading==="false"&&el.textContent==="English body only";},fixture.enVersion);
   } else throw Error(`unknown browser scenario ${scenario}`);
-  console.log(JSON.stringify({scenario,status:"passed"}));
+  receipts.push({scenario,status:"passed"});
+  } finally {await context.close();}
+  }
+  console.log(JSON.stringify(process.argv[2]==="batch" ? receipts : receipts[0]));
 } finally {await browser.close();}

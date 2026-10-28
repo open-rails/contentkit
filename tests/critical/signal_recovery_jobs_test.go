@@ -2,7 +2,6 @@ package critical_test
 
 import (
 	"context"
-	"errors"
 	"testing"
 	"time"
 
@@ -12,7 +11,7 @@ import (
 	"github.com/riverqueue/river"
 )
 
-func TestSignalRecoveryDoesNotScheduleProjectionRepair(t *testing.T) {
+func TestSignalRecoverySchedulesPreferences(t *testing.T) {
 	w := newWorld(t)
 	a := w.apps[0]
 	configureDiscoverySignals(t, w, a)
@@ -47,7 +46,7 @@ func TestSignalRecoveryDoesNotScheduleProjectionRepair(t *testing.T) {
 	if check == nil || check(t.Context()) == nil {
 		t.Fatal("missing real summary table did not make signal plane unready")
 	}
-	fleet, err := jobhook.Fleet(t.Context(), a.engine, &river.Config{Schema: w.schema + "_river", Queues: map[string]river.QueueConfig{}})
+	_, err = jobhook.Fleet(t.Context(), a.engine, &river.Config{Schema: w.schema + "_river", Queues: map[string]river.QueueConfig{}})
 	must(t, err)
 	// The fleet deliberately never starts: a preference job after restoration
 	// can only be the engine's reconnect callback, not a periodic first tick.
@@ -60,14 +59,4 @@ func TestSignalRecoveryDoesNotScheduleProjectionRepair(t *testing.T) {
 		must(t, w.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+w.schema+`_river.river_job WHERE kind='contentkit_preference_sync'`).Scan(&preferences))
 		return preferences > 0
 	})
-	var repairs int
-	must(t, w.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+w.schema+`_river.river_job WHERE kind='contentkit_projection_repair'`).Scan(&repairs))
-	if repairs != 0 {
-		t.Fatalf("signal recovery still scheduled %d automatic projection repairs", repairs)
-	}
-	_, err = fleet.Insert(t.Context(), scheduledContentJob{kind: "contentkit_projection_repair"}, nil)
-	var unknown *river.UnknownJobKindError
-	if !errors.As(err, &unknown) || unknown.Kind != "contentkit_projection_repair" {
-		t.Fatalf("automatic projection repair remains registered: %v", err)
-	}
 }

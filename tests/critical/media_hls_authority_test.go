@@ -84,7 +84,7 @@ func TestMediaHLSAuthorization(t *testing.T) {
 			if time.Now().After(deadline) {
 				t.Fatalf("withdrawal left the old HLS origin readable: %d", response.StatusCode)
 			}
-			time.Sleep(550 * time.Millisecond)
+			time.Sleep(50 * time.Millisecond)
 		}
 		// The other item's positive control stays readable after this item's
 		// completed withdrawal. It does not share the withdrawn item's scope.

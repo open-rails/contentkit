@@ -113,7 +113,7 @@ func (f *tinyHLSFixture) addSiteClip(t *testing.T) media.RefBody {
 	_, err = admin.IngestMedia(t.Context(), nil, ref, uuid.NewString(), []ck.MediaFile{{Path: "source.mp4", Type: "video/mp4", Body: bytes.NewReader(f.Source)}})
 	must(t, err)
 	waitForWithin(t, 90*time.Second, func() bool {
-		time.Sleep(550 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond)
 		read, err := admin.GetMedia(t.Context(), ref.Kind, ref.ID, ck.GetMediaQuery{Editor: true})
 		must(t, err)
 		if read.Status != nil && read.Status.FailureCount != 0 {
@@ -140,7 +140,7 @@ func (f *tinyHLSFixture) addClip(t *testing.T, title string, publish ...bool) me
 	_, err = admin.IngestMedia(t.Context(), http.DefaultClient, ref, uuid.NewString(), []ck.MediaFile{{Path: "source.mp4", Type: "video/mp4", Body: bytes.NewReader(f.Source)}})
 	must(t, err)
 	waitForWithin(t, 90*time.Second, func() bool {
-		time.Sleep(550 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond)
 		read, err := admin.GetMediaVersion(t.Context(), ref.Kind, ref.ID, ref.Version, ck.GetMediaVersionQuery{Editor: true})
 		must(t, err)
 		if read.Status != nil && read.Status.FailureCount != 0 {
@@ -163,7 +163,7 @@ func (f *tinyHLSFixture) addClip(t *testing.T, title string, publish ...bool) me
 		if time.Now().After(deadline) {
 			t.Fatalf("completed HLS publication unavailable: %v", err)
 		}
-		time.Sleep(550 * time.Millisecond)
+		time.Sleep(50 * time.Millisecond)
 	}
 	return ref
 }
