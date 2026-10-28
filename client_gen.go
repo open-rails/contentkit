@@ -96,49 +96,6 @@ func (c *Client) PostContentComments(ctx context.Context, id string, body conten
 	return out, err
 }
 
-// GetEntityCommentsQuery is the query of GetEntityComments.
-type GetEntityCommentsQuery struct {
-	// only this language's comments; every language by default
-	Language string
-	// likes (most liked), best (Wilson lower bound) or newest (the default)
-	Sort string
-	// page size: 20 by default, at most 100
-	Limit int
-	// items to skip
-	Offset int
-}
-
-func (q GetEntityCommentsQuery) values() url.Values {
-	v := url.Values{}
-	if q.Language != "" {
-		v.Set("language", q.Language)
-	}
-	if q.Sort != "" {
-		v.Set("sort", q.Sort)
-	}
-	if q.Limit != 0 {
-		v.Set("limit", fmt.Sprint(q.Limit))
-	}
-	if q.Offset != 0 {
-		v.Set("offset", fmt.Sprint(q.Offset))
-	}
-	return v
-}
-
-// GetEntityComments is GET /v1/entities/{id}/comments (public). The top-level comments on an entity with reply counts; the caller also sees its own held and rejected ones.
-func (c *Client) GetEntityComments(ctx context.Context, id string, q GetEntityCommentsQuery) ([]content.Comment, error) {
-	var out []content.Comment
-	err := c.call(ctx, http.MethodGet, expand("/v1/entities/{id}/comments", "{id}", url.PathEscape(id)), q.values(), nil, &out)
-	return out, err
-}
-
-// PostEntityComments is POST /v1/entities/{id}/comments (public). Comments on an entity in a language's thread, or replies to a top-level comment; a signed-out caller gives anon_name, where Config.anonymous.comments allows it. 202 when the moderator holds it.
-func (c *Client) PostEntityComments(ctx context.Context, id string, body content.CommentInput) (content.Comment, error) {
-	var out content.Comment
-	err := c.call(ctx, http.MethodPost, expand("/v1/entities/{id}/comments", "{id}", url.PathEscape(id)), nil, body, &out)
-	return out, err
-}
-
 // GetChannelCommentsQuery is the query of GetChannelComments.
 type GetChannelCommentsQuery struct {
 	// only this language's comments; every language by default
@@ -528,27 +485,6 @@ func (c *Client) GetContentFavorite(ctx context.Context, id string, q GetContent
 	return out, err
 }
 
-// PostEntityFavorite is POST /v1/entities/{id}/favorite (user). Favorites an entity the caller sees; favoriting again is a no-op. Answers the state with its favorite count.
-func (c *Client) PostEntityFavorite(ctx context.Context, id string) (content.FavoriteState, error) {
-	var out content.FavoriteState
-	err := c.call(ctx, http.MethodPost, expand("/v1/entities/{id}/favorite", "{id}", url.PathEscape(id)), nil, nil, &out)
-	return out, err
-}
-
-// DeleteEntityFavorite is DELETE /v1/entities/{id}/favorite (user). Unfavorites an entity, also one no longer visible. Answers the state with its favorite count.
-func (c *Client) DeleteEntityFavorite(ctx context.Context, id string) (content.FavoriteState, error) {
-	var out content.FavoriteState
-	err := c.call(ctx, http.MethodDelete, expand("/v1/entities/{id}/favorite", "{id}", url.PathEscape(id)), nil, nil, &out)
-	return out, err
-}
-
-// GetEntityFavorite is GET /v1/entities/{id}/favorite (public). The favorite count of an entity and whether the caller favorited it (never, signed out: then it must be visible).
-func (c *Client) GetEntityFavorite(ctx context.Context, id string) (content.FavoriteState, error) {
-	var out content.FavoriteState
-	err := c.call(ctx, http.MethodGet, expand("/v1/entities/{id}/favorite", "{id}", url.PathEscape(id)), nil, nil, &out)
-	return out, err
-}
-
 // PostChannelFavorite is POST /v1/channels/{id}/favorite (user). Favorites a channel the caller sees; favoriting again is a no-op. Answers the state with its favorite count.
 func (c *Client) PostChannelFavorite(ctx context.Context, id string) (content.FavoriteState, error) {
 	var out content.FavoriteState
@@ -898,27 +834,6 @@ func (q GetContentCanCommentQuery) values() url.Values {
 func (c *Client) GetContentCanComment(ctx context.Context, id string, q GetContentCanCommentQuery) (content.CommentStanding, error) {
 	var out content.CommentStanding
 	err := c.call(ctx, http.MethodGet, expand("/v1/contents/{id}/can-comment", "{id}", url.PathEscape(id)), q.values(), nil, &out)
-	return out, err
-}
-
-// GetEntityCanCommentQuery is the query of GetEntityCanComment.
-type GetEntityCanCommentQuery struct {
-	// only this language's thread; all languages by default
-	Language string
-}
-
-func (q GetEntityCanCommentQuery) values() url.Values {
-	v := url.Values{}
-	if q.Language != "" {
-		v.Set("language", q.Language)
-	}
-	return v
-}
-
-// GetEntityCanComment is GET /v1/entities/{id}/can-comment (public). Whether the caller may comment on an entity, the ban that stops it, and the authoritative visible top-level comment count. Counts include tombstones and the author's held/rejected rows; omitted when comments are hidden or locked.
-func (c *Client) GetEntityCanComment(ctx context.Context, id string, q GetEntityCanCommentQuery) (content.CommentStanding, error) {
-	var out content.CommentStanding
-	err := c.call(ctx, http.MethodGet, expand("/v1/entities/{id}/can-comment", "{id}", url.PathEscape(id)), q.values(), nil, &out)
 	return out, err
 }
 
@@ -1798,7 +1713,7 @@ func (q GetEntityQuery) values() url.Values {
 	return v
 }
 
-// GetEntity is GET /v1/entities/{id} (public). An active entity with its names, text, attributes, parent, scope, children, cover, avatar, edges, counts and membership standing; a merged entity answers with its survivor.
+// GetEntity is GET /v1/entities/{id} (public). An active entity with its names, text, attributes, parent, scope, children, cover, avatar, counts and membership standing; a merged entity answers with its survivor.
 func (c *Client) GetEntity(ctx context.Context, id string, q GetEntityQuery) (entities.EntityDetail, error) {
 	var out entities.EntityDetail
 	err := c.call(ctx, http.MethodGet, expand("/v1/entities/{id}", "{id}", url.PathEscape(id)), q.values(), nil, &out)
@@ -1990,21 +1905,7 @@ func (c *Client) DeleteEntityNames(ctx context.Context, id string, body []entiti
 	return out, err
 }
 
-// PostEntityEdges is POST /v1/entities/{id}/edges (staff). Adds edges from a entity.
-func (c *Client) PostEntityEdges(ctx context.Context, id string, body []entities.EdgeInput) ([]entities.Edge, error) {
-	var out []entities.Edge
-	err := c.call(ctx, http.MethodPost, expand("/v1/entities/{id}/edges", "{id}", url.PathEscape(id)), nil, body, &out)
-	return out, err
-}
-
-// DeleteEntityEdges is DELETE /v1/entities/{id}/edges (staff). Removes edges from a entity.
-func (c *Client) DeleteEntityEdges(ctx context.Context, id string, body []entities.EdgeInput) ([]entities.Edge, error) {
-	var out []entities.Edge
-	err := c.call(ctx, http.MethodDelete, expand("/v1/entities/{id}/edges", "{id}", url.PathEscape(id)), nil, body, &out)
-	return out, err
-}
-
-// PostEntityMerge is POST /v1/entities/{id}/merge (staff). Merges a entity into another of its kind: memberships, names, edges and children move, and its code redirects.
+// PostEntityMerge is POST /v1/entities/{id}/merge (staff). Merges a entity into another of its kind: memberships, names and children move, and its code redirects.
 func (c *Client) PostEntityMerge(ctx context.Context, id string, body entities.MergeInput) (entities.MergeReport, error) {
 	var out entities.MergeReport
 	err := c.call(ctx, http.MethodPost, expand("/v1/entities/{id}/merge", "{id}", url.PathEscape(id)), nil, body, &out)
@@ -3512,9 +3413,9 @@ func (c *Client) PostExposures(ctx context.Context, body discovery.Exposures) er
 
 // GetMeFavoritesQuery is the query of GetMeFavorites.
 type GetMeFavoritesQuery struct {
-	// contents (the default), entities or channels
+	// contents (the default) or channels
 	Target string
-	// only this content kind or group kind
+	// only this content kind
 	Kind string
 	// the group kinds cards name; every kind with a page by default
 	CardEntities []string
@@ -3564,7 +3465,7 @@ func (q GetMeFavoritesQuery) values() url.Values {
 	return v
 }
 
-// GetMeFavorites is GET /v1/me/favorites (user). The content items (as their listing shows them) entities or channels the reader favorited, most recent first.
+// GetMeFavorites is GET /v1/me/favorites (user). The content items (as their listing shows them) or channels the reader favorited, most recent first.
 func (c *Client) GetMeFavorites(ctx context.Context, q GetMeFavoritesQuery) (discovery.InteractionPage, error) {
 	var out discovery.InteractionPage
 	err := c.call(ctx, http.MethodGet, "/v1/me/favorites", q.values(), nil, &out)

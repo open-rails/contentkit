@@ -607,8 +607,8 @@ components below).
 
 ```tsx
 const { items, hasMore, loadMore } = useEntities({ kind: "artist", letter: "a", sort: "count" }); // parent, scope, contentKind, language
-const g = useEntity(id);           // g.entity: names, text, attributes, parent, scope, children, edges, counts
-await g.update({ attributes: { artist_type: "circle" } }); // staff: create, names, edges, merge, remove, restore
+const g = useEntity(id);           // g.entity: names, text, attributes, parent, scope, children, counts
+await g.update({ attributes: { artist_type: "circle" } }); // staff: create, names, merge, remove, restore
 await g.uploadCover(file);         // into the entity kind's folder (cover/{name}), then selected
 const members = useEntityMembers(id);       // add, remove, reorder
 const content = useContentEntities(contentId); // content.set(memberships, kinds)

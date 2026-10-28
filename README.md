@@ -75,7 +75,7 @@ bodies' wire and data types and its ports; its implementation is the
 | `adapters/authkit`, `adapters/openrails` | their own modules: AuthKit auth and scopes, `access.Billing` over OpenRails |
 | `server` | its own module: the standalone `contentkit` binary (`server/cmd/contentkit`) |
 | `internal/catalogstore` | content items, versions, `content_facets`, the one visibility rule, the `content_events` log ([cursor reads](docs/events.md)), search documents, totals, retention jobs |
-| `internal/entitystore`, `internal/channelstore` | entities by kind and channels: names, text, covers, scopes, edges, merges, memberships |
+| `internal/entitystore`, `internal/channelstore` | entities by kind and channels: names, text, covers, scopes, merges, memberships |
 | `internal/contentstore` | comments, reactions, favorites, polls, bans, moderation, interaction limits |
 | `internal/discoverystore`, `internal/search`, `internal/popularity` | public reads: lists, search, typeahead, similar and recommended, release dates, history; keyword search; ranking policy |
 | `internal/signalstore` | the ClickHouse signal plane |

@@ -5,7 +5,7 @@ import { useContext, useState } from "react";
 import type { ContentKitClient } from "../../client/client.js";
 import type { ContentKitError } from "../../client/errors.js";
 import { toContentKitError } from "../../client/errors.js";
-import type { Target } from "../../client/content/types.js";
+import type { CommentTarget, Target } from "../../client/content/types.js";
 import type { ReactionCounts } from "../../client/generated/wire.js";
 import type { ContentKitUiAppearance } from "../../appearance.js";
 import { useMessages } from "../../i18n/context.js";
@@ -89,7 +89,7 @@ export function ReactionButtons({ item, counts: initial, dislike = true, onSignI
 }
 
 export interface FavoriteButtonProps {
-  item: Target;
+  item: CommentTarget;
   /** Whether it is favorited and the item's count, as the host already has them: both given, nothing is read. */
   favorited?: boolean;
   count?: number;

@@ -97,8 +97,6 @@ type EntityRecord struct {
 	CoverContent *Ref   `json:"cover_content,omitempty"`
 	// Avatar is an image of the entity's media folder.
 	Avatar string `json:"avatar,omitempty"`
-	// Edges replace the entity's edges to other entities.
-	Edges []EdgeRecord `json:"edges,omitempty"`
 	// Code keeps a content code the entity had (9 characters); one is
 	// generated otherwise. A code never changes once given.
 	Code      string     `json:"code,omitempty"`
@@ -124,12 +122,6 @@ type ChannelRecord struct {
 	Code         string          `json:"code,omitempty"`
 	CreatedAt    *time.Time      `json:"created_at,omitempty"`
 	UpdatedAt    *time.Time      `json:"updated_at,omitempty"`
-}
-
-// EdgeRecord is a relation from the entity to another.
-type EdgeRecord struct {
-	Relation string `json:"relation"`
-	To       Ref    `json:"to"`
 }
 
 // ContentRecord is a content item with its text, creators and versions. Nil

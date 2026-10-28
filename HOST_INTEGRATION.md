@@ -420,8 +420,8 @@ ContentKit's `content_*` interaction tables. They target ContentKit's own
 content items (optionally one version, `?version=`) and entities, stored under
 the target's kind from `kinds.Config` and its id: `(tenant_id, content_kind,
 content_id, content_version_id)`. Routes are
-`/v1/contents/{id}/comments|like|dislike|reaction|favorite|can-comment` and
-the same under `/v1/entities/{id}/`, then `/comments/{cid}/...`,
+`/v1/contents/{id}/comments|like|dislike|reaction|favorite|can-comment`,
+`/v1/entities/{id}/like|dislike|reaction` (entities take reactions only), then `/comments/{cid}/...`,
 `/comments/latest`, `/comments/admin?content_kind=&author=`, `/polls...`,
 `/moderation/...`, `/comment-bans...` and `/global-comment-bans...`. A merged
 entity answers as its survivor; a deleted one, or content the request's site
@@ -604,10 +604,10 @@ in any `Per`"; an action with two must pass both.
 
 | Action | Routes | Default |
 |---|---|---|
-| `comment` | `POST /{contents\|entities}/{id}/comments` (top-level and replies), `PATCH /comments/{cid}` | 5 per 5 minutes and 20 per hour |
+| `comment` | `POST /{contents\|channels}/{id}/comments` (top-level and replies), `PATCH /comments/{cid}` | 5 per 5 minutes and 20 per hour |
 | `comment_reaction` | `POST /comments/{cid}/like\|dislike`, `DELETE /comments/{cid}/reaction` | 30 per minute |
 | `reaction` | `POST /{contents\|entities}/{id}/like\|dislike`, `DELETE …/reaction` | 30 per minute |
-| `favorite` | `POST` and `DELETE /{contents\|entities}/{id}/favorite` | 20 per minute |
+| `favorite` | `POST` and `DELETE /{contents\|channels}/{id}/favorite` | 20 per minute |
 | `poll_vote` | `POST /polls/{id}/vote` | 30 per minute |
 
 Override any of them in `content.Options.Limits` (`Comment`, `CommentReaction`,
@@ -873,7 +873,7 @@ that fits the reader (`display_language` first, then position).
 - `GET|DELETE /me/history`, `POST /signals` (explicit clicks; signed out,
   `session` names the browser), `POST /exposures`.
 - `GET /me/favorites`: what the reader favorited, contents as cards or
-  entities, most recent first.
+  channels, most recent first.
 - `GET /sitemap/contents?kind=`, `GET /sitemap/entities?kind=` (open): the
   request site's live, listed pages by id (`cursor`, up to 10000 a page),
   each with `lastmod` and its path per language it serves. Content filters

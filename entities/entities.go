@@ -1,8 +1,8 @@
 // Package entities is how content is grouped: tags, artists, series,
 // characters, channels, playlists and featured rails. Entity kinds come from
 // kinds.Config.EntityKinds. A entity has localized names and aliases,
-// per-language text, declared attributes, a cover, a parent, an optional
-// scope and edges to other entities; content joins it through memberships, at
+// per-language text, declared attributes, a cover, a parent and an optional
+// scope; content joins it through memberships, at
 // content level or for one version where the kind allows. A version's
 // effective entities (EffectiveEntities) feed content_facets.entity_ids; counts
 // derive from those facets.
