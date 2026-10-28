@@ -1239,6 +1239,22 @@
       ]
     },
     {
+      "id": "CK-J11-S10",
+      "journey": "CK-J11",
+      "behavior": "Uncontended advisory locks share one session per process; contended keys stay exclusive, other processes are excluded, and a cancelled waiter keeps its process's other locks",
+      "status": "verified",
+      "evidence": [
+        "Sixteen workers each holding their own key while nesting three more are never seen on more than one session in pg_locks; the per-lock connections before this change showed 18 at once. Sixteen workers contending on one key never overlap. A second pool cannot take a held key, a cancelled waiter leaves its process's other lock held, a waiter in another process acquires the key once it is released, and a terminated session is replaced on the next lock."
+      ],
+      "cases": [
+        "TestAdvisoryLockSession",
+        "TestAdvisoryLockSession/CK-J11-S10_uncontended_nested_locks_share_one_connection",
+        "TestAdvisoryLockSession/CK-J11-S10_a_contended_key_is_held_by_one_worker_at_a_time",
+        "TestAdvisoryLockSession/CK-J11-S10_a_lost_session_reconnects_for_the_next_lock",
+        "TestAdvisoryLockSession/CK-J11-S10_locks_exclude_other_processes_and_survive_a_cancelled_waiter"
+      ]
+    },
+    {
       "id": "CK-J12-S01",
       "journey": "CK-J12",
       "behavior": "Real video produces playable configured AV1 and H264 renditions with its soundtrack",
@@ -1403,6 +1419,21 @@
       ],
       "cases": [
         "TestGatewayCapabilities/CK-J13-S08_cors_cache_and_download_headers"
+      ]
+    },
+    {
+      "id": "CK-J13-S09",
+      "journey": "CK-J13",
+      "behavior": "The shared limiter admits at most Limit per sliding window, refuses without counting, and counts a reopened member once",
+      "status": "verified",
+      "evidence": [
+        "With a controlled clock the limiter behind the media read, commit and issuance limits admits exactly Limit per window, answers the exact wait, does not log refusals, requires every window, and counts a reopened member only once until a window after its first admission. CI runs the in-process store; the same cases were run locally against Redis 8 and Garnet with CONTENTKIT_CRITICAL_REDIS."
+      ],
+      "cases": [
+        "TestRateLimiter",
+        "TestRateLimiter/CK-J13-S09_limit_admits_burst_per_window_and_refusals_do_not_count",
+        "TestRateLimiter/CK-J13-S09_every_window_must_admit",
+        "TestRateLimiter/CK-J13-S09_member_limit_counts_distinct_items_from_their_first_opening"
       ]
     },
     {
