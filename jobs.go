@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	riverhelpers "github.com/open-rails/helpers/river"
 	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/rivertype"
 
 	"github.com/open-rails/contentkit/internal/worker"
 	"github.com/open-rails/contentkit/media"
@@ -130,27 +131,29 @@ func (e *Engine) rebuild(ctx context.Context) error {
 }
 
 // syncDocuments queues a search sync in the transaction that queued
-// documents (q, or after it when q is none), at most one a second, so they
-// follow writes at once; the periodic sync stays the backstop.
+// documents (q, or after it when q is none), so they follow writes at once;
+// the periodic sync stays the backstop. A sync already running may have read
+// the queue before this write, so it gets one follow-up.
 func (e *Engine) syncDocuments(ctx context.Context, q any) error {
 	c := e.jobs.bound()
 	if c == nil {
 		return nil
 	}
-	opts := &river.InsertOpts{Queue: QueueContentKit, MaxAttempts: 3,
-		UniqueOpts: river.UniqueOpts{ByArgs: true, ByPeriod: time.Second, ByState: media.PendingOnce.ByState}}
-	var err error
+	insert := c.Insert
 	if tx, ok := q.(pgx.Tx); ok {
-		_, err = c.InsertTx(ctx, tx, searchSyncArgs{}, opts)
-	} else {
-		_, err = c.Insert(ctx, searchSyncArgs{}, opts)
+		insert = func(ctx context.Context, args river.JobArgs, o *river.InsertOpts) (*rivertype.JobInsertResult, error) {
+			return c.InsertTx(ctx, tx, args, o)
+		}
 	}
-	return err
+	return media.InsertOnce(ctx, insert, searchSyncArgs{}, river.InsertOpts{Queue: QueueContentKit, MaxAttempts: 3})
 }
 
-type searchSyncArgs struct{}
+type searchSyncArgs struct {
+	After int64 `json:"after,omitempty"`
+}
 
-func (searchSyncArgs) Kind() string { return "contentkit_search_sync" }
+func (searchSyncArgs) Kind() string                      { return "contentkit_search_sync" }
+func (a searchSyncArgs) FollowUp(id int64) river.JobArgs { a.After = id; return a }
 
 // searchSyncWorker maintains the keyword documents of content items and
 // entities.
@@ -161,7 +164,10 @@ type searchSyncWorker struct {
 
 func (w *searchSyncWorker) Timeout(*river.Job[searchSyncArgs]) time.Duration { return 10 * time.Minute }
 
-func (w *searchSyncWorker) Work(ctx context.Context, _ *river.Job[searchSyncArgs]) error {
+func (w *searchSyncWorker) Work(ctx context.Context, job *river.Job[searchSyncArgs]) error {
+	if err := media.WaitFor(ctx, river.ClientFromContext[pgx.Tx](ctx), job.Args.After); err != nil {
+		return err
+	}
 	e := w.e
 	return worker.SyncOnce(ctx, worker.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Tenant,
 		SupportedLanguages: e.cfg.Content.Languages, Sources: []worker.Source{e.catalog, e.entities}})
