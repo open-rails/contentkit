@@ -139,7 +139,8 @@ func (s *Service) releaseDueTx(ctx context.Context, tx pgx.Tx, t versions.Target
 		return time.Time{}, nil
 	}
 	due := s.o.Now()
-	if !released && !storageStarted && state == "published" && parentState == "published" {
+	// A completed release no longer keeps its plan; release_id records it.
+	if !released && !previouslyPublished && !storageStarted && state == "published" && parentState == "published" {
 		for _, value := range []*time.Time{at, parentAt} {
 			if value != nil && value.After(due) {
 				due = *value
@@ -678,7 +679,7 @@ func (s *Service) runRelease(ctx context.Context, id string) (resultErr error) {
 	var t versions.Target
 	err := s.o.Pool.QueryRow(ctx, `SELECT content_id,version_id FROM `+s.releaseRequestsTable()+` WHERE tenant_id=$1 AND id=$2::uuid`, s.o.Tenant, id).Scan(&t.Content, &t.Version)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil
+		return errRequestGone
 	}
 	if err != nil {
 		return err
@@ -764,7 +765,12 @@ func (s *Service) runRelease(ctx context.Context, id string) (resultErr error) {
 			var raw []byte
 			var due time.Time
 			var state string
-			if err := tx.QueryRow(ctx, `SELECT current,state,scheduled_at,CASE WHEN state='retiring' THEN result ELSE plan END FROM `+s.releaseRequestsTable()+` WHERE tenant_id=$1 AND id=$2::uuid FOR UPDATE`, s.o.Tenant, id).Scan(&current, &state, &due, &raw); err != nil {
+			err := tx.QueryRow(ctx, `SELECT current,state,scheduled_at,CASE WHEN state='retiring' THEN result ELSE plan END FROM `+s.releaseRequestsTable()+` WHERE tenant_id=$1 AND id=$2::uuid FOR UPDATE`, s.o.Tenant, id).Scan(&current, &state, &due, &raw)
+			if errors.Is(err, pgx.ErrNoRows) {
+				// A newer release pruned this superseded request while it waited.
+				return errRequestGone
+			}
+			if err != nil {
 				return err
 			}
 			if state == "retiring" {
@@ -781,7 +787,6 @@ func (s *Service) runRelease(ctx context.Context, id string) (resultErr error) {
 			if len(raw) > 0 && string(raw) != "null" {
 				return json.Unmarshal(raw, &plan)
 			}
-			var err error
 			plan, err = s.planRelease(ctx, tx, t)
 			if err != nil {
 				return err
@@ -796,12 +801,8 @@ func (s *Service) runRelease(ctx context.Context, id string) (resultErr error) {
 				return err
 			}
 			if active != nil && active.Fingerprint == plan.Fingerprint && plan.storageSettled(active) {
-				active.Waiting, active.NextAt = plan.Waiting, plan.NextAt
-				body, err := json.Marshal(active)
-				if err != nil {
-					return err
-				}
-				if _, err := tx.Exec(ctx, `UPDATE `+s.releaseRequestsTable()+` SET state='completed',result=$3,completed_at=$4,updated_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2::uuid`, s.o.Tenant, id, body, s.o.Now()); err != nil {
+				// The live release already serves this plan; it stays the only copy.
+				if _, err := tx.Exec(ctx, `UPDATE `+s.releaseRequestsTable()+` SET state='completed',completed_at=$3,updated_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2::uuid`, s.o.Tenant, id, s.o.Now()); err != nil {
 					return err
 				}
 				current = false
@@ -958,7 +959,8 @@ func (s *Service) finishRetirement(ctx context.Context, id string, plan *release
 			return errRetired
 		}
 		at := s.o.Now()
-		if _, err := tx.Exec(ctx, `UPDATE `+s.releaseRequestsTable()+` SET state='completed',completed_at=$3,error=NULL,updated_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2::uuid`, s.o.Tenant, id, at); err != nil {
+		// The result holds the frozen plan with its delivered references.
+		if _, err := tx.Exec(ctx, `UPDATE `+s.releaseRequestsTable()+` SET state='completed',completed_at=$3,plan=NULL,error=NULL,updated_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2::uuid`, s.o.Tenant, id, at); err != nil {
 			return err
 		}
 		completion, ok := s.o.Facets.(publicationCompletion)
@@ -966,6 +968,11 @@ func (s *Service) finishRetirement(ctx context.Context, id string, plan *release
 			return errors.New("versions: catalog publication completion is not configured")
 		}
 		if err := completion.PublicationCompletedTx(ctx, tx, plan.Target, id, plan.Chapters, plan.Released, at); err != nil {
+			return err
+		}
+		// Under the source lock no other run is active, and this release
+		// withdrew every earlier delivery, so superseded requests are spent.
+		if err := s.pruneRequestsTx(ctx, tx, plan.Target, true); err != nil {
 			return err
 		}
 		if current && plan.NextAt != nil {
