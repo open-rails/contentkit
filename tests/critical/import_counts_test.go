@@ -356,3 +356,85 @@ CREATE TRIGGER critical_import_child BEFORE UPDATE OF body ON %s.content_comment
 		t.Fatalf("moderated imported reply remains counted: %d", got.ReplyCount)
 	}
 }
+
+func TestConcurrentImportedReplyMoves(t *testing.T) {
+	w := newWorld(t, func(cfg *ck.Config) { cfg.Interactions.Limits.Disabled = true })
+	a := w.apps[0]
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	_, token := w.person(t, 0)
+	item := publishedArticle(t, a, "Concurrent reply moves")
+	var roots []string
+	for _, body := range []string{"Original thread", "Intermediate thread", "Final thread"} {
+		roots = append(roots, postComment(t, a.client(token), item.ID, body).ID)
+	}
+	record := importer.CommentRecord{ExternalID: "moving-reply", Target: importer.TargetRef{Content: &importer.Ref{ID: item.ID}},
+		ReplyTo: &importer.Ref{ID: roots[0]}, AnonName: "Legacy guest", Body: "Imported reply"}
+	batch := importer.Batch{Source: "concurrent-reply-moves", Comments: []importer.CommentRecord{record}}
+	initial, err := a.engine.Client().PostImport(ctx, batch)
+	must(t, err)
+	if len(initial.Failed) != 0 || initial.Written[importer.SectionComments] != 1 {
+		t.Fatalf("reply import fixture failed: %+v", initial)
+	}
+	replyID := initial.IDs[importer.RecordComment][record.ExternalID]
+	holder, err := w.pool.Begin(ctx)
+	must(t, err)
+	defer holder.Rollback(t.Context())
+	_, err = holder.Exec(ctx, `SELECT 1 FROM `+w.schema+`.content_comments WHERE tenant_id=$1 AND id=$2 FOR UPDATE`, a.cfg.Scope.AppID.String(), replyID)
+	must(t, err)
+	type outcome struct {
+		result importer.Result
+		err    error
+	}
+	results := make(chan outcome, 2)
+	blockedBy := func(pid uint32) uint32 {
+		t.Helper()
+		var waiter uint32
+		waitForWithin(t, 10*time.Second, func() bool {
+			must(t, w.pool.QueryRow(ctx, `SELECT coalesce(min(pid),0) FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid))`, pid).Scan(&waiter))
+			return waiter != 0
+		})
+		return waiter
+	}
+	var first uint32
+	for i, root := range roots[1:] {
+		move := record
+		move.ReplyTo = &importer.Ref{ID: root}
+		go func() {
+			result, err := a.engine.Client().PostImport(ctx, importer.Batch{Source: batch.Source, Comments: []importer.CommentRecord{move}})
+			results <- outcome{result, err}
+		}()
+		if i == 0 {
+			first = blockedBy(holder.Conn().PgConn().PID())
+		} else {
+			blockedBy(first)
+		}
+	}
+	must(t, holder.Commit(ctx))
+	for range 2 {
+		out := <-results
+		must(t, out.err)
+		if len(out.result.Failed) != 0 || out.result.Written[importer.SectionComments] != 1 {
+			t.Fatalf("concurrent move import failed: %+v", out.result)
+		}
+	}
+	for _, destination := range []string{roots[2], roots[0]} {
+		batch.Comments[0].ReplyTo = &importer.Ref{ID: destination}
+		replayed, err := a.engine.Client().PostImport(ctx, batch)
+		must(t, err)
+		if len(replayed.Failed) != 0 || replayed.IDs[importer.RecordComment][record.ExternalID] != replyID {
+			t.Fatalf("reply replay or sequential move lost its identity: %+v", replayed)
+		}
+		for _, root := range roots {
+			replies, err := a.client("").GetCommentReplies(ctx, root, ck.GetCommentRepliesQuery{})
+			must(t, err)
+			want := 0
+			if root == destination {
+				want = 1
+			}
+			if got := readComment(t, a, item.ID, root); got.ReplyCount != want || len(replies) != want {
+				t.Fatalf("reply move left stale thread count: count=%d visible=%d want=%d", got.ReplyCount, len(replies), want)
+			}
+		}
+	}
+}
