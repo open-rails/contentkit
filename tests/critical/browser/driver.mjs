@@ -36,7 +36,28 @@ try {
     },{times:1});
     return {seen,release,done};
   }
-  if(scenario==="CK-J29-S02") {
+  if(scenario==="CK-J30-S01") {
+    await page.evaluate(()=>window.critical.mountPollEditor());
+    const rows=page.locator('[data-ckui="poll-option"]');
+    await rows.first().waitFor();
+    const first=rows.nth(0).locator('input').first(), second=rows.nth(1).locator('input').first();
+    assert.equal(await first.isEnabled(),true);
+    const saved=page.waitForResponse(r=>r.request().method()==="PATCH"&&r.url().includes("/options/"));
+    await second.fill("Autumn");await second.press("Enter");
+    const accepted=await saved;assert.equal(accepted.status(),200,await accepted.text());
+    const voted=await page.evaluate(()=>window.critical.votePoll());
+    assert.equal(voted.total_votes,1);
+    assert.equal(voted.options[1].label,"Autumn");
+    const refused=page.waitForResponse(r=>r.request().method()==="PATCH"&&r.url().includes("/options/")&&r.status()===409);
+    await first.fill("Changed after voting");await first.press("Enter");await refused;
+    await page.getByText("Choices are locked because voting has started.",{exact:true}).waitFor();
+    assert.equal(await first.isDisabled(),true);
+    assert.equal(await second.isDisabled(),true);
+    assert.equal(await first.inputValue(),"Summer");
+    assert.equal(await page.getByRole("button",{name:"Add option",exact:true}).isDisabled(),true);
+    const stored=await page.evaluate(id=>window.client.polls.get(id),fixture.poll);
+    assert.equal(stored.options[0].label,"Summer");assert.equal(stored.options[1].label,"Autumn");assert.equal(stored.total_votes,1);
+  } else if(scenario==="CK-J29-S02") {
     assert.match(await page.evaluate(()=>window.critical.binding()),/^[a-f0-9-]{36}$/);
   } else if(scenario==="CK-J29-S03") {
     const held=await hold(`**/contents/${fixture.item}/favorite`,"GET");

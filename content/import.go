@@ -39,8 +39,8 @@ type ImportFavorite struct {
 	CreatedAt *time.Time
 }
 
-// ImportPoll is a poll with its options, which replace the stored ones (and
-// their votes).
+// ImportPoll is a poll with its options. Options replace the stored choices
+// before voting starts; once votes exist, their IDs, labels and positions must match.
 type ImportPoll struct {
 	ID        string
 	Kind      string

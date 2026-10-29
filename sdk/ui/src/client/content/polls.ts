@@ -90,7 +90,7 @@ export class PollsClient {
     emit({ type: "poll.changed", id });
     return o;
   }
-  /** Removes an option and its votes; a poll keeps at least two. */
+  /** Removes an option before voting starts; a poll keeps at least two. */
   async deleteOption(id: string, option: string): Promise<void> {
     const emit = this.http.captureChanges();
     await call(this.http, "DELETE", "/polls/{id}/options/{oid}", { params: { id, oid: option } });
