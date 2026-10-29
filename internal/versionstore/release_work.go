@@ -893,7 +893,7 @@ func (s *Service) runRelease(ctx context.Context, id string) (resultErr error) {
 			}
 			at := s.o.Now()
 			if len(plan.Chapters) > 0 {
-				if _, err := tx.Exec(ctx, `UPDATE `+s.t.segments+` SET released_at=coalesce(released_at,$4),release_id=$5::uuid WHERE tenant_id=$1 AND version_id=$2 AND id=ANY($3)`, s.o.Tenant, t.Version, plan.Chapters, at, id); err != nil {
+				if _, err := tx.Exec(ctx, `UPDATE `+s.t.segments+` SET released_at=coalesce(released_at,$4) WHERE tenant_id=$1 AND version_id=$2 AND id=ANY($3)`, s.o.Tenant, t.Version, plan.Chapters, at); err != nil {
 					return err
 				}
 			}

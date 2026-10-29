@@ -45,8 +45,7 @@ type ReaderOptions struct {
 }
 
 // Reader answers reads and playlists after one trusted resolution per item.
-// Whole-item grants use a folder token; restricted grants sign only approved
-// immutable objects and never issue a folder cookie.
+// Whole-item grants use a folder token.
 type Reader struct {
 	o       ReaderOptions
 	reg     *Registry
@@ -136,8 +135,7 @@ type Grant struct {
 	Resolution     resolve.Resolution
 	Manifest       *Manifest
 	Expires        time.Time
-	item           string          // whole-item token only; never issued for a restricted grant
-	files          map[string]bool // exact private blob allowlist, nil for whole-item grants
+	item           string // whole-item token only
 	actor          access.Actor
 	editorRead     bool // explicit management read, after current editor authorization
 	inspectionRead bool // explicit management read of ready derivatives by a read-only auditor
@@ -166,8 +164,7 @@ func (r *Reader) Grant(ctx context.Context, ref contentref.ContentRef, actor acc
 	scope := strings.TrimSuffix(item.Prefix(), "/")
 	editorRead := res.Editor && resolve.EditorRead(ctx)
 	inspectionRead := !res.Editor && res.ReadRestricted && resolve.EditorRead(ctx)
-	restricted := !res.Editor && !res.ReadRestricted && res.MediaFiles != nil
-	if res.Full() || res.Editor || res.ReadRestricted || len(res.MediaFiles) > 0 {
+	if res.Full() || res.Editor || res.ReadRestricted {
 		if err := r.issue.allow(ctx, actor, res.Editor, scope); err != nil {
 			return nil, err
 		}
@@ -208,22 +205,13 @@ func (r *Reader) Grant(ctx context.Context, ref contentref.ContentRef, actor acc
 		// never becomes an editor grant or a reusable private-folder cookie.
 		return g, nil
 	}
-	if restricted {
-		g.files = make(map[string]bool)
-		for _, f := range man.Files {
-			area, _, valid := layout.SplitBlobRef(f.Blob)
-			if valid && area == layout.AreaPrivate && res.MediaFiles[f.Blob] && g.restrictedFile(f) {
-				g.files[f.Blob] = true
-			}
-		}
-	} else if res.Full() || res.Editor || res.ReadRestricted {
+	if res.Full() || res.Editor || res.ReadRestricted {
 		g.item = r.ring.Sign(scope, g.Expires)
 	}
 	return g, nil
 }
 
-// Full reports whole-item private access. A restricted viewer can instead
-// receive individual URLs through Allowed and URL without any folder token.
+// Full reports whole-item private access.
 func (g *Grant) Full() bool { return g.item != "" }
 
 // Editor reports an editor's grant.
@@ -251,9 +239,6 @@ func (g *Grant) Allowed(f media.File) bool {
 	}
 	if area == layout.AreaPublic {
 		return g.listed(f)
-	}
-	if g.files != nil {
-		return g.files[f.Blob] && g.restrictedFile(f)
 	}
 	return g.Full() && f.Blob != "" && g.listed(f)
 }
@@ -288,16 +273,6 @@ func (g *Grant) inspectionFile(f media.File) bool {
 	}
 	source, exists := g.Manifest.Get(f.From)
 	return exists && source.IsUpload() && !source.Unattached && !source.Gone && source.Fail() == nil && !slices.Contains(source.Pending, f.Preset)
-}
-
-func (g *Grant) restrictedFile(f media.File) bool {
-	if f.IsUpload() {
-		return g.Item.Kind().AudioUpload(f) && g.listed(f)
-	}
-	if p := g.Item.Kind().private(f.Preset); p != nil && p.Zip != "" {
-		return false
-	}
-	return f.Blob != "" && g.listed(f)
 }
 
 // Cookie is the item cookie for a viewer with access in cookie mode, else nil.
@@ -393,11 +368,9 @@ func (g *Grant) cookie() bool {
 	return g.r.o.Delivery.Mode == media.DeliverCookie && g.actor.Kind != auth.SubjectApplication
 }
 
-// url signs one exact approved object for restricted grants. Whole-item URLs
-// are plain under the item cookie, or carry the item token. A download adds
-// dl, its name: unsigned, since the token
-// already opens the file and the gateway only accepts a name of the file's
-// type.
+// url is plain under the item cookie, or carries the item token. A download
+// adds dl, its name, unsigned: the token already opens the file and the
+// gateway only accepts a name of the file's type.
 func (g *Grant) url(blob, download string, dl, cookie bool) (string, error) {
 	area, _, valid := layout.SplitBlobRef(blob)
 	if !valid {
@@ -416,11 +389,6 @@ func (g *Grant) url(blob, download string, dl, cookie bool) (string, error) {
 	q := url.Values{}
 	if area == layout.AreaPublic {
 		// Public delivery is unsigned, including for a locked viewer.
-	} else if g.files != nil {
-		if !g.files[blob] {
-			return "", ErrNotAllowed
-		}
-		q.Set("t", g.r.ring.Sign(token.PrivateFileScope(key), g.Expires))
 	} else if g.item == "" {
 		return "", ErrNotAllowed
 	} else if !cookie {
@@ -601,7 +569,7 @@ func (r *Reader) read(ctx context.Context, ref contentref.ContentRef, actor acce
 	out := &media.ReadResult{Access: media.AccessNone, Inspection: editor || g.inspectionRead, Offset: o.Offset, Limit: o.Limit, Expires: g.Expires.Unix(), Files: []media.FileInfo{}, Cookie: g.Cookie()}
 	if g.Full() {
 		out.Access, out.Meta = media.AccessFull, g.Manifest.Meta
-	} else if len(g.files) > 0 || g.inspectionRead {
+	} else if g.inspectionRead {
 		out.Access = media.AccessPartial
 	}
 	k := g.Item.Kind()

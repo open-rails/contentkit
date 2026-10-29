@@ -69,7 +69,7 @@ var readRoutes = []httpapi.Route[readHandler]{
 		Responses: []httpapi.Reply{httpapi.OK([]media.PresetRule{})}},
 		Serve: httpapi.H(readHandler.presets)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/{kind}/{id}", Resource: "media", Auth: httpapi.Public,
-		Doc:       "Released files under a prefix in manifest order. Offset/limit or repeated path selects which get URLs. Version access covers its private folder; optional restricted integrations use exact-file tokens. Explicit editor reads can inspect unserved source/prepared files through short-lived storage URLs. Unreadable files are omitted.",
+		Doc:       "Released files under a prefix in manifest order. Offset/limit or repeated path selects which get URLs. Version access covers its private folder. Explicit editor reads can inspect unserved source/prepared files through short-lived storage URLs. Unreadable files are omitted.",
 		Query:     mediaReadQuery,
 		Responses: []httpapi.Reply{httpapi.OK(media.ReadResult{})}},
 		Serve: httpapi.H(readHandler.read)},

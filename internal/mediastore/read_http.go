@@ -247,7 +247,7 @@ func (g *Grant) logIssued(req *http.Request, log *slog.Logger) {
 	access := media.AccessNone
 	if g.Full() {
 		access = media.AccessFull
-	} else if len(g.files) > 0 || g.inspectionRead {
+	} else if g.inspectionRead {
 		access = media.AccessPartial
 	}
 	attrs := []any{"viewer", g.actor.ID, "anonymous", g.actor.Anonymous, "ref", g.Item.Ref().String(),

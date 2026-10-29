@@ -569,7 +569,7 @@ func validateImage(im media.Image) error {
 		return fmt.Errorf("invalid image format %q", im.Format)
 	}
 	if im.Width < 0 || im.Height < 0 || im.Width > 16384 || im.Height > 16384 || im.Quality < 0 || im.Quality > 100 ||
-		im.Blur < 0 || im.MinWidth < 0 || !im.Aspect.Valid() ||
+		im.MinWidth < 0 || !im.Aspect.Valid() ||
 		im.Fit != media.FitInside && im.Fit != media.FitCover || im.Animation != media.AnimationAllow && im.Animation != media.AnimationReject {
 		return fmt.Errorf("invalid image spec %+v", im)
 	}

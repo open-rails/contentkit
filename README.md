@@ -446,7 +446,7 @@ worker leading its River schema also exports the queue backlog
 (`media_video_jobs`, `media_video_tenant_backlog`, ...); hosts collect none.
 
 **Images** (`media/image`, CGO over libvips): WebP at each `Image` spec
-(inside or cover box, quality, blur), through the upload's edit (crop in
+(inside or cover box, quality), through the upload's edit (crop in
 EXIF-oriented source pixels, then a clockwise quarter rotation); nothing is
 upscaled. GIF and WebP animations keep every frame, delay and loop count;
 `MaxPixels` (100 MP over all frames), `MaxFrames` (1000) and
@@ -460,7 +460,7 @@ as object metadata.
 
 A private image preset can instead use `Format: media.ImageFormatSource`
 and `To: "download-pages/{name}{ext}"` to retain the upload's format.
-With no edit or blur and an inside fit, files already inside the configured
+With no edit and an inside fit, files already inside the configured
 box keep their exact bytes; zero dimensions leave that side unbounded.
 `Width: 6000, Height: 6000` proportionally limits the longest edge to 6,000
 pixels without cropping or enlarging. Only an oversized or edited image is
