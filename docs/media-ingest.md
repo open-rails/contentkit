@@ -4,7 +4,7 @@ Uploads, processing and publication are separate actions. Create the content/ver
 
 `contentkit_media_ingest` on `media_ingest` owns staged placement and ZIP expansion. It then schedules image/video processing. There is no separate host ZIP-import job or upload-and-publish operation.
 
-Reader snapshots wake from durable commit and media progress/ready notifications. An attempt whose files are still processing finishes and waits for the next notification instead of polling every five seconds. Progress arriving during a running snapshot queues a follow-up, so ready pages can appear while unrelated video processing continues. Storage/database errors still retry. New versions receive explicit uploads; no version-copy workers run.
+Reader snapshots wake from durable commits and when an item's processing settles (ready, failed or full). Progress while files are still processing wakes nothing: publication is all-or-nothing for required outputs, so such a plan could only wait. Storage/database errors still retry. New versions receive explicit uploads; no version-copy workers run.
 
 ## Configure ZIP sources
 
