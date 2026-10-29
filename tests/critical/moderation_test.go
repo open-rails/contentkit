@@ -26,48 +26,60 @@ func TestModeratorErasure(t *testing.T) {
 	admin := a.engine.Client()
 	_, writerToken := w.person(t, 0)
 	item := publishedArticle(t, a, "Reviewer attribution")
-	for _, decision := range []content.Decision{content.DecisionApprove, content.DecisionReject} {
+	for _, action := range []string{"approve", "reject", "hold", "release"} {
 		for _, erased := range []bool{false, true} {
-			t.Run(fmt.Sprintf("%s_erased_%t", decision, erased), func(t *testing.T) {
+			t.Run(fmt.Sprintf("%s_erased_%t", action, erased), func(t *testing.T) {
 				reviewer, token := w.person(t, 0)
 				authtest.GrantRole(t, w.tenant[0], a.group, iam.UserSubject(reviewer.ID), w.commentManager)
-				comment := postComment(t, a.client(writerToken), item.ID, "Review "+string(decision)+fmt.Sprint(erased))
-				must(t, a.client(token).PostCommentHold(t.Context(), comment.ID))
-				queue, err := admin.GetModerationHeld(t.Context(), ck.GetModerationHeldQuery{Kind: content.KindComment})
-				must(t, err)
+				comment := postComment(t, a.client(writerToken), item.ID, "Review "+action+fmt.Sprint(erased))
 				var revision int64
-				for _, row := range queue.Items {
-					if row.ID == comment.ID {
-						revision = row.Revision
+				if action != "hold" {
+					must(t, a.client(token).PostCommentHold(t.Context(), comment.ID))
+					queue, err := admin.GetModerationHeld(t.Context(), ck.GetModerationHeldQuery{Kind: content.KindComment})
+					must(t, err)
+					for _, row := range queue.Items {
+						if row.ID == comment.ID {
+							revision = row.Revision
+						}
 					}
-				}
-				if revision == 0 {
-					t.Fatal("held comment is absent from review queue")
+					if revision == 0 {
+						t.Fatal("held comment is absent from review queue")
+					}
 				}
 				if erased {
 					// Cleanup can finish while a previously authenticated review is
 					// running; its source must not restore the account attribution.
 					must(t, a.engine.AnonymizeAccount(t.Context(), reviewer.ID))
 				}
-				input := content.ResolveInput{Decision: decision, Revision: revision, Reason: "Reviewed"}
-				stale := input
-				stale.Revision--
-				_, err = a.client(token).PostModerationResolve(t.Context(), content.KindComment, comment.ID, stale)
-				requireError(t, err, 404, "not_found")
-				_, err = a.client(token).PostModerationResolve(t.Context(), content.KindComment, comment.ID, input)
+				var err error
+				switch action {
+				case "hold":
+					err = a.client(token).PostCommentHold(t.Context(), comment.ID)
+				case "release":
+					err = a.client(token).PostCommentRelease(t.Context(), comment.ID)
+				default:
+					input := content.ResolveInput{Decision: content.Decision(action), Revision: revision, Reason: "Reviewed"}
+					stale := input
+					stale.Revision--
+					_, err = a.client(token).PostModerationResolve(t.Context(), content.KindComment, comment.ID, stale)
+					requireError(t, err, 404, "not_found")
+					_, err = a.client(token).PostModerationResolve(t.Context(), content.KindComment, comment.ID, input)
+				}
 				must(t, err)
 				var state string
 				var by *string
 				var stamped bool
 				must(t, w.pool.QueryRow(t.Context(), `SELECT moderation,moderated_by,moderated_at IS NOT NULL FROM `+w.schema+`.content_comments WHERE tenant_id=$1 AND id=$2`, a.cfg.Scope.AppID.String(), comment.ID).Scan(&state, &by, &stamped))
 				want := content.ModerationApproved
-				if decision == content.DecisionReject {
+				if action == "reject" {
 					want = content.ModerationRejected
+				} else if action == "hold" {
+					want = content.ModerationHeld
 				}
 				if state != want || !stamped || (erased && by != nil) || (!erased && (by == nil || *by != reviewer.ID)) {
 					t.Fatalf("wrong review attribution: state=%s reviewer=%v erased=%t stamped=%t", state, by, erased, stamped)
 				}
-				assertCommentVisibility(t, a.client(""), item.ID, comment.ID, decision == content.DecisionApprove)
+				assertCommentVisibility(t, a.client(""), item.ID, comment.ID, want == content.ModerationApproved)
 			})
 		}
 	}
@@ -77,27 +89,32 @@ func TestModeratorErasureRaces(t *testing.T) {
 	w := newWorld(t, func(cfg *ck.Config) { cfg.Interactions.Limits.Disabled = true })
 	a := w.apps[0]
 	item := publishedArticle(t, a, "Concurrent review attribution")
-	for _, decision := range []content.Decision{content.DecisionApprove, content.DecisionReject} {
+	for _, action := range []string{"approve", "reject", "hold", "release"} {
 		for _, first := range []string{"review", "purge", "author_purge"} {
-			t.Run(string(decision)+"_"+first+"_first", func(t *testing.T) {
+			if action == "hold" && first == "author_purge" {
+				continue // Hold does not change author attribution or inherit resolve's author guard.
+			}
+			t.Run(action+"_"+first+"_first", func(t *testing.T) {
 				ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 				defer cancel()
 				writer, writerToken := w.person(t, 0)
 				reviewer, token := w.person(t, 0)
 				authtest.GrantRole(t, w.tenant[0], a.group, iam.UserSubject(reviewer.ID), w.commentManager)
 				client := a.client(token)
-				comment := postComment(t, a.client(writerToken), item.ID, "Concurrent "+string(decision)+first)
-				must(t, client.PostCommentHold(ctx, comment.ID))
-				queue, err := client.GetModerationHeld(ctx, ck.GetModerationHeldQuery{Kind: content.KindComment})
-				must(t, err)
+				comment := postComment(t, a.client(writerToken), item.ID, "Concurrent "+action+first)
 				var revision int64
-				for _, row := range queue.Items {
-					if row.ID == comment.ID {
-						revision = row.Revision
+				if action != "hold" {
+					must(t, client.PostCommentHold(ctx, comment.ID))
+					queue, err := client.GetModerationHeld(ctx, ck.GetModerationHeldQuery{Kind: content.KindComment})
+					must(t, err)
+					for _, row := range queue.Items {
+						if row.ID == comment.ID {
+							revision = row.Revision
+						}
 					}
-				}
-				if revision == 0 {
-					t.Fatal("held comment is absent from review queue")
+					if revision == 0 {
+						t.Fatal("held comment is absent from review queue")
+					}
 				}
 				// Stop the first real write after it holds its subject fences.
 				// Observe the second request waiting on that exact connection.
@@ -146,7 +163,15 @@ CREATE TRIGGER critical_pause_review BEFORE %s ON %s.%s FOR EACH ROW EXECUTE FUN
 				}
 				reviewed, purged := make(chan error, 1), make(chan error, 1)
 				review := func() {
-					_, err := client.PostModerationResolve(ctx, content.KindComment, comment.ID, content.ResolveInput{Decision: decision, Revision: revision, Reason: "Reviewed"})
+					var err error
+					switch action {
+					case "hold":
+						err = client.PostCommentHold(ctx, comment.ID)
+					case "release":
+						err = client.PostCommentRelease(ctx, comment.ID)
+					default:
+						_, err = client.PostModerationResolve(ctx, content.KindComment, comment.ID, content.ResolveInput{Decision: content.Decision(action), Revision: revision, Reason: "Reviewed"})
+					}
 					reviewed <- err
 				}
 				purge := func() { purged <- a.engine.AnonymizeAccount(ctx, erasedID) }
@@ -175,8 +200,10 @@ CREATE TRIGGER critical_pause_review BEFORE %s ON %s.%s FOR EACH ROW EXECUTE FUN
 				var by *string
 				must(t, w.pool.QueryRow(ctx, `SELECT moderation,moderated_by FROM `+qs+`.content_comments WHERE tenant_id=$1 AND id=$2`, a.cfg.Scope.AppID.String(), comment.ID).Scan(&state, &by))
 				want := content.ModerationApproved
-				if decision == content.DecisionReject {
+				if action == "reject" {
 					want = content.ModerationRejected
+				} else if action == "hold" {
+					want = content.ModerationHeld
 				}
 				if first == "author_purge" {
 					want = content.ModerationHeld
@@ -189,7 +216,7 @@ CREATE TRIGGER critical_pause_review BEFORE %s ON %s.%s FOR EACH ROW EXECUTE FUN
 				if state != want {
 					t.Fatalf("concurrent cleanup lost decision or restored reviewer: state=%s reviewer=%v", state, by)
 				}
-				assertCommentVisibility(t, a.client(""), item.ID, comment.ID, decision == content.DecisionApprove && first != "author_purge")
+				assertCommentVisibility(t, a.client(""), item.ID, comment.ID, want == content.ModerationApproved)
 				var rollup, visible int
 				must(t, w.pool.QueryRow(ctx, `SELECT comment_count FROM `+qs+`.content_interaction_counts WHERE tenant_id=$1 AND content_kind='article' AND content_id=$2 AND content_version_id IS NULL`, a.cfg.Scope.AppID.String(), item.ID).Scan(&rollup))
 				must(t, w.pool.QueryRow(ctx, `SELECT count(*) FROM `+qs+`.content_comments WHERE tenant_id=$1 AND content_id=$2 AND moderation='approved' AND deleted_at IS NULL`, a.cfg.Scope.AppID.String(), item.ID).Scan(&visible))
