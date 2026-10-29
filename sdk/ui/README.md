@@ -605,7 +605,9 @@ Staff building blocks: `CommentBans` (paged) with `CommentBanDialog`, and
 
 Use `variant="embedded"` when the host supplies the poll's card surface.
 The optional `footer` slot places host navigation alongside the poll's own
-metadata and sign-in action, with wrapping and touch targets for small screens:
+metadata, with wrapping and touch targets for small screens. Where anonymous votes
+are disabled, signed-out visitors are asked to sign in when they select a voting
+option; polls do not display a separate sign-in button:
 
 ```tsx
 <Poll language={lang} variant="embedded" footer={<a href="/polls">Poll history</a>} />

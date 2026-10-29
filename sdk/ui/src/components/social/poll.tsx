@@ -21,11 +21,11 @@ export interface PollProps {
   language?: string;
   /** When results show: once the visitor voted (default), or always. A closed poll always shows them. */
   results?: "voted" | "always";
-  /** Asks a signed-out visitor to sign in where the server takes no anonymous votes (default the provider's). */
+  /** Called when a signed-out visitor selects an option where anonymous votes are refused (default the provider's). */
   onSignIn?: () => void;
   /** Shown when there is no live poll; default nothing. */
   empty?: ReactNode;
-  /** Host action alongside the poll's date, totals and sign-in action. */
+  /** Host action alongside the poll's date and totals. */
   footer?: ReactNode;
   /** Embedded omits the card surface and uses a larger heading on wider screens. */
   variant?: "card" | "embedded";
@@ -113,11 +113,6 @@ export function Poll(p: PollProps) {
       <PollFooter
         poll={poll}
         results={p.results === "always" || poll.voted || poll.closed}
-        signIn={!poll.voted && !poll.closed && mustSignIn ? (signIn ? (
-          <Button size="sm" className="min-h-11 max-w-full justify-self-start whitespace-normal sm:min-h-8" onClick={signIn}>
-            {t("poll.signIn")}
-          </Button>
-        ) : <p className="text-xs text-muted-foreground">{t("poll.signIn")}</p>) : undefined}
         action={p.footer}
       />
     </>,
@@ -178,17 +173,16 @@ function Choices({ poll, results, canVote, onVote }: { poll: PollData; results: 
   );
 }
 
-/** Keep host navigation and voting actions in the poll's own layout. */
-function PollFooter({ poll, results, signIn, action }: { poll: PollData; results: boolean; signIn?: ReactNode; action?: ReactNode }) {
+/** Keep host navigation alongside the poll's metadata. */
+function PollFooter({ poll, results, action }: { poll: PollData; results: boolean; action?: ReactNode }) {
   const m = useMessages();
   const total = poll.total_votes || poll.options.reduce((n, option) => n + option.vote_count, 0);
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-border pt-2" data-ckui="poll-footer">
-      <p className={cn("flex min-w-0 flex-wrap justify-between gap-x-3 gap-y-1 text-xs tabular-nums text-muted-foreground", signIn || !action ? "w-full" : "flex-1")}>
+      <p className={cn("flex min-w-0 flex-wrap justify-between gap-x-3 gap-y-1 text-xs tabular-nums text-muted-foreground", action ? "flex-1" : "w-full")}>
         <time dateTime={poll.live_at}>{formatDate(m, poll.live_at, false)}</time>
         {results && <span>{m.plural("poll.votes", total)}</span>}
       </p>
-      {signIn}
       {action && <div className="ms-auto shrink-0">{action}</div>}
     </div>
   );
