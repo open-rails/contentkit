@@ -46,8 +46,9 @@ func (j *Jobs) putFence(ctx context.Context, item Item, kind, match string) erro
 
 // FenceDeleted makes ref's gateway fence follow its soft deletion: deleted
 // fences the item; otherwise only a deletion fence is removed, never an
-// erasure. The caller holds the catalog rows that decide deleted, which
-// an erasure claim must lock too, so neither changes meanwhile.
+// erasure. The caller holds the rows that decide deleted (a version's catalog
+// rows, an entity's row), which an erasure or retirement claim must lock too,
+// so neither changes meanwhile.
 func (j *Jobs) FenceDeleted(ctx context.Context, ref contentref.ContentRef, deleted bool) error {
 	item, err := j.cfg.Registry.Item(ref)
 	if err != nil {
@@ -69,7 +70,8 @@ func (j *Jobs) FenceDeleted(ctx context.Context, ref contentref.ContentRef, dele
 	return nil
 }
 
-// fenceErasure makes item's fence permanent, replacing a deletion fence.
+// fenceErasure makes item's fence permanent, replacing a deletion fence. Erase
+// and the retirement of a deleted item call it.
 func (j *Jobs) fenceErasure(ctx context.Context, item Item) error {
 	for range 5 {
 		obj, kind, err := j.fence(ctx, item)

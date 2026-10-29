@@ -7,6 +7,7 @@ package worker
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -495,11 +496,21 @@ func (w syncer) backfill(ctx context.Context) (bool, error) {
 	return more, nil
 }
 
+// backfillState reads a kind and language's backfill position, creating it
+// at the start. The read after creating is its own statement: a concurrent
+// tick's insert that this one waited on is outside the insert's snapshot.
 func (w syncer) backfillState(ctx context.Context, kind, language string) (cursor, state string, err error) {
-	err = w.cfg.Pool.QueryRow(ctx, fmt.Sprintf(`WITH ins AS (
- INSERT INTO %[1]s.content_search_backfill (tenant_id, content_kind, language) VALUES ($1, $2, $3)
- ON CONFLICT (tenant_id, content_kind, language) DO NOTHING RETURNING cursor, state)
- SELECT cursor, state FROM ins UNION ALL
- SELECT cursor, state FROM %[1]s.content_search_backfill WHERE tenant_id = $1 AND content_kind = $2 AND language = $3`, w.qs), w.cfg.Tenant, kind, language).Scan(&cursor, &state)
+	read := func() error {
+		return w.cfg.Pool.QueryRow(ctx, fmt.Sprintf(`SELECT cursor, state FROM %s.content_search_backfill
+ WHERE tenant_id = $1 AND content_kind = $2 AND language = $3`, w.qs), w.cfg.Tenant, kind, language).Scan(&cursor, &state)
+	}
+	if err = read(); !errors.Is(err, pgx.ErrNoRows) {
+		return cursor, state, err
+	}
+	if _, err = w.cfg.Pool.Exec(ctx, fmt.Sprintf(`INSERT INTO %s.content_search_backfill (tenant_id, content_kind, language) VALUES ($1, $2, $3)
+ ON CONFLICT (tenant_id, content_kind, language) DO NOTHING`, w.qs), w.cfg.Tenant, kind, language); err != nil {
+		return "", "", err
+	}
+	err = read()
 	return cursor, state, err
 }

@@ -141,6 +141,15 @@ func (j *Jobs) retireFolder(ctx context.Context, item Item, intent manifestCommi
 	if d.Completed {
 		return nil
 	}
+	// Retirement is final: a soft-deleted item's fence becomes erasure, so no
+	// restore serves it again.
+	if _, kind, err := j.fence(ctx, item); err != nil {
+		return err
+	} else if kind == layout.FenceDeleted {
+		if err := j.fenceErasure(ctx, item); err != nil {
+			return err
+		}
+	}
 	operation := uuid.NewSHA1(intent.ID, []byte("delete"))
 	if err := j.deleteItem(ctx, item, d.Owner, operation, d.Incarnation, time.Time{}, false); err != nil {
 		return err
