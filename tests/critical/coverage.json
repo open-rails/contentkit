@@ -1653,14 +1653,17 @@
     {
       "id": "CK-J23-S02",
       "journey": "CK-J23",
-      "behavior": "Paused pre-erasure writer cannot resurrect visible data",
+      "behavior": "Paused pre-erasure writers cannot restore visible data or erased reviewer attribution",
       "status": "verified",
       "evidence": [
         "A real PostgreSQL insertion barrier pauses an accepted public favorite write. Erasure waits on the same subject serialization, then removes the committed write; future writes refuse while an unrelated reader still contributes.",
         "Executed with the race detector in resume-boundaries3; the aggregate failed only the separately corrected commerce outage oracle."
       ],
       "cases": [
-        "TestPausedInteractionWriterErasure/CK-J23-S02_paused_pre_erasure_writer_cannot_resurrect_activity"
+        "TestPausedInteractionWriterErasure/CK-J23-S02_paused_pre_erasure_writer_cannot_resurrect_activity",
+        "TestModeratorErasure",
+        "TestModeratorErasureRaces",
+        "TestModeratorErasureLockOrder"
       ]
     },
     {

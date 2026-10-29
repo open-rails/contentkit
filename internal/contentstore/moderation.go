@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -223,7 +224,18 @@ func (c *comments) resolve(ctx context.Context, cid, state string, d content.Rev
 		}
 		return err
 	}
-	if err := c.rt.guardErasedSubject(ctx, tx, subject); err != nil {
+	subjects := []string{subject, d.Reviewer}
+	sort.Strings(subjects)
+	for _, id := range subjects {
+		if err := c.rt.lockErasureSubject(ctx, tx, id); err != nil {
+			return err
+		}
+	}
+	if err := c.rt.checkSubjectNotErased(ctx, tx, subject); err != nil {
+		return err
+	}
+	reviewer, err := c.rt.provenance(ctx, tx, d.Reviewer)
+	if err != nil {
 		return err
 	}
 	if err := c.lockThread(ctx, tx, cid); err != nil {
@@ -234,9 +246,9 @@ func (c *comments) resolve(ctx context.Context, cid, state string, d content.Rev
 	var hidden bool
 	var k contentref.ContentKey
 	err = tx.QueryRow(ctx, `UPDATE `+c.s.t.comments+` SET moderation = $3, moderation_reason = CASE WHEN $3 = 'approved' THEN NULL ELSE coalesce(nullif($4, ''), moderation_reason) END,
-		moderated_by = $5, moderated_at = now(), updated_at = now()
+		moderated_by = NULLIF($5, ''), moderated_at = now(), updated_at = now()
 		WHERE id = $1 AND tenant_id = $2 AND moderation = 'held' AND deleted_at IS NULL AND moderation_revision = $6
-		RETURNING reply_to_id::text, deleted_at, author_hidden, `+keyCols, cid, c.s.tenant, state, d.Reason, d.Reviewer, d.Revision).
+		RETURNING reply_to_id::text, deleted_at, author_hidden, `+keyCols, cid, c.s.tenant, state, d.Reason, reviewer, d.Revision).
 		Scan(&replyTo, &deletedAt, &hidden, &k.TenantID, &k.ContentKind, &k.ContentID, versionid.Into(&k.ContentVersionID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
