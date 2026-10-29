@@ -87,15 +87,61 @@ jobs:
         pnpm typecheck && pnpm lint && pnpm test:read-refresh && pnpm build
         pnpm pack --pack-destination "$RUNNER_TEMP"
         python3 ../../.github/scripts/check-npm-package.py "$RUNNER_TEMP/openrails-contentkit-ui-0.0.0.tgz" 0.0.0
-        pnpm exec vite build --config ../../tests/critical/browser/vite.config.mjs
-        RAYON_NUM_THREADS=1 pnpm exec vite build --config ../../tests/critical/browser/search-attribution.config.mjs
-        RAYON_NUM_THREADS=1 pnpm exec vite build --config ../../tests/critical/browser/media-sse-upload.config.mjs
-        pnpm exec playwright install --with-deps chromium
+        # These four are independent (three configs write to three different
+        # outDirs, the Playwright install touches neither) -- were running
+        # one after another for no reason.
+        declare -A browser_pids
+        mkdir -p "$RUNNER_TEMP/browser-build-logs"
+        ( pnpm exec vite build --config ../../tests/critical/browser/vite.config.mjs ) \
+          > "$RUNNER_TEMP/browser-build-logs/vite.log" 2>&1 &
+        browser_pids[vite]=$!
+        ( RAYON_NUM_THREADS=1 pnpm exec vite build --config ../../tests/critical/browser/search-attribution.config.mjs ) \
+          > "$RUNNER_TEMP/browser-build-logs/search-attribution.log" 2>&1 &
+        browser_pids[search-attribution]=$!
+        ( RAYON_NUM_THREADS=1 pnpm exec vite build --config ../../tests/critical/browser/media-sse-upload.config.mjs ) \
+          > "$RUNNER_TEMP/browser-build-logs/media-sse-upload.log" 2>&1 &
+        browser_pids[media-sse-upload]=$!
+        ( pnpm exec playwright install --with-deps chromium ) \
+          > "$RUNNER_TEMP/browser-build-logs/playwright-install.log" 2>&1 &
+        browser_pids[playwright-install]=$!
+        status=0
+        for name in "${!browser_pids[@]}"; do
+          if wait "${browser_pids[$name]}"; then
+            echo "::group::$name (ok)"
+          else
+            echo "::group::$name (FAILED)"
+            status=1
+          fi
+          cat "$RUNNER_TEMP/browser-build-logs/$name.log"
+          echo "::endgroup::"
+        done
+        [[ $status -eq 0 ]] || exit 1
     - name: Build and vet public modules and native commands
       run: |
+        # The three modules are independent of each other, so they build and
+        # vet concurrently instead of one after another. Each still runs its
+        # own compile with -p 1, left alone -- untangling that pairs with the
+        # merge-queue work, not this change.
+        declare -A module_pids
+        mkdir -p "$RUNNER_TEMP/module-build-logs"
         for module in . adapters/authkit adapters/openrails; do
-          (cd "$module" && go build -p 1 ./... && go vet -p 1 ./...)
+          log="$RUNNER_TEMP/module-build-logs/$(echo "$module" | tr '/.' '__').log"
+          (cd "$module" && go build -p 1 ./... && go vet -p 1 ./...) > "$log" 2>&1 &
+          module_pids["$module"]=$!
         done
+        status=0
+        for module in "${!module_pids[@]}"; do
+          log="$RUNNER_TEMP/module-build-logs/$(echo "$module" | tr '/.' '__').log"
+          if wait "${module_pids[$module]}"; then
+            echo "::group::build/vet $module (ok)"
+          else
+            echo "::group::build/vet $module (FAILED)"
+            status=1
+          fi
+          cat "$log"
+          echo "::endgroup::"
+        done
+        [[ $status -eq 0 ]] || exit 1
         CGO_ENABLED=1 go build -p 1 -o tests/critical/.bin/media-worker ./cmd/media-worker
         # Hosts, server/ and adapters/* reach only the public surface.
         go test -count=1 -p 1 ./internal/boundaries
