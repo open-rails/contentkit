@@ -300,7 +300,7 @@ export function SearchBox(p: SearchBoxProps) {
           search(text.trim());
         }}
       >
-        {header ? <button type="submit" disabled={p.disabled} className="absolute top-1/2 left-2.5 -translate-y-1/2 rounded text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring" aria-label={t("contents.search")}><HugeiconsIcon icon={Search01Icon} strokeWidth={2} className="size-4" aria-hidden /></button>
+        {header ? <button type="submit" disabled={p.disabled} className="absolute top-1/2 left-2.5 -translate-y-1/2 rounded text-muted-foreground after:absolute after:-inset-y-3 after:-start-2.5 after:-end-1.5 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring" aria-label={t("contents.search")}><HugeiconsIcon icon={Search01Icon} strokeWidth={2} className="size-4" aria-hidden /></button>
           : <HugeiconsIcon icon={Search01Icon} strokeWidth={2} className={cn("pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground", dialog && "left-3.5 size-4.5")} aria-hidden />}
         <Input
           ref={input}
