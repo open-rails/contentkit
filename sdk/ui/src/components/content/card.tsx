@@ -106,10 +106,22 @@ export function cardStatus(card: Card, now = Date.now()): CardStatus {
   };
 }
 
+/** Select individual status marks; omitted marks remain visible. */
+export interface CardStatusOptions {
+  updated?: boolean;
+  completed?: boolean;
+  deleted?: boolean;
+}
+
 /** Quiet marks for a card's status: updated, completed and deleted. */
-export function CardStatusBadges({ card, className }: { card: Card; className?: string }) {
+export function CardStatusBadges({ card, show, className }: { card: Card; show?: CardStatusOptions; className?: string }) {
   const { t } = useMessages();
-  const st = cardStatus(card);
+  const state = cardStatus(card);
+  const st = {
+    updated: state.updated && show?.updated !== false,
+    completed: state.completed && show?.completed !== false,
+    deleted: state.deleted && show?.deleted !== false,
+  };
   if (!st.updated && !st.completed && !st.deleted) return null;
   const icon = "size-4 text-white drop-shadow-[0_0_3px_rgba(0,0,0,0.9)]";
   return (
@@ -298,7 +310,7 @@ export function ContentCard({ card, client, href, onOpen, shape = "portrait", as
   </a>;
   const [article, setArticle] = useState<HTMLElement | null>(null);
   return (
-    <article ref={setArticle} className={cn("group/card relative grid content-start gap-2", className)} data-ckui="content-card" data-id={card.id} data-locked={lock ? "" : undefined} lang={card.language || undefined}>
+    <article ref={setArticle} className={cn("group/card relative isolate grid content-start gap-2", className)} data-ckui="content-card" data-id={card.id} data-locked={lock ? "" : undefined} lang={card.language || undefined}>
       <div className="relative overflow-hidden rounded-lg" data-ckui="card-cover">
         <a href={url} onClick={onClick} onAuxClick={prepareNativeLink} onContextMenu={prepareNativeLink} className="relative block overflow-hidden rounded-lg bg-muted" tabIndex={-1} aria-hidden>
           <div data-ckui="card-cover-frame" data-disliked={dim || undefined} className={cn(coverAspect === undefined && (shape === "landscape" ? "aspect-video" : "aspect-[3/4]"), "transition-[opacity,filter]", dim && "opacity-50 brightness-75", st.deleted && "opacity-60 grayscale")} style={coverAspect === undefined ? undefined : { aspectRatio: coverAspect }}>
@@ -405,7 +417,7 @@ export function PostCard({ card, href, onOpen, tiers, labels, byline, showChanne
   const lock = lockLabel(m, card.access, tiers, labels);
   const title = card.title || card.code;
   return (
-    <article className={cn("relative grid gap-3 rounded-lg border border-border p-3", className)} data-ckui="post-card" data-id={card.id} data-locked={lock ? "" : undefined} lang={card.language || undefined}>
+    <article className={cn("relative isolate grid gap-3 rounded-lg border border-border p-3", className)} data-ckui="post-card" data-id={card.id} data-locked={lock ? "" : undefined} lang={card.language || undefined}>
       {byline ?? (showChannel && card.channel && <ChannelChip channel={card.channel} href={channelHref} loadMedia={loadMedia} className="text-sm" />)}
       <a href={url} onClick={onClick} onAuxClick={prepareNativeLink} onContextMenu={prepareNativeLink} className="grid gap-2">
         <span className="font-medium break-words hover:underline" data-ckui="card-title">

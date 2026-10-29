@@ -15,7 +15,7 @@ export const discovery: typeof en = {
     invalidDate: "今日以前の有効な日付を選んでください。",
     premiumMore_one: "ほか {count} 件",
     premiumMore_other: "ほか {count} 件",
-    premiumHint: "会員向けプレビュー · クリックして表示",
+    premiumHint: "プレビューを表示",
     filteredMore_one: "{count} 件を非表示",
     filteredMore_other: "{count} 件を非表示",
     manageFilters: "コンテンツフィルターを変更",

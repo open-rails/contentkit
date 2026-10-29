@@ -15,7 +15,7 @@ export const discovery: typeof en = {
     invalidDate: "Wähle ein gültiges Datum, das nicht in der Zukunft liegt.",
     premiumMore_one: "{count} weiterer Eintrag",
     premiumMore_other: "{count} weitere Einträge",
-    premiumHint: "Vorschauen für Mitglieder · Zum Ansehen klicken",
+    premiumHint: "Vorschauen anzeigen",
     filteredMore_one: "{count} Eintrag ausgefiltert",
     filteredMore_other: "{count} Einträge ausgefiltert",
     manageFilters: "Inhaltsfilter ändern",

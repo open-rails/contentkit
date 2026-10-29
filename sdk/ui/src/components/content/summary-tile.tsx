@@ -1,5 +1,6 @@
-import { LockIcon, Settings01Icon } from "@hugeicons/core-free-icons";
+import { Diamond02Icon, Settings01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
+import { cn } from "cn";
 import type { CSSProperties, MouseEvent } from "react";
 import { ratio } from "../../client/aspect.js";
 import type { Card } from "../../client/generated/wire.js";
@@ -46,17 +47,21 @@ export function ContentSummaryTile({
         aria-label={label}
         aria-expanded={kind === "premium" ? false : undefined}
         aria-haspopup={kind === "filtered" ? "dialog" : undefined}
-        className="relative flex h-auto w-full flex-col justify-center overflow-hidden rounded-lg p-0 text-center whitespace-normal"
+        className={cn("relative flex h-auto w-full flex-col justify-center overflow-hidden rounded-lg p-0 text-center whitespace-normal", kind === "premium" && "bg-black text-white hover:bg-black hover:text-white")}
         style={{ aspectRatio: aspect }}
         onClick={onClick}
       >
         {preview && open && near && (
-          <RenditionImg outputs={preview.cover} alt="" fit="cover" loading="lazy" className="absolute inset-0 size-full opacity-20" />
+          <RenditionImg outputs={preview.cover} alt="" fit="cover" loading="lazy" className="absolute inset-0 size-full opacity-[0.22]" />
         )}
-        <span className="relative grid justify-items-center gap-3 p-4">
-          <HugeiconsIcon icon={kind === "premium" ? LockIcon : Settings01Icon} strokeWidth={2} className="size-8" aria-hidden />
-          <span className="text-xl font-semibold">{label}</span>
-          <span className="text-sm text-muted-foreground">{t(kind === "premium" ? "releases.premiumHint" : "releases.manageFilters")}</span>
+        <span className={cn("relative grid justify-items-center", kind === "premium" ? "gap-2.5 p-3 md:gap-4 md:p-6" : "gap-3 p-4")}>
+          <HugeiconsIcon icon={kind === "premium" ? Diamond02Icon : Settings01Icon} strokeWidth={2} className={kind === "premium" ? "size-6 md:size-7" : "size-8"} aria-hidden />
+          <span
+            data-ckui="release-summary-label"
+            data-stacked={kind === "premium" && label.includes("\n") || undefined}
+            className={cn("font-semibold text-balance", kind === "premium" ? "text-sm leading-[1.4] whitespace-pre-line md:text-xl" : "text-xl")}
+          >{label}</span>
+          <span className={kind === "premium" ? "max-w-[14ch] text-xs leading-[1.4] text-balance opacity-80 md:max-w-[20ch] md:text-base" : "text-sm text-muted-foreground"}>{t(kind === "premium" ? "releases.premiumHint" : "releases.manageFilters")}</span>
         </span>
       </Button>
       {preview && <p className="mt-2 line-clamp-2 text-lg leading-snug text-muted-foreground">{preview.title}</p>}

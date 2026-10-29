@@ -14,7 +14,7 @@ export const discovery = {
     invalidDate: "Choose a valid date on or before today.",
     premiumMore_one: "{count} more item",
     premiumMore_other: "{count} more items",
-    premiumHint: "Members-only previews · Click to view",
+    premiumHint: "Show previews",
     filteredMore_one: "{count} item filtered out",
     filteredMore_other: "{count} items filtered out",
     manageFilters: "Change content filters",
