@@ -38,11 +38,12 @@ copies these facts into each application's log. Trusted host account integration
 own their cursors. Retention is independent of observers and completion receipts
 survive log expiry.
 
-Custom embedded `Hooks.ItemReady` and `Hooks.ItemProgressed` run synchronously in
-the processor's completion transaction. They must be idempotent transactional
-extensions. Stock external workers need no host callbacks: completion directly
-joins the durable `contentkit_publication` request. If an earlier release is
-running, its normal follow-up preserves the wakeup. Queues are scoped to the exact
+The stock worker needs no host callbacks. When an ingest or derivative job ends
+and the item's processing has settled (ready, failed or full), its completion
+transaction wakes the durable `contentkit_publication` request directly. While
+the item is still processing it does not, because a live edition releases only
+fully processed media. If an earlier release is running, its normal follow-up
+preserves the wakeup. Queues are scoped to the exact
 catalog key, including when several apps share one River schema.
 
 Removed interfaces: `media.Jobs.Expose`, `ExposeTx` on media/version/entity

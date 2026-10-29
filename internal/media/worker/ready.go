@@ -19,7 +19,8 @@ import (
 )
 
 // completionHook is part of the processing attempt. It records observable
-// progress/completion and the pending release wakeup before River completes the job.
+// progress/completion and, once processing settles, the release wakeup before
+// River completes the job.
 // A failed transaction retries this same attempt; there is no delivery job.
 type completionHook struct {
 	river.HookDefaults
@@ -49,21 +50,13 @@ func (h *completionHook) WorkEnd(ctx context.Context, job *rivertype.JobRow, err
 	if err := json.Unmarshal(job.EncodedArgs, &args); err != nil {
 		return workErr
 	}
-	hooks := h.manifests.Registry().Hooks()
 	err = mediastore.CompleteProcessing(ctx, h.manifests, args.Ref, func(ctx context.Context, tx pgx.Tx, r media.Readiness) error {
-		if err := h.publish(ctx, tx, args.Ref); err != nil {
-			return err
-		}
-		// Existing custom embedded integrations keep their transaction contract.
-		// Stock workers wake publication directly without a preparation job.
+		// A live edition releases only fully processed media, so a release woken
+		// mid-processing can only wait. The job that settles the item wakes it.
 		if r.State == media.StateProcessing {
-			if hooks.ItemProgressed != nil {
-				return hooks.ItemProgressed(ctx, tx, args.Ref)
-			}
-		} else if hooks.ItemReady != nil {
-			return hooks.ItemReady(ctx, tx, args.Ref, r)
+			return nil
 		}
-		return nil
+		return h.publish(ctx, tx, args.Ref)
 	})
 	if err != nil {
 		return err

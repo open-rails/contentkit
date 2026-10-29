@@ -2528,10 +2528,12 @@
       "behavior": "One derivative processor handles images and video, withholding release until all required outputs exist",
       "status": "verified",
       "cases": [
-        "TestRequiredMixedDerivativesBeforeRelease"
+        "TestRequiredMixedDerivativesBeforeRelease",
+        "TestReleaseWakesWhenProcessingSettles"
       ],
       "evidence": [
-        "Reviewed actual PNG/FFmpeg audiovisual source and S3 write barrier test: image completion alone does not activate release, completed mixed outputs do, and pending replacement retains the prior reader snapshot. Final runtime execution remains required."
+        "Reviewed actual PNG/FFmpeg audiovisual source and S3 write barrier test: image completion alone does not activate release, completed mixed outputs do, and pending replacement retains the prior reader snapshot. Final runtime execution remains required.",
+        "Processing wakes a release only once the item settles: while a four page gallery and a video in several chunk checkpoints process, no release plan parks as waiting; both release promptly afterwards, and a rotated page of a released edition re-releases at once while its later chapter keeps its date."
       ]
     },
     {

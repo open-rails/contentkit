@@ -17,9 +17,10 @@ import (
 )
 
 // CompleteProcessing commits any changed processor observation together with
-// its idempotent release wakeup. The caller must return an error to its processing job
-// if this fails. Retrying re-reads current media under a per-item database lock;
-// the durable fingerprint suppresses duplicate facts even after log retention.
+// the caller's idempotent metadata work, which runs even when it is unchanged.
+// The caller must return an error to its processing job if this fails.
+// Retrying re-reads current media under a per-item database lock; the durable
+// fingerprint suppresses duplicate facts even after log retention.
 func CompleteProcessing(ctx context.Context, manifests *Manifests, ref contentref.ContentRef, metadata func(context.Context, pgx.Tx, media.Readiness) error) error {
 	if manifests == nil {
 		return errors.New("media: processing completion needs Manifests")
@@ -71,7 +72,8 @@ func CompleteProcessing(ctx context.Context, manifests *Manifests, ref contentre
 			return err
 		}
 		readiness := k.Readiness(m)
-		// Event deduplication must not suppress the pending release wakeup.
+		// Producers record each page or batch without a wakeup, so a settled
+		// observation is often already recorded when the job's wakeup runs.
 		if metadata != nil {
 			if err := metadata(ctx, tx, readiness); err != nil {
 				return err
