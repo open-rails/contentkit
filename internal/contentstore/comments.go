@@ -633,14 +633,18 @@ func (c *comments) edit(ctx context.Context, actor access.Actor, cid, rawBody st
 	var hidden bool
 	var before string
 	var revision int64
+	var currentAuthor string
 	var k contentref.ContentKey
-	err = tx.QueryRow(ctx, `SELECT moderation, moderation_revision, author_hidden, `+keyCols+` FROM `+c.s.t.comments+` WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL FOR UPDATE`, cid, c.s.tenant).
-		Scan(&before, &revision, &hidden, &k.TenantID, &k.ContentKind, &k.ContentID, versionid.Into(&k.ContentVersionID))
+	err = tx.QueryRow(ctx, `SELECT moderation, moderation_revision, author_hidden, coalesce(user_id, ''), `+keyCols+` FROM `+c.s.t.comments+` WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL FOR UPDATE`, cid, c.s.tenant).
+		Scan(&before, &revision, &hidden, &currentAuthor, &k.TenantID, &k.ContentKind, &k.ContentID, versionid.Into(&k.ContentVersionID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return content.Comment{}, ErrNotFound
 	}
 	if err != nil {
 		return content.Comment{}, err
+	}
+	if currentAuthor != author || k != target.ref.Key() {
+		return content.Comment{}, ErrForbidden
 	}
 	if revision != target.revision {
 		return content.Comment{}, errContentChanged
@@ -678,7 +682,8 @@ func (c *comments) edit(ctx context.Context, actor access.Actor, cid, rawBody st
 // reply_count / the reference's comment_count when a published comment is
 // deleted.
 func (c *comments) softDelete(ctx context.Context, actor access.Actor, cid string) error {
-	if _, err := c.loadForWrite(ctx, actor, cid, true); err != nil {
+	target, err := c.loadForWrite(ctx, actor, cid, true)
+	if err != nil {
 		return err
 	}
 	tx, err := c.s.beginMutation(ctx)
@@ -689,8 +694,20 @@ func (c *comments) softDelete(ctx context.Context, actor access.Actor, cid strin
 	if err := c.lockThread(ctx, tx, cid); err != nil {
 		return err
 	}
-	var replyTo *string
+	var currentAuthor string
 	var k contentref.ContentKey
+	err = tx.QueryRow(ctx, `SELECT coalesce(user_id, ''), `+keyCols+` FROM `+c.s.t.comments+` WHERE id = $1 AND tenant_id = $2 FOR UPDATE`, cid, c.s.tenant).
+		Scan(&currentAuthor, &k.TenantID, &k.ContentKind, &k.ContentID, versionid.Into(&k.ContentVersionID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if currentAuthor != deref(target.ownerID) || k != target.ref.Key() {
+		return ErrForbidden
+	}
+	var replyTo *string
 	var state string
 	var hidden bool
 	err = tx.QueryRow(ctx, `UPDATE `+c.s.t.comments+` SET deleted_at = now(), updated_at = now()

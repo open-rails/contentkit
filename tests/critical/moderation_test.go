@@ -2,6 +2,7 @@ package critical_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -19,6 +20,408 @@ import (
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/importer"
 )
+
+func TestImportedCommentOwnershipRace(t *testing.T) {
+	w := newWorld(t, func(cfg *ck.Config) { cfg.Interactions.Limits.Disabled = true })
+	a := w.apps[0]
+	for _, name := range []string{"edit", "delete", "edit_reference", "delete_reference"} {
+		t.Run(name, func(t *testing.T) {
+			action := strings.TrimSuffix(name, "_reference")
+			movedReference := strings.HasSuffix(name, "_reference")
+			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+			defer cancel()
+			former, formerToken := w.person(t, 0)
+			current, currentToken := w.person(t, 0)
+			item := publishedArticle(t, a, "Imported comment ownership "+name)
+			destination := item
+			if movedReference {
+				current, currentToken = former, formerToken
+				destination = publishedArticle(t, a, "Imported destination "+name)
+			}
+			record := importer.CommentRecord{ExternalID: "comment", Target: importer.TargetRef{Content: &importer.Ref{ID: item.ID}}, UserID: former.ID, Body: "Original imported comment"}
+			batch := importer.Batch{Source: "comment-ownership-" + name, Comments: []importer.CommentRecord{record}}
+			initial, err := a.engine.Client().PostImport(ctx, batch)
+			must(t, err)
+			if len(initial.Failed) != 0 || initial.Written[importer.SectionComments] != 1 {
+				t.Fatalf("ownership fixture failed: %+v", initial)
+			}
+			commentID := initial.IDs[importer.RecordComment][record.ExternalID]
+			holder, err := w.pool.Acquire(ctx)
+			must(t, err)
+			defer holder.Release()
+			gate := w.schema + ":import-owner:" + name
+			_, err = holder.Exec(ctx, "SELECT pg_advisory_lock(hashtextextended($1,0))", gate)
+			must(t, err)
+			qs := pgx.Identifier{w.schema}.Sanitize()
+			defer func() {
+				cancel()
+				cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cleanupCancel()
+				_, _ = holder.Exec(cleanupCtx, "SELECT pg_advisory_unlock(hashtextextended($1,0))", gate)
+				_, err := holder.Exec(cleanupCtx, `DROP TRIGGER IF EXISTS critical_import_owner ON `+qs+`.content_comments; DROP FUNCTION IF EXISTS `+qs+`.critical_import_owner()`)
+				must(t, err)
+			}()
+			_, err = w.pool.Exec(ctx, fmt.Sprintf(`CREATE FUNCTION %s.critical_import_owner() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN IF NEW.id::text=TG_ARGV[0] AND NEW.user_id=TG_ARGV[1] THEN PERFORM pg_advisory_xact_lock(hashtextextended(TG_ARGV[2],0)); END IF; RETURN NEW; END$$;
+CREATE TRIGGER critical_import_owner BEFORE UPDATE OF user_id ON %s.content_comments FOR EACH ROW EXECUTE FUNCTION %s.critical_import_owner('%s','%s','%s')`, qs, qs, qs, commentID, current.ID, gate))
+			must(t, err)
+			blockedBy := func(pid uint32) uint32 {
+				t.Helper()
+				var waiter uint32
+				waitForWithin(t, 10*time.Second, func() bool {
+					must(t, w.pool.QueryRow(ctx, `SELECT coalesce(min(pid),0) FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid))`, pid).Scan(&waiter))
+					return waiter != 0
+				})
+				return waiter
+			}
+			batch.Comments[0].UserID, batch.Comments[0].Body = current.ID, "Imported replacement"
+			batch.Comments[0].Target = importer.TargetRef{Content: &importer.Ref{ID: destination.ID}}
+			imported, attempted := make(chan error, 1), make(chan error, 1)
+			go func() {
+				result, err := a.engine.Client().PostImport(ctx, batch)
+				if err == nil && (len(result.Failed) != 0 || result.Written[importer.SectionComments] != 1) {
+					err = fmt.Errorf("owner reassignment failed: %+v", result)
+				}
+				imported <- err
+			}()
+			importPID := blockedBy(holder.Conn().PgConn().PID())
+			go func() {
+				var err error
+				if action == "edit" {
+					_, err = a.client(formerToken).PatchComment(ctx, commentID, content.CommentEdit{Body: "Former author overwrote replacement"})
+				} else {
+					err = a.client(formerToken).DeleteComment(ctx, commentID)
+				}
+				attempted <- err
+			}()
+			waiter := blockedBy(importPID)
+			var query string
+			must(t, w.pool.QueryRow(ctx, "SELECT query FROM pg_stat_activity WHERE pid=$1", waiter).Scan(&query))
+			waitQuery := "ORDER BY id FOR UPDATE"
+			if movedReference && action == "edit" {
+				waitQuery = "pg_advisory_xact_lock"
+			}
+			if !strings.Contains(query, waitQuery) {
+				t.Fatalf("stale action waited outside its mutation guard: %s", query)
+			}
+			_, err = holder.Exec(ctx, "SELECT pg_advisory_unlock(hashtextextended($1,0))", gate)
+			must(t, err)
+			must(t, <-imported)
+			actionErr := <-attempted
+			var refused *ck.Error
+			if !errors.As(actionErr, &refused) || (refused.Status != 403 || refused.Code != "forbidden") && (refused.Status != 409 || refused.Code != "conflict") {
+				t.Errorf("former owner's %s was not refused after import: %v", action, actionErr)
+			}
+			var owner, body, contentID string
+			var deletedAt *time.Time
+			must(t, w.pool.QueryRow(ctx, `SELECT user_id,body,content_id,deleted_at FROM `+qs+`.content_comments WHERE tenant_id=$1 AND id=$2`, a.cfg.Scope.AppID.String(), commentID).Scan(&owner, &body, &contentID, &deletedAt))
+			if owner != current.ID || body != batch.Comments[0].Body || contentID != destination.ID || deletedAt != nil {
+				t.Errorf("former owner's %s changed imported state: owner=%s body=%q deleted=%v", action, owner, body, deletedAt != nil)
+			}
+			comments, err := a.client(currentToken).GetContentComments(ctx, destination.ID, ck.GetContentCommentsQuery{})
+			must(t, err)
+			found := false
+			for _, cm := range comments {
+				if cm.ID == commentID {
+					found = cm.UserID == current.ID && cm.Body == batch.Comments[0].Body && !cm.Deleted
+				}
+			}
+			if !found {
+				t.Errorf("imported replacement did not survive former owner's %s: %+v", action, comments)
+			}
+			if action == "edit" {
+				updated, err := a.client(currentToken).PatchComment(ctx, commentID, content.CommentEdit{Body: "Current author's edit"})
+				must(t, err)
+				if updated.UserID != current.ID || updated.Body != "Current author's edit" {
+					t.Fatalf("current owner could not edit the replacement: %+v", updated)
+				}
+			} else {
+				must(t, a.client(currentToken).DeleteComment(ctx, commentID))
+			}
+		})
+	}
+}
+
+func TestModeratorErasure(t *testing.T) {
+	w := newWorld(t, func(cfg *ck.Config) { cfg.Interactions.Limits.Disabled = true })
+	a := w.apps[0]
+	admin := a.engine.Client()
+	_, writerToken := w.person(t, 0)
+	item := publishedArticle(t, a, "Reviewer attribution")
+	for _, action := range []string{"approve", "reject", "hold", "release"} {
+		for _, erased := range []bool{false, true} {
+			t.Run(fmt.Sprintf("%s_erased_%t", action, erased), func(t *testing.T) {
+				reviewer, token := w.person(t, 0)
+				authtest.GrantRole(t, w.tenant[0], a.group, iam.UserSubject(reviewer.ID), w.commentManager)
+				comment := postComment(t, a.client(writerToken), item.ID, "Review "+action+fmt.Sprint(erased))
+				var revision int64
+				if action != "hold" {
+					must(t, a.client(token).PostCommentHold(t.Context(), comment.ID))
+					queue, err := admin.GetModerationHeld(t.Context(), ck.GetModerationHeldQuery{Kind: content.KindComment})
+					must(t, err)
+					for _, row := range queue.Items {
+						if row.ID == comment.ID {
+							revision = row.Revision
+						}
+					}
+					if revision == 0 {
+						t.Fatal("held comment is absent from review queue")
+					}
+				}
+				if erased {
+					// Cleanup can finish while a previously authenticated review is
+					// running; its source must not restore the account attribution.
+					must(t, a.engine.AnonymizeAccount(t.Context(), reviewer.ID))
+				}
+				var err error
+				switch action {
+				case "hold":
+					err = a.client(token).PostCommentHold(t.Context(), comment.ID)
+				case "release":
+					err = a.client(token).PostCommentRelease(t.Context(), comment.ID)
+				default:
+					input := content.ResolveInput{Decision: content.Decision(action), Revision: revision, Reason: "Reviewed"}
+					stale := input
+					stale.Revision--
+					_, err = a.client(token).PostModerationResolve(t.Context(), content.KindComment, comment.ID, stale)
+					requireError(t, err, 404, "not_found")
+					_, err = a.client(token).PostModerationResolve(t.Context(), content.KindComment, comment.ID, input)
+				}
+				must(t, err)
+				var state string
+				var by *string
+				var stamped bool
+				must(t, w.pool.QueryRow(t.Context(), `SELECT moderation,moderated_by,moderated_at IS NOT NULL FROM `+w.schema+`.content_comments WHERE tenant_id=$1 AND id=$2`, a.cfg.Scope.AppID.String(), comment.ID).Scan(&state, &by, &stamped))
+				want := content.ModerationApproved
+				if action == "reject" {
+					want = content.ModerationRejected
+				} else if action == "hold" {
+					want = content.ModerationHeld
+				}
+				if state != want || !stamped || (erased && by != nil) || (!erased && (by == nil || *by != reviewer.ID)) {
+					t.Fatalf("wrong review attribution: state=%s reviewer=%v erased=%t stamped=%t", state, by, erased, stamped)
+				}
+				assertCommentVisibility(t, a.client(""), item.ID, comment.ID, want == content.ModerationApproved)
+			})
+		}
+	}
+}
+
+func TestModeratorErasureRaces(t *testing.T) {
+	w := newWorld(t, func(cfg *ck.Config) { cfg.Interactions.Limits.Disabled = true })
+	a := w.apps[0]
+	item := publishedArticle(t, a, "Concurrent review attribution")
+	for _, action := range []string{"approve", "reject", "hold", "release"} {
+		for _, first := range []string{"review", "purge", "author_purge"} {
+			if action == "hold" && first == "author_purge" {
+				continue // Hold does not change author attribution or inherit resolve's author guard.
+			}
+			t.Run(action+"_"+first+"_first", func(t *testing.T) {
+				ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+				defer cancel()
+				writer, writerToken := w.person(t, 0)
+				reviewer, token := w.person(t, 0)
+				authtest.GrantRole(t, w.tenant[0], a.group, iam.UserSubject(reviewer.ID), w.commentManager)
+				client := a.client(token)
+				comment := postComment(t, a.client(writerToken), item.ID, "Concurrent "+action+first)
+				var revision int64
+				if action != "hold" {
+					must(t, client.PostCommentHold(ctx, comment.ID))
+					queue, err := client.GetModerationHeld(ctx, ck.GetModerationHeldQuery{Kind: content.KindComment})
+					must(t, err)
+					for _, row := range queue.Items {
+						if row.ID == comment.ID {
+							revision = row.Revision
+						}
+					}
+					if revision == 0 {
+						t.Fatal("held comment is absent from review queue")
+					}
+				}
+				// Stop the first real write after it holds its subject fences.
+				// Observe the second request waiting on that exact connection.
+				erasedID := reviewer.ID
+				if first == "author_purge" {
+					erasedID = writer.ID
+				}
+				gate := w.schema + ":" + comment.ID
+				holder, err := w.pool.Acquire(ctx)
+				must(t, err)
+				_, err = holder.Exec(ctx, "SELECT pg_advisory_lock(hashtextextended($1,0))", gate)
+				must(t, err)
+				var cleanup string
+				locked := true
+				defer holder.Release()
+				defer func() {
+					cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+					defer cancel()
+					if locked {
+						_, _ = holder.Exec(cleanupCtx, "SELECT pg_advisory_unlock(hashtextextended($1,0))", gate)
+					}
+					if cleanup != "" {
+						_, err := holder.Exec(cleanupCtx, cleanup)
+						must(t, err)
+					}
+				}()
+				table, event := "content_comments", "UPDATE"
+				condition := "NEW.id::text=TG_ARGV[0] AND NEW.moderated_by=TG_ARGV[1]"
+				if first != "review" {
+					table, event = "content_erased_subjects", "INSERT"
+					condition = "NEW.actor_id=TG_ARGV[1]"
+				}
+				qs := pgx.Identifier{w.schema}.Sanitize()
+				_, err = w.pool.Exec(ctx, fmt.Sprintf(`CREATE FUNCTION %s.critical_pause_review() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN IF %s THEN PERFORM pg_advisory_xact_lock(hashtextextended(TG_ARGV[2],0)); END IF; RETURN NEW; END$$;
+CREATE TRIGGER critical_pause_review BEFORE %s ON %s.%s FOR EACH ROW EXECUTE FUNCTION %s.critical_pause_review('%s','%s','%s')`, qs, condition, event, qs, table, qs, comment.ID, erasedID, gate))
+				must(t, err)
+				cleanup = `DROP TRIGGER critical_pause_review ON ` + qs + `.` + table + `; DROP FUNCTION ` + qs + `.critical_pause_review()`
+				blockedBy := func(pid uint32) uint32 {
+					t.Helper()
+					var waiter uint32
+					waitForWithin(t, 10*time.Second, func() bool {
+						must(t, w.pool.QueryRow(ctx, `SELECT coalesce(min(pid),0) FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid))`, pid).Scan(&waiter))
+						return waiter != 0
+					})
+					return waiter
+				}
+				reviewed, purged := make(chan error, 1), make(chan error, 1)
+				review := func() {
+					var err error
+					switch action {
+					case "hold":
+						err = client.PostCommentHold(ctx, comment.ID)
+					case "release":
+						err = client.PostCommentRelease(ctx, comment.ID)
+					default:
+						_, err = client.PostModerationResolve(ctx, content.KindComment, comment.ID, content.ResolveInput{Decision: content.Decision(action), Revision: revision, Reason: "Reviewed"})
+					}
+					reviewed <- err
+				}
+				purge := func() { purged <- a.engine.AnonymizeAccount(ctx, erasedID) }
+				if first == "review" {
+					go review()
+				} else {
+					go purge()
+				}
+				firstPID := blockedBy(holder.Conn().PgConn().PID())
+				if first == "review" {
+					go purge()
+				} else {
+					go review()
+				}
+				blockedBy(firstPID)
+				_, err = holder.Exec(ctx, "SELECT pg_advisory_unlock(hashtextextended($1,0))", gate)
+				must(t, err)
+				locked = false
+				if first == "author_purge" {
+					requireError(t, <-reviewed, 403, "forbidden")
+				} else {
+					must(t, <-reviewed)
+				}
+				must(t, <-purged)
+				var state string
+				var by *string
+				must(t, w.pool.QueryRow(ctx, `SELECT moderation,moderated_by FROM `+qs+`.content_comments WHERE tenant_id=$1 AND id=$2`, a.cfg.Scope.AppID.String(), comment.ID).Scan(&state, &by))
+				want := content.ModerationApproved
+				if action == "reject" {
+					want = content.ModerationRejected
+				} else if action == "hold" {
+					want = content.ModerationHeld
+				}
+				if first == "author_purge" {
+					want = content.ModerationHeld
+					if by == nil || *by != reviewer.ID {
+						t.Fatal("refused review changed existing moderator attribution")
+					}
+				} else if by != nil {
+					t.Fatal("review restored erased reviewer attribution")
+				}
+				if state != want {
+					t.Fatalf("concurrent cleanup lost decision or restored reviewer: state=%s reviewer=%v", state, by)
+				}
+				assertCommentVisibility(t, a.client(""), item.ID, comment.ID, want == content.ModerationApproved)
+				var rollup, visible int
+				must(t, w.pool.QueryRow(ctx, `SELECT comment_count FROM `+qs+`.content_interaction_counts WHERE tenant_id=$1 AND content_kind='article' AND content_id=$2 AND content_version_id IS NULL`, a.cfg.Scope.AppID.String(), item.ID).Scan(&rollup))
+				must(t, w.pool.QueryRow(ctx, `SELECT count(*) FROM `+qs+`.content_comments WHERE tenant_id=$1 AND content_id=$2 AND moderation='approved' AND deleted_at IS NULL`, a.cfg.Scope.AppID.String(), item.ID).Scan(&visible))
+				if rollup != visible {
+					t.Fatalf("review count changed during cleanup: rollup=%d visible=%d", rollup, visible)
+				}
+			})
+		}
+	}
+}
+
+func TestModeratorErasureLockOrder(t *testing.T) {
+	w := newWorld(t, func(cfg *ck.Config) { cfg.Interactions.Limits.Disabled = true })
+	a := w.apps[0]
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	low, lowToken := w.person(t, 0)
+	high, highToken := w.person(t, 0)
+	if low.ID > high.ID {
+		low, high = high, low
+		lowToken, highToken = highToken, lowToken
+	}
+	for _, id := range []string{low.ID, high.ID} {
+		authtest.GrantRole(t, w.tenant[0], a.group, iam.UserSubject(id), w.commentManager)
+	}
+	item := publishedArticle(t, a, "Reciprocal reviewers")
+	lowComment := postComment(t, a.client(lowToken), item.ID, "Low author's comment")
+	highComment := postComment(t, a.client(highToken), item.ID, "High author's comment")
+	for _, id := range []string{lowComment.ID, highComment.ID} {
+		must(t, a.client(lowToken).PostCommentHold(ctx, id))
+	}
+	queue, err := a.client(lowToken).GetModerationHeld(ctx, ck.GetModerationHeldQuery{Kind: content.KindComment})
+	must(t, err)
+	revisions := map[string]int64{}
+	for _, row := range queue.Items {
+		revisions[row.ID] = row.Revision
+	}
+	holder, err := w.pool.Begin(ctx)
+	must(t, err)
+	defer holder.Rollback(t.Context())
+	_, err = holder.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, w.schema+"\x1ferasure\x1f"+a.cfg.Scope.AppID.String()+"\x1f"+high.ID)
+	must(t, err)
+	blockedBy := func(pid uint32) uint32 {
+		t.Helper()
+		var waiter uint32
+		waitForWithin(t, 10*time.Second, func() bool {
+			must(t, w.pool.QueryRow(ctx, `SELECT coalesce(min(pid),0) FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid))`, pid).Scan(&waiter))
+			return waiter != 0
+		})
+		return waiter
+	}
+	results := make(chan error, 2)
+	review := func(token, id string) {
+		_, err := a.client(token).PostModerationResolve(ctx, content.KindComment, id, content.ResolveInput{Decision: content.DecisionApprove, Revision: revisions[id]})
+		results <- err
+	}
+	// The first request must hold the lower fence while waiting for the
+	// higher one. A reciprocal request then waits behind that lower fence.
+	go review(lowToken, highComment.ID)
+	firstPID := blockedBy(holder.Conn().PgConn().PID())
+	go review(highToken, lowComment.ID)
+	blockedBy(firstPID)
+	must(t, holder.Commit(ctx))
+	for range 2 {
+		must(t, <-results)
+	}
+	for _, pair := range []struct{ comment, reviewer string }{{lowComment.ID, high.ID}, {highComment.ID, low.ID}} {
+		var by string
+		must(t, w.pool.QueryRow(ctx, `SELECT moderated_by FROM `+w.schema+`.content_comments WHERE tenant_id=$1 AND id=$2`, a.cfg.Scope.AppID.String(), pair.comment).Scan(&by))
+		if by != pair.reviewer {
+			t.Fatalf("review attributed to %s; want %s", by, pair.reviewer)
+		}
+	}
+	self := postComment(t, a.client(lowToken), item.ID, "Self review")
+	must(t, a.client(lowToken).PostCommentHold(ctx, self.ID))
+	queue, err = a.client(lowToken).GetModerationHeld(ctx, ck.GetModerationHeldQuery{Kind: content.KindComment})
+	must(t, err)
+	if len(queue.Items) != 1 || queue.Items[0].ID != self.ID {
+		t.Fatalf("unexpected self-review queue: %+v", queue)
+	}
+	_, err = a.client(lowToken).PostModerationResolve(ctx, content.KindComment, self.ID, content.ResolveInput{Decision: content.DecisionApprove, Revision: queue.Items[0].Revision})
+	must(t, err)
+	assertCommentVisibility(t, a.client(""), item.ID, self.ID, true)
+}
 
 func authoredArticle(t *testing.T, a *application, author *ck.Client, entity string) catalog.Content {
 	t.Helper()

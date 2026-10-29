@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -223,7 +224,18 @@ func (c *comments) resolve(ctx context.Context, cid, state string, d content.Rev
 		}
 		return err
 	}
-	if err := c.rt.guardErasedSubject(ctx, tx, subject); err != nil {
+	subjects := []string{subject, d.Reviewer}
+	sort.Strings(subjects)
+	for _, id := range subjects {
+		if err := c.rt.lockErasureSubject(ctx, tx, id); err != nil {
+			return err
+		}
+	}
+	if err := c.rt.checkSubjectNotErased(ctx, tx, subject); err != nil {
+		return err
+	}
+	reviewer, err := c.rt.provenance(ctx, tx, d.Reviewer)
+	if err != nil {
 		return err
 	}
 	if err := c.lockThread(ctx, tx, cid); err != nil {
@@ -234,9 +246,9 @@ func (c *comments) resolve(ctx context.Context, cid, state string, d content.Rev
 	var hidden bool
 	var k contentref.ContentKey
 	err = tx.QueryRow(ctx, `UPDATE `+c.s.t.comments+` SET moderation = $3, moderation_reason = CASE WHEN $3 = 'approved' THEN NULL ELSE coalesce(nullif($4, ''), moderation_reason) END,
-		moderated_by = $5, moderated_at = now(), updated_at = now()
+		moderated_by = NULLIF($5, ''), moderated_at = now(), updated_at = now()
 		WHERE id = $1 AND tenant_id = $2 AND moderation = 'held' AND deleted_at IS NULL AND moderation_revision = $6
-		RETURNING reply_to_id::text, deleted_at, author_hidden, `+keyCols, cid, c.s.tenant, state, d.Reason, d.Reviewer, d.Revision).
+		RETURNING reply_to_id::text, deleted_at, author_hidden, `+keyCols, cid, c.s.tenant, state, d.Reason, reviewer, d.Revision).
 		Scan(&replyTo, &deletedAt, &hidden, &k.TenantID, &k.ContentKind, &k.ContentID, versionid.Into(&k.ContentVersionID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
@@ -255,14 +267,11 @@ func (c *comments) resolve(ctx context.Context, cid, state string, d content.Rev
 	return tx.Commit(ctx)
 }
 
-// lockThread locks a comment and the comment it replies to in id order, the
-// order erasure locks comments in, before a write changes the reply's state
-// and its parent's reply_count. reply_to_id never changes, so the parent is
-// known up front; imported comments keep explicit ids, so it need not sort
-// first.
-func (c *comments) lockThread(ctx context.Context, tx pgx.Tx, cid string) error {
-	_, err := tx.Exec(ctx, `SELECT 1 FROM `+c.s.t.comments+` WHERE tenant_id = $2 AND (id = $1 OR id = (SELECT reply_to_id FROM `+c.s.t.comments+` WHERE tenant_id = $2 AND id = $1))
-		ORDER BY id FOR UPDATE`, cid, c.s.tenant)
+// lockThread locks comments and their parents in id order before changing
+// thread state or counts. Imports take these locks before writing replies too.
+func (c *comments) lockThread(ctx context.Context, tx pgx.Tx, ids ...string) error {
+	_, err := tx.Exec(ctx, `SELECT 1 FROM `+c.s.t.comments+` WHERE tenant_id = $2 AND (id = ANY($1::uuid[]) OR id IN (SELECT reply_to_id FROM `+c.s.t.comments+` WHERE tenant_id = $2 AND id = ANY($1::uuid[])))
+		ORDER BY id FOR UPDATE`, ids, c.s.tenant)
 	return err
 }
 

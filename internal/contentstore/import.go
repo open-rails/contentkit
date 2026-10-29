@@ -167,8 +167,9 @@ func (rt *Runtime) ImportComments(ctx context.Context, tx pgx.Tx, in []content.I
 		key             keyRow
 	}
 	known := map[string]stored{}
+	observedIDs := append(slices.Clone(ids), parents...)
 	res, err := tx.Query(ctx, `SELECT id::text, tenant_id, coalesce(reply_to_id::text, ''), content_kind, content_id, content_version_id FROM `+s.t.comments+`
- WHERE id = ANY($1::uuid[])`, append(slices.Clone(ids), parents...))
+ WHERE id = ANY($1::uuid[])`, observedIDs)
 	if err != nil {
 		return err
 	}
@@ -234,6 +235,41 @@ func (rt *Runtime) ImportComments(ctx context.Context, tx pgx.Tx, in []content.I
 	data, err := json.Marshal(rows)
 	if err != nil {
 		return err
+	}
+	for id := range threads {
+		ids = append(ids, id)
+	}
+	if err := rt.comments.lockThread(ctx, tx, ids...); err != nil {
+		return err
+	}
+	// A concurrent import may have moved a reply while these locks waited.
+	// Retry through the importer's savepoint fallback instead of locking its
+	// newly discovered parent out of order or missing that parent's recount.
+	res, err = tx.Query(ctx, `SELECT id::text, tenant_id, coalesce(reply_to_id::text, ''), content_kind, content_id, content_version_id FROM `+s.t.comments+`
+ WHERE id = ANY($1::uuid[])`, observedIDs)
+	if err != nil {
+		return err
+	}
+	seen := 0
+	for res.Next() {
+		var id string
+		var c stored
+		if err := res.Scan(&id, &c.tenant, &c.replyTo, &c.key.Kind, &c.key.ID, versionid.Into(&c.key.Version)); err != nil {
+			res.Close()
+			return err
+		}
+		if before, ok := known[id]; !ok || before != c {
+			res.Close()
+			return fmt.Errorf("%w: comment %s moved during import; retry", ErrConflict, id)
+		}
+		seen++
+	}
+	res.Close()
+	if err := res.Err(); err != nil {
+		return err
+	}
+	if seen != len(known) {
+		return fmt.Errorf("%w: comment dependencies changed during import; retry", ErrConflict)
 	}
 	if _, err := tx.Exec(ctx, `INSERT INTO `+s.t.comments+` AS c (id, tenant_id, content_kind, content_id, content_version_id, language, reply_to_id,
  user_id, anon_name, body, deleted_at, created_at, updated_at, author_hidden)
@@ -727,6 +763,21 @@ func (rt *Runtime) RaisePreferenceFloor(ctx context.Context, tx pgx.Tx, floor in
 func (rt *Runtime) ImportDeletes(ctx context.Context, tx pgx.Tx, comments, polls []string) error {
 	s := rt.store
 	if len(comments) > 0 {
+		threadsQuery := `SELECT array_agg(id::text ORDER BY id), array_agg(coalesce(reply_to_id::text, '') ORDER BY id)
+ FROM ` + s.t.comments + ` WHERE tenant_id = $1 AND id = ANY($2::uuid[])`
+		var ids, parents, lockedIDs, lockedParents []string
+		if err := tx.QueryRow(ctx, threadsQuery, rt.tenant, comments).Scan(&ids, &parents); err != nil {
+			return err
+		}
+		if err := rt.comments.lockThread(ctx, tx, comments...); err != nil {
+			return err
+		}
+		if err := tx.QueryRow(ctx, threadsQuery, rt.tenant, comments).Scan(&lockedIDs, &lockedParents); err != nil {
+			return err
+		}
+		if !slices.Equal(ids, lockedIDs) || !slices.Equal(parents, lockedParents) {
+			return fmt.Errorf("%w: comment threads changed during deletion; retry", ErrConflict)
+		}
 		rows, err := tx.Query(ctx, `UPDATE `+s.t.comments+` SET deleted_at = now(), updated_at = now()
  WHERE tenant_id = $1 AND id = ANY($2::uuid[]) AND deleted_at IS NULL
  RETURNING coalesce(reply_to_id::text, ''), content_kind, content_id, coalesce(content_version_id, '')`, rt.tenant, comments)
