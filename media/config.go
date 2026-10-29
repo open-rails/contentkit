@@ -128,10 +128,6 @@ type Publish struct {
 	// Renditions are the private image presets from Pages a reader reads,
 	// the first at reading size: "low", "thumb".
 	Renditions []string `json:"renditions"`
-	// Previews names a declared public preview preset (First caps the reader
-	// preview count). Its uploads render normally; reader plans may also sign
-	// existing private renditions under the live access policy.
-	Previews string `json:"previews,omitempty"`
 	// Playback is the declared {name} audio upload the reader plays unchanged.
 	Playback string `json:"playback,omitempty"`
 	// Import is the {name} upload of page archives (application/zip),
@@ -221,17 +217,10 @@ func wider(a, b Aspect) bool { return a.W*b.H > b.W*a.H }
 // shape of its Width×Height box (both or neither), fitted per Fit, else of
 // the edit. It is never in the manifest; the object carries its from and fp
 // as metadata. A missing one is served Default by the media gateway.
-//
-// First makes it a preview: the first First attached uploads of From (a
-// {name} pattern) in manifest order, {n} in To their position from 1
-// ("preview-{n}.webp"). Anyone who can see the item sees them; a position is
-// rendered again when another upload takes it, and names past the last
-// upload are deleted. Everything else of the item stays private.
 type Public struct {
 	Name   string `json:"name"`
 	From   string `json:"from"`
-	To     string `json:"to"` // "cover-{w}.webp", "{name}.webp", "preview-{n}.webp"
-	First  int    `json:"first,omitempty"`
+	To     string `json:"to"` // "cover-{w}.webp", "{name}.webp"
 	Widths []int  `json:"widths,omitempty"`
 	Image  Image  `json:"image"`
 	// Default is a path in Kind.Defaults, rendered to the kind's _default
@@ -240,7 +229,7 @@ type Public struct {
 	// Stable also keeps the current image at the logical names (To without
 	// a generation), overwritten in place: a URL built from the item's id,
 	// which the gateway answers with Default while none is current. One
-	// image per item: no {name}, no First.
+	// image per item: no {name}.
 	Stable bool `json:"stable,omitempty"`
 }
 
@@ -254,7 +243,6 @@ type Image struct {
 	Height  int         `json:"height,omitempty"`
 	Fit     FitMode     `json:"fit,omitempty"`
 	Quality int         `json:"quality,omitempty"` // default 80
-	Blur    float64     `json:"blur,omitempty"`
 	// Aspect and MinWidth bound an upload's edit when this is its public
 	// preset's image: the crop is fitted to Aspect, and an edit narrower
 	// than MinWidth fails.

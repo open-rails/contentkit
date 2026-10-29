@@ -446,7 +446,7 @@ worker leading its River schema also exports the queue backlog
 (`media_video_jobs`, `media_video_tenant_backlog`, ...); hosts collect none.
 
 **Images** (`media/image`, CGO over libvips): WebP at each `Image` spec
-(inside or cover box, quality, blur), through the upload's edit (crop in
+(inside or cover box, quality), through the upload's edit (crop in
 EXIF-oriented source pixels, then a clockwise quarter rotation); nothing is
 upscaled. GIF and WebP animations keep every frame, delay and loop count;
 `MaxPixels` (100 MP over all frames), `MaxFrames` (1000) and
@@ -460,7 +460,7 @@ as object metadata.
 
 A private image preset can instead use `Format: media.ImageFormatSource`
 and `To: "download-pages/{name}{ext}"` to retain the upload's format.
-With no edit or blur and an inside fit, files already inside the configured
+With no edit and an inside fit, files already inside the configured
 box keep their exact bytes; zero dimensions leave that side unbounded.
 `Width: 6000, Height: 6000` proportionally limits the longest edge to 6,000
 pixels without cropping or enlarging. Only an oversized or edited image is
@@ -529,8 +529,13 @@ copy, repartition or rename image objects. A ready-file snapshot references the
 version's existing immutable renditions; every chapter reads that same version
 item. The server evaluates released pages and access when a reader asks, signs
 only requested authorized files, and excludes original uploads and archives
-from ordinary reader grants. Preview pages use those same existing renditions.
-Reader plans expose their signed-preview expiry so clients can refresh URLs.
+from ordinary reader grants. A locked version's free preview pages (its
+rule's `preview`, else its kind's) are the same for every reader who does not
+open it, so its release copies those leading released pages' renditions to the
+version's public area: the reader plan lists them as plain, cacheable public
+URLs without a grant, and a later release with fewer preview pages (or none)
+retires the copies it no longer lists. Scheduled chapters never contribute
+preview pages before they release.
 Media reads accept up to 64 repeated `path` query parameters to sign the
 selected permitted files without changing their manifest order. The SDK
 batches larger selections and refreshes active grants before expiry.
@@ -660,13 +665,19 @@ Likes and favorites keep their existing atomic counters.
 Entity writes record `entity.*` events on the catalog event log. Merging or
 deleting an entity a host links to is allowed; hosts repair their links from
 `GET /v1/manage/entities?ids=`, `GET /v1/manage/entities/match` and the events.
+A deleted entity's avatar and cover are unavailable to everyone until it is
+restored: after the write commits, the same request writes its item's deletion
+fence and the gateway answers 404; no bytes move. A failure after the commit is
+reported, and retrying the same write or import completes it. Purge makes the
+fence permanent and erases the files.
 
 The engine builds separate entity and channel interfaces from `Config.Content`.
 Metadata operations use `/entities`; channel operations use `/channels`. Channels
 retain their editor teams and optional billing entitlements. Their lifecycle
 operations call AuthKit directly, report failures and support idempotent caller
 retries. No entity/channel sync worker is registered. Physical deletion stays
-with the content-purge sweep. Ordinary tags and series need no lifecycle work.
+with the content-purge sweep. Ordinary tags and series need no lifecycle work
+beyond their media fence.
 One primary channel governs the overall item and all of its versions; a repost
 only references that original from another channel and grants no editing rights.
 

@@ -40,6 +40,9 @@ type releasePlan struct {
 	Retained    bool                   `json:"retained,omitempty"`
 	Waiting     bool                   `json:"waiting"`
 	NextAt      *time.Time             `json:"next_at,omitempty"`
+	// Preview is how many leading Pages are delivered publicly as a locked
+	// version's free preview.
+	Preview int `json:"preview,omitempty"`
 }
 
 type publicationCompletion interface {
@@ -139,7 +142,8 @@ func (s *Service) releaseDueTx(ctx context.Context, tx pgx.Tx, t versions.Target
 		return time.Time{}, nil
 	}
 	due := s.o.Now()
-	if !released && !storageStarted && state == "published" && parentState == "published" {
+	// A completed release no longer keeps its plan; release_id records it.
+	if !released && !previouslyPublished && !storageStarted && state == "published" && parentState == "published" {
 		for _, value := range []*time.Time{at, parentAt} {
 			if value != nil && value.After(due) {
 				due = *value
@@ -447,6 +451,23 @@ func (s *Service) planRelease(ctx context.Context, tx pgx.Tx, t versions.Target)
 		if rule.Free(now) {
 			area = layout.AreaPublic
 		}
+		// A locked version's free pages are the same for every non-payer, so
+		// their renditions are public like a free version's.
+		previewed := map[string]bool{}
+		if p := rule.Previewed(s.o.Kinds.Kinds[kind]).Preview; live && area == layout.AreaPrivate && p != nil {
+			plan.Preview = min(p.Pages, len(plan.Pages.Pages))
+			for _, pg := range plan.Pages.Pages[:plan.Preview] {
+				for _, r := range pg.Files {
+					previewed[r.Blob] = true
+				}
+			}
+		}
+		placed := func(blob string) string {
+			if previewed[blob] {
+				return layout.AreaPublic
+			}
+			return area
+		}
 		// Fingerprinting ignores allocation moves but includes ordered source
 		// revisions, chapter boundaries and desired areas. A move's own callback
 		// therefore cannot schedule an endless sequence of identical copies.
@@ -543,7 +564,7 @@ func (s *Service) planRelease(ctx context.Context, tx pgx.Tx, t versions.Target)
 				if spec := private(k, f.Preset); spec != nil && spec.HostOnly {
 					continue
 				}
-				destination = area
+				destination = placed(f.Blob)
 			}
 			if err := add(f.Blob, destination); err != nil {
 				return nil, err
@@ -564,7 +585,7 @@ func (s *Service) planRelease(ctx context.Context, tx pgx.Tx, t versions.Target)
 				}
 				plan.View.Files = append(plan.View.Files, f)
 				if !f.IsUpload() || k.AudioUpload(f) {
-					if err := add(f.Blob, area); err != nil {
+					if err := add(f.Blob, placed(f.Blob)); err != nil {
 						return nil, err
 					}
 				}
@@ -601,7 +622,7 @@ func finishReleasePlanFingerprint(plan *releasePlan, identity []any, state, pare
 	}
 	// A scheduled policy can change eligibility while all objects remain in
 	// private/. Its completed policy must still advance the active revision.
-	encoded, err := json.Marshal([]any{identity, boundaries, plan.Chapters, state, parentState, rule, plan.EffectiveAccess, plan.Released})
+	encoded, err := json.Marshal([]any{identity, boundaries, plan.Chapters, state, parentState, rule, plan.EffectiveAccess, plan.Released, plan.Preview})
 	if err != nil {
 		return err
 	}
@@ -678,7 +699,7 @@ func (s *Service) runRelease(ctx context.Context, id string) (resultErr error) {
 	var t versions.Target
 	err := s.o.Pool.QueryRow(ctx, `SELECT content_id,version_id FROM `+s.releaseRequestsTable()+` WHERE tenant_id=$1 AND id=$2::uuid`, s.o.Tenant, id).Scan(&t.Content, &t.Version)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return nil
+		return errRequestGone
 	}
 	if err != nil {
 		return err
@@ -764,7 +785,12 @@ func (s *Service) runRelease(ctx context.Context, id string) (resultErr error) {
 			var raw []byte
 			var due time.Time
 			var state string
-			if err := tx.QueryRow(ctx, `SELECT current,state,scheduled_at,CASE WHEN state='retiring' THEN result ELSE plan END FROM `+s.releaseRequestsTable()+` WHERE tenant_id=$1 AND id=$2::uuid FOR UPDATE`, s.o.Tenant, id).Scan(&current, &state, &due, &raw); err != nil {
+			err := tx.QueryRow(ctx, `SELECT current,state,scheduled_at,CASE WHEN state='retiring' THEN result ELSE plan END FROM `+s.releaseRequestsTable()+` WHERE tenant_id=$1 AND id=$2::uuid FOR UPDATE`, s.o.Tenant, id).Scan(&current, &state, &due, &raw)
+			if errors.Is(err, pgx.ErrNoRows) {
+				// A newer release pruned this superseded request while it waited.
+				return errRequestGone
+			}
+			if err != nil {
 				return err
 			}
 			if state == "retiring" {
@@ -781,7 +807,6 @@ func (s *Service) runRelease(ctx context.Context, id string) (resultErr error) {
 			if len(raw) > 0 && string(raw) != "null" {
 				return json.Unmarshal(raw, &plan)
 			}
-			var err error
 			plan, err = s.planRelease(ctx, tx, t)
 			if err != nil {
 				return err
@@ -796,12 +821,8 @@ func (s *Service) runRelease(ctx context.Context, id string) (resultErr error) {
 				return err
 			}
 			if active != nil && active.Fingerprint == plan.Fingerprint && plan.storageSettled(active) {
-				active.Waiting, active.NextAt = plan.Waiting, plan.NextAt
-				body, err := json.Marshal(active)
-				if err != nil {
-					return err
-				}
-				if _, err := tx.Exec(ctx, `UPDATE `+s.releaseRequestsTable()+` SET state='completed',result=$3,completed_at=$4,updated_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2::uuid`, s.o.Tenant, id, body, s.o.Now()); err != nil {
+				// The live release already serves this plan; it stays the only copy.
+				if _, err := tx.Exec(ctx, `UPDATE `+s.releaseRequestsTable()+` SET state='completed',completed_at=$3,updated_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2::uuid`, s.o.Tenant, id, s.o.Now()); err != nil {
 					return err
 				}
 				current = false
@@ -872,7 +893,7 @@ func (s *Service) runRelease(ctx context.Context, id string) (resultErr error) {
 			}
 			at := s.o.Now()
 			if len(plan.Chapters) > 0 {
-				if _, err := tx.Exec(ctx, `UPDATE `+s.t.segments+` SET released_at=coalesce(released_at,$4),release_id=$5::uuid WHERE tenant_id=$1 AND version_id=$2 AND id=ANY($3)`, s.o.Tenant, t.Version, plan.Chapters, at, id); err != nil {
+				if _, err := tx.Exec(ctx, `UPDATE `+s.t.segments+` SET released_at=coalesce(released_at,$4) WHERE tenant_id=$1 AND version_id=$2 AND id=ANY($3)`, s.o.Tenant, t.Version, plan.Chapters, at); err != nil {
 					return err
 				}
 			}
@@ -958,7 +979,8 @@ func (s *Service) finishRetirement(ctx context.Context, id string, plan *release
 			return errRetired
 		}
 		at := s.o.Now()
-		if _, err := tx.Exec(ctx, `UPDATE `+s.releaseRequestsTable()+` SET state='completed',completed_at=$3,error=NULL,updated_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2::uuid`, s.o.Tenant, id, at); err != nil {
+		// The result holds the frozen plan with its delivered references.
+		if _, err := tx.Exec(ctx, `UPDATE `+s.releaseRequestsTable()+` SET state='completed',completed_at=$3,plan=NULL,error=NULL,updated_at=clock_timestamp() WHERE tenant_id=$1 AND id=$2::uuid`, s.o.Tenant, id, at); err != nil {
 			return err
 		}
 		completion, ok := s.o.Facets.(publicationCompletion)
@@ -966,6 +988,11 @@ func (s *Service) finishRetirement(ctx context.Context, id string, plan *release
 			return errors.New("versions: catalog publication completion is not configured")
 		}
 		if err := completion.PublicationCompletedTx(ctx, tx, plan.Target, id, plan.Chapters, plan.Released, at); err != nil {
+			return err
+		}
+		// Under the source lock no other run is active, and this release
+		// withdrew every earlier delivery, so superseded requests are spent.
+		if err := s.pruneRequestsTx(ctx, tx, plan.Target, true); err != nil {
 			return err
 		}
 		if current && plan.NextAt != nil {

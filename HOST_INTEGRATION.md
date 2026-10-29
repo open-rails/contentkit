@@ -356,12 +356,16 @@ preview, counts or comments. With it, exactly what it names.
 | `views` | view counts (cards, detail) |
 | `comments` | comments, as below |
 
-Hidden counts are absent, never zero. `preview` is the free pages or
-segments when the access rule names none; a rule's own `preview` wins.
+Hidden counts are absent, never zero. `preview` is the free leading pages
+when the access rule names none; a rule's own `preview` wins. Release copies
+those released pages' reading renditions to the version's public area, and the
+reader plan lists them as unsigned public URLs to every reader who does not
+open the version.
 Detail, cards (lists, search, typeahead, rails, similar, recommendations,
 entity pages, `me` favorites and history), the reader plan and interactions
 apply it; the media read API lists a locked item's public files alone (its
-cover, and previews where named), never its private files or their count.
+cover, and a version's free preview pages), never its private files or their
+count.
 Staff, creators and primary-channel editors see everything. Sitemaps,
 codes and notifications carry only ids, codes and paths; stats and import
 are staff's. `GET /v1/kinds` spells out each kind's effective `locked`.
@@ -563,6 +567,8 @@ refuses the text) and `GET|POST|DELETE /v1/moderation/ip-bans`
 (`{"network", "reason", "until"}`: an address or CIDR network). They apply to
 every comment body and anonymous name before the moderator; an IP-banned write
 answers `403 comment_banned` with ban scope `ip`, and moderators are exempt.
+Imported comments get the mask words too, but a reject word never refuses
+imported history.
 
 Doujins adapter (`moderator{svc}` on the old `Moderation` port): implement
 `Screen` instead of `Check`; return `Verdict{Decision: DecisionReject, Reason}`
@@ -972,7 +978,6 @@ var Gallery = media.Kind{Name: "gallery", KeepOriginals: true,
 	Public: []media.Public{
 		{Name: "cover", From: "cover", To: "cover-{w}.webp", Widths: []int{230, 460, 920},
 			Image: media.Image{Aspect: media.Ratio("46:65")}, Default: "cover.png"},
-		{Name: "preview", From: "originals/{name}", To: "preview-{n}.webp", First: 3, Image: media.Image{Width: 1280}},
 	},
 	Defaults: defaultsFS, // holds cover.png
 }
@@ -1028,7 +1033,7 @@ worker, _ := cfg.MediaRegistry() // the stock worker's MEDIA_KINDS_FILE
   Image presets default to WebP. A private preset with
   `Image.Format: media.ImageFormatSource` must end its `To` with `{ext}`
   (the upload's original extension), such as `download-pages/{name}{ext}`.
-  With an inside fit and no edit/blur, a source within its width/height box
+  With an inside fit and no edit, a source within its width/height box
   passes through byte-for-byte. `Width: 6000, Height: 6000` bounds either
   edge proportionally; zero leaves an edge unbounded. Oversized or edited
   JPEG, PNG, WebP and GIF files retain their codec, including animation;
@@ -1056,16 +1061,10 @@ worker, _ := cfg.MediaRegistry() // the stock worker's MEDIA_KINDS_FILE
   so every name exists). The object carries its `from` and `fp` as metadata.
   The first public preset of an upload bounds its edit: the crop is fitted to
   `Image.Aspect`, and an edit narrower than `MinWidth` fails.
-- **Previews** are public presets with `First: N`: the first N attached
-  uploads of a `{name}` Upload in manifest order, `{n}` in `To` their position
-  from 1, so the URLs
-  (`{BaseURL}/v1/{ns}/{kind}/{id}/public/preview-{n}.webp`) need no manifest.
-  Anyone who can see the item sees them; a hidden item has none. A position
-  is rendered again when another upload takes it (a reorder, an insert, a
-  removal) or its upload is replaced or cropped again; its old image is
-  deleted with that commit, so the name is a 404 until the worker has
-  rendered it, and names past the last upload are deleted. This is the only way to show part
-  of an item: there is no partial access to `private/`.
+- **Previews.** There is no partial access to `private/`. A `Publish`
+  kind shows part of a locked version through its access rule's (or kind's
+  `locked`) `preview`: release copies the leading released pages' renditions
+  to `public/`, and the reader plan lists their URLs.
 - **Originals.** `KeepOriginals` keeps uploads once their private outputs
   exist (otherwise the blob is dropped and the file marked `gone`; public
   presets' sources are always kept). Except a version's declared audio
@@ -1171,16 +1170,15 @@ The media route group serves the read API at `/v1/media`
 (`Config.Media.ReadLimit`):
 
 - `GET /{kind}/{id}?prefix=low-res/&offset=&limit=&download&editor` answers
-  `{access, expires, meta, previews, public, locked, total, hls, files: [{path, type, size, w, h, url}]}`
+  `{access, expires, meta, public, locked, total, hls, files: [{path, type, size, w, h, url}]}`
   in manifest order. `access` is `full` or `none`. With access every listed
   file has a URL: plain under the item cookie
   (`Path=/v1/{ns}/{kind}/{id}/private/`) in cookie mode, with `?t={item
-  token}` in URL mode. Without it there is no URL, token, cookie, meta or
-  file: no path, size or count tells what a locked item holds, only
-  `locked: true` that it holds something. `previews` and `public` are the
-  item's public files (covers; a version's previews only as many as its
-  access rule or kind's `locked.preview` names), for every viewer who can
-  see it. `expires`
+  token}` in URL mode. Without it there is no token, cookie or meta, and the
+  only files listed are public ones: a locked version's free preview pages,
+  delivered publicly at release. Nothing else tells what a locked item holds,
+  only `locked: true` that it holds something. `public` is the item's public
+  files (covers), for every viewer who can see it. `expires`
   is when the token stops working; a read before then answers the same token,
   so clients keep what they have and read again shortly before (the SDK's
   gallery and player do). With `download`, each URL carries the file's
@@ -1303,7 +1301,8 @@ next one. Browsers keep using a read's `public` or `usePublicImage`.
   rules, expires temp objects and aborts multipart uploads after seven days.
   Use equivalent server settings where multipart lifecycle is unsupported.
 - `jobs.RetireItemsTx(ctx, tx, media.Deletion{Ref, Owner})` records an
-  incarnation-bound deletion with the owning tombstone. `RetirementStartedTx`
+  incarnation-bound deletion with the owning tombstone; executing it makes a
+  soft-deleted item's fence permanent. `RetirementStartedTx`
   prevents restoration after the claim; `RetirementComplete` permits the owner
   to mark completion only after physical deletion succeeds. The content purge
   retains exact late-write targets after the owning row is finalized.
@@ -1445,16 +1444,17 @@ the host's periodic jobs. The worker migrates its schema itself.
     process). It is enforced in `Reader.Grant`, so reads and playlists
     pass it (downloads have their own `media.downloads` quotas); over the limit the read API answers 429
     `rate_limited` with `Retry-After`, and `Grant` returns a `LimitError`
-    (`ErrRateLimited`). Opening the same item again within the hour is free;
+    (`ErrRateLimited`). Opening the same item again within an hour of first
+    opening it is free;
     viewers without access, the item's editors and `Issuance.Exempt` actors
     (staff) are not counted. An anonymous viewer is counted by `Actor.IP`
     (an IPv6 address by its /64). The read API fills it from `RemoteAddr`;
     a host route that calls `Grant` or `Read` itself for an anonymous actor
     must set it, or the grant fails with `ErrNoViewerKey` rather than put
-    every anonymous viewer in one count. The per-process count holds at most
-    65,536 viewers; past that it forgets some, who start again.
-  - `HandlerOptions.Limit` bounds requests to the read API (default 2/s,
-    burst 120 per viewer).
+    every anonymous viewer in one count. The per-process count forgets some
+    viewers once it is full, and they start again.
+  - `HandlerOptions.Limit` bounds requests to the read API (at most `Burst`
+    per `Burst/PerSecond` per viewer; default 120 per minute).
   - The ingress of the media host limits downloads per IP (Traefik's
     `rateLimit`). Clients treat its 429 as "over the limit" and do not retry
     in a loop (the SDK does not).
@@ -1466,9 +1466,9 @@ the host's periodic jobs. The worker migrates its schema itself.
 - **Multiple replicas**: the limit is per process unless `Limit.Redis` is set
   (logged at startup), so N replicas allow N times it. Pass the host's
   go-redis client for Redis or Microsoft Garnet (`Limit.KeyPrefix`, default
-  `contentkit:media:rl:`); replicas then share one sliding-window count per
-  viewer (at most `Burst` per `Burst/PerSecond` window; plain INCR/PEXPIRE/GET
-  in MULTI, no Lua, keys expire after two windows; replica clocks need NTP).
+  `contentkit:media:rl:`); replicas then share one sliding window per viewer
+  (sorted-set commands in MULTI, no Lua, keys expire a window after their last
+  request; replica clocks need NTP).
   A Redis error fails open to the per-process limit for 1 s, logs a warning
   once per outage and increments expvar
   `contentkit_media_ratelimit_redis_errors`: the limit is abuse protection,
@@ -1598,7 +1598,10 @@ The same channel/group identity makes caller retries safe, including a lost
 remote response after commit. Incomplete/deleted channels grant no authority.
 There is no `contentkit_entity_sync` or replacement lifecycle job. Imports finish
 their channel calls after committing identity, then report provider failures per
-record so replay uses the same external IDs.
+record so replay uses the same external IDs. Deleting or restoring any entity,
+through the API or an import, finishes its media fence the same way: the
+gateway answers 404 for a deleted entity's avatar and cover until it is
+restored, and a failure is reported for the caller to retry.
 
 ## Authored content and editions
 

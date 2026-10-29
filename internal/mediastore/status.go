@@ -186,7 +186,7 @@ func statusOf(k *RegisteredKind, m *Manifest, progress media.EncodeStatus) *medi
 				continue
 			}
 			if public := k.public(name); public != nil {
-				publication, ok := k.Current(m, f, public)
+				publication, ok := k.Current(f, public)
 				if !ok || !publication.Ready() {
 					continue
 				}

@@ -139,7 +139,7 @@ func (r *Registry) logicalImage(ref contentref.ContentRef, preset string) (media
 		return media.PublicImage{Preset: preset}, false
 	}
 	image := media.PublicImage{Preset: preset}
-	names := item.Kind().PublicNames(nil, p, "")
+	names := item.Kind().PublicNames(p, "")
 	for i, name := range names {
 		w := p.Image.Width
 		if len(p.Widths) > 0 {
@@ -155,9 +155,9 @@ func (r *Registry) logicalImage(ref contentref.ContentRef, preset string) (media
 }
 
 // hasDefault reports a default image at the preset's names: a preset
-// declaring Default, neither a preview nor per upload ({name}).
+// declaring Default, not per upload ({name}).
 func hasDefault(p *media.Public) bool {
-	return p.Default != "" && p.First == 0 && !strings.Contains(p.To, "{name}")
+	return p.Default != "" && !strings.Contains(p.To, "{name}")
 }
 
 // publication is one current publication as the projection stores it.
@@ -185,7 +185,7 @@ func (k *RegisteredKind) publications(m *Manifest) []publication {
 			continue
 		}
 		for _, p := range k.PublicFor(f.Path) {
-			pub, ok := k.Current(m, f, p)
+			pub, ok := k.Current(f, p)
 			if !ok {
 				continue
 			}

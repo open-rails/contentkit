@@ -18,6 +18,7 @@ import (
 	entitlement "github.com/open-rails/contentkit/internal/entitlement"
 	"github.com/open-rails/contentkit/internal/gate"
 	"github.com/open-rails/contentkit/internal/httpapi"
+	"github.com/open-rails/contentkit/internal/ratelimit"
 	"github.com/open-rails/contentkit/internal/resolve"
 	media "github.com/open-rails/contentkit/media"
 	"github.com/open-rails/helpers/eventlog"
@@ -208,10 +209,10 @@ func limited(o HandlerOptions, log *slog.Logger) func(http.Handler) http.Handler
 	return func(next http.Handler) http.Handler { return limit(lim, next, log) }
 }
 
-func limit(lim rateLimiter, next http.Handler, log *slog.Logger) http.Handler {
+func limit(lim *ratelimit.Limiter, next http.Handler, log *slog.Logger) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		actor := gate.Actor(req.Context())
-		if ok, wait := lim.allow(req.Context(), viewerKey(actor)); !ok {
+		if ok, wait := lim.Allow(req.Context(), viewerKey(actor)); !ok {
 			log.Warn("media read rate limited", "viewer", actor.ID, "anonymous", actor.Anonymous, "path", req.URL.Path)
 			w.Header().Set("Retry-After", strconv.Itoa(max(1, int(math.Ceil(wait.Seconds())))))
 			w.Header().Set("Cache-Control", "no-store")
@@ -246,7 +247,7 @@ func (g *Grant) logIssued(req *http.Request, log *slog.Logger) {
 	access := media.AccessNone
 	if g.Full() {
 		access = media.AccessFull
-	} else if len(g.files) > 0 || g.inspectionRead {
+	} else if g.inspectionRead {
 		access = media.AccessPartial
 	}
 	attrs := []any{"viewer", g.actor.ID, "anonymous", g.actor.Anonymous, "ref", g.Item.Ref().String(),

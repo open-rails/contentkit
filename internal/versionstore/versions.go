@@ -119,7 +119,7 @@ func New(o Options) (*Service, error) {
 
 // Hooks are media's hooks over the content model, for media.NewRegistry.
 func (s *Service) Hooks() mediastore.Hooks {
-	return mediastore.Hooks{Resolver: resolver{s}, ReaderManifest: s.readerManifest, CanUpload: uploads{s}, ValidatePathsChanged: s.validatePathsChanged, PathsChanged: s.pathsChanged, ItemReady: s.itemReady, ItemProgressed: s.itemProgressed, ItemCommitted: s.itemCommitted, Failed: s.failed}
+	return mediastore.Hooks{Resolver: resolver{s}, ReaderManifest: s.readerManifest, CanUpload: uploads{s}, ValidatePathsChanged: s.validatePathsChanged, PathsChanged: s.pathsChanged, ItemCommitted: s.itemCommitted, Failed: s.failed}
 }
 
 // Bind attaches the media runtime built over Hooks.

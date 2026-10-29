@@ -46,19 +46,8 @@ type Hooks struct {
 	PathsChanged func(ctx context.Context, tx pgx.Tx, ref contentref.ContentRef, renames map[string]string, removed []string) error
 	// CanUpload says who may write which upload path.
 	CanUpload media.UploadAuthorizer
-	// ItemReady reports an item whose processing settled (ready, or failed
-	// with nothing processing) in a host transaction, after the worker's
-	// job, synchronously in its completion transaction. It must be idempotent; an error
-	// retries.
-	ItemReady func(ctx context.Context, tx pgx.Tx, ref contentref.ContentRef, r media.Readiness) error
-	// ItemProgressed reports changed preparation while other outputs are
-	// pending. It never means a partial reader release is available. It runs in a
-	// processor completion transaction alongside ItemReady, which
-	// reports final completion. Optional; idempotent; an error retries.
-	ItemProgressed func(ctx context.Context, tx pgx.Tx, ref contentref.ContentRef) error
 	// ItemCommitted reports an item a commit changed, before its processing
-	// runs; ItemReady reports the far end. Idempotent; an error fails the
-	// commit.
+	// runs. Idempotent; an error fails the commit.
 	ItemCommitted func(ctx context.Context, ref contentref.ContentRef) error
 	// Failed reports an upload a producer cannot process, where it runs.
 	Failed func(ctx context.Context, ref contentref.ContentRef, path string, err error)

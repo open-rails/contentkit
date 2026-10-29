@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/rand/v2"
+	"slices"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -88,11 +89,22 @@ func New(o Options) (*Limiter, error) {
 // long until one fits. A Redis error falls back to the per-process log for
 // redisBackoff.
 func (l *Limiter) Allow(ctx context.Context, key string) (bool, time.Duration) {
+	return l.allow(ctx, key, "")
+}
+
+// AllowMember is Allow counting distinct members: a member key already has
+// in a window is admitted again without counting there, from the time it was
+// first admitted.
+func (l *Limiter) AllowMember(ctx context.Context, key, member string) (bool, time.Duration) {
+	return l.allow(ctx, key, member)
+}
+
+func (l *Limiter) allow(ctx context.Context, key, member string) (bool, time.Duration) {
 	t := l.now().UnixMilli()
 	if l.rdb == nil || t < l.down.Load() {
-		return l.local.allow(key, t)
+		return l.local.allow(key, member, t)
 	}
-	ok, wait, err := l.redisAllow(ctx, key, t)
+	ok, wait, err := l.redisAllow(ctx, key, member, t)
 	if err != nil {
 		if l.errs != nil {
 			l.errs.Add(1)
@@ -100,7 +112,7 @@ func (l *Limiter) Allow(ctx context.Context, key string) (bool, time.Duration) {
 		if l.down.Swap(t+redisBackoff.Milliseconds()) <= t-redisBackoff.Milliseconds() {
 			l.log.Warn("rate limit: Redis unavailable, counting per process", "prefix", l.prefix, "err", err.Error())
 		}
-		return l.local.allow(key, t)
+		return l.local.allow(key, member, t)
 	}
 	return ok, wait
 }
@@ -108,22 +120,26 @@ func (l *Limiter) Allow(ctx context.Context, key string) (bool, time.Duration) {
 // redisAllow logs the event in one sorted set per window (score: its time in
 // ms) in one MULTI, dropping times a window no longer covers, and reads the
 // count and the entry Limit places from the newest; a refusal takes the event
-// back out. Keys are {prefix}{key}:{per} (one hash slot per key, so MULTI is
-// cluster-safe) and expire a window after their last event. Times come from
-// each replica's clock, so replicas need NTP. No Lua: Garnet ships with
-// scripting off.
-func (l *Limiter) redisAllow(ctx context.Context, key string, t int64) (bool, time.Duration, error) {
+// back out. An event without a member gets a unique one; ZADD NX leaves a
+// member already present at its first time. Keys are {prefix}{key}:{per}
+// (one hash slot per key, so MULTI is cluster-safe) and expire a window after
+// their last event. Times come from each replica's clock, so replicas need
+// NTP. No Lua: Garnet ships with scripting off.
+func (l *Limiter) redisAllow(ctx context.Context, key, member string, t int64) (bool, time.Duration, error) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), redisTimeout)
 	defer cancel()
-	member := strconv.FormatInt(t, 36) + ":" + strconv.FormatUint(rand.Uint64(), 36)
+	if member == "" {
+		member = strconv.FormatInt(t, 36) + ":" + strconv.FormatUint(rand.Uint64(), 36)
+	}
 	keys := make([]string, len(l.windows))
+	added := make([]*redis.IntCmd, len(l.windows))
 	cards := make([]*redis.IntCmd, len(l.windows))
 	edges := make([]*redis.ZSliceCmd, len(l.windows))
 	_, err := l.rdb.TxPipelined(ctx, func(p redis.Pipeliner) error {
 		for i, w := range l.windows {
 			keys[i] = l.prefix + "{" + key + "}:" + strconv.FormatInt(w.per, 10)
 			p.ZRemRangeByScore(ctx, keys[i], "-inf", strconv.FormatInt(t-w.per, 10))
-			p.ZAdd(ctx, keys[i], redis.Z{Score: float64(t), Member: member})
+			added[i] = p.ZAddNX(ctx, keys[i], redis.Z{Score: float64(t), Member: member})
 			cards[i] = p.ZCard(ctx, keys[i])
 			// With this event newest, the entry Limit+1 from the end is the
 			// one whose expiry makes room.
@@ -141,7 +157,7 @@ func (l *Limiter) redisAllow(ctx context.Context, key string, t int64) (bool, ti
 		if err != nil {
 			return false, 0, err
 		}
-		if n <= int64(w.limit) {
+		if added[i].Val() == 0 || n <= int64(w.limit) {
 			continue
 		}
 		edge, err := edges[i].Result()
@@ -157,8 +173,10 @@ func (l *Limiter) redisAllow(ctx context.Context, key string, t int64) (bool, ti
 		return true, 0, nil
 	}
 	if _, err := l.rdb.Pipelined(ctx, func(p redis.Pipeliner) error {
-		for _, k := range keys {
-			p.ZRem(ctx, k, member)
+		for i, k := range keys {
+			if added[i].Val() == 1 {
+				p.ZRem(ctx, k, member)
+			}
 		}
 		return nil
 	}); err != nil {
@@ -167,8 +185,8 @@ func (l *Limiter) redisAllow(ctx context.Context, key string, t int64) (bool, ti
 	return false, time.Duration(wait) * time.Millisecond, nil
 }
 
-// memory is the per-process store: per key and window, the admitted event
-// times still inside the window, oldest first.
+// memory is the per-process store: per key and window, the admitted events
+// still inside the window, oldest first.
 type memory struct {
 	windows []window
 	shards  [shards]shard
@@ -176,18 +194,23 @@ type memory struct {
 
 type shard struct {
 	mu   sync.Mutex
-	keys map[string][][]int64
+	keys map[string][][]event
+}
+
+type event struct {
+	at     int64
+	member string
 }
 
 func newMemory(ws []window) *memory {
 	m := &memory{windows: ws}
 	for i := range m.shards {
-		m.shards[i].keys = map[string][][]int64{}
+		m.shards[i].keys = map[string][][]event{}
 	}
 	return m
 }
 
-func (m *memory) allow(key string, t int64) (bool, time.Duration) {
+func (m *memory) allow(key, member string, t int64) (bool, time.Duration) {
 	s := &m.shards[fnv32(key)%shards]
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -196,29 +219,33 @@ func (m *memory) allow(key string, t int64) (bool, time.Duration) {
 		if len(s.keys) >= maxKeys {
 			m.prune(s, t)
 		}
-		logs = make([][]int64, len(m.windows))
+		logs = make([][]event, len(m.windows))
 		s.keys[key] = logs
 	}
 	var wait int64
+	present := make([]bool, len(m.windows))
 	for i, w := range m.windows {
 		logs[i] = expire(logs[i], t-w.per)
-		if n := len(logs[i]); n >= w.limit {
-			wait = max(wait, logs[i][n-w.limit]+w.per-t, 1)
+		present[i] = member != "" && slices.ContainsFunc(logs[i], func(e event) bool { return e.member == member })
+		if n := len(logs[i]); !present[i] && n >= w.limit {
+			wait = max(wait, logs[i][n-w.limit].at+w.per-t, 1)
 		}
 	}
 	if wait > 0 {
 		return false, time.Duration(wait) * time.Millisecond
 	}
 	for i := range logs {
-		logs[i] = append(logs[i], t)
+		if !present[i] {
+			logs[i] = append(logs[i], event{t, member})
+		}
 	}
 	return true, 0
 }
 
-// expire drops the times at or before cutoff.
-func expire(log []int64, cutoff int64) []int64 {
+// expire drops the events at or before cutoff.
+func expire(log []event, cutoff int64) []event {
 	n := 0
-	for n < len(log) && log[n] <= cutoff {
+	for n < len(log) && log[n].at <= cutoff {
 		n++
 	}
 	if n == 0 {
@@ -233,7 +260,7 @@ func (m *memory) prune(s *shard, t int64) {
 	for k, logs := range s.keys {
 		live := false
 		for i, w := range m.windows {
-			live = live || len(logs[i]) > 0 && logs[i][len(logs[i])-1] > t-w.per
+			live = live || len(logs[i]) > 0 && logs[i][len(logs[i])-1].at > t-w.per
 		}
 		if !live {
 			delete(s.keys, k)

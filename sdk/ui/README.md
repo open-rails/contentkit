@@ -116,7 +116,7 @@ operation. This does not change the operation's result or its authentication.
   `polls.uploadOptionImage` do both steps. Reads resolve references: a
   content's `body` shows its images' signed URLs (the opened version's
   private files) and `images` maps each name to its URL. `folders` renames
-  the poll media kind. Declared-public covers and previews stay public regardless
+  the poll media kind. Declared-public covers stay public regardless
   of release visibility; private body images require signed access. `useContent`
   shows an unpublished item's private images to its editors (below).
 - **`client.config()`** says what the content module allows: which
@@ -497,9 +497,9 @@ the starting shape and edit.
 `<MediaGallery item={post} prefix="low-res/" renderLocked={unlock} />` reads
 through the client: the read (refreshed, reloaded after commits), HLS bases,
 playlist auth and the grant refresh. Passing `read`, `hlsBase`, `loader`
-and `refresh` yourself still works. A locked read lists no files, so the
-lock is uncounted; its public teaser carries `renderLocked`, so the unlock is
-on the first slide;
+and `refresh` yourself still works. A locked read lists only a locked
+version's free preview pages, shown as slides, and the rest is uncounted:
+one locked slide carries `renderLocked`;
 the stage is never taller than `maxHeight` (default `80svh`).
 
 ### VideoPosterPicker frames
@@ -1301,7 +1301,8 @@ Every chapter shares its version's access policy. Publication moves the selected
 files from that version's `internal` area into `public` or `private`; one item
 token opens its private folder and never a sibling version. Reader plans expose
 completed chapters and an optional `next_release_at` observation hint, without
-revealing future file paths. A due hint triggers another read, not local access.
+revealing future file paths. A due hint triggers another read, not local access;
+while it stays overdue, `useReaderPlan` backs off to one read a minute.
 
 The bulk upload queue retains the exact commit batch until the server confirms
 it. A retry reuses that batch ID and ordered operations. Browser persistence

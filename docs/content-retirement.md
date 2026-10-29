@@ -1,9 +1,10 @@
 # Content retirement
 
-A deleted version keeps its media during the configured restoration period,
-which defaults to 30 days. Deleting the last version also soft-deletes its
-parent. Once retention expires, `contentkit_content_purge_deleted` owns both
-physical media erasure and removal of the corresponding catalog records.
+A deleted version keeps its media, unserved, during the configured
+restoration period, which defaults to 30 days. Deleting the last version also
+soft-deletes its parent. Once retention expires,
+`contentkit_content_purge_deleted` owns both physical media erasure and
+removal of the corresponding catalog records.
 
 The purge first records a permanent erasure intent in the existing media
 journal, under the same parent/version locks used by restoration. It commits
@@ -35,10 +36,11 @@ expired content from progressing. There is no separate version-media reaper
 or per-version folder-deletion job.
 
 Entity, poll and account media retirement also record exact deletion intents;
-the same sweep drains that shared retirement journal. Account avatar erasure
-performs its required synchronous erasure first, with any recorded late-write
-cleanup retained for the sweep. No folder-deletion or media-reaper worker is
-needed.
+the same sweep drains that shared retirement journal. A deleted entity's media
+is fenced from its deletion; retirement makes that fence permanent before
+deleting the files. Account avatar erasure performs its required synchronous
+erasure first, with any recorded late-write cleanup retained for the sweep. No
+folder-deletion or media-reaper worker is needed.
 
 The same sweep erases the purged content's ClickHouse engagement and history
 records. Its exact cleanup references are committed with the PostgreSQL purge

@@ -117,6 +117,9 @@ func (rt *Runtime) ImportComments(ctx context.Context, tx pgx.Tx, in []content.I
 			r.UserID = &user
 			users = append(users, user)
 		case anon != "":
+			if anon, err = rt.rules.maskOnly(ctx, anon); err != nil {
+				return err
+			}
 			r.AnonName = &anon
 		default:
 			return invalidImport("comment %s needs a user_id or an anon_name", c.ID)
@@ -130,6 +133,8 @@ func (rt *Runtime) ImportComments(ctx context.Context, tx pgx.Tx, in []content.I
 		}
 		if r.Body = strings.TrimSpace(r.Body); r.Body == "" {
 			r.Body = commentTombstone
+		} else if r.Body, err = rt.rules.maskOnly(ctx, r.Body); err != nil {
+			return err
 		}
 		if c.ReplyToID != "" {
 			if err := contentref.ValidateID(c.ReplyToID); err != nil {

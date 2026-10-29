@@ -330,13 +330,15 @@
       "evidence": [
         "Publication accepts durable work; real workers establish visibility and emit one content/version release fact. Historical case IDs remain stable.",
         "The #250 focused source checks are partial; the strict runner must execute these cases on the final candidate.",
-        "An application with gallery media storage still publishes plain text kinds through its durable text worker, including future schedules, audience updates and withdrawal, without fabricating media storage requests."
+        "An application with gallery media storage still publishes plain text kinds through its durable text worker, including future schedules, audience updates and withdrawal, without fabricating media storage requests.",
+        "A withdrawn edition keeps no release plan, yet publishing it again for a later date still reconciles at once."
       ],
       "cases": [
         "TestPublicationWithoutWorkers/CK-J05-S01_immediate_publication_is_visible",
         "TestDurableTextPublication",
         "TestMediaApplicationPublishesTextKinds",
-        "TestReleaseRequestsSurviveRestartAndSequentialDeadlines"
+        "TestReleaseRequestsSurviveRestartAndSequentialDeadlines",
+        "TestWithdrawnEditionRepublishesAtOnce"
       ],
       "contract_change": "ContentKit #250 replaces clock-only publication and parent/subset access; preserved scenario identifiers do not preserve obsolete behavior."
     },
@@ -378,7 +380,8 @@
         "Valid item tokens grant all served private outputs of exactly that edition, never internal/original bytes or unreleased metadata.",
         "An editor reads an unreleased internal/ output through its exact presigned capability with identical bytes; reader item, private-file and absent tokens get 404 from the real gateway for that key.",
         "When processing hides a page a released edition already serves, its completion re-plans the edition at once; a later chapter keeps its own date.",
-        "A first release leaves pages_added_at unset; a later release with more pages than the active release sets it."
+        "A first release leaves pages_added_at unset; a later release with more pages than the active release sets it.",
+        "A wake-up or publish that changes nothing adds no request row and no copy of the live release; a real release removes the finished requests it supersedes, and readers see the same pages, chapters and downloads throughout."
       ],
       "cases": [
         "TestCommerceMediaGrantRevocation/CK-J05-S04_CK-J13-S07_segment_and_audience_deadlines_bound_reads_and_archives",
@@ -392,7 +395,8 @@
         "TestCompletedPublicationReader",
         "TestInternalArea/CK-J05-S04_editors_read_internal_and_readers_cannot",
         "TestScheduledPolicyPublishesWithoutStorageAreaChange",
-        "TestReleaseDuringPageSelectionKeepsCopyPrivate"
+        "TestReleaseDuringPageSelectionKeepsCopyPrivate",
+        "TestUnchangedReleaseLeavesNoRequestCopies"
       ],
       "contract_change": "ContentKit #250 replaces clock-only publication and parent/subset access; preserved scenario identifiers do not preserve obsolete behavior."
     },
@@ -536,6 +540,22 @@
       ],
       "cases": [
         "TestCommerceEntitlementBoundaries/CK-J06-S07_new_price_preserves_content_and_grant_identity"
+      ]
+    },
+    {
+      "id": "CK-J06-S08",
+      "journey": "CK-J06",
+      "behavior": "A locked version's free preview pages are public, exact and retired when its rule shrinks",
+      "status": "verified",
+      "evidence": [
+        "A real PPV gallery with preview.pages=2 releases exactly its first two released pages' renditions to public/: the stored public prefix equals the manifest's public objects, the non-payer plan lists unsigned URLs that the gateway serves, and page three stays private and is refused without a token.",
+        "A real OpenRails edition grant reads all pages with no previews. Editing the rule to one page and then none re-releases and retires the dropped public copies (404); a scheduled second chapter contributes no preview pages before release."
+      ],
+      "cases": [
+        "TestLockedPreviewPages/CK-J06-S08_non_payers_read_exactly_the_free_pages_publicly",
+        "TestLockedPreviewPages/CK-J06-S08_entitled_reader_reads_every_page_and_no_previews",
+        "TestLockedPreviewPages/CK-J06-S08_shrinking_the_preview_retires_its_public_copies",
+        "TestLockedPreviewPages/CK-J06-S08_scheduled_chapter_never_contributes_previews"
       ]
     },
     {
@@ -830,6 +850,19 @@
       "cases": [
         "TestEntityRenameReindexesLinkedContent/CK-J07-S23_rename_reindexes_every_linked_edition_in_batches_across_runs_and_a_second_rename_restarts",
         "TestEntityRenameReindexesLinkedContent/CK-J07-S23_the_search_job_continues_an_expansion_at_once"
+      ]
+    },
+    {
+      "id": "CK-J07-S24",
+      "journey": "CK-J07",
+      "behavior": "The first search syncs of an API and a worker starting together on fresh storage both succeed and create every backfill position once",
+      "status": "verified",
+      "evidence": [
+        "A started API's startup entity write and a worker's scheduled run make two concurrent contentkit_search_sync jobs; a rolled-back gate lines both up on the first backfill position. Neither job records an error and every kind and language ends done.",
+        "contentkit#275: before the fix one job failed with no rows in result set on every run; focused real-service execution against PostgreSQL; the strict gate must execute the exact case again."
+      ],
+      "cases": [
+        "TestConcurrentFirstSearchSync/CK-J07-S24_first_search_syncs_of_an_api_and_worker_starting_together_both_succeed"
       ]
     },
     {
@@ -1235,6 +1268,22 @@
       ]
     },
     {
+      "id": "CK-J11-S10",
+      "journey": "CK-J11",
+      "behavior": "Uncontended advisory locks share one session per process; contended keys stay exclusive, other processes are excluded, and a cancelled waiter keeps its process's other locks",
+      "status": "verified",
+      "evidence": [
+        "Sixteen workers each holding their own key while nesting three more are never seen on more than one session in pg_locks; the per-lock connections before this change showed 18 at once. Sixteen workers contending on one key never overlap. A second pool cannot take a held key, a cancelled waiter leaves its process's other lock held, a waiter in another process acquires the key once it is released, and a terminated session is replaced on the next lock."
+      ],
+      "cases": [
+        "TestAdvisoryLockSession",
+        "TestAdvisoryLockSession/CK-J11-S10_uncontended_nested_locks_share_one_connection",
+        "TestAdvisoryLockSession/CK-J11-S10_a_contended_key_is_held_by_one_worker_at_a_time",
+        "TestAdvisoryLockSession/CK-J11-S10_a_lost_session_reconnects_for_the_next_lock",
+        "TestAdvisoryLockSession/CK-J11-S10_locks_exclude_other_processes_and_survive_a_cancelled_waiter"
+      ]
+    },
+    {
       "id": "CK-J12-S01",
       "journey": "CK-J12",
       "behavior": "Real video produces playable configured AV1 and H264 renditions with its soundtrack",
@@ -1402,6 +1451,21 @@
       ]
     },
     {
+      "id": "CK-J13-S09",
+      "journey": "CK-J13",
+      "behavior": "The shared limiter admits at most Limit per sliding window, refuses without counting, and counts a reopened member once",
+      "status": "verified",
+      "evidence": [
+        "With a controlled clock the limiter behind the media read, commit and issuance limits admits exactly Limit per window, answers the exact wait, does not log refusals, requires every window, and counts a reopened member only once until a window after its first admission. CI runs the in-process store; the same cases were run locally against Redis 8 and Garnet with CONTENTKIT_CRITICAL_REDIS."
+      ],
+      "cases": [
+        "TestRateLimiter",
+        "TestRateLimiter/CK-J13-S09_limit_admits_burst_per_window_and_refusals_do_not_count",
+        "TestRateLimiter/CK-J13-S09_every_window_must_admit",
+        "TestRateLimiter/CK-J13-S09_member_limit_counts_distinct_items_from_their_first_opening"
+      ]
+    },
+    {
       "id": "CK-J16-S01",
       "journey": "CK-J16",
       "behavior": "Owned entity creates only the expected tenant/app authorization scope",
@@ -1534,7 +1598,7 @@
       "behavior": "Banned words and normalized IP/CIDR input cannot bypass restrictions",
       "status": "verified",
       "evidence": [
-        "Real word rules reject case/NFKC/zero-width variants, mask actual comment bytes, and removal restores writes. CIDR and IPv4-mapped inputs bind actual loopback requests; lift works and malformed batch leaves no partial rule.",
+        "Real word rules reject case/NFKC/zero-width variants, mask actual comment bytes, mask an imported comment's body and anonymous name without refusing it, and removal restores writes. CIDR and IPv4-mapped inputs bind actual loopback requests; lift works and malformed batch leaves no partial rule.",
         "Executed with the race detector in the completed 8d5ae7c6 aggregate; the strict runner requires these exact cases on every qualification."
       ],
       "cases": [
@@ -2121,6 +2185,54 @@
       ]
     },
     {
+      "id": "CK-J16-S09",
+      "journey": "CK-J16",
+      "behavior": "Deleting an entity closes its avatar and cover to everyone at once; a failed fence is reported and the retry completes it",
+      "status": "verified",
+      "evidence": [
+        "contentkit#274: a channel's and a site-owned creator's avatar and cover renditions answer 200, then 404 from the real gateway as soon as the deletion request returns, with a removable deletion fence and no served object moved. A fence write refused by storage fails the committed deletion request; retrying the same DELETE fences it. No lifecycle job is added."
+      ],
+      "cases": [
+        "TestDeletedEntityMediaFence/CK-J16-S09_deleting_an_entity_closes_its_avatar_and_cover_at_once"
+      ]
+    },
+    {
+      "id": "CK-J16-S10",
+      "journey": "CK-J16",
+      "behavior": "Restoring an entity reopens its media in place",
+      "status": "verified",
+      "evidence": [
+        "contentkit#274: restoring the channel and the creator lifts the deletion fence and serves the same renditions again; a refused fence removal fails the restore request and its retry reopens them; no served object moved."
+      ],
+      "cases": [
+        "TestDeletedEntityMediaFence/CK-J16-S10_restoring_an_entity_reopens_its_media_in_place"
+      ]
+    },
+    {
+      "id": "CK-J16-S11",
+      "journey": "CK-J16",
+      "behavior": "Imported entity deletion and restore close and reopen its media",
+      "status": "verified",
+      "evidence": [
+        "contentkit#274: an import's entity delete record and an imported deleted state fence the entity's media once the import returns; re-importing it active lifts the fence, all with no failed records."
+      ],
+      "cases": [
+        "TestDeletedEntityMediaFence/CK-J16-S11_imported_deletion_and_restore_close_and_reopen_media"
+      ]
+    },
+    {
+      "id": "CK-J16-S12",
+      "journey": "CK-J16",
+      "behavior": "Purge erases a deleted channel's media; its permanent fence outlives every restore attempt",
+      "status": "verified",
+      "evidence": [
+        "contentkit#274: past retention the River purge retires the channel's media, removes every served object, marks media_purged_at and turns the deletion fence into the erasure fence; a restore request answers 409 and a direct stale fence sync leaves the erasure, so the gateway keeps answering 404."
+      ],
+      "cases": [
+        "TestDeletedEntityMediaFence/CK-J16-S12_purge_erases_entity_media_and_its_fence_outlives_restore"
+      ]
+    },
+    {
       "id": "CK-J03-S08",
       "journey": "CK-J03",
       "behavior": "Configured fixed channels are provisioned through normal migrations with stable scopes, preserved roles/access and retry-safe adoption",
@@ -2416,10 +2528,12 @@
       "behavior": "One derivative processor handles images and video, withholding release until all required outputs exist",
       "status": "verified",
       "cases": [
-        "TestRequiredMixedDerivativesBeforeRelease"
+        "TestRequiredMixedDerivativesBeforeRelease",
+        "TestReleaseWakesWhenProcessingSettles"
       ],
       "evidence": [
-        "Reviewed actual PNG/FFmpeg audiovisual source and S3 write barrier test: image completion alone does not activate release, completed mixed outputs do, and pending replacement retains the prior reader snapshot. Final runtime execution remains required."
+        "Reviewed actual PNG/FFmpeg audiovisual source and S3 write barrier test: image completion alone does not activate release, completed mixed outputs do, and pending replacement retains the prior reader snapshot. Final runtime execution remains required.",
+        "Processing wakes a release only once the item settles: while a four page gallery and a video in several chunk checkpoints process, no release plan parks as waiting; both release promptly afterwards, and a rotated page of a released edition re-releases at once while its later chapter keeps its date."
       ]
     },
     {

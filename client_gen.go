@@ -1460,7 +1460,7 @@ func (q GetMediaQuery) values() url.Values {
 	return v
 }
 
-// GetMedia is GET /v1/media/{kind}/{id} (public). Released files under a prefix in manifest order. Offset/limit or repeated path selects which get URLs. Version access covers its private folder; optional restricted integrations use exact-file tokens. Explicit editor reads can inspect unserved source/prepared files through short-lived storage URLs. Unreadable files are omitted.
+// GetMedia is GET /v1/media/{kind}/{id} (public). Released files under a prefix in manifest order. Offset/limit or repeated path selects which get URLs. Version access covers its private folder. Explicit editor reads can inspect unserved source/prepared files through short-lived storage URLs. Unreadable files are omitted.
 func (c *Client) GetMedia(ctx context.Context, kind string, id string, q GetMediaQuery) (media.ReadResult, error) {
 	var out media.ReadResult
 	err := c.call(ctx, http.MethodGet, expand("/v1/media/{kind}/{id}", "{kind}", url.PathEscape(kind), "{id}", url.PathEscape(id)), q.values(), nil, &out)
@@ -1877,7 +1877,7 @@ func (c *Client) PatchEntity(ctx context.Context, id string, body entities.Entit
 	return out, err
 }
 
-// DeleteEntity is DELETE /v1/entities/{id} (editor). Marks an entity deleted and retires its AuthKit scope; a user-owned entity's content is deleted with it, and restoring the entity (PATCH state active) brings that content back within retention. Declared public media remains public until permanent purge. Staff holding root:entities:write write any entity; a signed-in person creates entities of user-owned kinds, as their owner and within the kind's max_per_owner, and the owner and holders of {kind}:settings:manage in its AuthKit scope edit names, text, attributes, cover, avatar and state.
+// DeleteEntity is DELETE /v1/entities/{id} (editor). Marks an entity deleted and retires its AuthKit scope; a user-owned entity's content is deleted with it, and restoring the entity (PATCH state active) brings that content back within retention. Its media is unavailable to everyone until restored; purge erases it after the deletion retention. A failure after the deletion commits is reported, and retrying completes it. Staff holding root:entities:write write any entity; a signed-in person creates entities of user-owned kinds, as their owner and within the kind's max_per_owner, and the owner and holders of {kind}:settings:manage in its AuthKit scope edit names, text, attributes, cover, avatar and state.
 func (c *Client) DeleteEntity(ctx context.Context, id string) (entities.Entity, error) {
 	var out entities.Entity
 	err := c.call(ctx, http.MethodDelete, expand("/v1/entities/{id}", "{id}", url.PathEscape(id)), nil, nil, &out)
@@ -2242,7 +2242,7 @@ func (c *Client) PatchChannel(ctx context.Context, id string, body channels.Upda
 	return out, err
 }
 
-// DeleteChannel is DELETE /v1/channels/{id} (editor). Soft-deletes the channel and synchronously retires its authoring group and original content; retained media follows the existing purge policy.
+// DeleteChannel is DELETE /v1/channels/{id} (editor). Soft-deletes the channel and synchronously closes its media to everyone and retires its authoring group and original content; restoring reopens them, and purge erases its media after the deletion retention.
 func (c *Client) DeleteChannel(ctx context.Context, id string) error {
 	return c.call(ctx, http.MethodDelete, expand("/v1/channels/{id}", "{id}", url.PathEscape(id)), nil, nil, nil)
 }
@@ -2292,7 +2292,7 @@ func (c *Client) PostContentVersionPageNoticeRestore(ctx context.Context, id str
 	return out, err
 }
 
-// GetContentVersionReader is GET /v1/contents/{id}/versions/{version}/reader (public). A version's reader plan: its segments with their release state, the canonical version item for released spans, signed previews of a locked version, playback and reader metadata. 202 while it has no current publication.
+// GetContentVersionReader is GET /v1/contents/{id}/versions/{version}/reader (public). A version's reader plan: its segments with their release state, the canonical version item for released spans, the public preview pages of a locked version, playback and reader metadata. 202 while it has no current publication.
 func (c *Client) GetContentVersionReader(ctx context.Context, id string, version string) (*Reply, error) {
 	return c.raw(ctx, http.MethodGet, expand("/v1/contents/{id}/versions/{version}/reader", "{id}", url.PathEscape(id), "{version}", url.PathEscape(version)), nil, nil)
 }

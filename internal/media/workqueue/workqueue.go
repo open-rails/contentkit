@@ -188,7 +188,7 @@ func FamiliesOf(k *mediastore.RegisteredKind, preset string) Families {
 }
 
 func (q *Queue) enqueue(ctx context.Context, insert mediastore.InsertFunc, job mediastore.ProcessJob) error {
-	if job.Class != "" && job.Class != media.VideoReencode && job.Class != media.VideoBackfill {
+	if job.Class != "" && job.Class != media.VideoBackfill {
 		return fmt.Errorf("media/workqueue: invalid video job class %q", job.Class)
 	}
 	item, err := q.kinds.Item(job.Ref)
@@ -206,13 +206,10 @@ func (q *Queue) enqueue(ctx context.Context, insert mediastore.InsertFunc, job m
 	return mediastore.InsertOnce(ctx, insert, DerivativeArgs{Ref: job.Ref, Preset: job.Preset, Force: job.Force, Editor: job.Editor, Class: job.Class}, *DerivativeInsertOpts(job.Class))
 }
 
-// DerivativeInsertOpts keep interactive uploads ahead of requested re-encodes.
+// DerivativeInsertOpts keep interactive uploads ahead of backfills.
 func DerivativeInsertOpts(class media.VideoJobClass) *river.InsertOpts {
 	priority := 1
-	switch class {
-	case media.VideoReencode:
-		priority = 3
-	case media.VideoBackfill:
+	if class == media.VideoBackfill {
 		priority = 4
 	}
 	return &river.InsertOpts{Queue: DerivativeQueue, Priority: priority, MaxAttempts: DerivativeMaxAttempts}
