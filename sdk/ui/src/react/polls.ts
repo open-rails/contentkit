@@ -103,7 +103,7 @@ export interface UsePollEditor {
   remove: () => Promise<void>;
   addOption: (label: string, image?: Blob | null) => Promise<PollOption>;
   renameOption: (option: string, label: string) => Promise<void>;
-  /** Removes an option and its votes; a poll keeps at least two. */
+  /** Removes an option before voting starts; a poll keeps at least two. */
   removeOption: (option: string) => Promise<void>;
   /** Moves an option to index to, at once; refetched if a write fails. */
   moveOption: (option: string, to: number) => Promise<void>;
@@ -125,10 +125,13 @@ export function usePollEditor(id: string | null | undefined, o: { client?: Conte
     setInflight((n) => n + 1);
     try {
       return await guarded(fn);
+    } catch (error) {
+      if (key && toContentKitError(error).code === "conflict") store.load(key, true);
+      throw error;
     } finally {
       setInflight((n) => n - 1);
     }
-  }, [guarded]);
+  }, [guarded, key, store]);
   const need = useCallback(() => {
     if (!pid) throw new Error("contentkit-ui: create the poll first");
     return pid;

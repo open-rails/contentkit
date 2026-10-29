@@ -638,26 +638,26 @@ func (c *Client) PutPollImage(ctx context.Context, id string, body content.Image
 	return out, err
 }
 
-// PostPollOptions is POST /v1/polls/{id}/options (staff). Adds an option to a multiple-choice poll, at the end unless position is given.
+// PostPollOptions is POST /v1/polls/{id}/options (staff). Before voting starts, adds an option to a multiple-choice poll, at the end unless position is given.
 func (c *Client) PostPollOptions(ctx context.Context, id string, body content.PollOptionPatch) (content.PollOption, error) {
 	var out content.PollOption
 	err := c.call(ctx, http.MethodPost, expand("/v1/polls/{id}/options", "{id}", url.PathEscape(id)), nil, body, &out)
 	return out, err
 }
 
-// PatchPollOption is PATCH /v1/polls/{id}/options/{oid} (staff). Updates an option's label or position.
+// PatchPollOption is PATCH /v1/polls/{id}/options/{oid} (staff). Before voting starts, updates an option's label or position.
 func (c *Client) PatchPollOption(ctx context.Context, id string, oid string, body content.PollOptionPatch) (content.PollOption, error) {
 	var out content.PollOption
 	err := c.call(ctx, http.MethodPatch, expand("/v1/polls/{id}/options/{oid}", "{id}", url.PathEscape(id), "{oid}", url.PathEscape(oid)), nil, body, &out)
 	return out, err
 }
 
-// DeletePollOption is DELETE /v1/polls/{id}/options/{oid} (staff). Removes an option and its votes; a poll keeps at least two.
+// DeletePollOption is DELETE /v1/polls/{id}/options/{oid} (staff). Before voting starts, removes an option; a poll keeps at least two.
 func (c *Client) DeletePollOption(ctx context.Context, id string, oid string) error {
 	return c.call(ctx, http.MethodDelete, expand("/v1/polls/{id}/options/{oid}", "{id}", url.PathEscape(id), "{oid}", url.PathEscape(oid)), nil, nil, nil)
 }
 
-// PutPollOptionImage is PUT /v1/polls/{id}/options/{oid}/image (staff). Sets an option's image to an inline image uploaded to the poll's media folder; "" clears it.
+// PutPollOptionImage is PUT /v1/polls/{id}/options/{oid}/image (staff). Before voting starts, sets an option's image to an inline image uploaded to the poll's media folder; "" clears it.
 func (c *Client) PutPollOptionImage(ctx context.Context, id string, oid string, body content.ImageInput) (content.PollImage, error) {
 	var out content.PollImage
 	err := c.call(ctx, http.MethodPut, expand("/v1/polls/{id}/options/{oid}/image", "{id}", url.PathEscape(id), "{oid}", url.PathEscape(oid)), nil, body, &out)

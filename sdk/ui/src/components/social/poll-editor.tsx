@@ -397,6 +397,7 @@ function EditFields(p: {
   const { t } = m;
   const ids = useId();
   const { poll, editor } = p;
+  const choicesLocked = poll.total_votes > 0;
   const [question, setQuestion] = useState(poll.question);
   const [liveAt, setLiveAt] = useState(localInput(new Date(poll.live_at)));
   const [closesAt, setClosesAt] = useState(poll.closes_at ? localInput(new Date(poll.closes_at)) : "");
@@ -439,14 +440,14 @@ function EditFields(p: {
           </Field>
           <ImageField label={t("pollEditor.image")} url={poll.image_url} disabled={p.saving} onPick={(f) => act(() => editor.setImage(f))} onRemove={() => act(() => editor.setImage(null))} />
         </Card>
-        <Card title={t("pollEditor.options")} hint={t("pollEditor.optionsLive")} ckui="poll-options">
-          <fieldset className="grid gap-2">
+        <Card title={t("pollEditor.options")} hint={t(choicesLocked ? "pollEditor.optionsLocked" : "pollEditor.optionsLive")} ckui="poll-options">
+          <fieldset className="grid gap-2" disabled={choicesLocked}>
             <legend className="sr-only">{t("pollEditor.options")}</legend>
             <SortableList
               items={options}
               id={(o) => o.id}
               name={(o) => o.label}
-              disabled={p.saving}
+              disabled={p.saving || choicesLocked}
               onMove={(from, to) => act(() => editor.moveOption(options[from]!.id, to))}
               label={t("pollEditor.options")}
               className="gap-2"
@@ -454,12 +455,13 @@ function EditFields(p: {
             >
               {(o, handle, i) => (
                 <OptionRow
+                  key={`${o.id}:${choicesLocked}`}
                   handle={handle}
                   index={i}
                   label={o.label}
                   url={o.image_url}
                   votes={o.vote_count}
-                  disabled={p.saving}
+                  disabled={p.saving || choicesLocked}
                   onCommit={(label) => label.trim() && label.trim() !== o.label && act(() => editor.renameOption(o.id, label.trim()))}
                   onImage={(f) => act(() => editor.setOptionImage(o.id, f))}
                   onRemove={options.length > 2 ? () => setRemoving(o) : undefined}

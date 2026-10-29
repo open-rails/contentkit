@@ -2608,7 +2608,7 @@
         "tags": [
           "polls"
         ],
-        "summary": "Adds an option to a multiple-choice poll, at the end unless position is given.",
+        "summary": "Before voting starts, adds an option to a multiple-choice poll, at the end unless position is given.",
         "parameters": [
           {
             "name": "id",
@@ -2653,6 +2653,7 @@
         "x-contentkit-auth": "staff",
         "x-contentkit-permission": "root:polls:write",
         "x-contentkit-errors": [
+          "conflict",
           "invalid_request",
           "not_found"
         ],
@@ -2668,7 +2669,7 @@
         "tags": [
           "polls"
         ],
-        "summary": "Updates an option's label or position.",
+        "summary": "Before voting starts, updates an option's label or position.",
         "parameters": [
           {
             "name": "id",
@@ -2721,6 +2722,7 @@
         "x-contentkit-auth": "staff",
         "x-contentkit-permission": "root:polls:write",
         "x-contentkit-errors": [
+          "conflict",
           "invalid_request",
           "not_configured",
           "not_found"
@@ -2735,7 +2737,7 @@
         "tags": [
           "polls"
         ],
-        "summary": "Removes an option and its votes; a poll keeps at least two.",
+        "summary": "Before voting starts, removes an option; a poll keeps at least two.",
         "parameters": [
           {
             "name": "id",
@@ -2771,6 +2773,7 @@
         "x-contentkit-auth": "staff",
         "x-contentkit-permission": "root:polls:write",
         "x-contentkit-errors": [
+          "conflict",
           "invalid_request",
           "not_found"
         ],
@@ -2786,7 +2789,7 @@
         "tags": [
           "polls"
         ],
-        "summary": "Sets an option's image to an inline image uploaded to the poll's media folder; \"\" clears it.",
+        "summary": "Before voting starts, sets an option's image to an inline image uploaded to the poll's media folder; \"\" clears it.",
         "parameters": [
           {
             "name": "id",
@@ -2839,6 +2842,7 @@
         "x-contentkit-auth": "staff",
         "x-contentkit-permission": "root:polls:write",
         "x-contentkit-errors": [
+          "conflict",
           "not_configured",
           "not_found"
         ],

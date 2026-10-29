@@ -14,6 +14,7 @@ import (
 	"github.com/open-rails/authkit/authtest"
 	"github.com/open-rails/authkit/iam"
 	ck "github.com/open-rails/contentkit"
+	"github.com/open-rails/contentkit/content"
 )
 
 func TestShippedBrowserClient(t *testing.T) {
@@ -68,5 +69,42 @@ func TestShippedBrowserClient(t *testing.T) {
 				t.Fatalf("browser did not execute selected scenario: %+v", receipts[i])
 			}
 		})
+	}
+}
+
+// The editor uses the shipped SDK and real handlers, including a stale view
+// that learns a vote landed only when its choice edit is refused.
+func TestPollChoicesBrowser(t *testing.T) {
+	if _, err := os.Stat(".browser-dist/index.html"); err != nil {
+		t.Fatal("build the shipped UI and critical browser harness before this selected test")
+	}
+	w := newWorld(t)
+	a := w.apps[0]
+	alice, aliceToken := w.person(t, 0)
+	bob, bobToken := w.person(t, 0)
+	persona, err := w.auth.Persona("app")
+	must(t, err)
+	authtest.GrantRole(t, w.tenant[0], a.group, iam.UserSubject(alice.ID), persona.OwnerRole())
+	poll, err := a.engine.Client().PostPolls(t.Context(), content.PollInput{Question: "Choose a season", Language: "en", Options: []content.PollOptionInput{{Label: "Summer"}, {Label: "Winter", Position: 1}}})
+	must(t, err)
+	base, err := url.Parse(a.server.URL)
+	must(t, err)
+	mux := http.NewServeMux()
+	mux.Handle("/content/", httputil.NewSingleHostReverseProxy(base))
+	mux.Handle("/", http.FileServer(http.Dir(".browser-dist")))
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	fixture, err := json.Marshal(map[string]string{"url": server.URL, "poll": poll.ID, "alice": alice.ID, "aliceToken": aliceToken, "bob": bob.ID, "bobToken": bobToken})
+	must(t, err)
+	command := exec.CommandContext(t.Context(), "node", "browser/driver.mjs", "CK-J30-S01")
+	command.Env = append(os.Environ(), "CONTENTKIT_BROWSER_FIXTURE="+string(fixture))
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("poll editor browser: %v\n%s", err, output)
+	}
+	var receipt struct{ Scenario, Status string }
+	must(t, json.Unmarshal([]byte(strings.TrimSpace(string(output))), &receipt))
+	if receipt.Scenario != "CK-J30-S01" || receipt.Status != "passed" {
+		t.Fatalf("poll editor scenario did not execute: %s", output)
 	}
 }

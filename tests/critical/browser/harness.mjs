@@ -5,7 +5,7 @@ import { createContentKitClient, resolveInlineImageReferences } from "../../../s
 import { ContentKitProvider } from "../../../sdk/ui/dist/react/provider.js";
 import { useContentDetail } from "../../../sdk/ui/dist/react/detail.js";
 import { useFavorite } from "../../../sdk/ui/dist/react/engagement.js";
-import { ChannelFeed, RepostButton, ContentEditor } from "../../../sdk/ui/dist/index.js";
+import { ChannelFeed, RepostButton, ContentEditor, PollEditor } from "../../../sdk/ui/dist/index.js";
 
 let fixture, bearer, currentViewer, client, root;
 const target = () => ({ type: "contents", id: fixture.item });
@@ -26,6 +26,15 @@ function render() {
 window.critical = {
   initialize(input) { fixture=input; bearer=input.aliceToken; currentViewer=input.alice; client=createContentKitClient({baseUrl:"/content",token:()=>bearer}); window.client=client; },
   mount() { render(); },
+  mountPollEditor() {
+    root ??= createRoot(document.querySelector("#root"));
+    root.render(React.createElement(ContentKitProvider, { client, viewer: currentViewer, language: "en" }, React.createElement(PollEditor, { poll: fixture.poll })));
+  },
+  async votePoll() {
+    const voter=createContentKitClient({baseUrl:"/content",token:()=>fixture.bobToken});
+    const poll=await voter.polls.get(fixture.poll);
+    return voter.polls.vote(poll.id,poll.options[0].id);
+  },
   mountVersionEditor() {
     root ??= createRoot(document.querySelector("#root"));
     root.render(React.createElement(ContentKitProvider, { client, viewer: currentViewer, language: "en" },
