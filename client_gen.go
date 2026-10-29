@@ -1877,7 +1877,7 @@ func (c *Client) PatchEntity(ctx context.Context, id string, body entities.Entit
 	return out, err
 }
 
-// DeleteEntity is DELETE /v1/entities/{id} (editor). Marks an entity deleted and retires its AuthKit scope; a user-owned entity's content is deleted with it, and restoring the entity (PATCH state active) brings that content back within retention. Declared public media remains public until permanent purge. Staff holding root:entities:write write any entity; a signed-in person creates entities of user-owned kinds, as their owner and within the kind's max_per_owner, and the owner and holders of {kind}:settings:manage in its AuthKit scope edit names, text, attributes, cover, avatar and state.
+// DeleteEntity is DELETE /v1/entities/{id} (editor). Marks an entity deleted and retires its AuthKit scope; a user-owned entity's content is deleted with it, and restoring the entity (PATCH state active) brings that content back within retention. Its media is unavailable to everyone until restored; purge erases it after the deletion retention. A failure after the deletion commits is reported, and retrying completes it. Staff holding root:entities:write write any entity; a signed-in person creates entities of user-owned kinds, as their owner and within the kind's max_per_owner, and the owner and holders of {kind}:settings:manage in its AuthKit scope edit names, text, attributes, cover, avatar and state.
 func (c *Client) DeleteEntity(ctx context.Context, id string) (entities.Entity, error) {
 	var out entities.Entity
 	err := c.call(ctx, http.MethodDelete, expand("/v1/entities/{id}", "{id}", url.PathEscape(id)), nil, nil, &out)
@@ -2242,7 +2242,7 @@ func (c *Client) PatchChannel(ctx context.Context, id string, body channels.Upda
 	return out, err
 }
 
-// DeleteChannel is DELETE /v1/channels/{id} (editor). Soft-deletes the channel and synchronously retires its authoring group and original content; retained media follows the existing purge policy.
+// DeleteChannel is DELETE /v1/channels/{id} (editor). Soft-deletes the channel and synchronously closes its media to everyone and retires its authoring group and original content; restoring reopens them, and purge erases its media after the deletion retention.
 func (c *Client) DeleteChannel(ctx context.Context, id string) error {
 	return c.call(ctx, http.MethodDelete, expand("/v1/channels/{id}", "{id}", url.PathEscape(id)), nil, nil, nil)
 }

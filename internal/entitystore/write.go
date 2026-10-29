@@ -426,10 +426,12 @@ func (s *Store) Entities(ctx context.Context, ids []entities.EntityID) ([]entiti
 // UpdateEntities applies each update in one transaction. A merged entity is
 // never updated (ErrConflict). Deleting or restoring an entity, or moving it to
 // another parent, re-derives the facets of the content it reaches, retires
-// or provisions its AuthKit scope and hides or shows its media; deleting a
-// user-owned entity deletes the content it owns, restoring it restores that
-// content and, within the retention, its media (Options.Owned,
-// Options.Folders). Billing product names are managed by the billing provider.
+// or provisions its AuthKit scope and, after the commit, closes or reopens its
+// media at the gateway (FinishMedia); deleting a user-owned entity deletes the
+// content it owns, restoring it restores that content and, within the
+// retention, its media (Options.Owned, Options.Folders). An error after the
+// commit leaves the write in place; retrying it finishes the rest. Billing
+// product names are managed by the billing provider.
 // Written as a person (As), each
 // entity is a user-owned one the person owns or holds
 // access.EntitySettingsManage in, its slug, links, owner and scope stay, and
@@ -639,10 +641,22 @@ func (s *Store) UpdateEntities(ctx context.Context, updates []entities.EntityUpd
 	if err != nil {
 		return nil, err
 	}
-	if s.channels {
-		return s.syncAfter(ctx, out, list)
+	// Every update that sets a state, unchanged ones included, finishes its
+	// media, so retrying a failed deletion or restore completes it.
+	var fenced []entities.EntityID
+	for _, u := range updates {
+		if u.State != nil {
+			fenced = append(fenced, u.ID)
+		}
 	}
-	return out, nil
+	var media error
+	if s.tx == nil {
+		media = s.FinishMedia(ctx, fenced)
+	}
+	if s.channels {
+		out, err = s.syncAfter(ctx, out, list)
+	}
+	return out, errors.Join(media, err)
 }
 
 // updateRow is groupRow plus the state an update writes.

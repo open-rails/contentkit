@@ -180,8 +180,9 @@ func (s *Store) Update(ctx context.Context, id string, in channels.Update) (chan
 	return s.Get(ctx, id, "")
 }
 
-// Delete withdraws the channel and completes its group/content lifecycle
-// synchronously. Retained media remains owned by the existing purge sweep.
+// Delete withdraws the channel and completes its media fence and group/content
+// lifecycle synchronously. Retained media remains owned by the existing purge
+// sweep.
 func (s *Store) Delete(ctx context.Context, id string) error {
 	current, err := s.Raw(ctx, id)
 	if err != nil {
@@ -244,14 +245,15 @@ func (s *Store) RawMany(ctx context.Context, ids []string) ([]entities.Entity, e
 	return s.storage.Entities(ctx, raw)
 }
 
-// Finish completes synchronous cross-store lifecycle operations after a
-// caller-owned import transaction commits. Retrying the same IDs is safe.
+// Finish completes synchronous cross-store lifecycle operations, the media
+// fence and the channel's group and content, after a caller-owned import
+// transaction commits. Retrying the same IDs is safe.
 func (s *Store) Finish(ctx context.Context, ids []string) error {
 	raw := make([]entities.EntityID, len(ids))
 	for i, id := range ids {
 		raw[i] = entities.EntityID(id)
 	}
-	return s.storage.FinishChannels(ctx, raw)
+	return errors.Join(s.storage.FinishMedia(ctx, raw), s.storage.FinishChannels(ctx, raw))
 }
 
 func sameInput(current entities.EntityDetail, in channels.Input) bool {

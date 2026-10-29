@@ -180,56 +180,6 @@ func (s *Service) canEdit(ctx context.Context, actor access.Actor, k *mediastore
 	return media.UploadGrant{Allowed: true, Owner: owner, Exempt: !actor.Member()}, nil
 }
 
-// itemReady records a settled version's facts and moves its media on: an
-// ready-file metadata publication.
-func (s *Service) itemReady(ctx context.Context, tx pgx.Tx, ref contentref.ContentRef, r media.Readiness) error {
-	k, err := s.reg.Kind(ref.ContentKind)
-	if err != nil || !k.Versions || ref.Version() == "" {
-		return nil
-	}
-	v := versions.Target{Content: ref.ContentID, Version: ref.Version()}
-	// Read the manifest only once v is locked: a delayed callback then
-	// records the newest snapshot, not the one current when it was called.
-	if err := s.lockTarget(ctx, tx, v); err != nil {
-		return err
-	}
-	m, _, err := s.m.Manifests.GetTx(ctx, tx, ref)
-	if errors.Is(err, mediastore.ErrNotFound) {
-		return nil
-	} else if err != nil {
-		return err
-	}
-	if err := s.recordFacts(ctx, tx, k, v, m); err != nil {
-		return err
-	}
-	return s.wakePublicationTx(ctx, tx, v)
-
-}
-
-// itemProgressed records partial media facts and wakes reader snapshots before
-// unrelated processing finishes. The wakeup commits with those facts.
-func (s *Service) itemProgressed(ctx context.Context, tx pgx.Tx, ref contentref.ContentRef) error {
-	k, err := s.reg.Kind(ref.ContentKind)
-	if err != nil || !k.Versions || ref.Version() == "" {
-		return nil
-	}
-	v := versions.Target{Content: ref.ContentID, Version: ref.Version()}
-	// As in itemReady: lock v, then read the newest manifest.
-	if err := s.lockTarget(ctx, tx, v); err != nil {
-		return err
-	}
-	m, _, err := s.m.Manifests.GetTx(ctx, tx, ref)
-	if errors.Is(err, mediastore.ErrNotFound) {
-		return nil
-	} else if err != nil {
-		return err
-	}
-	if err := s.recordFacts(ctx, tx, k, v, m); err != nil {
-		return err
-	}
-	return s.wakePublicationTx(ctx, tx, v)
-}
-
 // itemCommitted records a changed version's facts and queues its publication.
 func (s *Service) itemCommitted(ctx context.Context, ref contentref.ContentRef) error {
 	if ctx.Value(releaseMutationContextKey{}) == true {
@@ -242,7 +192,8 @@ func (s *Service) itemCommitted(ctx context.Context, ref contentref.ContentRef) 
 	v := versions.Target{Content: ref.ContentID, Version: ref.Version()}
 	vk := k
 	return pgx.BeginFunc(ctx, s.o.Pool, func(tx pgx.Tx) error {
-		// As in itemReady: lock v, then read the newest manifest.
+		// Lock v, then read the manifest: a delayed callback then records the
+		// newest snapshot, not the one current when it was called.
 		if err := s.lockTarget(ctx, tx, v); err != nil {
 			return err
 		}
