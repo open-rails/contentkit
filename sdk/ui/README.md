@@ -1288,7 +1288,8 @@ Every chapter shares its version's access policy. Publication moves the selected
 files from that version's `internal` area into `public` or `private`; one item
 token opens its private folder and never a sibling version. Reader plans expose
 completed chapters and an optional `next_release_at` observation hint, without
-revealing future file paths. A due hint triggers another read, not local access.
+revealing future file paths. A due hint triggers another read, not local access;
+while it stays overdue, `useReaderPlan` backs off to one read a minute.
 
 The bulk upload queue retains the exact commit batch until the server confirms
 it. A retry reuses that batch ID and ordered operations. Browser persistence
