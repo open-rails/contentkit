@@ -734,8 +734,20 @@ func (rt *Runtime) RaisePreferenceFloor(ctx context.Context, tx pgx.Tx, floor in
 func (rt *Runtime) ImportDeletes(ctx context.Context, tx pgx.Tx, comments, polls []string) error {
 	s := rt.store
 	if len(comments) > 0 {
+		threadsQuery := `SELECT array_agg(id::text ORDER BY id), array_agg(coalesce(reply_to_id::text, '') ORDER BY id)
+ FROM ` + s.t.comments + ` WHERE tenant_id = $1 AND id = ANY($2::uuid[])`
+		var ids, parents, lockedIDs, lockedParents []string
+		if err := tx.QueryRow(ctx, threadsQuery, rt.tenant, comments).Scan(&ids, &parents); err != nil {
+			return err
+		}
 		if err := rt.comments.lockThread(ctx, tx, comments...); err != nil {
 			return err
+		}
+		if err := tx.QueryRow(ctx, threadsQuery, rt.tenant, comments).Scan(&lockedIDs, &lockedParents); err != nil {
+			return err
+		}
+		if !slices.Equal(ids, lockedIDs) || !slices.Equal(parents, lockedParents) {
+			return fmt.Errorf("%w: comment threads changed during deletion; retry", ErrConflict)
 		}
 		rows, err := tx.Query(ctx, `UPDATE `+s.t.comments+` SET deleted_at = now(), updated_at = now()
  WHERE tenant_id = $1 AND id = ANY($2::uuid[]) AND deleted_at IS NULL

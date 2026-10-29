@@ -6963,7 +6963,8 @@
         "TestConcurrentImportedReplies",
         "TestImportReplyCountsImportFirst",
         "TestImportReplyCountsWithModeration",
-        "TestConcurrentImportedReplyMoves"
+        "TestConcurrentImportedReplyMoves",
+        "TestMovedImportedReplyDeletionWithModeration"
       ],
       "implemented_security_cases": [
         "TestHTTPAuthenticationMatrix/CK-API-166_POST_/v1/import/malformed_credential",

@@ -438,3 +438,136 @@ func TestConcurrentImportedReplyMoves(t *testing.T) {
 		}
 	}
 }
+
+func TestMovedImportedReplyDeletionWithModeration(t *testing.T) {
+	w := newWorld(t, func(cfg *ck.Config) { cfg.Interactions.Limits.Disabled = true })
+	a := w.apps[0]
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	manager, token := w.person(t, 0)
+	authtest.GrantRole(t, w.tenant[0], a.group, iam.UserSubject(manager.ID), w.commentManager)
+	item := publishedArticle(t, a, "Moved reply deletion and moderation")
+	originalID, destinationID, replyID := "00000000-0000-7000-8000-000000000010", "00000000-0000-7000-8000-000000000001", "00000000-0000-7000-8000-000000000020"
+	target := importer.TargetRef{Content: &importer.Ref{ID: item.ID}}
+	reply := importer.CommentRecord{ExternalID: "reply", ID: replyID, Target: target, ReplyTo: &importer.Ref{ID: originalID}, AnonName: "Legacy guest", Body: "Moving reply"}
+	batch := importer.Batch{Source: "moved-reply-deletion", Comments: []importer.CommentRecord{
+		{ExternalID: "original", ID: originalID, Target: target, AnonName: "Guest", Body: "Original thread"},
+		{ExternalID: "destination", ID: destinationID, Target: target, AnonName: "Guest", Body: "Destination thread"},
+		reply,
+	}}
+	initial, err := a.engine.Client().PostImport(ctx, batch)
+	must(t, err)
+	if len(initial.Failed) != 0 || initial.Written[importer.SectionComments] != 3 {
+		t.Fatalf("moved reply fixture failed: %+v", initial)
+	}
+	holder, err := w.pool.Acquire(ctx)
+	must(t, err)
+	defer holder.Release()
+	moveGate, deleteGate := w.schema+":move-before-delete", w.schema+":delete-before-hold"
+	for _, gate := range []string{moveGate, deleteGate} {
+		_, err = holder.Exec(ctx, "SELECT pg_advisory_lock(hashtextextended($1,0))", gate)
+		must(t, err)
+	}
+	qs := pgx.Identifier{w.schema}.Sanitize()
+	defer func() {
+		cancel()
+		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cleanupCancel()
+		for _, gate := range []string{moveGate, deleteGate} {
+			_, _ = holder.Exec(cleanupCtx, "SELECT pg_advisory_unlock(hashtextextended($1,0))", gate)
+		}
+		_, err := holder.Exec(cleanupCtx, `DROP TRIGGER IF EXISTS critical_moved_reply_delete ON `+qs+`.content_comments; DROP FUNCTION IF EXISTS `+qs+`.critical_moved_reply_delete()`)
+		must(t, err)
+	}()
+	_, err = w.pool.Exec(ctx, fmt.Sprintf(`CREATE FUNCTION %s.critical_moved_reply_delete() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN
+ IF NEW.id::text=TG_ARGV[0] THEN
+  IF NEW.reply_to_id::text=TG_ARGV[1] AND OLD.reply_to_id IS DISTINCT FROM NEW.reply_to_id THEN
+   PERFORM pg_advisory_xact_lock(hashtextextended(TG_ARGV[2],0));
+  ELSIF OLD.deleted_at IS NULL AND NEW.deleted_at IS NOT NULL THEN
+   PERFORM pg_advisory_xact_lock(hashtextextended(TG_ARGV[3],0));
+  END IF;
+ END IF;
+ RETURN NEW;
+END$$;
+CREATE TRIGGER critical_moved_reply_delete BEFORE UPDATE ON %s.content_comments FOR EACH ROW EXECUTE FUNCTION %s.critical_moved_reply_delete('%s','%s','%s','%s')`, qs, qs, qs, replyID, destinationID, moveGate, deleteGate))
+	must(t, err)
+	blockedBy := func(pid uint32) uint32 {
+		t.Helper()
+		var waiter uint32
+		waitForWithin(t, 10*time.Second, func() bool {
+			must(t, w.pool.QueryRow(ctx, `SELECT coalesce(min(pid),0) FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid))`, pid).Scan(&waiter))
+			return waiter != 0
+		})
+		return waiter
+	}
+	type outcome struct {
+		result importer.Result
+		err    error
+	}
+	moved, deleted := make(chan outcome, 1), make(chan outcome, 1)
+	reply.ReplyTo = &importer.Ref{ID: destinationID}
+	go func() {
+		result, err := a.engine.Client().PostImport(ctx, importer.Batch{Source: batch.Source, Comments: []importer.CommentRecord{reply}})
+		moved <- outcome{result, err}
+	}()
+	movePID := blockedBy(holder.Conn().PgConn().PID())
+	go func() {
+		result, err := a.engine.Client().PostImport(ctx, importer.Batch{Source: batch.Source, Deletes: []importer.DeleteRecord{{Entity: importer.RecordComment, ExternalID: reply.ExternalID}}})
+		deleted <- outcome{result, err}
+	}()
+	deletePID := blockedBy(movePID)
+	var query string
+	must(t, w.pool.QueryRow(ctx, "SELECT query FROM pg_stat_activity WHERE pid=$1", deletePID).Scan(&query))
+	if !strings.Contains(query, "ORDER BY id FOR UPDATE") {
+		t.Fatalf("deletion did not wait in its thread lock: %s", query)
+	}
+	_, err = holder.Exec(ctx, "SELECT pg_advisory_unlock(hashtextextended($1,0))", moveGate)
+	must(t, err)
+	move := <-moved
+	must(t, move.err)
+	if len(move.result.Failed) != 0 || move.result.Written[importer.SectionComments] != 1 {
+		t.Fatalf("reply move failed: %+v", move.result)
+	}
+	if got := blockedBy(holder.Conn().PgConn().PID()); got != deletePID {
+		t.Fatalf("delete barrier held another request: got %d want %d", got, deletePID)
+	}
+	held := make(chan error, 1)
+	go func() { held <- a.client(token).PostCommentHold(ctx, replyID) }()
+	blockedBy(deletePID)
+	_, err = holder.Exec(ctx, "SELECT pg_advisory_unlock(hashtextextended($1,0))", deleteGate)
+	must(t, err)
+	deletion := <-deleted
+	holdErr := <-held
+	must(t, deletion.err)
+	if len(deletion.result.Failed) != 0 || deletion.result.Written[importer.SectionDeletes] != 1 {
+		t.Fatalf("moved reply deletion failed: %+v; hold=%v", deletion.result, holdErr)
+	}
+	if holdErr != nil {
+		requireError(t, holdErr, 409, "conflict")
+	}
+	for _, root := range []string{originalID, destinationID} {
+		replies, err := a.client("").GetCommentReplies(ctx, root, ck.GetCommentRepliesQuery{})
+		must(t, err)
+		visible := 0
+		for _, r := range replies {
+			if !r.Deleted {
+				visible++
+			}
+		}
+		if got := readComment(t, a, item.ID, root); got.ReplyCount != 0 || visible != 0 {
+			t.Fatalf("deleted moved reply remains counted: root=%s count=%d visible=%d", root, got.ReplyCount, visible)
+		}
+	}
+	for _, purged := range []bool{false, true} {
+		if purged {
+			_, err := w.pool.Exec(ctx, `DELETE FROM `+qs+`.content_comments WHERE tenant_id=$1 AND id=$2`, a.cfg.Scope.AppID.String(), replyID)
+			must(t, err)
+		}
+		replayed, err := a.engine.Client().PostImport(ctx, importer.Batch{Source: batch.Source,
+			Deletes: []importer.DeleteRecord{{Entity: importer.RecordComment, ExternalID: reply.ExternalID}}})
+		must(t, err)
+		if len(replayed.Failed) != 0 || replayed.Written[importer.SectionDeletes] != 1 {
+			t.Fatalf("deletion replay failed (purged=%v): %+v", purged, replayed)
+		}
+	}
+}
