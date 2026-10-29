@@ -4,7 +4,7 @@ import { registerHooks } from "node:module";
 import test, { mock } from "node:test";
 import { fileURLToPath } from "node:url";
 import type { ContentKitClient } from "../src/client/client.ts";
-import type { ReadResult } from "../src/client/generated/wire.ts";
+import type { ReadResult, ReaderPlan } from "../src/client/generated/wire.ts";
 
 // The sources import each other as .js (bundler resolution) and the hash
 // worker through Vite; run them from .ts with the worker stubbed.
@@ -25,6 +25,7 @@ registerHooks({
 const { ContentKitError } = await import("../src/client/errors.ts");
 const { ResourceStore } = await import("../src/react/resources.ts");
 const { ReadStore } = await import("../src/react/store.ts");
+const { nextReaderRefresh, overdueAttempts, overdueDelay } = await import("../src/react/versions.ts");
 
 const settle = () => new Promise((resolve) => setImmediate(resolve));
 const outage = () => new ContentKitError("server_unavailable", "down", { status: 503 });
@@ -120,4 +121,31 @@ test("an active aborted resource settles without leaking a departed account or r
   assert.deepEqual(store.snapshot("bob-favorite").data, { favorited: false });
   assert.equal(store.snapshot("bob-favorite").error, undefined);
   assert.equal(store.snapshot("bob-favorite").loading, false);
+});
+
+test("an overdue release or pending plan is re-read with a capped back-off", () => {
+  const now = Date.parse("2026-10-28T12:00:00Z");
+  const past = new Date(now - 60_000).toISOString();
+  const future = new Date(now + 3_600_000).toISOString();
+  const plan = (release: string, next?: string) =>
+    ({ content_id: "c", version_id: "v", publication_id: release, segments: [], previews: [], next_release_at: next }) as ReaderPlan;
+  const intervals = (answer: Parameters<typeof overdueAttempts>[0], count: number) => {
+    let state = { mark: null as string | null, attempt: 0 };
+    return Array.from({ length: count }, () => overdueDelay((state = overdueAttempts(answer, state, now)).attempt));
+  };
+  // A waiting or failed request keeps its past time: back off, never stop.
+  assert.deepEqual(intervals(plan("r1", past), 8), [2500, 5000, 10000, 20000, 40000, 60000, 60000, 60000]);
+  assert.deepEqual(intervals({ status: "pending" }, 7), [2500, 5000, 10000, 20000, 40000, 60000, 60000]);
+  assert.equal(nextReaderRefresh(plan("r1", past), now, overdueDelay(3)), now + 20000);
+
+  let state = { mark: null as string | null, attempt: 0 };
+  for (let i = 0; i < 6; i++) state = overdueAttempts(plan("r1", past), state, now);
+  assert.equal(state.attempt, 5);
+  state = overdueAttempts(plan("r2", past), state, now);
+  assert.equal(state.attempt, 0, "a new live release starts again at the short interval");
+  state = overdueAttempts(plan("r2", past), state, now);
+  state = overdueAttempts(plan("r2", future), state, now);
+  assert.deepEqual(state, { mark: null, attempt: 0 }, "a future release resets the back-off");
+  assert.equal(nextReaderRefresh(plan("r2", future), now, overdueDelay(4)), Date.parse(future), "a future release waits for its own time");
+  assert.equal(nextReaderRefresh(plan("r2"), now), null, "nothing scheduled, nothing to observe");
 });
