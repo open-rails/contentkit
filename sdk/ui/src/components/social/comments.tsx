@@ -445,8 +445,9 @@ function Row({ comment: c, onReply }: { comment: Comment; onReply?: (name: strin
         {c.moderation === "rejected" && (
           <p className="text-xs text-destructive">{c.moderation_reason ? t("comments.rejected", { reason: c.moderation_reason }) : t("comments.rejectedNoReason")}</p>
         )}
+        {/* 24px buttons with a 40px tall hit area, so the row stays compact. */}
         {!c.deleted && !c.moderation && !editing && (
-          <div className="-ms-2 flex flex-wrap items-center gap-1">
+          <div className="-ms-2 flex flex-wrap items-center gap-1 [&>button]:relative [&>button]:after:absolute [&>button]:after:-inset-y-2.5 [&>button]:after:inset-x-0">
             <Button variant={c.mine === 1 ? "secondary" : "ghost"} size="xs" aria-pressed={c.mine === 1} aria-label={t("comments.like")} disabled={!thread.can("react")} onClick={() => react(1)}>
               <HugeiconsIcon icon={ThumbsUpIcon} strokeWidth={2} />
               <span>{c.likes}</span>
