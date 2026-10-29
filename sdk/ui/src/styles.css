@@ -184,3 +184,15 @@
     cursor: pointer;
   }
 }
+
+/* A host may put the summary count on its own first line. */
+[data-ckui="release-summary-label"][data-stacked]::first-line {
+  font-size: 1.75rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+@media (min-width: 768px) {
+  [data-ckui="release-summary-label"][data-stacked]::first-line {
+    font-size: 2.25rem;
+  }
+}

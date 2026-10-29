@@ -321,6 +321,11 @@ totals. `entityKinds={["series"]}` selects series chips;
 `filterEntity={(entity, kind) => ...}` filters them before the chip limit.
 Defaults continue to show all normal metadata, entity chips and totals.
 
+`status={false}` suppresses the built-in status marks in every card list.
+To compose them with host branding, render `CardStatusBadges` in `decorate`;
+its optional `show={{ updated: false }}` hides the update mark while retaining
+completed and deleted states. `dimDisliked` also passes through card lists.
+
 For a poster-style card, set `aspectRatio="182 / 260"`,
 `titlePosition="cover"` and `entityStyle="text"`. The title is a single
 accessible link over the cover's bottom gradient; entities remain clickable
@@ -596,6 +601,14 @@ Staff building blocks: `CommentBans` (paged) with `CommentBanDialog`, and
 ```tsx
 <Comments item={{ kind: "video", id }} count={video.comment_count} userHref={(u) => `/u/${u.username}`} />
 <Poll language={lang} />
+```
+
+Use `variant="embedded"` when the host supplies the poll's card surface.
+The optional `footer` slot places host navigation alongside the poll's own
+metadata and sign-in action, with wrapping and touch targets for small screens:
+
+```tsx
+<Poll language={lang} variant="embedded" footer={<a href="/polls">Poll history</a>} />
 ```
 
 ## Entities

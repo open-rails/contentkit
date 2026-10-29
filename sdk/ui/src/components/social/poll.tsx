@@ -25,6 +25,10 @@ export interface PollProps {
   onSignIn?: () => void;
   /** Shown when there is no live poll; default nothing. */
   empty?: ReactNode;
+  /** Host action alongside the poll's date, totals and sign-in action. */
+  footer?: ReactNode;
+  /** Embedded omits the card surface and uses a larger heading on wider screens. */
+  variant?: "card" | "embedded";
   client?: ContentKitClient;
   onError?: ContentKitErrorHandler;
   className?: string;
@@ -46,7 +50,7 @@ export function Poll(p: PollProps) {
   // Signed out where the server takes no anonymous votes.
   const mustSignIn = signedOut && config?.anonymous.votes === false;
   const root = (children: ReactNode) => (
-    <ContentKitUiRoot appearance={p.appearance} className={cn("grid content-start gap-3 rounded-xl border border-border bg-card p-4 text-sm text-card-foreground", p.className)} data-ckui="poll">
+    <ContentKitUiRoot appearance={p.appearance} className={cn("grid min-w-0 content-start gap-3 text-sm text-card-foreground", p.variant !== "embedded" && "rounded-xl border border-border bg-card p-4", p.className)} data-ckui="poll">
       {children}
     </ContentKitUiRoot>
   );
@@ -86,7 +90,7 @@ export function Poll(p: PollProps) {
   const header = (
     <>
       {poll.image_url && <img src={poll.image_url} alt="" className="aspect-video w-full rounded-lg object-cover" loading="lazy" />}
-      <h3 className="border-b border-border pb-2 text-base font-semibold" id={`poll-${poll.id}`}>
+      <h3 className={cn("text-base leading-[1.4] font-semibold [overflow-wrap:anywhere]", p.variant === "embedded" ? "text-balance sm:text-lg" : "border-b border-border pb-2")} id={`poll-${poll.id}`}>
         {poll.question}
       </h3>
       {poll.closed ? (
@@ -106,11 +110,16 @@ export function Poll(p: PollProps) {
         onVote={vote}
       />
       <ErrorLine error={error} />
-      {!poll.voted && !poll.closed && mustSignIn && (signIn ? (
-        <Button size="sm" className="justify-self-start" onClick={signIn}>
-          {t("poll.signIn")}
-        </Button>
-      ) : <p className="text-xs text-muted-foreground">{t("poll.signIn")}</p>)}
+      <PollFooter
+        poll={poll}
+        results={p.results === "always" || poll.voted || poll.closed}
+        signIn={!poll.voted && !poll.closed && mustSignIn ? (signIn ? (
+          <Button size="sm" className="min-h-11 max-w-full justify-self-start whitespace-normal sm:min-h-8" onClick={signIn}>
+            {t("poll.signIn")}
+          </Button>
+        ) : <p className="text-xs text-muted-foreground">{t("poll.signIn")}</p>) : undefined}
+        action={p.footer}
+      />
     </>,
   );
 }
@@ -126,7 +135,7 @@ function Choices({ poll, results, canVote, onVote }: { poll: PollData; results: 
   return (
     <>
       {canVote && <p className="text-xs text-muted-foreground">{t("poll.choose")}</p>}
-      <ul className={cn("grid gap-3", images && "grid-cols-2")} aria-labelledby={`poll-${poll.id}`}>
+      <ul className={cn("grid gap-2 sm:gap-3", images && "grid-cols-2")} aria-labelledby={`poll-${poll.id}`}>
         {options.map((o) => {
           const mine = poll.my_option === o.id;
           const percent = total ? Math.round((o.vote_count / total) * 100) : 0;
@@ -135,11 +144,11 @@ function Choices({ poll, results, canVote, onVote }: { poll: PollData; results: 
           const body = (
             <>
               {o.image_url && <img src={o.image_url} alt="" className="aspect-[4/3] w-full rounded-md bg-muted object-contain" loading="lazy" />}
-              <span className="flex w-full items-baseline gap-2">
+              <span className="flex w-full flex-wrap items-baseline gap-x-2 gap-y-1">
                 {mine && <HugeiconsIcon icon={Tick02Icon} strokeWidth={2.5} className="size-4 shrink-0 self-center text-primary" aria-label={t("poll.yourVote")} />}
-                <span className="min-w-0 flex-1 break-words text-start font-medium">{o.label}</span>
+                <span className="min-w-0 flex-1 text-start font-medium [overflow-wrap:anywhere]">{o.label}</span>
                 {results && (
-                  <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
+                  <span className="ms-auto shrink-0 text-xs tabular-nums text-muted-foreground">
                     <span className="font-semibold text-foreground">{percent}%</span> · {m.plural("poll.votes", o.vote_count)}
                   </span>
                 )}
@@ -154,7 +163,7 @@ function Choices({ poll, results, canVote, onVote }: { poll: PollData; results: 
           return (
             <li key={o.id} data-option={o.id} data-mine={mine || undefined} {...meter}>
               {choose ? (
-                <button type="button" className="grid w-full gap-1.5 rounded-md border border-border p-2 text-start hover:border-primary/60 hover:bg-muted/60 focus-visible:outline-2 focus-visible:outline-ring" onClick={choose}>
+                <button type="button" className="grid min-h-11 w-full gap-1.5 rounded-md border border-border p-2 text-start hover:border-primary/60 hover:bg-muted/60 focus-visible:outline-2 focus-visible:outline-ring" onClick={choose}>
                   {body}
                 </button>
               ) : (
@@ -165,10 +174,22 @@ function Choices({ poll, results, canVote, onVote }: { poll: PollData; results: 
         })}
       </ul>
       {poll.voted && !poll.closed && <p className="text-xs text-muted-foreground">{t("poll.final")}</p>}
-      <p className="flex justify-between gap-2 border-t border-border pt-2 text-xs tabular-nums text-muted-foreground">
+    </>
+  );
+}
+
+/** Keep host navigation and voting actions in the poll's own layout. */
+function PollFooter({ poll, results, signIn, action }: { poll: PollData; results: boolean; signIn?: ReactNode; action?: ReactNode }) {
+  const m = useMessages();
+  const total = poll.total_votes || poll.options.reduce((n, option) => n + option.vote_count, 0);
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-border pt-2" data-ckui="poll-footer">
+      <p className={cn("flex min-w-0 flex-wrap justify-between gap-x-3 gap-y-1 text-xs tabular-nums text-muted-foreground", signIn || !action ? "w-full" : "flex-1")}>
         <time dateTime={poll.live_at}>{formatDate(m, poll.live_at, false)}</time>
         {results && <span>{m.plural("poll.votes", total)}</span>}
       </p>
-    </>
+      {signIn}
+      {action && <div className="ms-auto shrink-0">{action}</div>}
+    </div>
   );
 }

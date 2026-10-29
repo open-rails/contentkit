@@ -1,4 +1,4 @@
-export { CardStatusBadges, ContentCard, ChannelChip, PostCard, cardStatus, lockLabel, type CardMetadata, type CardStatus, type ContentCardProps, type PostCardProps } from "./card.js";
+export { CardStatusBadges, ContentCard, ChannelChip, PostCard, cardStatus, lockLabel, type CardMetadata, type CardStatus, type CardStatusOptions, type ContentCardProps, type PostCardProps } from "./card.js";
 export { cardGridLayout, CardGrid, ContentGrid, ContentHistory, ContentRail, SearchEntities, SearchResults, type CardGridLayout, type CardListProps, type ContentRailProps, type LockedCards, type SearchResultsProps } from "./grid.js";
 export { DailyReleases, type DailyReleasesProps } from "./daily-releases.js";
 export { ReleaseDatePicker, isReleaseDate, localReleaseDate, type ReleaseDatePickerProps } from "./release-date-picker.js";

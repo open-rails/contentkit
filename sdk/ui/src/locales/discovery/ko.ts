@@ -15,7 +15,7 @@ export const discovery: typeof en = {
     invalidDate: "오늘 또는 그 이전의 올바른 날짜를 선택하세요.",
     premiumMore_one: "{count}개 더 보기",
     premiumMore_other: "{count}개 더 보기",
-    premiumHint: "회원 전용 미리보기 · 클릭하여 보기",
+    premiumHint: "미리보기 보기",
     filteredMore_one: "{count}개 필터링됨",
     filteredMore_other: "{count}개 필터링됨",
     manageFilters: "콘텐츠 필터 변경",

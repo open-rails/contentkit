@@ -255,6 +255,8 @@ function CardGridBody({ list, render, filterKinds, filterLanguage, horizontal, s
                     channelHref={p.channelHref}
                     decorate={p.decorate}
                     cardTitle={p.cardTitle}
+                    status={p.status}
+                    dimDisliked={p.dimDisliked}
                     onOpen={() => exposure.click(entry.card.id, entry.position, exposure.href(entry.card.id, entry.position, p.href ? p.href(entry.card) : entry.card.path))}
                   />
                 )}
