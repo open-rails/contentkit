@@ -2482,16 +2482,21 @@
     {
       "id": "CK-J30-S01",
       "journey": "CK-J30",
-      "behavior": "Only predefined-choice polls accept creation, import and votes; scope, closure, final-vote and erasure counts remain correct",
+      "behavior": "Only predefined-choice polls accept creation, import and votes; choices lock after voting while scope, closure, final-vote and erasure counts remain correct",
       "status": "verified",
       "evidence": [
-        "Real public Go/HTTP poll operations exercise unsupported-kind rejection, duplicate concurrent final voting, anonymous policy, mismatched options, cross-app IDs, future/closed polls and repeated account erasure."
+        "Real public Go/HTTP poll operations exercise unsupported-kind rejection, duplicate concurrent final voting, anonymous policy, mismatched options, cross-app IDs, future/closed polls and repeated account erasure. PostgreSQL tests cover staff/import choice locking, replay and concurrent voting; the shipped-editor browser test covers editing before voting and refreshing a stale editor after conflict."
       ],
       "cases": [
         "TestChoicePolls/CK-J30-S01_predefined_choices_validate_requests",
         "TestChoicePolls/CK-J30-S01_duplicate_votes_scope_and_erasure_keep_counts",
         "TestChoicePolls/CK-J30-S01_closed_and_scheduled_polls_stay_inert",
-        "TestAnonymousChoicePolls"
+        "TestAnonymousChoicePolls",
+        "TestChoicePolls/CK-J30-S01_choices_lock_after_voting",
+        "TestChoicePolls/CK-J30-S01_vote_and_option_delete_serialize",
+        "TestImportedPollChoices",
+        "TestImportedPollChoiceRaces",
+        "TestPollChoicesBrowser"
       ]
     },
     {

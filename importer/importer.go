@@ -250,7 +250,8 @@ type FavoriteRecord struct {
 	CreatedAt *time.Time `json:"created_at,omitempty"`
 }
 
-// PollRecord is a site poll with its options, which replace the stored ones.
+// PollRecord is a site poll with its options. Options replace the stored choices
+// before voting starts; once votes exist, their IDs, labels and positions must match.
 type PollRecord struct {
 	ExternalID string `json:"external_id"`
 	ID         string `json:"id,omitempty"`

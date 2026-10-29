@@ -62,10 +62,10 @@ Anonymous readers can send `ContentKit-Reader-Preferences: {"filters":[{"group_i
 | DELETE | `/v1/polls/{id}` | staff `root:polls:write` | — | 204 — | Deletes a poll and its media folder. |
 | POST | `/v1/polls/{id}/vote` | public | `PollVote` | 200 `Poll` | Votes for an option of an open multiple-choice poll, signed out where Config.anonymous.votes allows it; a vote is final, and voting again changes nothing. |
 | PUT | `/v1/polls/{id}/image` | staff `root:polls:write` | `ImageInput` | 200 `PollImage` | Sets the question image to an inline image uploaded to the poll's media folder; "" clears it. |
-| POST | `/v1/polls/{id}/options` | staff `root:polls:write` | `PollOptionPatch` | 201 `PollOption` | Adds an option to a multiple-choice poll, at the end unless position is given. |
-| PATCH | `/v1/polls/{id}/options/{oid}` | staff `root:polls:write` | `PollOptionPatch` | 200 `PollOption` | Updates an option's label or position. |
-| DELETE | `/v1/polls/{id}/options/{oid}` | staff `root:polls:write` | — | 204 — | Removes an option and its votes; a poll keeps at least two. |
-| PUT | `/v1/polls/{id}/options/{oid}/image` | staff `root:polls:write` | `ImageInput` | 200 `PollImage` | Sets an option's image to an inline image uploaded to the poll's media folder; "" clears it. |
+| POST | `/v1/polls/{id}/options` | staff `root:polls:write` | `PollOptionPatch` | 201 `PollOption` | Before voting starts, adds an option to a multiple-choice poll, at the end unless position is given. |
+| PATCH | `/v1/polls/{id}/options/{oid}` | staff `root:polls:write` | `PollOptionPatch` | 200 `PollOption` | Before voting starts, updates an option's label or position. |
+| DELETE | `/v1/polls/{id}/options/{oid}` | staff `root:polls:write` | — | 204 — | Before voting starts, removes an option; a poll keeps at least two. |
+| PUT | `/v1/polls/{id}/options/{oid}/image` | staff `root:polls:write` | `ImageInput` | 200 `PollImage` | Before voting starts, sets an option's image to an inline image uploaded to the poll's media folder; "" clears it. |
 | GET | `/v1/comment-bans` | user | — | 200 `CommentBan[]` | The bans the caller placed on commenters of its own content, newest first, expired ones included. Query: `limit`, `offset`. |
 | PUT | `/v1/comment-bans/{user}` | user | `BanInput` | 200 `CommentBan` | Bans a user from commenting on the caller's content, or replaces the ban; no body bans without reason or end. |
 | DELETE | `/v1/comment-bans/{user}` | user | — | 204 — | Lifts the caller's ban on a user. |

@@ -516,6 +516,24 @@ func (p *polls) open(ctx context.Context, q querier, pollID string) error {
 	return nil
 }
 
+// lockChoices waits for votes already in flight before checking the committed tally.
+func (p *polls) lockChoices(ctx context.Context, tx pgx.Tx, id string) error {
+	if err := tx.QueryRow(ctx, `SELECT 1 FROM `+p.s.t.pollQuestions+` WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL FOR NO KEY UPDATE`, p.s.tenant, id).Scan(new(int)); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrNotFound
+		}
+		return err
+	}
+	var voted bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM `+p.s.t.pollVotes+` WHERE tenant_id = $1 AND question_id = $2)`, p.s.tenant, id).Scan(&voted); err != nil {
+		return err
+	}
+	if voted {
+		return httpError{status: http.StatusConflict, msg: "poll choices cannot change after voting starts"}
+	}
+	return nil
+}
+
 // pollVoteConflict targets the partial unique index for the voter's dedup key.
 func pollVoteConflict(userID string) string {
 	if userID != "" {
@@ -565,25 +583,25 @@ var pollRoutes = []httpapi.Route[*polls]{
 		Responses: []httpapi.Reply{httpapi.OK(content.PollImage{})}, Errors: []string{content.CodeNotConfigured, content.CodeNotFound}},
 		Serve: httpapi.H((*polls).handleQuestionImage)},
 	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/polls/{id}/options", Resource: "polls", Auth: httpapi.Staff, Perm: string(access.PollsWrite),
-		Doc:       "Adds an option to a multiple-choice poll, at the end unless position is given.",
+		Doc:       "Before voting starts, adds an option to a multiple-choice poll, at the end unless position is given.",
 		Request:   content.PollOptionPatch{},
-		Responses: []httpapi.Reply{httpapi.Created(content.PollOption{})}, Errors: []string{content.CodeInvalidRequest, content.CodeNotFound}},
+		Responses: []httpapi.Reply{httpapi.Created(content.PollOption{})}, Errors: []string{content.CodeConflict, content.CodeInvalidRequest, content.CodeNotFound}},
 		Serve: httpapi.H((*polls).handleAddOption)},
 	// Nested under the poll: a bare /polls/options/{oid} DELETE would ambiguously
 	// overlap reactions' generic DELETE /{kind}/{id}/reaction in ServeMux.
 	{Spec: httpapi.Spec{Method: httpapi.PATCH, Path: "/polls/{id}/options/{oid}", Resource: "polls", Auth: httpapi.Staff, Perm: string(access.PollsWrite),
-		Doc:       "Updates an option's label or position.",
+		Doc:       "Before voting starts, updates an option's label or position.",
 		Request:   content.PollOptionPatch{},
-		Responses: []httpapi.Reply{httpapi.OK(content.PollOption{})}, Errors: []string{content.CodeInvalidRequest, content.CodeNotConfigured, content.CodeNotFound}},
+		Responses: []httpapi.Reply{httpapi.OK(content.PollOption{})}, Errors: []string{content.CodeConflict, content.CodeInvalidRequest, content.CodeNotConfigured, content.CodeNotFound}},
 		Serve: httpapi.H((*polls).handleUpdateOption)},
 	{Spec: httpapi.Spec{Method: httpapi.DELETE, Path: "/polls/{id}/options/{oid}", Resource: "polls", Auth: httpapi.Staff, Perm: string(access.PollsWrite),
-		Doc:       "Removes an option and its votes; a poll keeps at least two.",
-		Responses: []httpapi.Reply{httpapi.NoContent}, Errors: []string{content.CodeInvalidRequest, content.CodeNotFound}},
+		Doc:       "Before voting starts, removes an option; a poll keeps at least two.",
+		Responses: []httpapi.Reply{httpapi.NoContent}, Errors: []string{content.CodeConflict, content.CodeInvalidRequest, content.CodeNotFound}},
 		Serve: httpapi.H((*polls).handleDeleteOption)},
 	{Spec: httpapi.Spec{Method: httpapi.PUT, Path: "/polls/{id}/options/{oid}/image", Resource: "polls", Auth: httpapi.Staff, Perm: string(access.PollsWrite),
-		Doc:       "Sets an option's image to an inline image uploaded to the poll's media folder; \"\" clears it.",
+		Doc:       "Before voting starts, sets an option's image to an inline image uploaded to the poll's media folder; \"\" clears it.",
 		Request:   content.ImageInput{},
-		Responses: []httpapi.Reply{httpapi.OK(content.PollImage{})}, Errors: []string{content.CodeNotConfigured, content.CodeNotFound}},
+		Responses: []httpapi.Reply{httpapi.OK(content.PollImage{})}, Errors: []string{content.CodeConflict, content.CodeNotConfigured, content.CodeNotFound}},
 		Serve: httpapi.H((*polls).handleOptionImage)},
 }
 
@@ -627,13 +645,7 @@ func (p *polls) handleAddOption(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	defer tx.Rollback(ctx)
-	err = tx.QueryRow(ctx, `SELECT 1 FROM `+p.s.t.pollQuestions+` WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL FOR NO KEY UPDATE`,
-		p.s.tenant, id).Scan(new(int))
-	if errors.Is(err, pgx.ErrNoRows) {
-		writeErr(w, ErrNotFound)
-		return
-	}
-	if err != nil {
+	if err := p.lockChoices(ctx, tx, id); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -694,8 +706,19 @@ func (p *polls) handleUpdateOption(w http.ResponseWriter, req *http.Request) {
 		}
 		in.Label = &l
 	}
+	ctx := req.Context()
+	tx, err := p.s.beginMutation(ctx)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	defer tx.Rollback(ctx)
+	if err := p.lockChoices(ctx, tx, pollID); err != nil {
+		writeErr(w, err)
+		return
+	}
 	var o content.PollOption
-	err := p.s.pool.QueryRow(req.Context(), `UPDATE `+p.s.t.pollOptions+`
+	err = tx.QueryRow(ctx, `UPDATE `+p.s.t.pollOptions+`
 		SET label = COALESCE($2, label), position = COALESCE($3, position)
 		WHERE id = $1 AND question_id = $4 AND tenant_id = $5
  AND EXISTS (SELECT 1 FROM `+p.s.t.pollQuestions+` q WHERE q.tenant_id=$5 AND q.id=$4 AND q.deleted_at IS NULL)
@@ -710,6 +733,10 @@ func (p *polls) handleUpdateOption(w http.ResponseWriter, req *http.Request) {
 		writeErr(w, err)
 		return
 	}
+	if err := tx.Commit(ctx); err != nil {
+		writeErr(w, err)
+		return
+	}
 	set := p.rt.images()
 	set.add(pollFolder, pollID, o.ImageURL)
 	if err := set.resolve(req.Context()); err != nil {
@@ -720,7 +747,7 @@ func (p *polls) handleUpdateOption(w http.ResponseWriter, req *http.Request) {
 	writeJSON(w, http.StatusOK, o)
 }
 
-// handleDeleteOption removes an option and its votes. Refuses to shrink a
+// handleDeleteOption removes an unvoted option. Refuses to shrink a
 // poll below 2 options — that would break voting. root:polls:write-gated.
 func (p *polls) handleDeleteOption(w http.ResponseWriter, req *http.Request) {
 	actor := p.rt.actor(req.Context())
@@ -740,22 +767,14 @@ func (p *polls) handleDeleteOption(w http.ResponseWriter, req *http.Request) {
 	writeJSON(w, http.StatusNoContent, nil)
 }
 
-// deleteOption deletes an option and its votes while the poll keeps at least
-// two. The poll row lock serializes deletes, which otherwise could each see
-// three options and leave one, and waits for votes in flight (see open). Votes
-// go before their option, the order account erasure locks them in.
+// deleteOption keeps at least two choices and never removes recorded votes.
 func (p *polls) deleteOption(ctx context.Context, pollID, oid string) error {
 	tx, err := p.s.beginMutation(ctx) // the count must see a delete committed during the lock wait
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback(ctx)
-	err = tx.QueryRow(ctx, `SELECT 1 FROM `+p.s.t.pollQuestions+` WHERE tenant_id = $1 AND id = $2 AND deleted_at IS NULL FOR NO KEY UPDATE`,
-		p.s.tenant, pollID).Scan(new(int))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return ErrNotFound
-	}
-	if err != nil {
+	if err := p.lockChoices(ctx, tx, pollID); err != nil {
 		return err
 	}
 	var options int
@@ -769,9 +788,6 @@ func (p *polls) deleteOption(ctx context.Context, pollID, oid string) error {
 		return ErrNotFound
 	case options < 3:
 		return badRequest("a poll needs at least 2 options")
-	}
-	if _, err := tx.Exec(ctx, `DELETE FROM `+p.s.t.pollVotes+` WHERE tenant_id = $1 AND option_id = $2`, p.s.tenant, oid); err != nil {
-		return err
 	}
 	if _, err := tx.Exec(ctx, `DELETE FROM `+p.s.t.pollOptions+` WHERE tenant_id = $1 AND id = $2`, p.s.tenant, oid); err != nil {
 		return err
@@ -804,10 +820,6 @@ func (p *polls) setImage(w http.ResponseWriter, req *http.Request, update string
 		writeErr(w, err)
 		return
 	}
-	if p.rt.media == nil {
-		writeErr(w, errMediaNotConfigured)
-		return
-	}
 	id := req.PathValue("id")
 	if !uuidRe.MatchString(id) {
 		writeErr(w, ErrNotFound)
@@ -818,7 +830,23 @@ func (p *polls) setImage(w http.ResponseWriter, req *http.Request, update string
 		writeErr(w, err)
 		return
 	}
-	if err := p.s.pool.QueryRow(ctx, `SELECT id::text FROM `+p.s.t.pollQuestions+` WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`,
+	tx, err := p.s.beginMutation(ctx)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	defer tx.Rollback(ctx)
+	if len(extra) > 0 {
+		if err := p.lockChoices(ctx, tx, id); err != nil {
+			writeErr(w, err)
+			return
+		}
+	}
+	if p.rt.media == nil {
+		writeErr(w, errMediaNotConfigured)
+		return
+	}
+	if err := tx.QueryRow(ctx, `SELECT id::text FROM `+p.s.t.pollQuestions+` WHERE id = $1 AND tenant_id = $2 AND deleted_at IS NULL`,
 		id, p.s.tenant).Scan(&id); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			err = ErrNotFound
@@ -826,13 +854,17 @@ func (p *polls) setImage(w http.ResponseWriter, req *http.Request, update string
 		writeErr(w, err)
 		return
 	}
-	tag, err := p.s.pool.Exec(ctx, update, append([]any{id, p.s.tenant, name}, extra...)...)
+	tag, err := tx.Exec(ctx, update, append([]any{id, p.s.tenant, name}, extra...)...)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 	if tag.RowsAffected() == 0 {
 		writeErr(w, ErrNotFound)
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		writeErr(w, err)
 		return
 	}
 	set := p.rt.images()

@@ -103,6 +103,51 @@ func TestChoicePolls(t *testing.T) {
 		if got.TotalVotes != 2 || got.Options[0].VoteCount != 1 || got.Options[1].VoteCount != 1 {
 			t.Fatalf("repeated account deletion lost or duplicated a vote: %+v", got)
 		}
+		label := "Changed after erasure"
+		_, err = admin.PatchPollOption(t.Context(), p.ID, p.Options[0].ID, content.PollOptionPatch{Label: &label})
+		requireError(t, err, http.StatusConflict, "conflict")
+	})
+	t.Run("CK-J30-S01_choices_lock_after_voting", func(t *testing.T) {
+		label := "Autumn"
+		position := 1
+		p := create(input)
+		added, err := admin.PostPollOptions(t.Context(), p.ID, content.PollOptionPatch{Label: &label})
+		must(t, err)
+		_, err = admin.PatchPollOption(t.Context(), p.ID, added.ID, content.PollOptionPatch{Label: &label, Position: &position})
+		must(t, err)
+		must(t, admin.DeletePollOption(t.Context(), p.ID, added.ID))
+		_, token := w.person(t, 0)
+		_, err = a.client(token).PostPollVote(t.Context(), p.ID, content.PollVote{OptionID: p.Options[0].ID})
+		must(t, err)
+		for _, action := range []struct {
+			name   string
+			change func() error
+		}{
+			{"add", func() error {
+				_, err := admin.PostPollOptions(t.Context(), p.ID, content.PollOptionPatch{Label: &label})
+				return err
+			}},
+			{"rename_unvoted", func() error {
+				_, err := admin.PatchPollOption(t.Context(), p.ID, p.Options[1].ID, content.PollOptionPatch{Label: &label})
+				return err
+			}},
+			{"reorder", func() error {
+				_, err := admin.PatchPollOption(t.Context(), p.ID, p.Options[0].ID, content.PollOptionPatch{Position: &position})
+				return err
+			}},
+			{"delete", func() error { return admin.DeletePollOption(t.Context(), p.ID, p.Options[0].ID) }},
+			{"image", func() error {
+				_, err := admin.PutPollOptionImage(t.Context(), p.ID, p.Options[1].ID, content.ImageInput{Image: new(string)})
+				return err
+			}},
+		} {
+			t.Run(action.name, func(t *testing.T) { requireError(t, action.change(), http.StatusConflict, "conflict") })
+		}
+		got, err := admin.GetPoll(t.Context(), p.ID)
+		must(t, err)
+		if got.TotalVotes != 1 || len(got.Options) != 2 || got.Options[0].ID != p.Options[0].ID || got.Options[1].Label != p.Options[1].Label {
+			t.Fatalf("refused choice edits changed the poll: %+v", got)
+		}
 	})
 	t.Run("CK-J30-S01_closed_and_scheduled_polls_stay_inert", func(t *testing.T) {
 		future := time.Now().Add(time.Hour)
@@ -215,7 +260,7 @@ func TestChoicePolls(t *testing.T) {
 		tenant := a.cfg.Scope.AppID.String()
 		racer, racerToken := w.person(t, 0)
 		racing := a.client(racerToken)
-		blocked := func(holder pgx.Tx) {
+		blocked := func(t *testing.T, holder pgx.Tx) {
 			t.Helper()
 			waitForWithin(t, 10*time.Second, func() bool {
 				var waiting bool
@@ -238,28 +283,56 @@ func TestChoicePolls(t *testing.T) {
 			_, err := racing.PostPollVote(t.Context(), p.ID, content.PollVote{OptionID: p.Options[2].ID})
 			voted <- err
 		}()
-		blocked(holder)
+		blocked(t, holder)
 		must(t, holder.Commit(t.Context()))
 		requireError(t, <-voted, 400, "invalid_request")
 
-		// Vote first: the delete waits for it, then removes the option and its vote.
-		p = create(three)
-		holder, err = w.pool.Begin(t.Context())
-		must(t, err)
-		defer holder.Rollback(t.Context())
-		_, err = holder.Exec(t.Context(), `SELECT 1 FROM `+w.schema+`.content_poll_questions WHERE tenant_id=$1 AND id=$2 FOR SHARE`, tenant, p.ID)
-		must(t, err)
-		deleted := make(chan error, 1)
-		go func() { deleted <- admin.DeletePollOption(t.Context(), p.ID, p.Options[2].ID) }()
-		blocked(holder)
-		_, err = holder.Exec(t.Context(), `INSERT INTO `+w.schema+`.content_poll_votes(tenant_id, question_id, option_id, user_id) VALUES ($1, $2, $3, $4)`, tenant, p.ID, p.Options[2].ID, racer.ID)
-		must(t, err)
-		must(t, holder.Commit(t.Context()))
-		must(t, <-deleted)
-		var left int
-		must(t, w.pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM `+w.schema+`.content_poll_options WHERE tenant_id=$1 AND id=$2) + (SELECT count(*) FROM `+w.schema+`.content_poll_votes WHERE tenant_id=$1 AND option_id=$2)`, tenant, p.Options[2].ID).Scan(&left))
-		if left != 0 {
-			t.Fatalf("deleted option or its vote survived: %d rows", left)
+		// Vote first: every choice mutation waits, then sees the committed vote.
+		label, position := "Changed", 1
+		for _, action := range []struct {
+			name   string
+			change func(content.Poll) error
+		}{
+			{"delete", func(p content.Poll) error { return admin.DeletePollOption(t.Context(), p.ID, p.Options[2].ID) }},
+			{"add", func(p content.Poll) error {
+				_, err := admin.PostPollOptions(t.Context(), p.ID, content.PollOptionPatch{Label: &label})
+				return err
+			}},
+			{"rename", func(p content.Poll) error {
+				_, err := admin.PatchPollOption(t.Context(), p.ID, p.Options[2].ID, content.PollOptionPatch{Label: &label})
+				return err
+			}},
+			{"reorder", func(p content.Poll) error {
+				_, err := admin.PatchPollOption(t.Context(), p.ID, p.Options[2].ID, content.PollOptionPatch{Position: &position})
+				return err
+			}},
+			{"image", func(p content.Poll) error {
+				_, err := admin.PutPollOptionImage(t.Context(), p.ID, p.Options[2].ID, content.ImageInput{Image: new(string)})
+				return err
+			}},
+		} {
+			t.Run(action.name, func(t *testing.T) {
+				p := create(three)
+				holder, err := w.pool.Begin(t.Context())
+				must(t, err)
+				defer holder.Rollback(t.Context())
+				_, err = holder.Exec(t.Context(), `SELECT 1 FROM `+w.schema+`.content_poll_questions WHERE tenant_id=$1 AND id=$2 FOR SHARE`, tenant, p.ID)
+				must(t, err)
+				changed := make(chan error, 1)
+				go func() { changed <- action.change(p) }()
+				blocked(t, holder)
+				_, err = holder.Exec(t.Context(), `INSERT INTO `+w.schema+`.content_poll_votes(tenant_id, question_id, option_id, user_id) VALUES ($1, $2, $3, $4)`, tenant, p.ID, p.Options[2].ID, racer.ID)
+				must(t, err)
+				_, err = holder.Exec(t.Context(), `UPDATE `+w.schema+`.content_poll_options SET vote_count=vote_count+1 WHERE tenant_id=$1 AND id=$2`, tenant, p.Options[2].ID)
+				must(t, err)
+				must(t, holder.Commit(t.Context()))
+				requireError(t, <-changed, http.StatusConflict, "conflict")
+				got, err := admin.GetPoll(t.Context(), p.ID)
+				must(t, err)
+				if len(got.Options) != 3 || got.TotalVotes != 1 || got.Options[2].Label != "Spring" || got.Options[2].VoteCount != 1 {
+					t.Fatalf("choice edit changed a voted poll: %+v", got)
+				}
+			})
 		}
 	})
 }
@@ -275,5 +348,8 @@ func TestAnonymousChoicePolls(t *testing.T) {
 		if !got.Voted || got.TotalVotes != 1 || got.Options[0].VoteCount != 1 {
 			t.Fatalf("anonymous vote replay changed tally: %+v", got)
 		}
+		label := "Changed"
+		_, err = a.engine.Client().PatchPollOption(t.Context(), poll.ID, poll.Options[1].ID, content.PollOptionPatch{Label: &label})
+		requireError(t, err, http.StatusConflict, "conflict")
 	}
 }

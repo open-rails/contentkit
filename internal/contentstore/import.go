@@ -484,8 +484,8 @@ func (rt *Runtime) recountReplies(ctx context.Context, tx pgx.Tx, threads map[st
 	return err
 }
 
-// ImportPolls writes polls and their options in tx; options the import no
-// longer lists go, with their votes.
+// ImportPolls writes polls and their options in tx. Choices can change only
+// before voting starts; identical choices can always be imported again.
 func (rt *Runtime) ImportPolls(ctx context.Context, tx pgx.Tx, in []content.ImportPoll) error {
 	if len(in) == 0 {
 		return nil
@@ -507,7 +507,7 @@ func (rt *Runtime) ImportPolls(ctx context.Context, tx pgx.Tx, in []content.Impo
 	}
 	now := time.Now()
 	var rows []row
-	var options []optionRow
+	options := []optionRow{}
 	ids := make([]string, 0, len(in))
 	for _, p := range in {
 		if err := contentref.ValidateID(p.ID); err != nil {
@@ -559,6 +559,7 @@ func (rt *Runtime) ImportPolls(ctx context.Context, tx pgx.Tx, in []content.Impo
  SELECT r.id::uuid, $1, r.question, r.language, r.active, r.live_at, r.closes_at, r.deleted_at, r.created_at, r.updated_at
  FROM jsonb_to_recordset($2::jsonb) AS r(id text, question text, language text, active bool, live_at timestamptz, closes_at timestamptz,
   deleted_at timestamptz, created_at timestamptz, updated_at timestamptz)
+ ORDER BY r.id::uuid
  ON CONFLICT (tenant_id, id) DO UPDATE SET question = EXCLUDED.question, language = EXCLUDED.language, is_active = EXCLUDED.is_active,
   live_at = EXCLUDED.live_at, closes_at = EXCLUDED.closes_at, deleted_at = EXCLUDED.deleted_at, created_at = EXCLUDED.created_at, updated_at = EXCLUDED.updated_at
  WHERE q.tenant_id = $1 AND (q.question, q.language, q.is_active, q.live_at, q.closes_at, q.deleted_at, q.created_at)
@@ -577,6 +578,28 @@ func (rt *Runtime) ImportPolls(ctx context.Context, tx pgx.Tx, in []content.Impo
 	}
 	if moved != "" {
 		return fmt.Errorf("%w: poll option %s belongs to another poll", ErrConflict, moved)
+	}
+	// The upsert locks even unchanged question rows. Check votes in a separate
+	// statement so a vote committed during that lock wait is visible.
+	var voted string
+	if err := tx.QueryRow(ctx, `WITH incoming AS (
+ SELECT r.poll_id::uuid AS question_id, r.id::uuid AS id, r.label, r.position
+ FROM jsonb_to_recordset($2::jsonb) AS r(poll_id text, id text, label text, position int)
+)
+ SELECT coalesce(min(q.id::text), '') FROM `+s.t.pollQuestions+` q
+ WHERE q.tenant_id = $3 AND q.id = ANY($1::uuid[])
+ AND EXISTS (SELECT 1 FROM `+s.t.pollVotes+` v WHERE v.tenant_id = $3 AND v.question_id = q.id)
+ AND EXISTS (
+  (SELECT o.id, o.label, o.position FROM `+s.t.pollOptions+` o WHERE o.tenant_id = $3 AND o.question_id = q.id
+   EXCEPT SELECT i.id, i.label, i.position FROM incoming i WHERE i.question_id = q.id)
+  UNION ALL
+  (SELECT i.id, i.label, i.position FROM incoming i WHERE i.question_id = q.id
+   EXCEPT SELECT o.id, o.label, o.position FROM `+s.t.pollOptions+` o WHERE o.tenant_id = $3 AND o.question_id = q.id)
+ )`, ids, string(odata), rt.tenant).Scan(&voted); err != nil {
+		return err
+	}
+	if voted != "" {
+		return fmt.Errorf("%w: poll %s choices cannot change after voting starts", ErrConflict, voted)
 	}
 	if _, err := tx.Exec(ctx, `DELETE FROM `+s.t.pollOptions+` o WHERE o.tenant_id = $3 AND o.question_id = ANY($1::uuid[])
  AND NOT EXISTS (SELECT 1 FROM jsonb_to_recordset($2::jsonb) AS r(id text) WHERE r.id::uuid = o.id)`, ids, string(odata), rt.tenant); err != nil {
@@ -637,6 +660,12 @@ func (rt *Runtime) ImportVotes(ctx context.Context, tx pgx.Tx, in []content.Impo
 		return err
 	}
 	s := rt.store
+	// Match live voting's question lock before inspecting options. Stable order
+	// prevents multi-poll imports from locking the same questions in reverse.
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM `+s.t.pollQuestions+`
+ WHERE tenant_id = $1 AND id = ANY($2::uuid[]) ORDER BY id FOR SHARE`, rt.tenant, polls); err != nil {
+		return err
+	}
 	all, err := json.Marshal(append(slices.Clone(byUser), byIP...))
 	if err != nil {
 		return err
