@@ -267,14 +267,11 @@ func (c *comments) resolve(ctx context.Context, cid, state string, d content.Rev
 	return tx.Commit(ctx)
 }
 
-// lockThread locks a comment and the comment it replies to in id order, the
-// order erasure locks comments in, before a write changes the reply's state
-// and its parent's reply_count. reply_to_id never changes, so the parent is
-// known up front; imported comments keep explicit ids, so it need not sort
-// first.
-func (c *comments) lockThread(ctx context.Context, tx pgx.Tx, cid string) error {
-	_, err := tx.Exec(ctx, `SELECT 1 FROM `+c.s.t.comments+` WHERE tenant_id = $2 AND (id = $1 OR id = (SELECT reply_to_id FROM `+c.s.t.comments+` WHERE tenant_id = $2 AND id = $1))
-		ORDER BY id FOR UPDATE`, cid, c.s.tenant)
+// lockThread locks comments and their parents in id order before changing
+// thread state or counts. Imports take these locks before writing replies too.
+func (c *comments) lockThread(ctx context.Context, tx pgx.Tx, ids ...string) error {
+	_, err := tx.Exec(ctx, `SELECT 1 FROM `+c.s.t.comments+` WHERE tenant_id = $2 AND (id = ANY($1::uuid[]) OR id IN (SELECT reply_to_id FROM `+c.s.t.comments+` WHERE tenant_id = $2 AND id = ANY($1::uuid[])))
+		ORDER BY id FOR UPDATE`, ids, c.s.tenant)
 	return err
 }
 

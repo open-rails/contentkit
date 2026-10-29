@@ -235,6 +235,12 @@ func (rt *Runtime) ImportComments(ctx context.Context, tx pgx.Tx, in []content.I
 	if err != nil {
 		return err
 	}
+	for id := range threads {
+		ids = append(ids, id)
+	}
+	if err := rt.comments.lockThread(ctx, tx, ids...); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(ctx, `INSERT INTO `+s.t.comments+` AS c (id, tenant_id, content_kind, content_id, content_version_id, language, reply_to_id,
  user_id, anon_name, body, deleted_at, created_at, updated_at, author_hidden)
  SELECT r.id::uuid, $1, r.kind, r.content_id, r.version, r.language, r.reply_to::uuid, r.user_id, r.anon_name, r.body, r.deleted_at,
@@ -698,6 +704,9 @@ func (rt *Runtime) RaisePreferenceFloor(ctx context.Context, tx pgx.Tx, floor in
 func (rt *Runtime) ImportDeletes(ctx context.Context, tx pgx.Tx, comments, polls []string) error {
 	s := rt.store
 	if len(comments) > 0 {
+		if err := rt.comments.lockThread(ctx, tx, comments...); err != nil {
+			return err
+		}
 		rows, err := tx.Query(ctx, `UPDATE `+s.t.comments+` SET deleted_at = now(), updated_at = now()
  WHERE tenant_id = $1 AND id = ANY($2::uuid[]) AND deleted_at IS NULL
  RETURNING coalesce(reply_to_id::text, ''), content_kind, content_id, coalesce(content_version_id, '')`, rt.tenant, comments)

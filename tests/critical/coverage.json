@@ -6949,7 +6949,7 @@
       "id": "CK-API-166",
       "method": "POST",
       "path": "/v1/import",
-      "selection": "partial-security-only; positive/full functionality deferred P1",
+      "selection": "partial-security-and-reply-counts; other functionality deferred P1",
       "status": "verified",
       "cases": [
         "TestHTTPAuthenticationMatrix/CK-API-166_POST_/v1/import/malformed_credential",
@@ -6958,7 +6958,11 @@
         "TestHTTPAuthenticationMatrix/CK-API-166_POST_/v1/import/wrong_issuer",
         "TestHTTPAuthenticationMatrix/CK-API-166_POST_/v1/import/foreign_app_key",
         "TestHTTPAuthenticationMatrix/CK-API-166_POST_/v1/import/anonymous_protected_operation",
-        "TestHTTPAuthenticationMatrix/CK-API-166_POST_/v1/import/member_without_named_permission"
+        "TestHTTPAuthenticationMatrix/CK-API-166_POST_/v1/import/member_without_named_permission",
+        "TestImportReplyCounts",
+        "TestConcurrentImportedReplies",
+        "TestImportReplyCountsImportFirst",
+        "TestImportReplyCountsWithModeration"
       ],
       "implemented_security_cases": [
         "TestHTTPAuthenticationMatrix/CK-API-166_POST_/v1/import/malformed_credential",
@@ -6974,7 +6978,7 @@
       "evidence": [
         "Selected phase1 credential failures, foreign app-key binding, declared staff permission gate when applicable, HEAD inheritance and no protected body disclosure. Positive functionality and deeper route-specific profiles remain P1."
       ],
-      "qualified_scope": "phase1 security-only; not full route functionality"
+      "qualified_scope": "phase1 security and scoped reply-count concurrency; not full route functionality"
     },
     {
       "id": "CK-API-167",
