@@ -2,6 +2,7 @@ package critical_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -19,6 +20,126 @@ import (
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/importer"
 )
+
+func TestImportedCommentOwnershipRace(t *testing.T) {
+	w := newWorld(t, func(cfg *ck.Config) { cfg.Interactions.Limits.Disabled = true })
+	a := w.apps[0]
+	for _, name := range []string{"edit", "delete", "edit_reference", "delete_reference"} {
+		t.Run(name, func(t *testing.T) {
+			action := strings.TrimSuffix(name, "_reference")
+			movedReference := strings.HasSuffix(name, "_reference")
+			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+			defer cancel()
+			former, formerToken := w.person(t, 0)
+			current, currentToken := w.person(t, 0)
+			item := publishedArticle(t, a, "Imported comment ownership "+name)
+			destination := item
+			if movedReference {
+				current, currentToken = former, formerToken
+				destination = publishedArticle(t, a, "Imported destination "+name)
+			}
+			record := importer.CommentRecord{ExternalID: "comment", Target: importer.TargetRef{Content: &importer.Ref{ID: item.ID}}, UserID: former.ID, Body: "Original imported comment"}
+			batch := importer.Batch{Source: "comment-ownership-" + name, Comments: []importer.CommentRecord{record}}
+			initial, err := a.engine.Client().PostImport(ctx, batch)
+			must(t, err)
+			if len(initial.Failed) != 0 || initial.Written[importer.SectionComments] != 1 {
+				t.Fatalf("ownership fixture failed: %+v", initial)
+			}
+			commentID := initial.IDs[importer.RecordComment][record.ExternalID]
+			holder, err := w.pool.Acquire(ctx)
+			must(t, err)
+			defer holder.Release()
+			gate := w.schema + ":import-owner:" + name
+			_, err = holder.Exec(ctx, "SELECT pg_advisory_lock(hashtextextended($1,0))", gate)
+			must(t, err)
+			qs := pgx.Identifier{w.schema}.Sanitize()
+			defer func() {
+				cancel()
+				cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cleanupCancel()
+				_, _ = holder.Exec(cleanupCtx, "SELECT pg_advisory_unlock(hashtextextended($1,0))", gate)
+				_, err := holder.Exec(cleanupCtx, `DROP TRIGGER IF EXISTS critical_import_owner ON `+qs+`.content_comments; DROP FUNCTION IF EXISTS `+qs+`.critical_import_owner()`)
+				must(t, err)
+			}()
+			_, err = w.pool.Exec(ctx, fmt.Sprintf(`CREATE FUNCTION %s.critical_import_owner() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN IF NEW.id::text=TG_ARGV[0] AND NEW.user_id=TG_ARGV[1] THEN PERFORM pg_advisory_xact_lock(hashtextextended(TG_ARGV[2],0)); END IF; RETURN NEW; END$$;
+CREATE TRIGGER critical_import_owner BEFORE UPDATE OF user_id ON %s.content_comments FOR EACH ROW EXECUTE FUNCTION %s.critical_import_owner('%s','%s','%s')`, qs, qs, qs, commentID, current.ID, gate))
+			must(t, err)
+			blockedBy := func(pid uint32) uint32 {
+				t.Helper()
+				var waiter uint32
+				waitForWithin(t, 10*time.Second, func() bool {
+					must(t, w.pool.QueryRow(ctx, `SELECT coalesce(min(pid),0) FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid))`, pid).Scan(&waiter))
+					return waiter != 0
+				})
+				return waiter
+			}
+			batch.Comments[0].UserID, batch.Comments[0].Body = current.ID, "Imported replacement"
+			batch.Comments[0].Target = importer.TargetRef{Content: &importer.Ref{ID: destination.ID}}
+			imported, attempted := make(chan error, 1), make(chan error, 1)
+			go func() {
+				result, err := a.engine.Client().PostImport(ctx, batch)
+				if err == nil && (len(result.Failed) != 0 || result.Written[importer.SectionComments] != 1) {
+					err = fmt.Errorf("owner reassignment failed: %+v", result)
+				}
+				imported <- err
+			}()
+			importPID := blockedBy(holder.Conn().PgConn().PID())
+			go func() {
+				var err error
+				if action == "edit" {
+					_, err = a.client(formerToken).PatchComment(ctx, commentID, content.CommentEdit{Body: "Former author overwrote replacement"})
+				} else {
+					err = a.client(formerToken).DeleteComment(ctx, commentID)
+				}
+				attempted <- err
+			}()
+			waiter := blockedBy(importPID)
+			var query string
+			must(t, w.pool.QueryRow(ctx, "SELECT query FROM pg_stat_activity WHERE pid=$1", waiter).Scan(&query))
+			waitQuery := "ORDER BY id FOR UPDATE"
+			if movedReference && action == "edit" {
+				waitQuery = "pg_advisory_xact_lock"
+			}
+			if !strings.Contains(query, waitQuery) {
+				t.Fatalf("stale action waited outside its mutation guard: %s", query)
+			}
+			_, err = holder.Exec(ctx, "SELECT pg_advisory_unlock(hashtextextended($1,0))", gate)
+			must(t, err)
+			must(t, <-imported)
+			actionErr := <-attempted
+			var refused *ck.Error
+			if !errors.As(actionErr, &refused) || (refused.Status != 403 || refused.Code != "forbidden") && (refused.Status != 409 || refused.Code != "conflict") {
+				t.Errorf("former owner's %s was not refused after import: %v", action, actionErr)
+			}
+			var owner, body, contentID string
+			var deletedAt *time.Time
+			must(t, w.pool.QueryRow(ctx, `SELECT user_id,body,content_id,deleted_at FROM `+qs+`.content_comments WHERE tenant_id=$1 AND id=$2`, a.cfg.Scope.AppID.String(), commentID).Scan(&owner, &body, &contentID, &deletedAt))
+			if owner != current.ID || body != batch.Comments[0].Body || contentID != destination.ID || deletedAt != nil {
+				t.Errorf("former owner's %s changed imported state: owner=%s body=%q deleted=%v", action, owner, body, deletedAt != nil)
+			}
+			comments, err := a.client(currentToken).GetContentComments(ctx, destination.ID, ck.GetContentCommentsQuery{})
+			must(t, err)
+			found := false
+			for _, cm := range comments {
+				if cm.ID == commentID {
+					found = cm.UserID == current.ID && cm.Body == batch.Comments[0].Body && !cm.Deleted
+				}
+			}
+			if !found {
+				t.Errorf("imported replacement did not survive former owner's %s: %+v", action, comments)
+			}
+			if action == "edit" {
+				updated, err := a.client(currentToken).PatchComment(ctx, commentID, content.CommentEdit{Body: "Current author's edit"})
+				must(t, err)
+				if updated.UserID != current.ID || updated.Body != "Current author's edit" {
+					t.Fatalf("current owner could not edit the replacement: %+v", updated)
+				}
+			} else {
+				must(t, a.client(currentToken).DeleteComment(ctx, commentID))
+			}
+		})
+	}
+}
 
 func TestModeratorErasure(t *testing.T) {
 	w := newWorld(t, func(cfg *ck.Config) { cfg.Interactions.Limits.Disabled = true })

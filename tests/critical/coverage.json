@@ -2913,14 +2913,16 @@
       "id": "CK-API-011",
       "method": "PATCH",
       "path": "/v1/comments/{cid}",
-      "selection": "partial-security-only; positive/full functionality deferred P1",
+      "selection": "partial-security-and-ownership-race; other functionality deferred P1",
       "status": "verified",
       "cases": [
         "TestHTTPAuthenticationMatrix/CK-API-011_PATCH_/v1/comments/{cid}/malformed_credential",
         "TestHTTPAuthenticationMatrix/CK-API-011_PATCH_/v1/comments/{cid}/revoked_session",
         "TestHTTPAuthenticationMatrix/CK-API-011_PATCH_/v1/comments/{cid}/expired_credential",
         "TestHTTPAuthenticationMatrix/CK-API-011_PATCH_/v1/comments/{cid}/wrong_issuer",
-        "TestHTTPAuthenticationMatrix/CK-API-011_PATCH_/v1/comments/{cid}/foreign_app_key"
+        "TestHTTPAuthenticationMatrix/CK-API-011_PATCH_/v1/comments/{cid}/foreign_app_key",
+        "TestImportedCommentOwnershipRace/edit",
+        "TestImportedCommentOwnershipRace/edit_reference"
       ],
       "implemented_security_cases": [
         "TestHTTPAuthenticationMatrix/CK-API-011_PATCH_/v1/comments/{cid}/malformed_credential",
@@ -2930,24 +2932,27 @@
         "TestHTTPAuthenticationMatrix/CK-API-011_PATCH_/v1/comments/{cid}/foreign_app_key"
       ],
       "remaining": "P1: positive/function-specific error and deeper target profiles, as declared in the approved inventory.",
-      "security_evidence": "credential gate and app-key boundary only; no route-specific functional or mutation no-effect approval; executed in integrated-f052-aggregate",
+      "security_evidence": "Phase1 credential/app-key checks executed in integrated-f052-aggregate; the current PostgreSQL/public HTTP ownership race verifies stale-owner refusal and preserved replacement state. Other mutation profiles remain unqualified.",
       "evidence": [
-        "Selected phase1 credential failures, foreign app-key binding, declared staff permission gate when applicable, HEAD inheritance and no protected body disclosure. Positive functionality and deeper route-specific profiles remain P1."
+        "Selected phase1 credential failures, foreign app-key binding, declared staff permission gate when applicable, HEAD inheritance and no protected body disclosure. Positive functionality and deeper route-specific profiles remain P1.",
+        "Public HTTP/PostgreSQL contention refuses a former owner after import changes the owner, preserving the replacement comment."
       ],
-      "qualified_scope": "phase1 security-only; not full route functionality"
+      "qualified_scope": "phase1 security and scoped imported-ownership race; not full route functionality"
     },
     {
       "id": "CK-API-012",
       "method": "DELETE",
       "path": "/v1/comments/{cid}",
-      "selection": "partial-security-only; positive/full functionality deferred P1",
+      "selection": "partial-security-and-ownership-race; other functionality deferred P1",
       "status": "verified",
       "cases": [
         "TestHTTPAuthenticationMatrix/CK-API-012_DELETE_/v1/comments/{cid}/malformed_credential",
         "TestHTTPAuthenticationMatrix/CK-API-012_DELETE_/v1/comments/{cid}/revoked_session",
         "TestHTTPAuthenticationMatrix/CK-API-012_DELETE_/v1/comments/{cid}/expired_credential",
         "TestHTTPAuthenticationMatrix/CK-API-012_DELETE_/v1/comments/{cid}/wrong_issuer",
-        "TestHTTPAuthenticationMatrix/CK-API-012_DELETE_/v1/comments/{cid}/foreign_app_key"
+        "TestHTTPAuthenticationMatrix/CK-API-012_DELETE_/v1/comments/{cid}/foreign_app_key",
+        "TestImportedCommentOwnershipRace/delete",
+        "TestImportedCommentOwnershipRace/delete_reference"
       ],
       "implemented_security_cases": [
         "TestHTTPAuthenticationMatrix/CK-API-012_DELETE_/v1/comments/{cid}/malformed_credential",
@@ -2957,11 +2962,12 @@
         "TestHTTPAuthenticationMatrix/CK-API-012_DELETE_/v1/comments/{cid}/foreign_app_key"
       ],
       "remaining": "P1: positive/function-specific error and deeper target profiles, as declared in the approved inventory.",
-      "security_evidence": "credential gate and app-key boundary only; no route-specific functional or mutation no-effect approval; executed in integrated-f052-aggregate",
+      "security_evidence": "Phase1 credential/app-key checks executed in integrated-f052-aggregate; the current PostgreSQL/public HTTP ownership race verifies stale-owner refusal and preserved replacement state. Other mutation profiles remain unqualified.",
       "evidence": [
-        "Selected phase1 credential failures, foreign app-key binding, declared staff permission gate when applicable, HEAD inheritance and no protected body disclosure. Positive functionality and deeper route-specific profiles remain P1."
+        "Selected phase1 credential failures, foreign app-key binding, declared staff permission gate when applicable, HEAD inheritance and no protected body disclosure. Positive functionality and deeper route-specific profiles remain P1.",
+        "Public HTTP/PostgreSQL contention refuses a former owner after import changes the owner, preserving the replacement comment."
       ],
-      "qualified_scope": "phase1 security-only; not full route functionality"
+      "qualified_scope": "phase1 security and scoped imported-ownership race; not full route functionality"
     },
     {
       "id": "CK-API-013",
