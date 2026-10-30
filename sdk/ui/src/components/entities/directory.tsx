@@ -1,5 +1,5 @@
 import { cn } from "cn";
-import { useRef, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { ContentKitUiAppearance } from "../../appearance.js";
 import type { ContentKitClient } from "../../client/client.js";
 import { LETTERS } from "../../client/entity-fields.js";
@@ -64,13 +64,25 @@ export function EntityDirectory(p: EntityDirectoryProps) {
   const sort = p.sort ?? ownSort;
   const choose = (l: string | null) => (p.onLetterChange ? p.onLetterChange(l) : setOwn(l));
   const chooseSort = (s: EntitySort) => (p.onSortChange ? p.onSortChange(s) : setOwnSort(s));
+  const lettersRef = useRef<HTMLElement>(null);
+  // Bring the chosen letter into the phone row, e.g. one restored from the URL.
+  useEffect(() => {
+    const nav = lettersRef.current;
+    const chosen = nav?.querySelector<HTMLElement>("[aria-pressed=true]");
+    if (!nav || !chosen) return;
+    const n = nav.getBoundingClientRect();
+    const c = chosen.getBoundingClientRect();
+    if (c.left < n.left || c.right > n.right) nav.scrollLeft += c.left - n.left - (n.width - c.width) / 2;
+  }, [letter]);
   const filter: EntityFilter = { kind: p.kind, language: p.language, contentKind: p.contentKind, parent: p.parent, scope: p.scope, sort, letter: letter ?? undefined, pageSize: p.pageSize };
   return (
     <ContentKitUiRoot appearance={p.appearance} className={cn("grid gap-4 text-sm", p.className)} data-ckui="entity-directory" data-kind={p.kind}>
       {(p.letters !== false || !!p.sorts?.length) && (
-        <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="flex min-w-0 flex-wrap items-start justify-between gap-2">
           {p.letters !== false && (
-            <nav aria-label={t("entities.byLetter")} className="flex flex-wrap gap-1" data-ckui="letters">
+            // One scrolling row on phones: wrapped, the 40px letters took four rows before the first entity.
+            // The inset keeps focus rings inside the scroller.
+            <nav ref={lettersRef} aria-label={t("entities.byLetter")} className="flex gap-1 max-sm:-m-1 max-sm:w-[calc(100%+0.5rem)] max-sm:overflow-x-auto max-sm:p-1 sm:flex-wrap" data-ckui="letters">
               {[null, ...LETTERS].map((l) => (
                 <Button
                   key={l ?? "all"}
@@ -127,18 +139,26 @@ function NumberedEntities({ filter, client, ...p }: EntityDirectoryProps & { fil
     p.onPageChange?.(next);
     if (scroll) top.current?.scrollIntoView({ block: "start", behavior: "smooth" });
   };
+  // A page of names fits on one screen, so a list has one bar, after it; long cover grids keep one at each end.
+  const grid = p.layout === "grid";
   const controls = (bottom: boolean) =>
-    r.total !== undefined ? <Pagination page={page} total={r.total} pageSize={size} range={!bottom} pageHref={p.pageHref} onPageChange={(n) => go(n, bottom)} /> : null;
+    r.total !== undefined ? <Pagination page={page} total={r.total} pageSize={size} pageHref={p.pageHref} onPageChange={(n) => go(n, bottom)} /> : null;
+  const entities = <Entities {...p} items={r.items} loading={r.loading} error={r.error} reload={r.reload} />;
+  // A list's one bar also stays on an empty page past the end, the way back.
   return (
     <>
-      <div ref={top} className="scroll-mt-20">
-        {controls(false)}
+      <div ref={top} className="grid scroll-mt-20 gap-4">
+        {grid && controls(false)}
+        {entities}
       </div>
-      <Entities {...p} items={r.items} loading={r.loading} error={r.error} reload={r.reload} />
-      {r.items.length > 0 && controls(true)}
+      {(!grid || r.items.length > 0) && controls(true)}
     </>
   );
 }
+
+const GRID = "grid grid-cols-[repeat(auto-fill,minmax(9rem,1fr))] gap-3";
+// Equal columns, so names of any length line up.
+const CHIPS = "grid grid-cols-[repeat(auto-fill,minmax(11rem,1fr))] gap-2";
 
 function Entities({ items, loading, error, reload, ...p }: Shown & { items: EntityCard[]; loading: boolean; error?: Parameters<typeof contentError>[1]; reload: () => void }) {
   const m = useMessages();
@@ -147,9 +167,9 @@ function Entities({ items, loading, error, reload, ...p }: Shown & { items: Enti
   const count = (n: number) => new Intl.NumberFormat(m.language).format(n);
   if (loading && !items.length)
     return (
-      <div className={grid ? "grid grid-cols-[repeat(auto-fill,minmax(9rem,1fr))] gap-3" : "grid gap-2"} aria-busy>
-        {Array.from({ length: 6 }, (_, i) => (
-          <Skeleton key={i} className={grid ? "aspect-[3/4] w-full" : "h-6 w-48"} />
+      <div className={grid ? GRID : CHIPS} aria-busy>
+        {Array.from({ length: grid ? 6 : 12 }, (_, i) => (
+          <Skeleton key={i} className={grid ? "aspect-[3/4] w-full" : "h-8 w-full"} />
         ))}
       </div>
     );
@@ -169,7 +189,7 @@ function Entities({ items, loading, error, reload, ...p }: Shown & { items: Enti
       </p>
     );
   return (
-    <ul className={grid ? "grid grid-cols-[repeat(auto-fill,minmax(9rem,1fr))] gap-3" : "flex flex-wrap gap-2"} data-ckui="entitys">
+    <ul className={grid ? GRID : CHIPS} data-ckui="entitys">
       {items.map((g) => (
         <li key={g.id} data-ckui="entity" data-slug={g.slug}>
           {p.renderEntity ? (
@@ -181,11 +201,14 @@ function Entities({ items, loading, error, reload, ...p }: Shown & { items: Enti
               <span className="text-xs text-muted-foreground tabular-nums">{m.plural("entities.items", g.count)}</span>
             </EntityLink>
           ) : (
-            <EntityLink entity={g} href={p.href} className="inline-flex items-center gap-1.5 rounded-md border border-border px-2 py-1 hover:bg-muted">
-              <span className="break-words">{g.name || g.slug}</span>
-              <span className="text-xs text-muted-foreground tabular-nums" aria-label={m.plural("entities.items", g.count)}>
-                {count(g.count)}
-              </span>
+            // A 32px chip taking taps over 40px; a zero count is left out rather than shown as "0".
+            <EntityLink entity={g} href={p.href} className="relative flex h-8 w-full items-center gap-1.5 rounded-md border border-border px-2.5 transition-colors after:absolute after:inset-x-0 after:-inset-y-1 hover:bg-muted">
+              <span className="truncate" title={g.name || g.slug}>{g.name || g.slug}</span>
+              {g.count > 0 && (
+                <span className="ms-auto shrink-0 text-xs text-muted-foreground tabular-nums" aria-label={m.plural("entities.items", g.count)}>
+                  {count(g.count)}
+                </span>
+              )}
             </EntityLink>
           )}
         </li>
