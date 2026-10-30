@@ -5,7 +5,6 @@ import (
 	"errors"
 
 	"github.com/open-rails/contentkit/contentref"
-	discovery "github.com/open-rails/contentkit/discovery"
 	"github.com/open-rails/contentkit/internal/search"
 	signalstore "github.com/open-rails/contentkit/internal/signalstore"
 	"github.com/open-rails/contentkit/signal"
@@ -18,7 +17,27 @@ const seedConcurrency = 4
 
 var errNoStore = errors.New("discovery: Engagement.Store is required")
 
-// Engagement is the co-engagement Candidates source: Similar reads works
+// query bounds one candidate request.
+type query struct {
+	// ContentKinds limits candidate kinds (empty = any).
+	ContentKinds []string
+	// Limit is the number of results the caller returns after filtering.
+	Limit int
+	// Window bounds the evidence (zero = all time).
+	Window signal.Window
+	// SeedLimit and SeedContentKinds bound which of the subject's history
+	// informs ForSubject (0 / empty = default).
+	SeedLimit        int
+	SeedContentKinds []string
+}
+
+// candidate is one ranked work.
+type candidate struct {
+	Ref   contentref.ContentRef
+	Score float64
+}
+
+// Engagement is the co-engagement candidate source: Similar reads works
 // co-engaged with the anchor; ForSubject seeds from the subject's
 // highest-signal non-negative works and RRF-fuses each seed's co-engaged list.
 type Engagement struct {
@@ -28,18 +47,7 @@ type Engagement struct {
 	RRFK int
 }
 
-var _ discovery.Candidates = Engagement{}
-
-// NewEngagement builds the default source over a hub's ClickHouse database.
-func NewEngagement(conn signal.Conn, database, tenant string) (Engagement, error) {
-	store, err := signalstore.NewStore(conn, database)
-	if err != nil {
-		return Engagement{}, err
-	}
-	return Engagement{Store: store, Tenant: tenant}, nil
-}
-
-func (e Engagement) Similar(ctx context.Context, anchor contentref.ContentRef, q discovery.Query) ([]discovery.Candidate, error) {
+func (e Engagement) Similar(ctx context.Context, anchor contentref.ContentRef, q query) ([]candidate, error) {
 	if e.Store == nil {
 		return nil, errNoStore
 	}
@@ -51,15 +59,15 @@ func (e Engagement) Similar(ctx context.Context, anchor contentref.ContentRef, q
 	if err != nil {
 		return nil, err
 	}
-	out := make([]discovery.Candidate, 0, len(co))
+	out := make([]candidate, 0, len(co))
 	for _, c := range co {
-		out = append(out, discovery.Candidate{Ref: c.ContentRef, Score: float64(c.Strength)})
+		out = append(out, candidate{Ref: c.ContentRef, Score: float64(c.Strength)})
 	}
 	return out, nil
 }
 
 // ForSubject never returns its seeds.
-func (e Engagement) ForSubject(ctx context.Context, subject signal.Subject, q discovery.Query) ([]discovery.Candidate, error) {
+func (e Engagement) ForSubject(ctx context.Context, subject signal.Subject, q query) ([]candidate, error) {
 	if e.Store == nil {
 		return nil, errNoStore
 	}
@@ -106,13 +114,13 @@ func (e Engagement) ForSubject(ctx context.Context, subject signal.Subject, q di
 		return nil, err
 	}
 	fused := search.FuseRRF(lists, search.RRFOptions{K: e.RRFK})
-	out := make([]discovery.Candidate, 0, len(fused))
+	out := make([]candidate, 0, len(fused))
 	for _, f := range fused {
 		ref := f.Ref()
 		if _, ok := isSeed[ref.Key()]; ok {
 			continue
 		}
-		out = append(out, discovery.Candidate{Ref: ref, Score: float64(f.Score)})
+		out = append(out, candidate{Ref: ref, Score: float64(f.Score)})
 	}
 	return out, nil
 }

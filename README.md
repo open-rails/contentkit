@@ -68,7 +68,7 @@ bodies' wire and data types and its ports; its implementation is the
 | `kinds` | the content model: content and entity kinds, languages, tiers, channels |
 | `contentref` | `ContentRef`, `ContentKey`, `EntityID` |
 | `access` | `Actor`, the staff permissions (`Permission`, `Permissions()`), the key grammar, rules and the `Billing` port ([Access](#access-access)) |
-| `catalog`, `entities`, `channels`, `content`, `contenturl`, `discovery`, `importer`, `signal`, `media`, `media/versions` | the routes' request and response types, events, the media registry's config types and the bucket port (`media.Store`), and the host ports (`content.ContentModerator`, `discovery.Candidates`, `entities.Scopes`, …) |
+| `catalog`, `entities`, `channels`, `content`, `contenturl`, `discovery`, `importer`, `signal`, `media`, `media/versions` | the routes' request and response types, events, the media registry's config types and the bucket port (`media.Store`), and the host ports (`content.ContentModerator`, `entities.Scopes`, …) |
 | `media/s3` | `media.Store` over aws-sdk-go-v2 (Ceph RGW in production, MinIO in tests), bucket policy and point-in-time `Restore` |
 | `media/avatar` | the standard account avatar kind |
 | `media/gateway`, `media/token`, `media/layout` | the media gateway's handler (`cmd/media-gateway`), its access tokens and object keys |
@@ -767,8 +767,7 @@ routes (signals, exposures, history, popular, similar, recommend) land with
   `popularity.New(popularity.Config{Source: hub, Policy: policy})` over the engine's hub, then
   `ranker.Popular` / `ranker.Scores` / `ranker.Entities`
   ([docs/popularity-policy.md](docs/popularity-policy.md)).
-- Similar and recommended content draw candidates from `Deps.Candidates`
-  (default: co-engagement); see
+- Similar and recommended content draw candidates from co-engagement; see
   [discovery candidates](HOST_INTEGRATION.md#discovery-candidates).
 - `AnonymizeAccount` is account deletion with a quorum-written fence; see
   [HOST_INTEGRATION.md](HOST_INTEGRATION.md#signal-plane-account-deletion)

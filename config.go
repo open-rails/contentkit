@@ -310,9 +310,6 @@ type Deps struct {
 	// Processor sanitizes comments, BodyProcessor content items' rich-text
 	// bodies (keeping "contentkit:" image references); nil strips tags.
 	Processor, BodyProcessor content.ContentProcessor
-	// Candidates sources similar and recommended content; nil is
-	// co-engagement over the signal plane.
-	Candidates discovery.Candidates
 
 	// Clock is the time; nil is time.Now.
 	Clock func() time.Time

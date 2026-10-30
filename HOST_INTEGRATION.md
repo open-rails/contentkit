@@ -845,8 +845,8 @@ that fits the reader (`display_language` first, then position).
   /typeahead` (direct title/entity-name/alias prefixes only; no contextual
   keywords or typo expansion). `SearchBox` puts matching recent queries first,
   followed by entities and content titles; full search remains broader.
-- `GET /contents/{id}/similar`, `GET /recommendations`: `Deps.Candidates`
-  (co-engagement by default), admitted through the reader's visibility.
+- `GET /contents/{id}/similar`, `GET /recommendations`: co-engagement
+  candidates, admitted through the reader's visibility.
   Recommendations fill from the last 30 days' popularity, then all-time,
   then the newest content the reader has not seen.
 - `GET /release-dates` (`by=day|month`, the list filters): counts and free
@@ -1550,21 +1550,10 @@ each host erases its own tenant.
 
 ## Discovery candidates
 
-Similar and recommended lists get candidates from one port:
-
-```go
-type Candidates interface { // package discovery
-	Similar(ctx context.Context, anchor contentref.ContentRef, q Query) ([]Candidate, error)
-	ForSubject(ctx context.Context, subject signal.Subject, q Query) ([]Candidate, error)
-}
-```
-
-Candidates are ranked best-first; oversample past `q.Limit`. The
-`Recommender` applies one policy to every source: tenant and kinds, never the
-anchor, seen and disliked works, the reader's visibility (admission in one
-batch), dedupe, limit, and the popularity fill. `Deps.Candidates` nil is
-`discovery.Engagement`; wrap a provider in `discovery.Fallback` so errors and
-thin results fall back to engagement.
+Similar and recommended lists get their candidates from co-engagement over
+the signal plane. The recommender applies one policy to them: tenant and kinds,
+never the anchor, seen and disliked works, the reader's visibility (admission
+in one batch), dedupe, limit, and the popularity fill.
 
 ## Popularity (policy-ranked)
 
