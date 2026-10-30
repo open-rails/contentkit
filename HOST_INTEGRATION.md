@@ -458,7 +458,7 @@ Ports (in `content` unless qualified):
 bans show each author as `{id, name, username, avatar, avatar_srcset}`:
 `name` and `username` from `UserInfo.Get` (never the email), with one `Get`
 per response, never per author, and the avatar at its stable URL, built
-from the id (`Config.Avatars`, Avatars below). An id the directory does not
+from the id (`Config.Accounts.Avatars`, Avatars below). An id the directory does not
 hold (a deleted account) has no author; a directory failure is logged and
 leaves bare ids, never failing the response. Without `UserInfo` authors are
 bare ids.
@@ -1007,7 +1007,7 @@ worker, _ := cfg.MediaRegistry() // the stock worker's MEDIA_KINDS_FILE
   Doujins' translation requests' covers. In the engine anyone reads its
   public files (`GET /v1/media/{kind}/{id}`) and holders of
   `root:content:write` or `root:import:write` upload them.
-- **Account avatars** are the engine's `Config.Avatars` (Avatars below).
+- **Account avatars** are the engine's `Config.Accounts.Avatars` (Avatars below).
   `avatar.User()` (`github.com/open-rails/contentkit/media/avatar`) is the
   standard kind: JPEG, PNG and WebP up to 10 MiB, square WebP at 64, 128,
   256 and 512 pixels, a default silhouette (publish it with the other
@@ -1090,10 +1090,10 @@ worker, _ := cfg.MediaRegistry() // the stock worker's MEDIA_KINDS_FILE
 
 ```go
 // The primary (Doujins): its media holds every avatar.
-cfg.Avatars = &contentkit.AvatarsConfig{} // avatar.User(), preset "avatar"
+cfg.Accounts.Avatars = &contentkit.AvatarsConfig{} // avatar.User(), preset "avatar"
 
 // Another site sharing its people (Hentai0): keeps none.
-cfg.Avatars = &contentkit.AvatarsConfig{
+cfg.Accounts.Avatars = &contentkit.AvatarsConfig{
 	Primary: "https://doujins.dev/api/v1/contentkit", // the primary's routes
 	Key:     os.Getenv("CONTENTKIT_AVATARS_KEY"),     // the primary's API key: root:avatars:write
 }
@@ -1345,7 +1345,7 @@ gates (Auth). No compatibility: the old ports are gone.
   (`access.Permissions()`, full `root:<resource>:<action>` names), held in
   the Authenticator's root scope. Declare them in the auth's roles from the
   constants (Auth); there is no permission or scope setting.
-- `adapters/authkit` is deleted: authors are ContentKit's (`Config.Avatars`),
+- `adapters/authkit` is deleted: authors are ContentKit's (`Config.Accounts.Avatars`),
   and account uploads are a few lines of `CanUpload` (Account avatars).
 - `media.HandlerOptions.Identity` and `UploadHandlerOptions.Actor` are `Auth`;
   `media.Identity`, `content.Identity`, `content.Authorizer`,

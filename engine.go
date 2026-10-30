@@ -251,16 +251,17 @@ func (e *Engine) validate(deps Deps) error {
 			return errors.New("contentkit: Config.Media needs Deps.Store")
 		}
 	}
-	if a := cfg.Avatars; a != nil {
+	if a := cfg.Accounts; a != nil && a.Avatars != nil {
+		a := a.Avatars
 		if cfg.Media == nil {
-			return errors.New("contentkit: Config.Avatars needs Config.Media")
+			return errors.New("contentkit: Config.Accounts.Avatars needs Config.Media")
 		}
 		if a.Primary != "" {
 			if u, err := url.Parse(a.Primary); err != nil || u.Scheme != "https" && u.Scheme != "http" || u.Host == "" {
-				return fmt.Errorf("contentkit: Config.Avatars.Primary %q is not an http(s) URL", a.Primary)
+				return fmt.Errorf("contentkit: Config.Accounts.Avatars.Primary %q is not an http(s) URL", a.Primary)
 			}
 			if strings.TrimSpace(a.Key) == "" {
-				return errors.New("contentkit: Config.Avatars.Primary needs Key")
+				return errors.New("contentkit: Config.Accounts.Avatars.Primary needs Key")
 			}
 		}
 	}

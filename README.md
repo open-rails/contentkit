@@ -132,7 +132,7 @@ for _, r := range routes {
   `CreateContent`).
 - `Ready` fails until `Start`; `Probes` are the optional dependencies
   (ClickHouse, the bucket, Redis); `AnonymizeAccount` is account deletion.
-- `Config.Avatars` is people's avatars: held by one site's engine, the
+- `Config.Accounts.Avatars` is people's avatars: held by one site's engine, the
   primary, which other sites sharing its people forward their avatar
   writes to (HOST_INTEGRATION "Avatars").
 

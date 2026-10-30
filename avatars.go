@@ -23,7 +23,7 @@ import (
 	"github.com/open-rails/contentkit/media/layout"
 )
 
-// engineAvatars is how the engine shows people's avatars (Config.Avatars),
+// engineAvatars is how the engine shows people's avatars (Config.Accounts.Avatars),
 // and on a site that is not the primary, forwards their writes to it.
 type engineAvatars struct {
 	urls    *mediastore.Registry // builds avatar URLs: the primary's registry, else one of the avatar kind alone
@@ -31,9 +31,9 @@ type engineAvatars struct {
 	forward *avatarForward       // nil on the primary
 }
 
-// newAvatars builds Config.Avatars over the engine's media.
+// newAvatars builds Config.Accounts.Avatars over the engine's media.
 func (e *Engine) newAvatars(deps Deps) (*engineAvatars, error) {
-	a := e.cfg.Avatars
+	a := e.cfg.avatars
 	if a == nil {
 		return nil, nil
 	}
@@ -46,7 +46,7 @@ func (e *Engine) newAvatars(deps Deps) (*engineAvatars, error) {
 		var err error
 		if out.urls, err = mediastore.NewRegistry(media.Config{Namespace: e.media.reg.Config().Namespace, Scope: e.media.reg.Config().Scope, BaseURL: e.media.reg.Config().BaseURL,
 			Kinds: []media.Kind{kind}, Avatars: media.Avatars{Kind: kind.Name, Preset: preset}}, mediastore.Hooks{}); err != nil {
-			return nil, fmt.Errorf("contentkit: Config.Avatars: %w", err)
+			return nil, fmt.Errorf("contentkit: Config.Accounts.Avatars: %w", err)
 		}
 		if out.forward, err = newAvatarForward(e, deps, kind, a); err != nil {
 			return nil, err
@@ -83,7 +83,7 @@ const forwardTimeout = 30 * time.Second
 func newAvatarForward(e *Engine, deps Deps, kind media.Kind, a *AvatarsConfig) (*avatarForward, error) {
 	base, err := url.Parse(e.media.reg.Config().BaseURL)
 	if err != nil || base.Scheme == "" || base.Host == "" {
-		return nil, errors.New("contentkit: Config.Avatars.Primary needs Config.Media.BaseURL, the media host avatars are shown at")
+		return nil, errors.New("contentkit: Config.Accounts.Avatars.Primary needs Config.Media.BaseURL, the media host avatars are shown at")
 	}
 	c := e.cfg.Media.CommitLimit
 	return &avatarForward{kind: kind.Name, primary: strings.TrimRight(a.Primary, "/"), key: a.Key, media: base,
@@ -198,7 +198,7 @@ func (f *avatarForward) serve(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
 		// The person passed this site's check: the primary refused the key.
-		f.log.ErrorContext(r.Context(), "contentkit: the avatar primary refused Config.Avatars.Key", "status", resp.StatusCode)
+		f.log.ErrorContext(r.Context(), "contentkit: the avatar primary refused Config.Accounts.Avatars.Key", "status", resp.StatusCode)
 		fail(w, http.StatusServiceUnavailable, httpapi.CodeUnavailable, unavailable, 5*time.Second)
 		return
 	case resp.StatusCode == http.StatusOK && r.Method == http.MethodGet:

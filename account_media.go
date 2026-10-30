@@ -28,7 +28,7 @@ func (c Config) AccountMedia() (AccountMediaStorage, bool, error) {
 	return s, ok, nil
 }
 func (e *Engine) accountMediaStorage() (AccountMediaStorage, bool) {
-	if e.cfg.Media == nil || e.cfg.Avatars == nil || e.cfg.Avatars.Primary != "" {
+	if e.cfg.Media == nil || e.cfg.avatars == nil || e.cfg.avatars.Primary != "" {
 		return AccountMediaStorage{}, false
 	}
 	schema, _ := e.accountStorage()
@@ -43,12 +43,12 @@ func (e *Engine) accountMediaPartition() string {
 var ErrAvatarPlacement = errors.New("contentkit: tenant avatar primary placement conflicts")
 
 func (e *Engine) avatarPlacement(ctx context.Context, claim bool) error {
-	if e.cfg.Media == nil || e.cfg.Avatars == nil {
+	if e.cfg.Media == nil || e.cfg.avatars == nil {
 		return nil
 	}
 	schema, _ := e.accountStorage()
 	table := pgx.Identifier{schema, "content_account_avatar_placement"}.Sanitize()
-	primary := e.cfg.Avatars.Primary == ""
+	primary := e.cfg.avatars.Primary == ""
 	if claim && primary {
 		if _, err := e.pool.Exec(ctx, "INSERT INTO "+table+" (tenant_id,primary_app_id) VALUES ($1,$2) ON CONFLICT (tenant_id) DO NOTHING", e.scope.TenantID.String(), e.scope.AppID.String()); err != nil {
 			return err

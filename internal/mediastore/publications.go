@@ -94,10 +94,10 @@ ORDER BY 1, 2, 3, 4`, cols[0], cols[1], cols[2], versions, cols[3], cols[4])
 	return rows.Err()
 }
 
-// Avatars returns, per id in order, the person's avatar (Config.Avatars) at
+// Avatars returns, per id in order, the person's avatar (Config.Accounts.Avatars) at
 // its Stable preset's logical names: their current image, else the
 // gateway's default. Built from the ids, never looked up; none without
-// Config.Avatars or for an invalid id.
+// Config.Accounts.Avatars or for an invalid id.
 func (r *Registry) Avatars(ids ...string) []media.PublicImage {
 	a := r.cfg.Avatars
 	if a == (media.Avatars{}) {

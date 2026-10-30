@@ -41,8 +41,6 @@ type Config struct {
 	// Media is the media registry and how it is served; nil runs without
 	// media (no upload or media route groups, no post and poll images).
 	Media *MediaConfig `yaml:"media" json:"media"`
-	// Avatars are people's avatars; nil: people have none. Needs Media.
-	Avatars *AvatarsConfig `yaml:"avatars" json:"avatars"`
 	// ClickHouse is the signal plane: signals, exposures, history,
 	// preferences, popularity and recommendations from signals. Unset, or
 	// while a configured one is down, they are off: the content model says
@@ -56,6 +54,7 @@ type Config struct {
 	// Accounts declares one shared account space for inboxes and avatars.
 	// It does not combine this site's content catalog with any other site's.
 	Accounts *AccountsConfig `json:"accounts,omitempty" yaml:"accounts,omitempty"`
+	avatars  *AvatarsConfig  // Accounts.Avatars with its account kind, set by withAccounts
 
 	// Jobs sizes the engine's River queue.
 	Jobs JobsConfig `yaml:"jobs" json:"jobs"`
@@ -160,7 +159,7 @@ type AvatarsConfig struct {
 // MediaKinds is the media registry Config.Media serves, in the tenant's
 // namespace: content kinds' media are their versions', each entity kind
 // gains cover media (media.ForContent), and the avatar primary holds the
-// avatar kind (Config.Accounts.Avatars or Config.Avatars). The media worker
+// avatar kind (Config.Accounts.Avatars). The media worker
 // runs it from MediaRegistry's JSON.
 func (c Config) MediaKinds() (media.Config, error) {
 	c.Content = c.Content.StorageModel()
@@ -178,9 +177,9 @@ func (c Config) MediaKinds() (media.Config, error) {
 	}
 	mc := c.Media.Config
 	if mc.Avatars != (media.Avatars{}) {
-		return media.Config{}, errors.New("contentkit: people's avatars are Config.Avatars, not Config.Media.Avatars")
+		return media.Config{}, errors.New("contentkit: people's avatars are Config.Accounts.Avatars, not Config.Media.Avatars")
 	}
-	if a := c.Avatars; a != nil && a.Primary == "" {
+	if a := c.avatars; a != nil && a.Primary == "" {
 		kind, preset := a.kind()
 		kind.Namespace = ""
 		kind.Account = true

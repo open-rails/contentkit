@@ -70,7 +70,9 @@ func TestAccountAnonymizationRecoveryAcrossStores(t *testing.T) {
 	must(t, err)
 	t.Cleanup(func() { must(t, borrowed.Close()) })
 	a.deps.ClickHouse = borrowed
-	m := attachMedia(t, w, a, func(c *ck.Config) { c.Avatars = &ck.AvatarsConfig{} })
+	m := attachMedia(t, w, a, func(c *ck.Config) {
+		c.Accounts = &ck.AccountsConfig{Schema: "contentkit_accounts", Avatars: &ck.AvatarsConfig{}}
+	})
 	account, ok, err := a.cfg.AccountMedia()
 	must(t, err)
 	if !ok || account.Schema != "contentkit_accounts" || account.WorkerSchema == a.cfg.Media.WorkerSchema {
