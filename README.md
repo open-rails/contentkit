@@ -398,9 +398,8 @@ nothing is stored). The browser's hash only finds an identical blob already
 in the folder (no upload). After the commit, the worker's place job hashes
 each staged upload and writes it to `private/sha256-{hex}` of the bytes it
 read (`Manifests.Place`); an existing blob is never overwritten, so a blob
-always holds the bytes of its name. The optional `UploadLimiter`
-(`media.NewPGLimiter`) rate-limits uploaders and charges each upload's size
-(at least 64 KiB) to the grant's `Owner`; growth past the quota fails with 413
+always holds the bytes of its name. The upload limiter rate-limits uploaders
+and charges each upload's size (at least 64 KiB) to the grant's `Owner`; growth past the quota fails with 413
 `quota_exceeded`, and deleting an item releases it.
 
 **Media gateway** (`cmd/media-gateway`, `media/gateway`, image
