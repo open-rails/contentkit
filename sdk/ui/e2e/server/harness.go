@@ -12,6 +12,7 @@ import (
 
 	mediastore "github.com/open-rails/contentkit/internal/mediastore"
 
+	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -85,8 +86,8 @@ var site = func() kinds.Config {
 	item := func(route, presentation string) kinds.Kind {
 		return kinds.Kind{Route: route, Presentation: presentation, Versions: one, Entities: []string{"tag", "series", "character"}}
 	}
-	return kinds.Config{Languages: []string{"en", "de", "ja"}, Tiers: []string{"premium"}, TokenClaims: []string{"premium"}, ContentFilters: kinds.ContentFilters{AppliesTo: []string{"comic"}, Domains: []kinds.Domain{{Name: "main", Filters: []kinds.ContentFilter{{Entity: kinds.EntityRef{Kind: "tag", Slug: "gore"}, Visible: false}}}}}, Kinds: map[string]kinds.Kind{
-		"gallery": item("g", "reader"), "album": item("album", "reader"), "note": item("note", "reader"), "channel": item("channel", "reader"),
+	return kinds.Config{Channels: &kinds.Channels{Creation: "users"}, Languages: []string{"en", "de", "ja"}, Tiers: []string{"premium"}, TokenClaims: []string{"premium"}, ContentFilters: kinds.ContentFilters{AppliesTo: []string{"comic"}, Domains: []kinds.Domain{{Name: "main", Filters: []kinds.ContentFilter{{Entity: kinds.EntityRef{Kind: "tag", Slug: "gore"}, Visible: false}}}}}, Kinds: map[string]kinds.Kind{
+		"gallery": item("g", "reader"), "album": item("album", "reader"), "note": item("note", "reader"),
 		"file": item("file", "reader"), "video": item("v", "player"), "watch": item("watch", "player"), "abr": item("abr", "player"),
 		blogKind: {Route: "blog", Presentation: "post", Versions: kinds.VersionRules{Languages: "one", Hidden: true}},
 		"comic": {Route: "comics", Presentation: "reader", Versions: kinds.VersionRules{Languages: "one", Traits: []string{"colored", "uncensored"}},
@@ -181,6 +182,16 @@ func newHarness(ctx context.Context, c config, mediaOrigin string) (_ *harness, 
 	}
 	deps := contentkit.Deps{Postgres: h.pool, Auth: h.auth.Authenticator(), Authorization: policy, Users: h.auth.UserInfo(), Store: h.store,
 		Moderator: moderator{}, BodyProcessor: newPostHTML()}
+	if deps.Scopes, err = ckauth.AppScopes(h.auth, scope); err != nil {
+		return nil, err
+	}
+	// New never migrates: the three mounts share this schema and scope.
+	if err = contentkit.MigratePostgres(ctx, h.pool, cfg, contentkit.MigrationOptions{Scopes: deps.Scopes}); err != nil {
+		return nil, err
+	}
+	if err = contentkit.MigrateClickHouse(ctx, h.pool, cfg); err != nil {
+		return nil, err
+	}
 	if h.ck, err = contentkit.New(ctx, cfg, deps); err != nil {
 		return nil, err
 	}
@@ -316,9 +327,11 @@ func openBucket(ctx context.Context, c config) (*mediaS3.Store, error) {
 	if err != nil {
 		return nil, err
 	}
+	admin := s3.New(s3.Options{Region: "us-east-1", BaseEndpoint: &c.s3Endpoint, UsePathStyle: true,
+		Credentials: credentials.NewStaticCredentialsProvider(c.s3Key, c.s3Secret, "")})
 	deadline := time.Now().Add(2 * time.Minute)
 	for {
-		_, err = store.Client().CreateBucket(ctx, &s3.CreateBucketInput{Bucket: &c.bucket})
+		_, err = admin.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: &c.bucket})
 		var owned *types.BucketAlreadyOwnedByYou
 		if err == nil || errors.As(err, &owned) {
 			return store, store.Check(ctx)

@@ -39,6 +39,8 @@ var (
 		}
 		return out
 	}()
+	// The persona of authoring channels' groups (the site enables channels).
+	_ = rbac.Persona("channel").Declare(access.ChannelPermissions()...)
 	// Every fixture member can create/edit their own posts. Other roles add staff powers.
 	contributor = appPersona.Role("contributor", perm[access.ContentCreate], perm[access.ContentEditOwn])
 	// roles are what /__test/users additionally hands out.

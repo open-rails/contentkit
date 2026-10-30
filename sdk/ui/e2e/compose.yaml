@@ -38,12 +38,11 @@ services:
     environment:
       MEDIA_GATEWAY_LISTEN: 127.0.0.1:${E2E_GATEWAY_PORT:-54792}
       MEDIA_GATEWAY_S3_ENDPOINT: http://127.0.0.1:${E2E_MINIO_PORT:-54791}
-      MEDIA_GATEWAY_BUCKETS: "tenant_00000000-0000-4000-8000-000000000201_app_00000000-0000-4000-8000-000000000202=ckui-e2e; tenant_00000000-0000-4000-8000-000000000201=ckui-e2e"
       MEDIA_GATEWAY_S3_ACCESS_KEY_ID: contentkit
       MEDIA_GATEWAY_S3_SECRET_ACCESS_KEY: contentkit-secret
-      # The harness's fault proxy forwards with the browser's Host.
-      MEDIA_GATEWAY_HOSTS: "127.0.0.1=tenant_00000000-0000-4000-8000-000000000201_app_00000000-0000-4000-8000-000000000202,tenant_00000000-0000-4000-8000-000000000201; localhost=tenant_00000000-0000-4000-8000-000000000201_app_00000000-0000-4000-8000-000000000202,tenant_00000000-0000-4000-8000-000000000201"
-      MEDIA_GATEWAY_CORS_ORIGINS: ${E2E_ORIGIN:-http://localhost:4790}
+      # The app's media and the tenant's avatars, on both loopback names (the
+      # harness's fault proxy forwards with the browser's Host), for the app origin.
+      MEDIA_GATEWAY_ROUTES: '[{"host":"127.0.0.1","scope":{"tenant_id":"00000000-0000-4000-8000-000000000201","app_id":"00000000-0000-4000-8000-000000000202"},"bucket":"ckui-e2e","origins":["${E2E_ORIGIN:-http://localhost:4790}"]},{"host":"127.0.0.1","scope":{"tenant_id":"00000000-0000-4000-8000-000000000201"},"bucket":"ckui-e2e","origins":["${E2E_ORIGIN:-http://localhost:4790}"]},{"host":"localhost","scope":{"tenant_id":"00000000-0000-4000-8000-000000000201","app_id":"00000000-0000-4000-8000-000000000202"},"bucket":"ckui-e2e","origins":["${E2E_ORIGIN:-http://localhost:4790}"]},{"host":"localhost","scope":{"tenant_id":"00000000-0000-4000-8000-000000000201"},"bucket":"ckui-e2e","origins":["${E2E_ORIGIN:-http://localhost:4790}"]}]'
       MEDIA_GATEWAY_TOKEN_KEY: ${E2E_TOKEN_KEY:-e2e:ZTJlLW1lZGlhLXRva2VuLWtleS0zMi1ieXRlcyEhISE=}
 
   # Started once the harness has migrated its schemas (the worker runs no DDL).
