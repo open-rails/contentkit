@@ -107,8 +107,6 @@ export const discovery: typeof en = {
     any: "すべて",
     filters: "絞り込み",
     clear: "絞り込みを解除",
-    showing: "{total}件中 {from}–{to}件を表示",
-    showingAtLeast: "{total}件以上中 {from}–{to}件を表示",
     pages: "ページ",
     previous: "前のページ",
     next: "次のページ",

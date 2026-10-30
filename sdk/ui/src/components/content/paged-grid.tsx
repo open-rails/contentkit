@@ -48,15 +48,16 @@ function NumberedCards({
   };
   const controls = (bottom: boolean) =>
     !result.loading || total > 0 ? (
-      <Pagination page={page} total={total} atLeast={result.summary?.truncated} pageSize={size} range={!bottom} pageHref={p.pageHref} onPageChange={(n) => go(n, bottom)} />
+      <Pagination page={page} total={total} atLeast={result.summary?.truncated} pageSize={size} pageHref={p.pageHref} onPageChange={(n) => go(n, bottom)} />
     ) : null;
   return (
     <ContentKitUiRoot appearance={p.appearance} className={cn("grid gap-4 text-sm", p.className)} data-ckui="numbered-grid">
-      <div ref={top} className="scroll-mt-20">
+      {/* One wrapper, so a page without controls leaves no empty row and its gap. */}
+      <div ref={top} className="grid scroll-mt-20 gap-4">
         {controls(false)}
+        <CardGrid {...p} className={undefined} list={list} render={render} filterKinds={filterKinds} filterLanguage={filterLanguage}
+          positionOffset={(page - 1) * size} searchQuery={searchQuery} queryID={queryID} ranker={ranker} settledEmpty={settledEmpty} />
       </div>
-      <CardGrid {...p} className={undefined} list={list} render={render} filterKinds={filterKinds} filterLanguage={filterLanguage}
-        positionOffset={(page - 1) * size} searchQuery={searchQuery} queryID={queryID} ranker={ranker} settledEmpty={settledEmpty} />
       {list.items.length > 0 && controls(true)}
     </ContentKitUiRoot>
   );

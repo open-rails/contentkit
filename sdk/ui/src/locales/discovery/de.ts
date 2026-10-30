@@ -107,8 +107,6 @@ export const discovery: typeof en = {
     any: "Alle",
     filters: "Filter",
     clear: "Filter zurücksetzen",
-    showing: "{from}–{to} von {total}",
-    showingAtLeast: "{from}–{to} von mehr als {total}",
     pages: "Seiten",
     previous: "Vorherige Seite",
     next: "Nächste Seite",

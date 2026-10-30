@@ -107,8 +107,6 @@ export const discovery: typeof en = {
     any: "전체",
     filters: "필터",
     clear: "필터 지우기",
-    showing: "{total}개 중 {from}–{to}",
-    showingAtLeast: "{total}개 이상 중 {from}–{to}",
     pages: "페이지",
     previous: "이전 페이지",
     next: "다음 페이지",
