@@ -106,8 +106,6 @@ export const discovery = {
     any: "Any",
     filters: "Filters",
     clear: "Clear filters",
-    showing: "Showing {from}–{to} of {total}",
-    showingAtLeast: "Showing {from}–{to} of {total}+",
     pages: "Pages",
     previous: "Previous page",
     next: "Next page",

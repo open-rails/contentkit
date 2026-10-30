@@ -107,8 +107,6 @@ export const discovery: typeof en = {
     any: "全部",
     filters: "筛选",
     clear: "清除筛选",
-    showing: "第 {from}–{to} 项，共 {total} 项",
-    showingAtLeast: "第 {from}–{to} 项，共 {total}+ 项",
     pages: "分页",
     previous: "上一页",
     next: "下一页",

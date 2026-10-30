@@ -16,8 +16,6 @@ export interface PaginationProps {
   onPageChange: (page: number) => void;
   /** Each page's link, for crawlers and opening in a new tab; clicks still call onPageChange. */
   pageHref?: (page: number) => string;
-  /** Show "Showing X–Y of Z"; default true. */
-  range?: boolean;
   className?: string;
 }
 
@@ -35,7 +33,7 @@ export function pageWindow(page: number, last: number): (number | "gap")[] {
   return out;
 }
 
-/** Numbered page controls with the shown range, for lists whose page lives in the host's URL. */
+/** Numbered page controls, for lists whose page lives in the host's URL. */
 export function Pagination(p: PaginationProps) {
   const m = useMessages();
   const { t } = m;
@@ -44,9 +42,8 @@ export function Pagination(p: PaginationProps) {
   const page = Math.max(1, p.page);
   const last = Math.max(known, page);
   const format = (n: number) => new Intl.NumberFormat(m.language).format(n);
-  if (p.total === 0 && page === 1) return null;
-  const from = Math.min(p.total, (page - 1) * size + 1);
-  const to = Math.min(p.total, page * size);
+  // One page has nothing to choose.
+  if (last <= 1 && !p.atLeast) return null;
   const control = (target: number, label: ReactNode, o: { current?: boolean; disabled?: boolean; aria?: string } = {}) => {
     const className = cn(buttonVariants({ variant: o.current ? "default" : "ghost", size: "sm" }), "min-w-8 tabular-nums", o.disabled && "pointer-events-none opacity-50");
     const go = (event: MouseEvent) => {
@@ -65,28 +62,19 @@ export function Pagination(p: PaginationProps) {
     );
   };
   return (
-    <nav aria-label={t("listing.pages")} className={cn("flex flex-wrap items-center justify-between gap-2 text-sm", p.className)} data-ckui="pagination">
-      {p.range !== false && p.total > 0 && (
-        <p className="text-muted-foreground tabular-nums" role="status">
-          {t(p.atLeast ? "listing.showingAtLeast" : "listing.showing", { from: format(from), to: format(to), total: format(p.total) })}
-        </p>
+    <nav aria-label={t("listing.pages")} className={cn("flex flex-wrap items-center justify-end gap-1 text-sm", p.className)} data-ckui="pagination">
+      {control(page - 1, <HugeiconsIcon icon={ArrowLeft01Icon} strokeWidth={2} />, { disabled: page <= 1, aria: t("listing.previous") })}
+      {pageWindow(page, last).map((n, i) =>
+        n === "gap" ? (
+          <span key={`gap-${i}`} aria-hidden className="px-1 text-muted-foreground">
+            …
+          </span>
+        ) : (
+          <span key={n}>{control(n, format(n), { current: n === page, aria: t("listing.goToPage", { page: format(n) }) })}</span>
+        ),
       )}
-      {(last > 1 || p.atLeast) && (
-        <div className="ms-auto flex flex-wrap items-center gap-1">
-          {control(page - 1, <HugeiconsIcon icon={ArrowLeft01Icon} strokeWidth={2} />, { disabled: page <= 1, aria: t("listing.previous") })}
-          {pageWindow(page, last).map((n, i) =>
-            n === "gap" ? (
-              <span key={`gap-${i}`} aria-hidden className="px-1 text-muted-foreground">
-                …
-              </span>
-            ) : (
-              <span key={n}>{control(n, format(n), { current: n === page, aria: t("listing.goToPage", { page: format(n) }) })}</span>
-            ),
-          )}
-          {p.atLeast && <span aria-hidden className="px-1 text-muted-foreground">…</span>}
-          {control(page + 1, <HugeiconsIcon icon={ArrowRight01Icon} strokeWidth={2} />, { disabled: page >= last && !p.atLeast, aria: t("listing.next") })}
-        </div>
-      )}
+      {p.atLeast && <span aria-hidden className="px-1 text-muted-foreground">…</span>}
+      {control(page + 1, <HugeiconsIcon icon={ArrowRight01Icon} strokeWidth={2} />, { disabled: page >= last && !p.atLeast, aria: t("listing.next") })}
     </nav>
   );
 }
