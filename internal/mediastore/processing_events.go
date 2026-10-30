@@ -56,7 +56,6 @@ func CompleteProcessing(ctx context.Context, manifests *Manifests, ref contentre
 		// or selecting a different cover must wake the pending release.
 		identity := m.Clone()
 		identity.Receipt = nil
-		identity.Hidden = false
 		identity.Meta = nil
 		state, err := json.Marshal(struct {
 			Manifest *Manifest

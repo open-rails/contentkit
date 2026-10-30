@@ -24,7 +24,6 @@ import (
 type Manifest struct {
 	V                 int    `json:"v"`
 	PublicationLayout int    `json:"publication_layout,omitempty"`
-	Hidden            bool   `json:"hidden,omitempty"`      // legacy visibility flag; ignored by processing and public storage
 	Incarnation       string `json:"incarnation,omitempty"` // changes only on explicit reset
 	Deleted           bool   `json:"deleted,omitempty"`     // retained S3 tombstone; ordinary edits cannot recreate it
 	// Full: a producer could not record its outputs within the bound, so
@@ -167,8 +166,8 @@ func (m *Manifest) Validate() error {
 			return errors.New("media: invalid manifest incarnation")
 		}
 	}
-	if m.Deleted && (!m.Hidden || len(m.Files) != 0 || len(m.Meta) != 0 || len(m.Deliveries) != 0 || m.Full || m.Deficit != 0) {
-		return errors.New("media: deletion tombstone must be hidden and empty")
+	if m.Deleted && (len(m.Files) != 0 || len(m.Meta) != 0 || len(m.Deliveries) != 0 || m.Full || m.Deficit != 0) {
+		return errors.New("media: deletion tombstone must be empty")
 	}
 	if m.Receipt != nil {
 		for _, value := range []string{m.Receipt.Operation, m.Receipt.Attempt} {

@@ -130,7 +130,6 @@ func (j *Jobs) Restore(ctx context.Context, snap Snapshot, o RestoreOptions) (*M
 			next.PublicationLayout = 0 // origin retirement must complete before item grants resume
 		}
 		next.Receipt = nil
-		next.Hidden = false
 		// Select old targets before reserving the new ones. Include allocations
 		// whose writes have not arrived, not just objects already in the bucket.
 		keys, err := j.manifests.allocationKeys(ctx, item)
