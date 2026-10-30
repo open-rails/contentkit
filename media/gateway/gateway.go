@@ -1,7 +1,6 @@
 // Package gateway serves the exact app/account roots declared for a media
 // host. Scoped URLs are /v1/tenant/{tenant}/app/{app}/{kind}/{id}[/{version}]/…
-// or /v1/tenant/{tenant}/account/{kind}/{account}/… . Legacy namespace URLs
-// remain available only through explicitly configured Hosts/Buckets.
+// or /v1/tenant/{tenant}/account/{kind}/{account}/… .
 //
 // Public renditions are anonymous; private files require an exact-file or item token and
 // download files require a token for that exact key. Denials use a uniform
@@ -17,7 +16,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -41,7 +39,6 @@ const (
 
 // Config configures a Handler.
 // Route exposes exactly one tenant account or app root on a media host.
-// Legacy Hosts/Buckets never authorize a scoped path.
 type Route struct {
 	Host    string       `json:"host"`
 	Scope   layout.Scope `json:"scope"`
@@ -55,11 +52,8 @@ type Config struct {
 	Endpoint, Region             string // path-style S3 endpoint; Region default us-east-1
 	AccessKeyID, SecretAccessKey string // read key for served private/public objects, including the fence HEAD; scoped prefixes need missing-object 404s
 	Ring                         token.Ring
-	Hosts                        map[string][]string // legacy lower-case host -> namespaces; Routes selects scoped paths
-	Buckets                      map[string]string   // legacy namespace -> bucket; required for each legacy host namespace
-	Origins                      []string            // exact CORS origins ("scheme://host[:port]") allowed with credentials
-	Defaults                     []layout.Default    // deployment selection from image.PublishDefaults
-	Client                       *http.Client        // default: a tuned transport without compression
+	Defaults                     []layout.Default // deployment selection from image.PublishDefaults
+	Client                       *http.Client     // default: a tuned transport without compression
 	Logger                       *slog.Logger
 }
 
@@ -83,23 +77,8 @@ func New(cfg Config) (*Handler, error) {
 	if err != nil || (base.Scheme != "http" && base.Scheme != "https") || base.Host == "" {
 		return nil, errors.New("gateway: invalid Endpoint")
 	}
-	if len(cfg.Hosts) > 0 {
-		if cfg.Hosts, err = layout.CheckHosts(cfg.Hosts); err != nil {
-			return nil, err
-		}
-		if cfg.Buckets, err = layout.CheckBuckets(cfg.Buckets); err != nil {
-			return nil, err
-		}
-	}
-	if len(cfg.Hosts) == 0 && len(cfg.Routes) == 0 {
-		return nil, errors.New("gateway: at least one scoped Route or legacy Host is required")
-	}
-	for host, nss := range cfg.Hosts {
-		for _, ns := range nss {
-			if cfg.Buckets[ns] == "" {
-				return nil, fmt.Errorf("gateway: host %q serves namespace %q, which has no bucket", host, ns)
-			}
-		}
+	if len(cfg.Routes) == 0 {
+		return nil, errors.New("gateway: at least one Route is required")
 	}
 	cfg.Routes = slices.Clone(cfg.Routes)
 	for i := range cfg.Routes {
@@ -122,12 +101,6 @@ func New(cfg Config) (*Handler, error) {
 	if err != nil {
 		return nil, err
 	}
-	for _, o := range cfg.Origins {
-		if err := validOrigin(o); err != nil {
-			return nil, err
-		}
-	}
-	cfg.Origins = slices.Clone(cfg.Origins)
 	cfg.Region = cmp.Or(cfg.Region, "us-east-1")
 	if cfg.Client == nil {
 		cfg.Client = &http.Client{Transport: &http.Transport{
@@ -187,28 +160,26 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if q := r.URL.Query(); q.Has("dl") {
 		dl = new(q.Get("dl"))
 	}
-	if !o.scope.IsZero() {
-		check := r.Clone(r.Context())
-		check.Method = http.MethodHead
-		check.Header = make(http.Header)
-		fence := o
-		fence.area = layout.AreaPublic
-		fence.name = layout.FenceName
-		status, err := h.fetch(check, o.bucket, fence.key())
-		if err != nil {
+	check := r.Clone(r.Context())
+	check.Method = http.MethodHead
+	check.Header = make(http.Header)
+	fence := o
+	fence.area = layout.AreaPublic
+	fence.name = layout.FenceName
+	status, err := h.fetch(check, o.bucket, fence.key())
+	if err != nil {
+		h.fail(w, http.StatusBadGateway)
+		return
+	}
+	code := status.StatusCode
+	_ = status.Body.Close()
+	if code != http.StatusNotFound {
+		if code == http.StatusOK {
+			h.fail(w, http.StatusNotFound)
+		} else {
 			h.fail(w, http.StatusBadGateway)
-			return
 		}
-		code := status.StatusCode
-		_ = status.Body.Close()
-		if code != http.StatusNotFound {
-			if code == http.StatusOK {
-				h.fail(w, http.StatusNotFound)
-			} else {
-				h.fail(w, http.StatusBadGateway)
-			}
-			return
-		}
+		return
 	}
 	resp, err := h.fetch(r, o.bucket, key)
 	if err == nil && missing(resp.StatusCode) && o.area == "public" {
@@ -237,14 +208,11 @@ type object struct {
 }
 
 func (o object) key() string {
-	if !o.scope.IsZero() {
-		return o.scope.Prefix(o.kind, o.id, o.version) + o.area + "/" + o.name
-	}
-	return layout.Prefix(o.ns, o.kind, o.id, o.version) + o.area + "/" + o.name
+	return o.scope.Prefix(o.kind, o.id, o.version) + o.area + "/" + o.name
 }
 
-// parse accepts exactly /v1/{ns}/{kind}/{id}[/{version}]/{public|private}/{name},
-// unescaped, for a namespace served on the request's host.
+// parse accepts exactly a scoped /v1/tenant/… object path, unescaped, for a
+// Route on the request's host.
 func (h *Handler) parse(r *http.Request) (object, bool) {
 	rest, ok := strings.CutPrefix(r.URL.Path, layout.URLPrefix)
 	if !ok || r.URL.RawPath != "" {
@@ -264,20 +232,16 @@ func (h *Handler) parse(r *http.Request) (object, bool) {
 	}
 	host = strings.ToLower(host)
 	if k.Scope.IsZero() {
-		if !slices.Contains(h.cfg.Hosts[host], k.Namespace) {
-			return object{}, false
+		return object{}, false
+	}
+	for _, route := range h.cfg.Routes {
+		if route.Host == host && route.Scope == k.Scope {
+			o.bucket = route.Bucket
+			break
 		}
-		o.bucket = h.cfg.Buckets[k.Namespace]
-	} else {
-		for _, route := range h.cfg.Routes {
-			if route.Host == host && route.Scope == k.Scope {
-				o.bucket = route.Bucket
-				break
-			}
-		}
-		if o.bucket == "" {
-			return object{}, false
-		}
+	}
+	if o.bucket == "" {
+		return object{}, false
 	}
 	return o, true
 }
@@ -392,9 +356,8 @@ func (h *Handler) cors(w http.ResponseWriter, r *http.Request) {
 	hdr := w.Header()
 	hdr.Add("Vary", "Origin")
 	o := r.Header.Get("Origin")
-	origins := h.cfg.Origins
-	if obj, ok := h.parse(r); ok && !obj.scope.IsZero() {
-		origins = nil
+	var origins []string
+	if obj, ok := h.parse(r); ok {
 		for _, route := range h.cfg.Routes {
 			host := r.Host
 			if hh, _, err := net.SplitHostPort(host); err == nil {

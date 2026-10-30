@@ -1081,7 +1081,8 @@ worker, _ := cfg.MediaRegistry() // the stock worker's MEDIA_KINDS_FILE
 - **Shared kinds.** Account avatars use `tenant/{tenant}/account/{kind}/{id}/`.
   One app owns the shared avatar journal and worker; other sites reach it
   through its API (Avatars below) and serve its files from their media hosts
-  (`MEDIA_GATEWAY_BUCKETS`). The root is derived from `Config.Scope`.
+  (a `MEDIA_GATEWAY_ROUTES` entry for the tenant account root). The root is
+  derived from `Config.Scope`.
 - The stock worker reads the registry as JSON (`MEDIA_KINDS_FILE`; hooks
   are not included): an engine's is `Config.MediaKinds()`, printed
   by `contentkit media-config`.
@@ -1101,10 +1102,10 @@ cfg.Accounts.Avatars = &contentkit.AvatarsConfig{
 
 - Every author and the content model's `avatars` (`GET /v1/kinds`, a
   `Stable` preset rule) name avatars at the site's own media host,
-  `{media}/v1/accounts/user/{id}/public/avatar-{w}.webp`: nothing is looked
-  up. The gateway's resource policy is same-site, so each site's host
-  serves them: `MEDIA_GATEWAY_HOSTS` gives every media host `accounts` and
-  `MEDIA_GATEWAY_BUCKETS` maps `accounts` to the primary's bucket.
+  `{media}/v1/tenant/{tenant}/account/user/{id}/public/avatar-{w}.webp`:
+  nothing is looked up. The gateway's resource policy is same-site, so each
+  site's host serves them: every media host has a `MEDIA_GATEWAY_ROUTES`
+  entry for the tenant account root, pointing at the primary's bucket.
 - On the other site, a person's avatar presigns, commits and editor reads
   (`/v1/media/upload/{presign,commit}`, `/v1/media/{kind}/{id}`) go through
   its own routes, which forward them to the primary's with `Key`: only
@@ -1403,14 +1404,13 @@ the host's periodic jobs. The worker migrates its schema itself.
   CookieDomain: "<site domain>"}`); URL delivery only for apps without cookies.
   Either way one item token opens the whole item's `private/`, and viewers
   without access get none.
-- **Media gateway config**: `MEDIA_GATEWAY_HOSTS` maps each media host to the
-  partitions it serves (`tenant_<tenant-id>_app_<app-id>` and
-  `tenant_<tenant-id>` for account media). `MEDIA_GATEWAY_BUCKETS` maps each
-  partition to its bucket; the account partition uses the avatar primary's
-  bucket. URL paths use the tenant/app or tenant/account roots above.
-  `MEDIA_GATEWAY_CORS_ORIGINS` exactly your sites' origins
-  (`https://<domain>,https://www.<domain>`; no wildcards, no third parties);
-  `MEDIA_GATEWAY_DEFAULTS` the public names that fall back to a kind's
+- **Media gateway config**: `MEDIA_GATEWAY_ROUTES` lists each root a media
+  host serves: `{"host", "scope": {"tenant_id", "app_id"}, "bucket",
+  "origins"}` for the app and the same without `app_id` for account media,
+  whose bucket is the avatar primary's. URL paths use the tenant/app or
+  tenant/account roots above. `origins` are exactly your sites' origins
+  (`https://<domain>`, `https://www.<domain>`; no wildcards, no third
+  parties); `MEDIA_GATEWAY_DEFAULTS` the public names that fall back to a kind's
   `_default` item. `Cross-Origin-Resource-Policy` is always `same-site`.
 - **Bucket**: one per app, private (no public ACL or policy); the gateway's
   key reads only `*/private/*` and `*/public/*` of each; only the hosts write.

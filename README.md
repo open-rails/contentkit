@@ -416,11 +416,9 @@ one HEAD per read. Everything else and every denial is one `no-store` 404. It ke
 ingress; the read API limits the items a viewer opens per hour
 (`ReaderOptions.Issuance`). It needs `MEDIA_GATEWAY_S3_ENDPOINT`, a key
 reading only `*/private/*` and `*/public/*`, `MEDIA_GATEWAY_TOKEN_KEY` and
-`_TOKEN_KEY_PREVIOUS`, `MEDIA_GATEWAY_HOSTS`
-(`media.doujins.ai=doujins,accounts; media.hanime.media=hentai0,accounts`),
-`MEDIA_GATEWAY_BUCKETS`, each namespace's bucket, one per app
-(`doujins=prod-doujins; hentai0=prod-hentai0; accounts=prod-doujins`),
-`MEDIA_GATEWAY_CORS_ORIGINS` and `MEDIA_GATEWAY_DEFAULTS`
+`_TOKEN_KEY_PREVIOUS`, `MEDIA_GATEWAY_ROUTES` (a JSON list of
+`{host, scope, bucket, origins}`, one per tenant account or app root a media
+host serves) and `MEDIA_GATEWAY_DEFAULTS`
 (`contentkit-media-worker publish-defaults` prints it).
 
 **The media worker** (`internal/media/worker`) runs every producer from the host's
