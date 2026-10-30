@@ -458,7 +458,7 @@ Ports (in `content` unless qualified):
 bans show each author as `{id, name, username, avatar, avatar_srcset}`:
 `name` and `username` from `UserInfo.Get` (never the email), with one `Get`
 per response, never per author, and the avatar at its stable URL, built
-from the id (`Config.Avatars`, Avatars below). An id the directory does not
+from the id (`Config.Accounts.Avatars`, Avatars below). An id the directory does not
 hold (a deleted account) has no author; a directory failure is logged and
 leaves bare ids, never failing the response. Without `UserInfo` authors are
 bare ids.
@@ -845,8 +845,8 @@ that fits the reader (`display_language` first, then position).
   /typeahead` (direct title/entity-name/alias prefixes only; no contextual
   keywords or typo expansion). `SearchBox` puts matching recent queries first,
   followed by entities and content titles; full search remains broader.
-- `GET /contents/{id}/similar`, `GET /recommendations`: `Deps.Candidates`
-  (co-engagement by default), admitted through the reader's visibility.
+- `GET /contents/{id}/similar`, `GET /recommendations`: co-engagement
+  candidates, admitted through the reader's visibility.
   Recommendations fill from the last 30 days' popularity, then all-time,
   then the newest content the reader has not seen.
 - `GET /release-dates` (`by=day|month`, the list filters): counts and free
@@ -1007,7 +1007,7 @@ worker, _ := cfg.MediaRegistry() // the stock worker's MEDIA_KINDS_FILE
   Doujins' translation requests' covers. In the engine anyone reads its
   public files (`GET /v1/media/{kind}/{id}`) and holders of
   `root:content:write` or `root:import:write` upload them.
-- **Account avatars** are the engine's `Config.Avatars` (Avatars below).
+- **Account avatars** are the engine's `Config.Accounts.Avatars` (Avatars below).
   `avatar.User()` (`github.com/open-rails/contentkit/media/avatar`) is the
   standard kind: JPEG, PNG and WebP up to 10 MiB, square WebP at 64, 128,
   256 and 512 pixels, a default silhouette (publish it with the other
@@ -1081,7 +1081,8 @@ worker, _ := cfg.MediaRegistry() // the stock worker's MEDIA_KINDS_FILE
 - **Shared kinds.** Account avatars use `tenant/{tenant}/account/{kind}/{id}/`.
   One app owns the shared avatar journal and worker; other sites reach it
   through its API (Avatars below) and serve its files from their media hosts
-  (`MEDIA_GATEWAY_BUCKETS`). The root is derived from `Config.Scope`.
+  (a `MEDIA_GATEWAY_ROUTES` entry for the tenant account root). The root is
+  derived from `Config.Scope`.
 - The stock worker reads the registry as JSON (`MEDIA_KINDS_FILE`; hooks
   are not included): an engine's is `Config.MediaKinds()`, printed
   by `contentkit media-config`.
@@ -1090,10 +1091,10 @@ worker, _ := cfg.MediaRegistry() // the stock worker's MEDIA_KINDS_FILE
 
 ```go
 // The primary (Doujins): its media holds every avatar.
-cfg.Avatars = &contentkit.AvatarsConfig{} // avatar.User(), preset "avatar"
+cfg.Accounts.Avatars = &contentkit.AvatarsConfig{} // avatar.User(), preset "avatar"
 
 // Another site sharing its people (Hentai0): keeps none.
-cfg.Avatars = &contentkit.AvatarsConfig{
+cfg.Accounts.Avatars = &contentkit.AvatarsConfig{
 	Primary: "https://doujins.dev/api/v1/contentkit", // the primary's routes
 	Key:     os.Getenv("CONTENTKIT_AVATARS_KEY"),     // the primary's API key: root:avatars:write
 }
@@ -1101,10 +1102,10 @@ cfg.Avatars = &contentkit.AvatarsConfig{
 
 - Every author and the content model's `avatars` (`GET /v1/kinds`, a
   `Stable` preset rule) name avatars at the site's own media host,
-  `{media}/v1/accounts/user/{id}/public/avatar-{w}.webp`: nothing is looked
-  up. The gateway's resource policy is same-site, so each site's host
-  serves them: `MEDIA_GATEWAY_HOSTS` gives every media host `accounts` and
-  `MEDIA_GATEWAY_BUCKETS` maps `accounts` to the primary's bucket.
+  `{media}/v1/tenant/{tenant}/account/user/{id}/public/avatar-{w}.webp`:
+  nothing is looked up. The gateway's resource policy is same-site, so each
+  site's host serves them: every media host has a `MEDIA_GATEWAY_ROUTES`
+  entry for the tenant account root, pointing at the primary's bucket.
 - On the other site, a person's avatar presigns, commits and editor reads
   (`/v1/media/upload/{presign,commit}`, `/v1/media/{kind}/{id}`) go through
   its own routes, which forward them to the primary's with `Key`: only
@@ -1345,7 +1346,7 @@ gates (Auth). No compatibility: the old ports are gone.
   (`access.Permissions()`, full `root:<resource>:<action>` names), held in
   the Authenticator's root scope. Declare them in the auth's roles from the
   constants (Auth); there is no permission or scope setting.
-- `adapters/authkit` is deleted: authors are ContentKit's (`Config.Avatars`),
+- `adapters/authkit` is deleted: authors are ContentKit's (`Config.Accounts.Avatars`),
   and account uploads are a few lines of `CanUpload` (Account avatars).
 - `media.HandlerOptions.Identity` and `UploadHandlerOptions.Actor` are `Auth`;
   `media.Identity`, `content.Identity`, `content.Authorizer`,
@@ -1403,14 +1404,13 @@ the host's periodic jobs. The worker migrates its schema itself.
   CookieDomain: "<site domain>"}`); URL delivery only for apps without cookies.
   Either way one item token opens the whole item's `private/`, and viewers
   without access get none.
-- **Media gateway config**: `MEDIA_GATEWAY_HOSTS` maps each media host to the
-  partitions it serves (`tenant_<tenant-id>_app_<app-id>` and
-  `tenant_<tenant-id>` for account media). `MEDIA_GATEWAY_BUCKETS` maps each
-  partition to its bucket; the account partition uses the avatar primary's
-  bucket. URL paths use the tenant/app or tenant/account roots above.
-  `MEDIA_GATEWAY_CORS_ORIGINS` exactly your sites' origins
-  (`https://<domain>,https://www.<domain>`; no wildcards, no third parties);
-  `MEDIA_GATEWAY_DEFAULTS` the public names that fall back to a kind's
+- **Media gateway config**: `MEDIA_GATEWAY_ROUTES` lists each root a media
+  host serves: `{"host", "scope": {"tenant_id", "app_id"}, "bucket",
+  "origins"}` for the app and the same without `app_id` for account media,
+  whose bucket is the avatar primary's. URL paths use the tenant/app or
+  tenant/account roots above. `origins` are exactly your sites' origins
+  (`https://<domain>`, `https://www.<domain>`; no wildcards, no third
+  parties); `MEDIA_GATEWAY_DEFAULTS` the public names that fall back to a kind's
   `_default` item. `Cross-Origin-Resource-Policy` is always `same-site`.
 - **Bucket**: one per app, private (no public ACL or policy); the gateway's
   key reads only `*/private/*` and `*/public/*` of each; only the hosts write.
@@ -1550,21 +1550,10 @@ each host erases its own tenant.
 
 ## Discovery candidates
 
-Similar and recommended lists get candidates from one port:
-
-```go
-type Candidates interface { // package discovery
-	Similar(ctx context.Context, anchor contentref.ContentRef, q Query) ([]Candidate, error)
-	ForSubject(ctx context.Context, subject signal.Subject, q Query) ([]Candidate, error)
-}
-```
-
-Candidates are ranked best-first; oversample past `q.Limit`. The
-`Recommender` applies one policy to every source: tenant and kinds, never the
-anchor, seen and disliked works, the reader's visibility (admission in one
-batch), dedupe, limit, and the popularity fill. `Deps.Candidates` nil is
-`discovery.Engagement`; wrap a provider in `discovery.Fallback` so errors and
-thin results fall back to engagement.
+Similar and recommended lists get their candidates from co-engagement over
+the signal plane. The recommender applies one policy to them: tenant and kinds,
+never the anchor, seen and disliked works, the reader's visibility (admission
+in one batch), dedupe, limit, and the popularity fill.
 
 ## Popularity (policy-ranked)
 

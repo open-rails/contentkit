@@ -12,9 +12,9 @@ import (
 	"github.com/open-rails/contentkit/signal"
 )
 
-// Recommender turns a Candidates source into tenant-scoped discovery lists.
+// Recommender turns co-engagement candidates into tenant-scoped discovery lists.
 type Recommender struct {
-	Candidates discovery.Candidates
+	Candidates Engagement
 	Store      *signalstore.Store
 	Tenant     string
 	// DefaultLimit applies when options leave Limit zero (default 20).
@@ -40,17 +40,6 @@ func (r Recommender) rrfK() int {
 	return 60
 }
 
-func fallbackSource(source discovery.Candidates) (discovery.Fallback, bool) {
-	switch source := source.(type) {
-	case discovery.Fallback:
-		return source, true
-	case *discovery.Fallback:
-		return *source, true
-	default:
-		return discovery.Fallback{}, false
-	}
-}
-
 // Similar returns works like the anchor, never the anchor itself.
 func (r Recommender) Similar(ctx context.Context, anchor contentref.ContentRef, opts discovery.SimilarOptions) ([]discovery.Hit, error) {
 	if err := anchor.Validate(); err != nil {
@@ -61,54 +50,24 @@ func (r Recommender) Similar(ctx context.Context, anchor contentref.ContentRef, 
 	}
 	limit := r.limit(opts.Limit)
 	kinds := trimAll(opts.ContentKinds)
-	q := discovery.Query{ContentKinds: kinds, Limit: oversample(limit, opts.Admit), Window: opts.Window}
-	fallback, hasFallback := fallbackSource(r.Candidates)
-	source := r.Candidates
-	if hasFallback {
-		source = fallback.Primary
-	}
-	cands, err := source.Similar(ctx, anchor, q)
-	if err != nil && hasFallback {
-		reportFallback(fallback, err)
-		cands, err = fallback.Secondary.Similar(ctx, anchor, q)
-		hasFallback = false
-	}
+	q := query{ContentKinds: kinds, Limit: oversample(limit, opts.Admit), Window: opts.Window}
+	cands, err := r.Candidates.Similar(ctx, anchor, q)
 	if err != nil {
 		return nil, err
 	}
 	f := r.newFilter(limit, kinds, opts.Admit)
 	f.exclude[anchor.Content().Key()] = struct{}{}
-	apply := func(cands []discovery.Candidate, first bool) error {
-		if opts.ExcludeSeenFor != nil {
-			present := make([]string, 0, len(cands))
-			for _, c := range cands {
-				present = append(present, c.Ref.ContentKind)
-			}
-			if first {
-				if err := f.loadSubject(ctx, r, *opts.ExcludeSeenFor, present, kinds, false); err != nil {
-					return err
-				}
-			} else if err := f.loadSeen(ctx, r, *opts.ExcludeSeenFor, present); err != nil {
-				return err
-			}
+	if opts.ExcludeSeenFor != nil {
+		present := make([]string, 0, len(cands))
+		for _, c := range cands {
+			present = append(present, c.Ref.ContentKind)
 		}
-		return f.pushAll(ctx, cands)
-	}
-	if err := apply(cands, true); err != nil {
-		return nil, err
-	}
-	if hasFallback && !f.full() {
-		secondary, err := fallback.Secondary.Similar(ctx, anchor, q)
-		if err != nil {
-			if len(cands) == 0 {
-				return nil, err
-			}
-			reportFallback(fallback, err)
-			return f.out, nil
-		}
-		if err := apply(secondary, false); err != nil {
+		if err := f.loadSubject(ctx, r, *opts.ExcludeSeenFor, present, kinds, false); err != nil {
 			return nil, err
 		}
+	}
+	if err := f.pushAll(ctx, cands); err != nil {
+		return nil, err
 	}
 	return f.out, nil
 }
@@ -126,23 +85,13 @@ func (r Recommender) Recommend(ctx context.Context, subject signal.Subject, opts
 		return nil, fmt.Errorf("discovery: RecommendOptions.ContentKinds is required")
 	}
 	limit := r.limit(opts.Limit)
-	q := discovery.Query{
+	q := query{
 		ContentKinds:     kinds,
 		Limit:            oversample(limit, opts.Admit),
 		SeedLimit:        opts.SeedLimit,
 		SeedContentKinds: trimAll(opts.SeedContentKinds),
 	}
-	fallback, hasFallback := fallbackSource(r.Candidates)
-	source := r.Candidates
-	if hasFallback {
-		source = fallback.Primary
-	}
-	cands, err := source.ForSubject(ctx, subject, q)
-	if err != nil && hasFallback {
-		reportFallback(fallback, err)
-		cands, err = fallback.Secondary.ForSubject(ctx, subject, q)
-		hasFallback = false
-	}
+	cands, err := r.Candidates.ForSubject(ctx, subject, q)
 	if err != nil {
 		return nil, err
 	}
@@ -152,18 +101,6 @@ func (r Recommender) Recommend(ctx context.Context, subject signal.Subject, opts
 	}
 	if err := f.pushAll(ctx, cands); err != nil {
 		return nil, err
-	}
-	// Fallback fullness is based on eligible hits, not raw candidates.
-	if hasFallback && !f.full() {
-		secondary, err := fallback.Secondary.ForSubject(ctx, subject, q)
-		if err != nil {
-			if len(cands) == 0 {
-				return nil, err
-			}
-			reportFallback(fallback, err)
-		} else if err := f.pushAll(ctx, secondary); err != nil {
-			return nil, err
-		}
 	}
 
 	for _, kind := range kinds {
@@ -179,9 +116,9 @@ func (r Recommender) Recommend(ctx context.Context, subject signal.Subject, opts
 		if err != nil {
 			return nil, err
 		}
-		fill := make([]discovery.Candidate, len(refs))
+		fill := make([]candidate, len(refs))
 		for i, ref := range refs {
-			fill[i] = discovery.Candidate{Ref: ref, Score: float64(r.fillScore(f, i))}
+			fill[i] = candidate{Ref: ref, Score: float64(r.fillScore(f, i))}
 		}
 		if err := f.pushAll(ctx, fill); err != nil {
 			return nil, err
@@ -199,9 +136,9 @@ func (r Recommender) fillPopular(ctx context.Context, f *filter, popular func(co
 		if err != nil {
 			return err
 		}
-		fill := make([]discovery.Candidate, len(pop))
+		fill := make([]candidate, len(pop))
 		for i, id := range pop {
-			fill[i] = discovery.Candidate{Ref: contentref.New(r.Tenant, kind, id), Score: float64(r.fillScore(f, i))}
+			fill[i] = candidate{Ref: contentref.New(r.Tenant, kind, id), Score: float64(r.fillScore(f, i))}
 		}
 		if err := f.pushAll(ctx, fill); err != nil {
 			return err
@@ -308,7 +245,7 @@ func (f *filter) excluded(kind string) []string {
 
 // pushAll appends candidates in order until full: those the policy keeps,
 // then admitted in one batch.
-func (f *filter) pushAll(ctx context.Context, cands []discovery.Candidate) error {
+func (f *filter) pushAll(ctx context.Context, cands []candidate) error {
 	if f.full() {
 		return nil
 	}

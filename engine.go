@@ -251,16 +251,17 @@ func (e *Engine) validate(deps Deps) error {
 			return errors.New("contentkit: Config.Media needs Deps.Store")
 		}
 	}
-	if a := cfg.Avatars; a != nil {
+	if a := cfg.Accounts; a != nil && a.Avatars != nil {
+		a := a.Avatars
 		if cfg.Media == nil {
-			return errors.New("contentkit: Config.Avatars needs Config.Media")
+			return errors.New("contentkit: Config.Accounts.Avatars needs Config.Media")
 		}
 		if a.Primary != "" {
 			if u, err := url.Parse(a.Primary); err != nil || u.Scheme != "https" && u.Scheme != "http" || u.Host == "" {
-				return fmt.Errorf("contentkit: Config.Avatars.Primary %q is not an http(s) URL", a.Primary)
+				return fmt.Errorf("contentkit: Config.Accounts.Avatars.Primary %q is not an http(s) URL", a.Primary)
 			}
 			if strings.TrimSpace(a.Key) == "" {
-				return errors.New("contentkit: Config.Avatars.Primary needs Key")
+				return errors.New("contentkit: Config.Accounts.Avatars.Primary needs Key")
 			}
 		}
 	}
@@ -597,13 +598,9 @@ func (e *Engine) mount(deps Deps) error {
 // mountDiscovery builds the public read routes over the catalog's rule.
 func (e *Engine) mountDiscovery(deps Deps) error {
 	o := discoverystore.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Scope.AppID.String(), Kinds: e.cfg.Content, Resolver: e.catalog.Resolver(), Gate: e.gate,
-		Entities: e.entities, Channels: e.channels, Hub: e.hub, Candidates: deps.Candidates, Logger: e.log, Now: deps.Clock, Visibility: e.catalog, ActivitySigner: deps.ActivitySigner,
+		Entities: e.entities, Channels: e.channels, Hub: e.hub, Logger: e.log, Now: deps.Clock, Visibility: e.catalog, ActivitySigner: deps.ActivitySigner,
 		ActivityCohorts: e.cfg.ActivityCohorts}
 	o.Tenure, _ = deps.Billing.(access.TenureReader)
-	if o.Candidates != nil && !e.hub.SignalsConfigured() {
-		e.log.Warn("contentkit: Deps.Candidates needs the signal plane; similar and recommendations are off")
-		o.Candidates = nil
-	}
 	if e.media != nil {
 		o.Media = e.media.versions
 		if o.ActivitySigner == nil {
