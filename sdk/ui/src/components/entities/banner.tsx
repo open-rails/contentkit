@@ -41,12 +41,15 @@ export function EntityBanner(p: EntityBannerProps) {
   const text = g.text.find((x) => x.language === (p.language ?? g.name_language)) ?? g.text.find((x) => x.description);
   const count = g.counts.filter((c) => c.language === (p.language ?? "")).reduce((n, c) => n + c.count, 0);
   const cover = p.cover !== false && !!g.cover?.renditions?.length;
+  // Inset under a cover, where the avatar overlaps its edge; otherwise flush with the host's page edge.
+  const inset = cover ? "px-2 sm:px-4" : undefined;
   return (
     <ContentKitUiRoot appearance={p.appearance} className={cn("grid gap-3 text-sm", p.className)} data-ckui="entity-banner" data-kind={g.kind}>
       {/* Without a cover image, a compact header rather than an empty 3:1 tile. Capped so the entity's contents start on the first screen. */}
       {cover && <EntityCover entity={g} className="aspect-[3/1] max-h-56 w-full" />}
-      <div className={cn("flex flex-wrap gap-4 px-2 sm:px-4", cover ? "items-end" : "items-center")}>
-        <EntityAvatar entity={g} className={cover ? "-mt-12 size-20 border-4 border-background sm:-mt-16 sm:size-28" : "size-16 sm:size-20"} />
+      <div className={cn("flex flex-wrap gap-4", inset, cover ? "items-end" : "items-center")}>
+        {/* Text sizes scale a missing picture's initial with its circle (at body size it read as a stray letter); the hairline gives it an edge on the page. */}
+        <EntityAvatar entity={g} className={cn("ring-1 ring-foreground/10 ring-inset", cover ? "-mt-12 size-20 border-4 border-background text-3xl sm:-mt-16 sm:size-28 sm:text-4xl" : "size-16 text-2xl sm:size-20 sm:text-3xl")} />
         <div className="grid min-w-0 flex-1 gap-1">
           {g.scope && (
             <EntityLink entity={g.scope} href={p.href} className="text-xs text-muted-foreground hover:underline">
@@ -60,8 +63,8 @@ export function EntityBanner(p: EntityBannerProps) {
           {p.children}
         </div>
       </div>
-      {text?.description && <p className="px-2 break-words whitespace-pre-line sm:px-4">{text.description}</p>}
-      <ScopedEntities entity={g} language={p.language} labels={p.labels} href={p.href} client={p.client} className="px-2 sm:px-4" />
+      {text?.description && <p className={cn("break-words whitespace-pre-line", inset)}>{text.description}</p>}
+      <ScopedEntities entity={g} language={p.language} labels={p.labels} href={p.href} client={p.client} className={inset} />
     </ContentKitUiRoot>
   );
 }
