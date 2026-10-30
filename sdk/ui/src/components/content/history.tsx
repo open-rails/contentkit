@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState, type ReactNode } from "react";
 import type { Card } from "../../client/generated/wire.js";
 import type { HistoryQuery } from "../../client/discovery.js";
 import { useMessages } from "../../i18n/context.js";
@@ -11,7 +11,7 @@ import { ContentCard } from "./card.js";
 import { CardGrid, type CardListProps } from "./grid.js";
 
 /** Account history or this browser's guest history, each removable, with a clear-all. */
-export function ContentHistory({ query = {}, ...p }: CardListProps & { query?: HistoryQuery }) {
+export function ContentHistory({ query = {}, heading, ...p }: CardListProps & { query?: HistoryQuery; /** The page's heading, sharing a row with the clear-all. */ heading?: ReactNode }) {
   const { t } = useMessages();
   const q = useMemo(() => ({ ...query, summary: true, mode: p.locked === "collapse" ? "lock" as const : p.locked === "hide" ? "hide" as const : query.mode, limit: query.limit ?? p.pageSize }), [query, p.pageSize, p.locked]);
   const list = useHistory(q, { client: p.client });
@@ -21,10 +21,15 @@ export function ContentHistory({ query = {}, ...p }: CardListProps & { query?: H
   const filterTrigger = useRef<HTMLButtonElement | null>(null);
   return (
     <div className="grid gap-3" data-ckui="content-history">
-      {list.items.length > 0 && (
-        <Button size="sm" variant="outline" className="justify-self-end" disabled={forget.pending} onClick={() => void forget.run(() => list.forget(query.kind ? { kind: query.kind } : {}))}>
-          {t("contents.clearHistory")}
-        </Button>
+      {(heading || list.items.length > 0) && (
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          {heading}
+          {list.items.length > 0 && (
+            <Button size="sm" variant="outline" className="ms-auto" disabled={forget.pending} onClick={() => void forget.run(() => list.forget(query.kind ? { kind: query.kind } : {}))}>
+              {t("contents.clearHistory")}
+            </Button>
+          )}
+        </div>
       )}
       {list.filterSummaryUnknown && p.showFilteredSummary !== false && (
         <Button ref={filterTrigger} variant="outline" className="justify-self-start" onClick={() => setFiltersOpen(true)}>{t("releases.manageFilters")}</Button>
