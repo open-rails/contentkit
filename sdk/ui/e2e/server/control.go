@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"path"
 	"strings"
+	"time"
 
 	mediastore "github.com/open-rails/contentkit/internal/mediastore"
 
@@ -20,6 +21,8 @@ import (
 	contentkit "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
+	"github.com/open-rails/contentkit/channels"
+	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/media"
 )
 
@@ -138,6 +141,7 @@ func (h *harness) createUser(w http.ResponseWriter, r *http.Request) {
 // createItem: {kind, owner?, access?, hidden?, title?} → the item, a
 // content item made through the catalog as its authenticated owner (or host
 // when none is specified), access "none" pay-per-view, published unless hidden.
+// Kind channel is an authoring channel its owner creates.
 func (h *harness) createItem(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		item
@@ -159,10 +163,8 @@ func (h *harness) createItem(w http.ResponseWriter, r *http.Request) {
 	if title == "" {
 		title = it.Kind + " " + uuid.NewString()[:8]
 	}
-	input := catalog.ContentInput{Kind: it.Kind, Text: map[string]catalog.Text{"en": {Title: title}}, Access: itemRule(it.Access)}
-	if it.Kind != blogKind {
-		input.Versions = []catalog.VersionInput{{Languages: []string{"en"}}}
-	}
+	input := catalog.ContentInput{Kind: it.Kind, Access: itemRule(it.Access),
+		Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: title}}}}}
 	ck := h.ck.Client()
 	if it.Owner != "" {
 		stored, ok := h.users.Load(it.Owner)
@@ -172,9 +174,26 @@ func (h *harness) createItem(w http.ResponseWriter, r *http.Request) {
 		}
 		ck = contentkit.NewClient(h.origin+apiPrefix, &http.Client{Transport: fixtureCredential{stored.(testUser).AccessToken}})
 	}
+	if it.Kind == "channel" {
+		if it.Access != "full" || it.Hidden {
+			fail(w, http.StatusBadRequest, errors.New("a channel has no access or hidden state"))
+			return
+		}
+		ch, err := ck.PostChannels(r.Context(), channels.Input{Slug: "channel-" + uuid.NewString()[:8], Names: []entities.Name{{Language: "en", Kind: "name", Name: title}}})
+		if err != nil {
+			fail(w, http.StatusBadRequest, err)
+			return
+		}
+		it.ID = ch.ID
+		h.items.put(itemKey(it.Kind, it.ID), it)
+		reply(w, http.StatusCreated, it)
+		return
+	}
 	c, err := ck.PostContents(r.Context(), input)
 	if err == nil && !it.Hidden {
-		c, err = ck.PostContentPublish(r.Context(), c.ID, catalog.PublishInput{})
+		if c, err = ck.PostContentPublish(r.Context(), c.ID, catalog.PublishInput{}); err == nil {
+			err = h.awaitLive(r.Context(), c.ID)
+		}
 	}
 	if err != nil {
 		fail(w, http.StatusBadRequest, err)
@@ -189,6 +208,20 @@ func (h *harness) createItem(w http.ResponseWriter, r *http.Request) {
 	}
 	h.items.put(itemKey(it.Kind, it.ID), it)
 	reply(w, http.StatusCreated, it)
+}
+
+// awaitLive returns once viewers can read the item: publication completes in
+// the background after the publish call.
+func (h *harness) awaitLive(ctx context.Context, id string) error {
+	anon := contentkit.NewClient(h.origin+apiPrefix, http.DefaultClient)
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		_, err := anon.GetContent(ctx, id, contentkit.GetContentQuery{})
+		if err == nil || time.Now().After(deadline) || ctx.Err() != nil {
+			return err
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 // itemRule is an item's access as a catalog rule.
@@ -228,7 +261,9 @@ func (h *harness) updateItem(w http.ResponseWriter, r *http.Request) {
 		if *in.Hidden {
 			_, err = ck.PostContentUnpublish(r.Context(), it.ID)
 		} else {
-			_, err = ck.PostContentPublish(r.Context(), it.ID, catalog.PublishInput{})
+			if _, err = ck.PostContentPublish(r.Context(), it.ID, catalog.PublishInput{}); err == nil {
+				err = h.awaitLive(r.Context(), it.ID)
+			}
 		}
 		if err != nil {
 			fail(w, http.StatusBadRequest, err)

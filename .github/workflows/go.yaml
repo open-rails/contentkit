@@ -118,13 +118,13 @@ jobs:
         [[ $status -eq 0 ]] || exit 1
     - name: Build and vet public modules and native commands
       run: |
-        # The three modules are independent of each other, so they build and
-        # vet concurrently instead of one after another. Each still runs its
-        # own compile with -p 1, left alone -- untangling that pairs with the
-        # merge-queue work, not this change.
+        # The modules (the last is the `pnpm demo` harness) are independent of
+        # each other, so they build and vet concurrently instead of one after
+        # another. Each still runs its own compile with -p 1, left alone --
+        # untangling that pairs with the merge-queue work, not this change.
         declare -A module_pids
         mkdir -p "$RUNNER_TEMP/module-build-logs"
-        for module in . adapters/authkit adapters/openrails; do
+        for module in . adapters/authkit adapters/openrails sdk/ui/e2e/server; do
           log="$RUNNER_TEMP/module-build-logs/$(echo "$module" | tr '/.' '__').log"
           (cd "$module" && go build -p 1 ./... && go vet -p 1 ./...) > "$log" 2>&1 &
           module_pids["$module"]=$!
