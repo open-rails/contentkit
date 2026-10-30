@@ -203,12 +203,12 @@ func (rt *Runtime) Resolve(ctx context.Context, kind, id string, d content.Revie
 	if kind != content.KindComment {
 		return badRequest("kind must be %s", content.KindComment)
 	}
-	return rt.comments.resolve(ctx, id, state, d)
+	return rt.comments.resolve(ctx, id, state, d, nil)
 }
 
 // resolve moves a held comment to its final state; approving publishes it
 // into the thread counts.
-func (c *comments) resolve(ctx context.Context, cid, state string, d content.ReviewDecision) error {
+func (c *comments) resolve(ctx context.Context, cid, state string, d content.ReviewDecision, scope *contentref.ContentKey) error {
 	if !uuidRe.MatchString(cid) {
 		return ErrNotFound
 	}
@@ -239,6 +239,9 @@ func (c *comments) resolve(ctx context.Context, cid, state string, d content.Rev
 		return err
 	}
 	if err := c.lockThread(ctx, tx, cid); err != nil {
+		return err
+	}
+	if err := c.stillOn(ctx, tx, cid, scope); err != nil {
 		return err
 	}
 	var replyTo *string

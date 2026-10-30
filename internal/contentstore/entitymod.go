@@ -42,26 +42,54 @@ func (rt *Runtime) moderates(ctx context.Context, actor access.Actor, ref conten
 
 // loadForModeration resolves a live comment for a moderator: a
 // root:comments:moderate holder or its target's entity comment moderators,
-// not its author as such.
-func (c *comments) loadForModeration(ctx context.Context, actor access.Actor, cid string) (writeTarget, error) {
+// not its author as such. scope is the reference that authorized an entity
+// moderator, which the write must find unchanged under its locks; nil for a
+// root:comments:moderate holder.
+func (c *comments) loadForModeration(ctx context.Context, actor access.Actor, cid string) (t writeTarget, scope *contentref.ContentKey, err error) {
 	if actor.Anonymous || actor.ID == "" {
-		return writeTarget{}, errUnauthorized
+		return writeTarget{}, nil, errUnauthorized
 	}
-	t, err := c.loadComment(ctx, cid)
+	t, err = c.loadComment(ctx, cid)
 	if err != nil {
-		return t, err
+		return t, nil, err
 	}
 	err = c.rt.requirePerm(ctx, actor, access.CommentsModerate)
-	if errors.Is(err, errForbidden) {
-		err = c.rt.moderates(ctx, actor, t.ref)
+	if !errors.Is(err, errForbidden) {
+		return t, nil, err
 	}
-	return t, err
+	if err := c.rt.moderates(ctx, actor, t.ref); err != nil {
+		return t, nil, err
+	}
+	k := t.ref.Key()
+	return t, &k, nil
+}
+
+// stillOn refuses a group moderator's write once cid has moved off the
+// reference that authorized it. Call it with cid's row locked.
+func (c *comments) stillOn(ctx context.Context, tx pgx.Tx, cid string, scope *contentref.ContentKey) error {
+	if scope == nil {
+		return nil
+	}
+	var k contentref.ContentKey
+	err := tx.QueryRow(ctx, `SELECT `+keyCols+` FROM `+c.s.t.comments+` WHERE id = $1 AND tenant_id = $2`, cid, c.s.tenant).
+		Scan(&k.TenantID, &k.ContentKind, &k.ContentID, versionid.Into(&k.ContentVersionID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if k != *scope {
+		return ErrForbidden
+	}
+	return nil
 }
 
 // hold takes a published comment out of its thread for review: it shows to
 // its author only until released or deleted.
 func (c *comments) hold(ctx context.Context, actor access.Actor, cid string) error {
-	if _, err := c.loadForModeration(ctx, actor, cid); err != nil {
+	_, scope, err := c.loadForModeration(ctx, actor, cid)
+	if err != nil {
 		return err
 	}
 	tx, err := c.s.beginMutation(ctx)
@@ -77,6 +105,9 @@ func (c *comments) hold(ctx context.Context, actor access.Actor, cid string) err
 		return err
 	}
 	if err := c.lockThread(ctx, tx, cid); err != nil {
+		return err
+	}
+	if err := c.stillOn(ctx, tx, cid, scope); err != nil {
 		return err
 	}
 	var hidden bool
@@ -105,11 +136,11 @@ func (c *comments) hold(ctx context.Context, actor access.Actor, cid string) err
 
 // release publishes a held comment, as a reviewer's approval does.
 func (c *comments) release(ctx context.Context, actor access.Actor, cid string) error {
-	t, err := c.loadForModeration(ctx, actor, cid)
+	t, scope, err := c.loadForModeration(ctx, actor, cid)
 	if err != nil {
 		return err
 	}
-	return c.resolve(ctx, cid, content.ModerationApproved, content.ReviewDecision{Revision: t.revision, Decision: content.DecisionApprove, Reviewer: actor.ID})
+	return c.resolve(ctx, cid, content.ModerationApproved, content.ReviewDecision{Revision: t.revision, Decision: content.DecisionApprove, Reviewer: actor.ID}, scope)
 }
 
 const entityModeratorsDoc = " For root:comments:moderate holders and, on a user-owned group or its content, the group's comment moderators (its owner, holders of {kind}:comments:moderate in its AuthKit scope)."

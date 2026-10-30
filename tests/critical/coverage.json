@@ -1638,6 +1638,20 @@
       ]
     },
     {
+      "id": "CK-J20-S08",
+      "journey": "CK-J20",
+      "behavior": "A group moderator cannot hold or release a comment an import moved out of its group while the action waited",
+      "status": "verified",
+      "evidence": [
+        "A real channel moderator's hold and release authorize against the comment's original article, then wait at the thread lock while an import moves the comment to another channel's article. Both are refused 403 forbidden, and the moved comment's moderation state, revision, reviewer, counts and visibility are unchanged. Before the fix both actions succeeded in the other channel."
+      ],
+      "cases": [
+        "TestScopedModeratorImportedReferenceRace",
+        "TestScopedModeratorImportedReferenceRace/CK-J20-S08_hold_refused_after_an_import_moves_the_comment_out_of_scope",
+        "TestScopedModeratorImportedReferenceRace/CK-J20-S08_release_refused_after_an_import_moves_the_comment_out_of_scope"
+      ]
+    },
+    {
       "id": "CK-J23-S01",
       "journey": "CK-J23",
       "behavior": "Erasure fences reads before physical cleanup finishes",
