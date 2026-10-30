@@ -162,7 +162,7 @@ func newHarness(ctx context.Context, c config, mediaOrigin string) (_ *harness, 
 	if err != nil {
 		return nil, err
 	}
-	cfg := contentkit.Config{Scope: &scope, Accounts: &contentkit.AccountsConfig{Schema: "e2e_accounts"}, Database: contentkit.DatabaseConfig{Schema: schema, RiverSchema: riverSchema}, Content: site(),
+	cfg := contentkit.Config{Scope: &scope, Accounts: &contentkit.AccountsConfig{Schema: "e2e_accounts", Avatars: avatars}, Database: contentkit.DatabaseConfig{Schema: schema, RiverSchema: riverSchema}, Content: site(),
 		Interactions: contentkit.InteractionsConfig{
 			Anonymous: content.Anonymous{Comments: true, Reactions: true, Votes: true},
 			// The suites test the bound; the default may change.
@@ -170,7 +170,6 @@ func newHarness(ctx context.Context, c config, mediaOrigin string) (_ *harness, 
 			// Generous for a shared suite; a test reaches the comment limit with its own account.
 			Limits: contentkit.LimitsConfig{Comment: []contentkit.Rate{{Count: 20, Per: time.Minute}}},
 		},
-		Avatars: avatars,
 		Media: &contentkit.MediaConfig{Config: mc, WorkerSchema: workerSchema,
 			// One-second token windows: a refreshed read signs a new token.
 			Delivery:    contentkit.DeliveryConfig{SigningKey: c.tokenKey, Window: time.Second},

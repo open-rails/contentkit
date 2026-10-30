@@ -4,8 +4,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-
-	"github.com/open-rails/contentkit/media/layout"
 )
 
 // URL picks the narrowest published rendition at least width pixels wide,
@@ -40,15 +38,4 @@ func (p PublicImage) SrcSet() string {
 		}
 	}
 	return strings.Join(set, ", ")
-}
-
-// GatewayRules are the media gateway's rules for an app's media host: the
-// namespaces it serves there (MEDIA_GATEWAY_HOSTS, with layout.FormatHosts;
-// each one's bucket in MEDIA_GATEWAY_BUCKETS) and the default public names of its kinds
-// (MEDIA_GATEWAY_DEFAULTS, with layout.FormatDefaults).
-type GatewayRules struct {
-	Namespaces []string
-	// Scopes are the exact scoped roots; build gateway.Routes for these.
-	Scopes   []layout.Scope
-	Defaults []layout.Default
 }

@@ -126,7 +126,7 @@ func (j *Jobs) deleteItem(ctx context.Context, item Item, owner string, operatio
 			}
 			mutation.effects.Settlement = Settlement{Tenant: item.Ref().TenantID, Owner: owner, Delta: -charged}
 		}
-		cur.Deleted, cur.Hidden = true, true
+		cur.Deleted = true
 		cur.Deliveries = nil
 		cur.Files, cur.Meta, cur.Full, cur.Deficit = []media.File{}, nil, false, 0
 		return nil
@@ -222,7 +222,7 @@ func (j *Jobs) resetItem(ctx context.Context, item Item, deletion uuid.UUID) err
 		if !cur.Deleted || cur.Receipt == nil || cur.Receipt.Operation != deletion.String() {
 			return errors.New("media: reset requires its settled deletion tombstone")
 		}
-		cur.Deleted, cur.Hidden = false, false
+		cur.Deleted = false
 		cur.Incarnation = uuid.NewString()
 		return nil
 	})

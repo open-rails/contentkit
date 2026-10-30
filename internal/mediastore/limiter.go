@@ -11,37 +11,6 @@ import (
 	media "github.com/open-rails/contentkit/media"
 )
 
-// UploadLimiter is the optional anti-abuse port. Quota is enforced when bytes
-// are committed: a commit that grows its owner's stored originals past the
-// quota is refused. Reserve runs at presign (skipped for exempt uploaders) and
-// refuses with an *UploadError coded CodeRate or CodeQuota before any bytes
-// move; a reservation is only that early refusal and may expire. Settle runs
-// at commit and abort: it drops the reservations of Keys and adds Delta (the
-// change in stored originals, negative on removal) to the owner's usage.
-type UploadLimiter interface {
-	Reserve(ctx context.Context, r Reservation) error
-	Settle(ctx context.Context, s Settlement) error
-}
-
-// QuotaReleaser records a folder's refund before its objects are deleted, then
-// applies that refund once. Operation identifies the deletion across retries.
-type QuotaReleaser interface {
-	PrepareRelease(ctx context.Context, r QuotaRelease) (applied bool, err error)
-	Release(ctx context.Context, tenant, operation string) error
-}
-
-// QuotaRelease is the amount captured before deleting a folder.
-type QuotaRelease struct {
-	Tenant    string
-	Folder    string
-	Owner     string
-	Operation string
-	Bytes     int64
-}
-
-// ErrQuotaReleasePending means a different deletion must finish or be retried first.
-var ErrQuotaReleasePending = errors.New("media: another quota release is pending for the folder")
-
 // Reservation is one presigned upload. Uploader is rate-limited; Owner ("" for
 // none) has Size reserved against its quota until the upload is settled or the
 // reservation expires.
@@ -78,22 +47,24 @@ type PGLimits struct {
 	ReservationTTL time.Duration
 }
 
-// PGLimiter is the default UploadLimiter over ContentKit's Postgres schema:
-// hourly counters per uploader (bytes/day sums the last 24), one usage total
-// per owner and short-lived pending reservations. There are no rows per file.
+// PGLimiter is the upload anti-abuse limiter over ContentKit's Postgres
+// schema: hourly counters per uploader (bytes/day sums the last 24), one usage
+// total per owner and short-lived pending reservations. There are no rows per
+// file. Quota is enforced when bytes are committed: a commit that grows its
+// owner's stored originals past the quota is refused. Reserve runs at presign
+// (skipped for exempt uploaders) and refuses with an *UploadError coded
+// CodeRate or CodeQuota before any bytes move; a reservation is only that
+// early refusal and may expire. Settle runs at commit and abort: it drops the
+// reservations of Keys and adds Delta (the change in stored originals,
+// negative on removal) to the owner's usage.
 type PGLimiter struct {
-	pool     *pgxpool.Pool
-	limits   PGLimits
-	rates    string
-	usage    string
-	res      string
-	releases string
-	routes   map[string]*PGLimiter
+	pool   *pgxpool.Pool
+	limits PGLimits
+	rates  string
+	usage  string
+	res    string
+	routes map[string]*PGLimiter
 }
-
-var _ UploadLimiter = (*PGLimiter)(nil)
-
-var _ QuotaReleaser = (*PGLimiter)(nil)
 
 func NewPGLimiter(pool *pgxpool.Pool, schema string, limits PGLimits) (*PGLimiter, error) {
 	if pool == nil || schema == "" {
@@ -104,64 +75,7 @@ func NewPGLimiter(pool *pgxpool.Pool, schema string, limits PGLimits) (*PGLimite
 	}
 	q := func(t string) string { return pgx.Identifier{schema, t}.Sanitize() }
 	return &PGLimiter{pool: pool, limits: limits, rates: q("content_media_upload_rates"),
-		usage: q("content_media_usage"), res: q("content_media_reservations"),
-		releases: q("content_media_releases")}, nil
-}
-
-func (l *PGLimiter) PrepareRelease(ctx context.Context, r QuotaRelease) (bool, error) {
-	l = l.forTenant(r.Tenant)
-	if r.Tenant == "" || r.Folder == "" || r.Owner == "" || r.Operation == "" || r.Bytes < 0 {
-		return false, errors.New("media: release needs a tenant, folder, owner, operation and nonnegative bytes")
-	}
-	var applied bool
-	err := pgx.BeginFunc(ctx, l.pool, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, `INSERT INTO `+l.releases+` (tenant_id, operation_id, folder_prefix, owner_id, bytes)
-VALUES ($1, $2, $3, $4, $5) ON CONFLICT DO NOTHING`,
-			r.Tenant, r.Operation, r.Folder, r.Owner, r.Bytes); err != nil {
-			return err
-		}
-		var folder string
-		var owner string
-		var bytes int64
-		if err := tx.QueryRow(ctx, `SELECT folder_prefix, owner_id, bytes, applied FROM `+l.releases+`
-WHERE tenant_id = $1 AND operation_id = $2`, r.Tenant, r.Operation).Scan(&folder, &owner, &bytes, &applied); err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return fmt.Errorf("%w: %s", ErrQuotaReleasePending, r.Folder)
-			}
-			return err
-		}
-		if folder != r.Folder || owner != r.Owner || !applied && r.Bytes > bytes {
-			return fmt.Errorf("media: release operation %q changed folder, owner or grew", r.Operation)
-		}
-		return nil
-	})
-	return applied, err
-}
-
-func (l *PGLimiter) Release(ctx context.Context, tenant, operation string) error {
-	l = l.forTenant(tenant)
-	return pgx.BeginFunc(ctx, l.pool, func(tx pgx.Tx) error {
-		var owner string
-		var bytes int64
-		var applied bool
-		if err := tx.QueryRow(ctx, `SELECT owner_id, bytes, applied FROM `+l.releases+`
-WHERE tenant_id = $1 AND operation_id = $2 FOR UPDATE`, tenant, operation).Scan(&owner, &bytes, &applied); err != nil {
-			return fmt.Errorf("media: load release %q: %w", operation, err)
-		}
-		if applied {
-			return nil
-		}
-		if bytes > 0 {
-			if _, err := tx.Exec(ctx, `INSERT INTO `+l.usage+` AS u (tenant_id, owner_id, used_bytes) VALUES ($1, $2, 0)
-ON CONFLICT (tenant_id, owner_id) DO UPDATE SET used_bytes = GREATEST(u.used_bytes - $3, 0)`,
-				tenant, owner, bytes); err != nil {
-				return err
-			}
-		}
-		_, err := tx.Exec(ctx, `UPDATE `+l.releases+` SET applied = true
-WHERE tenant_id = $1 AND operation_id = $2`, tenant, operation)
-		return err
-	})
+		usage: q("content_media_usage"), res: q("content_media_reservations")}, nil
 }
 
 func (l *PGLimiter) Reserve(ctx context.Context, r Reservation) error {
@@ -307,15 +221,6 @@ ON CONFLICT (tenant_id, owner_id) DO UPDATE SET used_bytes = u.used_bytes RETURN
 	_, err := tx.Exec(ctx, `UPDATE `+l.usage+` SET used_bytes = GREATEST(used_bytes + $3, 0)
 WHERE tenant_id = $1 AND owner_id = $2`, s.Tenant, s.Owner, s.Delta)
 	return err
-}
-
-// Usage reports an owner's stored bytes and unexpired pending reservations.
-func (l *PGLimiter) Usage(ctx context.Context, tenant, owner string) (used, pending int64, err error) {
-	l = l.forTenant(tenant)
-	err = l.pool.QueryRow(ctx, `SELECT COALESCE((SELECT used_bytes FROM `+l.usage+` WHERE tenant_id = $1 AND owner_id = $2), 0),
-(SELECT COALESCE(sum(bytes), 0) FROM `+l.res+` WHERE tenant_id = $1 AND owner_id = $2 AND expires_at > now())`,
-		tenant, owner).Scan(&used, &pending)
-	return used, pending, err
 }
 
 // RouteLimiter pairs a routed journal with its account quota ledger.

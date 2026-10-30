@@ -313,7 +313,7 @@ function corsHint() {
   hinted = true;
   console.warn(
     `contentkit: video requests failed with no response (status 0). If media is served from another origin, ` +
-      `media-gateway must allow this page: set MEDIA_GATEWAY_CORS_ORIGINS to include ${globalThis.location?.origin ?? "the app origin"}.`,
+      `media-gateway must allow this page: add ${globalThis.location?.origin ?? "the app origin"} to its MEDIA_GATEWAY_ROUTES origins.`,
   );
 }
 

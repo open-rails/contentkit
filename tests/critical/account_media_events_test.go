@@ -30,7 +30,11 @@ func TestAccountMediaEventReader(t *testing.T) {
 			must(t, err)
 		})
 		a, sibling, foreign := w.apps[0], w.apps[1], w.apps[2]
-		attachMedia(t, w, a, func(c *ck.Config) { c.Avatars = &ck.AvatarsConfig{} })
+		attachMedia(t, w, a, func(c *ck.Config) {
+			accounts := *c.Accounts
+			accounts.Avatars = &ck.AvatarsConfig{}
+			c.Accounts = &accounts
+		})
 		reader, err := a.engine.AccountMediaEvents()
 		must(t, err)
 		query := eventlog.Query{Types: []string{media.EventProcessingProgressed, media.EventProcessingCompleted}}

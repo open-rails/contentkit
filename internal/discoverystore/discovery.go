@@ -68,9 +68,6 @@ type Options struct {
 	// signal plane, or while it is down, history, signals, exposures,
 	// view_status, similar, recommendations and popularity are unavailable.
 	Hub *hub.Hub
-	// Candidates sources similar and recommendations; nil is co-engagement
-	// over the signal plane.
-	Candidates discovery.Candidates
 	// Tenure supplies elapsed access to configured tiers; nil omits it from
 	// account statistics. Billing adapters may implement access.TenureReader.
 	Tenure access.TenureReader
@@ -118,9 +115,6 @@ func New(o Options) (*Service, error) {
 		comments:    q("content_comments"),
 		entityNames: q("content_entity_names"), normalize: q("contentkit_keyword_normalize"), rankings: q("content_popular_rankings"), reposts: q("content_channel_reposts")},
 		ranges: make(chan struct{}, rangeSlots)}
-	if o.Candidates != nil && !o.Hub.SignalsConfigured() {
-		return nil, errors.New("discovery: Candidates needs the signal plane")
-	}
 	return s, nil
 }
 
@@ -146,11 +140,7 @@ func (s *Service) recommender() (*Recommender, error) {
 		}
 		return nil, ErrSignalsDown
 	}
-	c := s.o.Candidates
-	if c == nil {
-		c = Engagement{Store: store, Tenant: s.o.Tenant}
-	}
-	return &Recommender{Candidates: c, Store: store, Tenant: s.o.Tenant}, nil
+	return &Recommender{Candidates: Engagement{Store: store, Tenant: s.o.Tenant}, Store: store, Tenant: s.o.Tenant}, nil
 }
 
 // languages is the configured languages, the fallback order of text.

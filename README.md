@@ -68,7 +68,7 @@ bodies' wire and data types and its ports; its implementation is the
 | `kinds` | the content model: content and entity kinds, languages, tiers, channels |
 | `contentref` | `ContentRef`, `ContentKey`, `EntityID` |
 | `access` | `Actor`, the staff permissions (`Permission`, `Permissions()`), the key grammar, rules and the `Billing` port ([Access](#access-access)) |
-| `catalog`, `entities`, `channels`, `content`, `contenturl`, `discovery`, `importer`, `signal`, `media`, `media/versions` | the routes' request and response types, events, the media registry's config types and the bucket port (`media.Store`), and the host ports (`content.ContentModerator`, `discovery.Candidates`, `entities.Scopes`, …) |
+| `catalog`, `entities`, `channels`, `content`, `contenturl`, `discovery`, `importer`, `signal`, `media`, `media/versions` | the routes' request and response types, events, the media registry's config types and the bucket port (`media.Store`), and the host ports (`content.ContentModerator`, `entities.Scopes`, …) |
 | `media/s3` | `media.Store` over aws-sdk-go-v2 (Ceph RGW in production, MinIO in tests), bucket policy and point-in-time `Restore` |
 | `media/avatar` | the standard account avatar kind |
 | `media/gateway`, `media/token`, `media/layout` | the media gateway's handler (`cmd/media-gateway`), its access tokens and object keys |
@@ -132,7 +132,7 @@ for _, r := range routes {
   `CreateContent`).
 - `Ready` fails until `Start`; `Probes` are the optional dependencies
   (ClickHouse, the bucket, Redis); `AnonymizeAccount` is account deletion.
-- `Config.Avatars` is people's avatars: held by one site's engine, the
+- `Config.Accounts.Avatars` is people's avatars: held by one site's engine, the
   primary, which other sites sharing its people forward their avatar
   writes to (HOST_INTEGRATION "Avatars").
 
@@ -398,9 +398,8 @@ nothing is stored). The browser's hash only finds an identical blob already
 in the folder (no upload). After the commit, the worker's place job hashes
 each staged upload and writes it to `private/sha256-{hex}` of the bytes it
 read (`Manifests.Place`); an existing blob is never overwritten, so a blob
-always holds the bytes of its name. The optional `UploadLimiter`
-(`media.NewPGLimiter`) rate-limits uploaders and charges each upload's size
-(at least 64 KiB) to the grant's `Owner`; growth past the quota fails with 413
+always holds the bytes of its name. The upload limiter rate-limits uploaders
+and charges each upload's size (at least 64 KiB) to the grant's `Owner`; growth past the quota fails with 413
 `quota_exceeded`, and deleting an item releases it.
 
 **Media gateway** (`cmd/media-gateway`, `media/gateway`, image
@@ -417,11 +416,9 @@ one HEAD per read. Everything else and every denial is one `no-store` 404. It ke
 ingress; the read API limits the items a viewer opens per hour
 (`ReaderOptions.Issuance`). It needs `MEDIA_GATEWAY_S3_ENDPOINT`, a key
 reading only `*/private/*` and `*/public/*`, `MEDIA_GATEWAY_TOKEN_KEY` and
-`_TOKEN_KEY_PREVIOUS`, `MEDIA_GATEWAY_HOSTS`
-(`media.doujins.ai=doujins,accounts; media.hanime.media=hentai0,accounts`),
-`MEDIA_GATEWAY_BUCKETS`, each namespace's bucket, one per app
-(`doujins=prod-doujins; hentai0=prod-hentai0; accounts=prod-doujins`),
-`MEDIA_GATEWAY_CORS_ORIGINS` and `MEDIA_GATEWAY_DEFAULTS`
+`_TOKEN_KEY_PREVIOUS`, `MEDIA_GATEWAY_ROUTES` (a JSON list of
+`{host, scope, bucket, origins}`, one per tenant account or app root a media
+host serves) and `MEDIA_GATEWAY_DEFAULTS`
 (`contentkit-media-worker publish-defaults` prints it).
 
 **The media worker** (`internal/media/worker`) runs every producer from the host's
@@ -767,8 +764,7 @@ routes (signals, exposures, history, popular, similar, recommend) land with
   `popularity.New(popularity.Config{Source: hub, Policy: policy})` over the engine's hub, then
   `ranker.Popular` / `ranker.Scores` / `ranker.Entities`
   ([docs/popularity-policy.md](docs/popularity-policy.md)).
-- Similar and recommended content draw candidates from `Deps.Candidates`
-  (default: co-engagement); see
+- Similar and recommended content draw candidates from co-engagement; see
   [discovery candidates](HOST_INTEGRATION.md#discovery-candidates).
 - `AnonymizeAccount` is account deletion with a quorum-written fence; see
   [HOST_INTEGRATION.md](HOST_INTEGRATION.md#signal-plane-account-deletion)
