@@ -62,6 +62,21 @@ const IDLE: Resource<never> = { data: undefined, loading: false, loaded: false }
  * hook shows it, optimistic writes with rollback, and every change the client
  * makes applied in place (or refetched) for every hook showing it.
  */
+// A cached list is a rail (an array) or a page holding it as items (Page) or
+// contents (ContentPage, SearchPage); other data under the same tag, such as a
+// count, holds none and is returned unchanged.
+function mapList<T>(data: unknown, fn: (list: T[]) => T[]): unknown {
+  if (Array.isArray(data)) return fn(data);
+  for (const key of ["items", "contents"] as const) {
+    const list = (data as Record<string, unknown> | null)?.[key];
+    if (Array.isArray(list)) {
+      const next = fn(list);
+      return next === list ? data : { ...(data as object), [key]: next };
+    }
+  }
+  return data;
+}
+
 export class ResourceStore {
   private readonly slots = new Map<string, Slot>();
   // Tokens must remain unique when a scope leaves and its slots are recreated.
@@ -195,30 +210,26 @@ export class ResourceStore {
       this.invalidate((t) => match(t) && (t.readScope ?? "{}") !== scope);
     };
     const items = <T extends { id: string }>(types: string[], fn: (item: T) => T | null) =>
-      patch<Page<T>>(
+      patch<unknown>(
         (t) => types.includes(t.type),
-        (page) => {
-          let changed = false;
-          const out: T[] = [];
-          for (const it of page.items) {
-            const next = fn(it);
-            if (next !== it) changed = true;
-            if (next) out.push(next);
-          }
-          return changed ? { ...page, items: out } : page;
-        },
+        (data) =>
+          mapList<T>(data, (list) => {
+            let changed = false;
+            const out: T[] = [];
+            for (const it of list) {
+              const next = fn(it);
+              if (next !== it) changed = true;
+              if (next) out.push(next);
+            }
+            return changed ? out : list;
+          }),
       );
     const comments = ["comments", "replies", "latest", "admin-comments"];
     // Cards in lists (pages) and rails (arrays) show a content's counts and the viewer's state.
     const cards = (id: string, fn: (card: Card) => Card) =>
-      patch<Page<Card> | Card[]>(
+      patch<unknown>(
         (t) => t.type === "cards" || t.type === "history" || t.type === "channel-feed",
-        (data) => {
-          const each = (list: Card[]) => (list.some((x) => x.id === id) ? list.map((x) => (x.id === id ? fn(x) : x)) : list);
-          if (Array.isArray(data)) return each(data);
-          const items = each(data.items);
-          return items === data.items ? data : { ...data, items };
-        },
+        (data) => mapList<Card>(data, (list) => (list.some((x) => x.id === id) ? list.map((x) => (x.id === id ? fn(x) : x)) : list)),
       );
     switch (c.type) {
       case "media.committed":

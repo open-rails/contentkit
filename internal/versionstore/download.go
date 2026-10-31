@@ -190,6 +190,13 @@ func (s *Service) Download(ctx context.Context, actor access.Actor, t versions.T
 	var name string
 	if z != nil && k.LazyZip(z) {
 		name = fileName(".zip", g.name, archiveStem(title, z), v.Content)
+		// Archive resolves each page the same way; a page it cannot read would
+		// fail the transfer after the download was charged.
+		for _, f := range pages {
+			if _, err := item.Blob(f.Blob); err != nil {
+				return nil, ErrNoDownload
+			}
+		}
 		if err := s.charge(ctx, actor); err != nil {
 			return nil, err
 		}
