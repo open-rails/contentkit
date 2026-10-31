@@ -201,6 +201,17 @@ func TestDiscoveryVisibility(t *testing.T) {
 		must(t, err)
 		assertCards(t, visible, excluded.ID)
 	})
+	t.Run("CK-J07-S17_public_lists_leave_deleted_versions_out_even_for_staff", func(t *testing.T) {
+		// Staff find deleted content in management, not among public cards.
+		page, err := admin.GetContents(t.Context(), ck.GetContentsQuery{Ids: []string{deleted.ID, one.ID}})
+		must(t, err)
+		assertCards(t, page, one.ID)
+		managed, err := admin.GetManage(t.Context(), ck.GetManageQuery{State: "deleted", Ids: []string{deleted.ID}})
+		must(t, err)
+		if len(managed) != 1 || managed[0].ID != deleted.ID {
+			t.Fatalf("management lost the deleted content: %+v", managed)
+		}
+	})
 	t.Run("CK-J07-S03_search_and_typeahead_conceal_internal_names_and_invisible_content", func(t *testing.T) {
 		found, err := public.GetSearch(t.Context(), ck.GetSearchQuery{Q: "CriticalVis", Kind: "article", Mode: "hide"})
 		must(t, err)
