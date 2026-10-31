@@ -149,3 +149,21 @@ test("an overdue release or pending plan is re-read with a capped back-off", () 
   assert.equal(nextReaderRefresh(plan("r2", future), now, overdueDelay(4)), Date.parse(future), "a future release waits for its own time");
   assert.equal(nextReaderRefresh(plan("r2"), now), null, "nothing scheduled, nothing to observe");
 });
+
+test("a reaction updates cards in rails and content pages and leaves other card-tagged data alone", async () => {
+  let emit!: (change: unknown, scope: string | null) => void;
+  const store = new ResourceStore({ subscribe: (listener: typeof emit) => ((emit = listener), () => {}) } as unknown as ContentKitClient);
+  const card = (id: string) => ({ id, counts: { likes: 0, dislikes: 0 } });
+  const cached: Record<string, unknown> = { page: { contents: [card("a"), card("b")] }, rail: [card("a")], count: 3 };
+  for (const [key, data] of Object.entries(cached)) {
+    store.subscribe(key, { type: "cards" }, () => {});
+    store.bind(key, async () => data);
+    store.load(key);
+  }
+  await settle();
+  emit({ type: "reaction.changed", target: { type: "contents", id: "a" }, counts: { likes: 1, dislikes: 0 } }, "{}");
+  const likes = (list: { id: string; counts: { likes: number } }[]) => list.map((c) => `${c.id}:${c.counts.likes}`).join(" ");
+  assert.equal(likes((store.snapshot("page").data as { contents: never[] }).contents), "a:1 b:0");
+  assert.equal(likes(store.snapshot("rail").data as never[]), "a:1");
+  assert.equal(store.snapshot("count").data, 3);
+});
