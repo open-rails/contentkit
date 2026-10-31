@@ -495,6 +495,7 @@ function Composer(p: ComposerProps) {
   const { t } = m;
   const thread = useThread();
   const ids = useId();
+  const editing = p.operation === "comment.edit";
   const [body, setBody] = useState(p.initial ?? "");
   const [name, setName] = useState("");
   const [pending, setPending] = useState(false);
@@ -575,7 +576,7 @@ function Composer(p: ComposerProps) {
           ) : left !== undefined && max !== undefined && left <= max * 0.2 ? (
             m.plural("comments.charsLeft", left)
           ) : (
-            <span className="pointer-coarse:hidden">{t("comments.submitHint", { key: mac ? "⌘" : "Ctrl" })}</span>
+            <span className="pointer-coarse:hidden">{t(editing ? "comments.submitHintSave" : "comments.submitHint", { key: mac ? "⌘" : "Ctrl" })}</span>
           )}
         </span>
         {p.onCancel && (
@@ -584,7 +585,7 @@ function Composer(p: ComposerProps) {
           </Button>
         )}
         <Button type="submit" size="sm" disabled={pending}>
-          {pending ? t("comments.posting") : p.submit}
+          {pending ? t(editing ? "comments.saving" : "comments.posting") : p.submit}
         </Button>
       </div>
       {error && <ErrorLine>{error}</ErrorLine>}
