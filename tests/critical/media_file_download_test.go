@@ -3,6 +3,7 @@ package critical_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"mime"
 	"net/http"
@@ -14,8 +15,10 @@ import (
 
 	mediastore "github.com/open-rails/contentkit/internal/mediastore"
 
+	"github.com/google/uuid"
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/layout"
@@ -172,5 +175,73 @@ func TestPublishedSingleFileDownload(t *testing.T) {
 				return response.StatusCode == 404 || response.StatusCode == 403
 			})
 		})
+	}
+}
+
+// A gallery whose page source cannot be read must refuse the download up
+// front, before a link is issued or the viewer's daily download is spent.
+func TestZIPDownloadRefusesUnreadablePagesBeforeCharging(t *testing.T) {
+	w := newWorld(t)
+	a := w.apps[0]
+	storage := attachMedia(t, w, a, func(c *ck.Config) {
+		kind := &c.Media.Config.Kinds[0]
+		kind.Publish = &media.Publish{Pages: "pages/{name}", Renditions: []string{"reader"}, Download: "archive"}
+		kind.Private = append(kind.Private,
+			media.Private{Name: "archive-pages", From: "pages/{name}", To: "download-pages/{name}{ext}", Image: &media.Image{Format: media.ImageFormatSource}},
+			media.Private{Name: "archive", To: "pages.zip", Zip: "download-pages/", HostOnly: true})
+		c.Media.Downloads = versions.Downloads{Anonymous: []versions.Quota{{Limit: 1, Per: 24 * time.Hour}}}
+	})
+	admin := a.engine.Client()
+	ref := galleryRef(t, admin, "Unreadable gallery")
+	_, err := admin.IngestMedia(t.Context(), http.DefaultClient, ref, uuid.NewString(), []ck.MediaFile{{Path: "pages/one.png", Type: "image/png", Body: bytes.NewReader(imageBytes(t))}})
+	must(t, err)
+	awaitMediaReady(t, admin, ref)
+	_, err = admin.PostContentPublish(t.Context(), ref.ID, catalog.PublishInput{})
+	must(t, err)
+	awaitEditionPublication(t, a, admin, ref.ID, ref.Version)
+
+	config, err := a.cfg.MediaKinds()
+	must(t, err)
+	registry, err := mediastore.NewRegistry(config, mediastore.Hooks{})
+	must(t, err)
+	target, err := registry.VersionRef(ref.Kind, ref.ID, ref.Version)
+	must(t, err)
+	item, err := registry.Item(target)
+	must(t, err)
+	reader := a.client("")
+	waitFor(t, func() bool {
+		body, _, err := storage.store.Get(t.Context(), item.ManifestKey(), media.GetOptions{})
+		must(t, err)
+		stored, err := io.ReadAll(body)
+		body.Close()
+		must(t, err)
+		manifest, err := mediastore.DecodeManifest(stored)
+		must(t, err)
+		page, ok := manifest.Get("download-pages/one.png")
+		return ok && page.Blob != ""
+	})
+	// Point the archive's page at an area the layout does not accept.
+	body, _, err := storage.store.Get(t.Context(), item.ManifestKey(), media.GetOptions{})
+	must(t, err)
+	stored, err := io.ReadAll(body)
+	body.Close()
+	must(t, err)
+	manifest, err := mediastore.DecodeManifest(stored)
+	must(t, err)
+	for i, f := range manifest.Files {
+		if f.Path == "download-pages/one.png" {
+			_, name, _ := layout.SplitBlobRef(f.Blob)
+			manifest.Files[i].Blob = "future/" + name
+		}
+	}
+	rewritten, err := json.Marshal(manifest)
+	must(t, err)
+	_, err = storage.store.Put(t.Context(), item.ManifestKey(), bytes.NewReader(rewritten), int64(len(rewritten)), media.PutOptions{ContentType: "application/json"})
+	must(t, err)
+
+	// Twice under a one-download quota: a charged refusal would make the second 429.
+	for range 2 {
+		_, err = reader.GetContentVersionDownload(t.Context(), ref.ID, ref.Version)
+		requireError(t, err, http.StatusConflict, "no_download")
 	}
 }
