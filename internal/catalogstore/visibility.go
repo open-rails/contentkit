@@ -257,11 +257,18 @@ func (v *Viewer) listed(alias string, language bool) (string, pgx.NamedArgs) {
 	for k, a := range softArgs {
 		args[k] = a
 	}
+	// Public lists (Listed) leave deleted versions out for everyone; staff find
+	// them in management, and a content page (Shown) still offers them to its
+	// editors.
+	kept := ""
+	if language {
+		kept = " AND NOT " + f("deleted")
+	}
 	if v.staff {
 		if v.management {
 			return scope, args
 		}
-		return "(" + scope + " AND " + soft + " AND " + v.channelReady(alias) + ")", args
+		return "(" + scope + " AND " + soft + " AND " + v.channelReady(alias) + kept + ")", args
 	}
 	public := "(NOT " + f("deleted") + " AND " + live + " AND " + scope + " AND " + soft
 	if v.mode == access.Hide {
@@ -271,7 +278,7 @@ func (v *Viewer) listed(alias string, language bool) (string, pgx.NamedArgs) {
 	if language {
 		public = "(" + public + " AND (@cv_language = '' OR @cv_language = ANY(" + f("languages") + ")))"
 	}
-	return "(" + scope + " AND " + v.channelReady(alias) + " AND (" + public + " OR " + v.privileged(alias) + "))", args
+	return "(" + scope + " AND " + v.channelReady(alias) + kept + " AND (" + public + " OR " + v.privileged(alias) + "))", args
 }
 
 // channelReady keeps incomplete or withdrawn authoring homes out of public
