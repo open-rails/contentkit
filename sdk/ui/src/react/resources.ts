@@ -256,12 +256,19 @@ export class ResourceStore {
         break;
       case "comment.deleted": {
         let parent: string | undefined;
+        // As the server lists them, a deleted root stays only while it holds replies.
         items<Comment>(["comments", "replies"], (x) => {
           if (x.id !== c.id || x.deleted) return x;
           if (!x.moderation) parent = x.reply_to_id;
+          if (!x.reply_to_id && x.reply_count === 0) return null;
           return { ...x, deleted: true, body: "[deleted]", author: undefined, user_id: undefined, anon_name: undefined };
         });
-        if (parent) items<Comment>(["comments"], (x) => (x.id === parent ? { ...x, reply_count: Math.max(0, x.reply_count - 1) } : x));
+        if (parent)
+          items<Comment>(["comments"], (x) => {
+            if (x.id !== parent) return x;
+            const reply_count = Math.max(0, x.reply_count - 1);
+            return x.deleted && reply_count === 0 ? null : { ...x, reply_count };
+          });
         items<Comment>(["latest"], (x) => (x.id === c.id ? null : x));
         items<Comment & { deleted_at?: string }>(["admin-comments"], (x) => (x.id === c.id ? { ...x, deleted: true, deleted_at: new Date().toISOString() } : x));
         this.invalidate((t) => t.type === "standing");

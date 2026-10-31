@@ -1652,6 +1652,20 @@
       ]
     },
     {
+      "id": "CK-J20-S09",
+      "journey": "CK-J20",
+      "behavior": "A deleted top-level comment stays in the thread and its count only while it holds replies",
+      "status": "verified",
+      "evidence": [
+        "A deleted root without replies leaves the signed-out list and standing count; a deleted root with a reply stays as a tombstone and leaves once its last reply is deleted; restoring the lone root returns it and its count.",
+        "Executed in a focused local run against real PostgreSQL; failed with the thread predicate's reply condition removed."
+      ],
+      "cases": [
+        "TestDeletedCommentThreads",
+        "TestDeletedCommentThreads/CK-J20-S09_a_deleted_root_stays_only_while_it_holds_replies"
+      ]
+    },
+    {
       "id": "CK-J23-S01",
       "journey": "CK-J23",
       "behavior": "Erasure fences reads before physical cleanup finishes",

@@ -71,8 +71,9 @@ type CommentStanding struct {
 	CanComment bool `json:"can_comment"`
 	// Comments is the target's comments setting: open, closed or hidden.
 	Comments string `json:"comments"`
-	// Count is the visible top-level thread size, including tombstones and
-	// the caller's held/rejected roots, in the requested language. Zero is
+	// Count is the visible top-level thread size, including tombstones that
+	// still hold replies and the caller's held/rejected roots, in the
+	// requested language. Zero is
 	// present for an empty thread; hidden or locked comments withhold it.
 	Count *int `json:"count,omitempty"`
 	// Locked: the caller can't open the content (or the version) and its

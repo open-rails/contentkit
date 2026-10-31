@@ -247,10 +247,11 @@ func scanComment(row pgx.Row, cm *content.Comment) (replyTo, userID, anonName *s
 }
 
 // threadPred is shared by the top-level page and its authoritative count.
-// Approved tombstones and the author's unpublished rows remain in both.
-// Args are keyArgs, viewerID and language, in that order.
+// A tombstone remains only while it still holds replies; the author's
+// unpublished rows remain in both. Args are keyArgs, viewerID and language,
+// in that order.
 func threadPred() string {
-	return keyPred(1) + " AND reply_to_id IS NULL AND " + visiblePred(5) + " AND ($6 = '' OR language = $6)"
+	return keyPred(1) + " AND reply_to_id IS NULL AND (deleted_at IS NULL OR reply_count > 0) AND " + visiblePred(5) + " AND ($6 = '' OR language = $6)"
 }
 
 // threadCount reads a canonical target already admitted by the caller. It
