@@ -125,8 +125,6 @@ function Choices({ poll, results, canVote, onVote }: { poll: PollData; results: 
   const options = [...poll.options].sort((a, b) => a.position - b.position);
   const images = options.some((o) => o.image_url);
   const total = poll.total_votes || options.reduce((n, o) => n + o.vote_count, 0);
-  // Bars scale to the leading option, which spans the full width.
-  const lead = Math.max(1, ...options.map((o) => o.vote_count));
   return (
     <>
       {canVote && <p className="text-xs text-muted-foreground">{t("poll.choose")}</p>}
@@ -150,7 +148,7 @@ function Choices({ poll, results, canVote, onVote }: { poll: PollData; results: 
               </span>
               {results && (
                 <span aria-hidden className="block h-2 w-full overflow-hidden rounded-full bg-muted">
-                  <span className={cn("block h-full rounded-full transition-[width] duration-500 motion-reduce:transition-none", mine ? "bg-primary" : "bg-foreground/40")} style={{ width: `${(o.vote_count / lead) * 100}%` }} />
+                  <span className={cn("block h-full rounded-full transition-[width] duration-500 motion-reduce:transition-none", mine ? "bg-primary" : "bg-foreground/40")} style={{ width: `${total ? (o.vote_count / total) * 100 : 0}%` }} />
                 </span>
               )}
             </>
