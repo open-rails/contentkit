@@ -59,6 +59,7 @@ export const discovery = {
     search: "Search",
     searchPlaceholder: "Search…",
     clearSearch: "Clear search",
+    closeSearch: "Close search",
     suggestions: "Suggestions",
     filtersSignedOut: "Sign in to choose what you see.",
     shown: "Shown",

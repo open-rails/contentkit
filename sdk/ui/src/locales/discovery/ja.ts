@@ -60,6 +60,7 @@ export const discovery: typeof en = {
     search: "検索",
     searchPlaceholder: "検索…",
     clearSearch: "検索をクリア",
+    closeSearch: "検索を閉じる",
     suggestions: "候補",
     filtersSignedOut: "表示する内容を選ぶにはサインインしてください。",
     shown: "表示",

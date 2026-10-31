@@ -60,6 +60,7 @@ export const discovery: typeof en = {
     search: "搜索",
     searchPlaceholder: "搜索…",
     clearSearch: "清除搜索",
+    closeSearch: "关闭搜索",
     suggestions: "建议",
     filtersSignedOut: "登录后选择你想看的内容。",
     shown: "显示",
