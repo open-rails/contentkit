@@ -393,7 +393,8 @@ function MetaLink({ url, name }: { url?: string; name: string }) {
 
 function Chip({ url, name, variant = "chips" }: { url?: string; name: string; variant?: "chips" | "text" }) {
   const onClick = useLink(url);
-  const cls = variant === "text" ? "text-sm text-muted-foreground" : "inline-block rounded-md border border-border px-1.5 py-0.5 text-sm text-muted-foreground";
+  // A text link is a 24px-tall target, the minimum for a link set this close to its neighbours.
+  const cls = variant === "text" ? "inline-block py-0.5 text-sm text-muted-foreground" : "inline-block rounded-md border border-border px-1.5 py-0.5 text-sm text-muted-foreground";
   return url ? (
     <a href={url} onClick={onClick} onAuxClick={prepareNativeLink} onContextMenu={prepareNativeLink} className={cn(cls, "hover:text-foreground", variant === "text" ? "hover:underline" : "hover:bg-muted")}>
       {name}
