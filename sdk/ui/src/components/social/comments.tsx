@@ -1,7 +1,7 @@
 import { MoreHorizontalIcon, ThumbsDownIcon, ThumbsUpIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { cn } from "cn";
-import { createContext, useContext, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import type { ContentKitClient } from "../../client/client.js";
 import type { BanScope, Reaction, Sort } from "../../client/content/types.js";
 import { toContentKitError, type ContentKitError } from "../../client/errors.js";
@@ -299,11 +299,13 @@ function TopLevel({ comment }: { comment: Comment }) {
   const { t, plural } = useMessages();
   const thread = useThread();
   const [open, setOpen] = useState(false);
-  const [replyTo, setReplyTo] = useState<string | null>(null);
+  const [replyTo, setReplyTo] = useState<{ name: string; mention: boolean } | null>(null);
   const replies = useCommentReplies(comment.id, { pageSize: thread.repliesPageSize, enabled: open });
-  const startReply = (name: string) =>
+  // Replies stay one level deep, so answering a reply starts with its
+  // author's name to say whom it answers.
+  const startReply = (name: string, mention = false) =>
     thread.gate("comment", () => {
-      setReplyTo(name);
+      setReplyTo({ name, mention });
       if (comment.reply_count > 0) setOpen(true);
     });
   return (
@@ -319,7 +321,7 @@ function TopLevel({ comment }: { comment: Comment }) {
           {replies.loading && !replies.items.length && <li className="text-muted-foreground">{t("comments.loadingReplies")}</li>}
           {replies.items.map((r) => (
             <li key={r.id}>
-              <Row comment={r} onReply={r.deleted || r.moderation || !thread.can("comment") ? undefined : startReply} />
+              <Row comment={r} onReply={r.deleted || r.moderation || !thread.can("comment") ? undefined : (name) => startReply(name, true)} />
             </li>
           ))}
           {replies.error && (
@@ -338,8 +340,10 @@ function TopLevel({ comment }: { comment: Comment }) {
       )}
       {replyTo !== null && (
         <div className="ms-11 grid gap-1">
-          <p className="text-xs text-muted-foreground">{t("comments.replyingTo", { name: replyTo })}</p>
+          <p className="text-xs text-muted-foreground">{t("comments.replyingTo", { name: replyTo.name })}</p>
           <Composer
+            key={`${replyTo.name}:${replyTo.mention}`}
+            initial={replyTo.mention ? `@${replyTo.name} ` : undefined}
             autoFocus
             placeholder={t("comments.replyPlaceholder")}
             submit={t("comments.reply")}
@@ -502,6 +506,11 @@ function Composer(p: ComposerProps) {
   const [invalid, setInvalid] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const area = useRef<HTMLTextAreaElement>(null);
+  // Opening on a mention or an edit puts the caret after the text.
+  useEffect(() => {
+    const el = area.current;
+    if (p.autoFocus && el) el.setSelectionRange(el.value.length, el.value.length);
+  }, [p.autoFocus]);
   const max = thread.maxLength;
   const left = max === undefined ? undefined : max - body.length;
 

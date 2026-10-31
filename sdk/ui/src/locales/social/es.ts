@@ -110,7 +110,7 @@ export const social: typeof en = {
     votes_one: "{count} voto",
     votes_other: "{count} votos",
     yourVote: "Tu voto",
-    choose: "Elige una opción para votar.",
+    choose: "Elige una opción para votar. El voto no se puede cambiar.",
     final: "Tu voto es definitivo.",
     closes: "Cierra el {date}",
     closed: "Esta encuesta está cerrada.",

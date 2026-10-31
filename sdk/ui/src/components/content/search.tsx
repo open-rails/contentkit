@@ -227,7 +227,7 @@ export function SearchBox(p: SearchBoxProps) {
           data-ckui="suggestion"
           data-type={s.type}
           ref={s.type === "content" ? exposure.track(s.card.id, i + 1) : undefined}
-          className={cn("relative flex cursor-pointer items-center", header ? s.type === "recent" ? "entity h-9 gap-2.5 rounded-lg px-2.5 text-sm hover:bg-foreground/10" : "gap-3 rounded-lg px-2 py-1.5 text-sm font-medium hover:bg-foreground/10" : dialog ? "min-h-11 gap-3 rounded-md p-2 text-sm hover:bg-accent hover:text-accent-foreground" : "gap-2 px-2 py-1.5", i === activeIndex && "bg-accent text-accent-foreground")}
+          className={cn("relative flex cursor-pointer items-center", header ? s.type === "recent" ? "entity h-9 gap-2.5 rounded-lg px-2.5 text-sm hover:bg-foreground/10" : "gap-3 rounded-lg px-2 py-1.5 text-sm font-medium hover:bg-foreground/10" : dialog ? "min-h-11 gap-3 rounded-md p-2 text-sm hover:bg-accent hover:text-accent-foreground" : "gap-2 px-2 py-1.5", i === activeIndex && (header ? "bg-foreground/15" : "bg-accent text-accent-foreground"))}
           onMouseEnter={() => setActive(suggestionKey(s))}
           onMouseDown={(e) => {
             e.preventDefault();
@@ -344,8 +344,8 @@ export function SearchBox(p: SearchBoxProps) {
           <button
             type="button"
             disabled={p.disabled}
-            className="absolute top-1/2 right-2.5 -translate-y-1/2 rounded p-0.5 text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
-            aria-label={text ? t("contents.clearSearch") : t("common.close")}
+            className="absolute top-1/2 right-2.5 -translate-y-1/2 rounded p-0.5 text-muted-foreground after:absolute after:-inset-2.5 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+            aria-label={text ? t("contents.clearSearch") : t("contents.closeSearch")}
             onMouseDown={(event) => event.preventDefault()}
             onClick={() => {
               input.current?.focus();

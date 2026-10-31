@@ -13,7 +13,6 @@ import { ContentKitUiRoot } from "../../scope.js";
 import { Button } from "#ckui/ui/button";
 import { Skeleton } from "#ckui/ui/skeleton";
 import { RenditionImg } from "../rendition-img.js";
-import { RelativeTime } from "../social/parts.js";
 import { lockLabel, type PostCardProps } from "./card.js";
 
 export interface PostListProps {
@@ -121,7 +120,7 @@ function PostRow({ card, url, unread, lock, excerptLength }: { card: Card; url: 
           <span>{card.title || card.code}</span>
         </a>
         <p className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-          {card.published_at && <RelativeTime at={card.published_at} />}
+          {card.published_at && <PublishedDate at={card.published_at} />}
           {lock && (
             <span className="inline-flex items-center gap-1" data-ckui="card-lock">
               <HugeiconsIcon icon={LockIcon} strokeWidth={2} className="size-3.5" aria-hidden />
@@ -154,7 +153,7 @@ function SidebarSection({ title, kind, sort, size, language, url, client }: { ti
                   )}
                   <span className="grid min-w-0 gap-0.5">
                     <span className="line-clamp-2 font-medium break-words">{card.title || card.code}</span>
-                    {card.published_at && <RelativeTime at={card.published_at} className="text-xs text-muted-foreground" />}
+                    {card.published_at && <PublishedDate at={card.published_at} className="text-xs text-muted-foreground" />}
                   </span>
                 </a>
               </li>
@@ -171,4 +170,14 @@ export function excerpt(text: string, length: number): string {
   const cut = s.slice(0, length + 1);
   const space = cut.lastIndexOf(" ");
   return `${(space > length * 0.6 ? cut.slice(0, space) : s.slice(0, length)).replace(/[\s.,;:!?-]+$/, "")}…`;
+}
+
+/** A post's publication day, in the same style as release dates. */
+function PublishedDate({ at, className }: { at: string; className?: string }) {
+  const m = useMessages();
+  return (
+    <time dateTime={at} className={className}>
+      {new Intl.DateTimeFormat(m.language, { dateStyle: "medium", timeZone: "UTC" }).format(new Date(at))}
+    </time>
+  );
 }

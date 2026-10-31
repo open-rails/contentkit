@@ -60,6 +60,7 @@ export const discovery: typeof en = {
     search: "Buscar",
     searchPlaceholder: "Buscar…",
     clearSearch: "Borrar búsqueda",
+    closeSearch: "Cerrar búsqueda",
     suggestions: "Sugerencias",
     filtersSignedOut: "Inicia sesión para elegir lo que ves.",
     shown: "Visible",

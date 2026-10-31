@@ -60,6 +60,7 @@ export const discovery: typeof en = {
     search: "검색",
     searchPlaceholder: "검색…",
     clearSearch: "검색 지우기",
+    closeSearch: "검색 닫기",
     suggestions: "추천 검색어",
     filtersSignedOut: "볼 콘텐츠를 선택하려면 로그인하세요.",
     shown: "표시",

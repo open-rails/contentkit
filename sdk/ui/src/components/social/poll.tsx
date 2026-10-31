@@ -1,7 +1,7 @@
 import { Tick02Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { cn } from "cn";
-import { useContext, useState, type ReactNode } from "react";
+import { useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import type { ContentKitClient } from "../../client/client.js";
 import { toContentKitError, type ContentKitError } from "../../client/errors.js";
 import type { Poll as PollData } from "../../client/generated/wire.js";
@@ -49,6 +49,21 @@ export function Poll(p: PollProps) {
   const signedOut = ctx?.viewer === null;
   // Signed out where the server takes no anonymous votes.
   const mustSignIn = signedOut && config?.anonymous.votes === false;
+  // A vote clicked while signed out is cast once the visitor has signed in.
+  const afterSignIn = useRef<string | null>(null);
+  const viewer = ctx?.viewer;
+  const { poll: current, loading, vote: castVote } = r;
+  useEffect(() => {
+    const option = afterSignIn.current;
+    if (!option || !viewer || loading || !current) return;
+    afterSignIn.current = null;
+    if (current.voted || current.closed) return;
+    castVote(option).catch((e) => {
+      const err = toContentKitError(e);
+      setError(err);
+      report(err, "poll.vote");
+    });
+  }, [viewer, loading, current, castVote, report]);
   const root = (children: ReactNode) => (
     <ContentKitUiRoot appearance={p.appearance} className={cn("grid min-w-0 content-start gap-3 text-sm text-card-foreground", p.variant !== "embedded" && "rounded-xl border border-border bg-card p-4", p.className)} data-ckui="poll">
       {children}
@@ -83,9 +98,15 @@ export function Poll(p: PollProps) {
     report(err, op);
   };
   const vote = (option: string) => {
-    if (mustSignIn) return signIn?.();
+    if (mustSignIn) {
+      afterSignIn.current = option;
+      return signIn?.();
+    }
     setError(null);
-    r.vote(option).catch((e) => fail(e, "poll.vote"));
+    r.vote(option).catch((e) => {
+      if (toContentKitError(e).code === "unauthorized" && signIn && signedOut) afterSignIn.current = option;
+      fail(e, "poll.vote");
+    });
   };
   const header = (
     <>

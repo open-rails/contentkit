@@ -1030,3 +1030,38 @@ func TestDuplicateComments(t *testing.T) {
 		})
 	}
 }
+
+func TestDeletedCommentThreads(t *testing.T) {
+	t.Run("CK-J20-S09_a_deleted_root_stays_only_while_it_holds_replies", func(t *testing.T) {
+		w := newWorld(t, func(cfg *ck.Config) { cfg.Interactions.Limits.Disabled = true })
+		a := w.apps[0]
+		_, token := w.person(t, 0)
+		client, public := a.client(token), a.client("")
+		item := publishedArticle(t, a, "Deleted threads")
+		count := func(want int) {
+			t.Helper()
+			standing, err := public.GetContentCanComment(t.Context(), item.ID, ck.GetContentCanCommentQuery{})
+			must(t, err)
+			if standing.Count == nil || *standing.Count != want {
+				t.Fatalf("standing count=%v; want %d", standing.Count, want)
+			}
+		}
+		lone := postComment(t, client, item.ID, "Lone root")
+		parent := postComment(t, client, item.ID, "Answered root")
+		reply, err := client.PostContentComments(t.Context(), item.ID, content.CommentInput{Body: "An answer", ReplyToID: parent.ID}, ck.PostContentCommentsQuery{})
+		must(t, err)
+		count(2)
+		must(t, client.DeleteComment(t.Context(), lone.ID))
+		must(t, client.DeleteComment(t.Context(), parent.ID))
+		assertCommentVisibility(t, public, item.ID, lone.ID, false)
+		assertCommentVisibility(t, public, item.ID, parent.ID, true)
+		count(1)
+		must(t, client.DeleteComment(t.Context(), reply.ID))
+		assertCommentVisibility(t, public, item.ID, parent.ID, false)
+		count(0)
+		_, err = a.engine.Client().PostCommentRestore(t.Context(), lone.ID)
+		must(t, err)
+		assertCommentVisibility(t, public, item.ID, lone.ID, true)
+		count(1)
+	})
+}
