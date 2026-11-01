@@ -22,6 +22,7 @@ import { Textarea } from "#ckui/ui/textarea";
 import { localInput } from "./bans.js";
 import { SortableList } from "../sortable-list.js";
 import { ConfirmDialog, contentError, ErrorLine, formatDate } from "./parts.js";
+import { PageHeading } from "../page-heading.js";
 
 export interface PollEditorProps {
   /** The poll to edit; none creates one. */
@@ -123,7 +124,7 @@ export function PollEditor(p: PollEditorProps) {
       {ed.poll ? (
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="grid gap-1">
-            <h2 className="text-2xl font-semibold tracking-tight">{t("pollEditor.editTitle")}</h2>
+            <PageHeading className="text-2xl font-semibold tracking-tight">{t("pollEditor.editTitle")}</PageHeading>
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-muted-foreground">
               <PollStateDot state={pollState(ed.poll)} />
               <span aria-hidden>·</span>
@@ -144,7 +145,7 @@ export function PollEditor(p: PollEditorProps) {
         </div>
       ) : (
         <div className="grid gap-1">
-          <h2 className="text-2xl font-semibold tracking-tight">{t("pollEditor.newTitle")}</h2>
+          <PageHeading className="text-2xl font-semibold tracking-tight">{t("pollEditor.newTitle")}</PageHeading>
           <p className="text-muted-foreground">{t("pollEditor.newIntro")}</p>
         </div>
       )}

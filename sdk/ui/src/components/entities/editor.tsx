@@ -26,6 +26,7 @@ import { useConfirm } from "../admin/shell.js";
 import { AttributeFields, formOf } from "./fields.js";
 import { EntityImageEditor } from "./banner.js";
 import { EntityPicker, labelOf, type EntityLike, type Labels } from "./parts.js";
+import { PageHeading } from "../page-heading.js";
 
 export interface EntityEditorProps {
   /** The entity edited; null creates one of `kind`. */
@@ -287,7 +288,7 @@ function Head({
       data-ckui="entity-head"
     >
       <div className="flex min-w-0 flex-1 items-baseline gap-2">
-        <h2 className="truncate text-xl font-semibold tracking-tight" title={name}>{name}</h2>
+        <PageHeading className="truncate text-xl font-semibold tracking-tight" title={name}>{name}</PageHeading>
         <span className="shrink-0 text-sm text-muted-foreground">{labelOf(labels, entity.kind, "one")}</span>
       </div>
       <div className="flex items-center gap-2">
@@ -535,7 +536,7 @@ function CreateForm({ kind, spec, languages, labels, g, onCreated, onCancel, onE
       }}
     >
       <div className="grid gap-1 lg:col-span-2">
-        <h2 className="text-2xl font-semibold tracking-tight">{title}</h2>
+        <PageHeading className="text-2xl font-semibold tracking-tight">{title}</PageHeading>
         <p className="text-sm text-muted-foreground">{t("entityEditor.createIntro")}</p>
       </div>
       <div className="grid min-w-0 gap-5">

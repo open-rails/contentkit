@@ -13,6 +13,7 @@ import { EntityManager, type EntityManagerProps } from "./entity-manager.js";
 import { PollManager, type PollManagerProps } from "./poll-manager.js";
 import { AdminRoot, LoadFailed, Rows, type AdminFlowProps, type AdminRouteProps } from "./shell.js";
 import { StatsDashboard } from "./stats-dashboard.js";
+import { NestedPageHeadings } from "../page-heading.js";
 
 export type ContentAdminSection = "contents" | "entities" | "moderation" | "polls" | "statistics";
 
@@ -135,6 +136,7 @@ function Workbench({ client, basePath, navigation, sections: wanted, contentKind
             </Button>
           ))}
         </nav>
+        <NestedPageHeadings>
         <div className="grid min-w-0 content-start gap-4" data-ckui="content-admin-view">
           {!valid ? (
             <div className="grid justify-items-start gap-2">
@@ -161,6 +163,7 @@ function Workbench({ client, basePath, navigation, sections: wanted, contentKind
             <StatsDashboard {...shared} kinds={kinds.map((value) => ({ value, label: labelOf(labels, value) }))} />
           )}
         </div>
+        </NestedPageHeadings>
       </div>
     </>
   );

@@ -31,6 +31,7 @@ import { MembershipEditor } from "../entities/memberships.js";
 import { labelOf, type Labels } from "../entities/parts.js";
 import { AdminRoot, LoadFailed, NoAccess, Pager, Rows, Segmented, pageOf, useConfirm, type AdminFlowProps, type AdminRouteProps } from "./shell.js";
 
+import { PageHeading } from "../page-heading.js";
 type Choice = string | { value: string; label: string };
 
 /** What ContentManager hands its body editor. */
@@ -387,7 +388,7 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
     <div className="grid gap-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-baseline gap-2">
-          <h2 className="text-xl font-semibold tracking-tight first-letter:uppercase">{heading}</h2>
+          <PageHeading className="text-xl font-semibold tracking-tight first-letter:uppercase">{heading}</PageHeading>
           {total !== undefined && (
             <span className="text-sm text-muted-foreground tabular-nums">
               {new Intl.NumberFormat(m.language).format(total)}
@@ -904,13 +905,13 @@ function StandardContentEditor({ id, client: own, kind, languages: offered, rend
             <header className="grid gap-2" data-ckui="content-head">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 {item ? (
-                  <h2 className="min-w-0 truncate text-xl font-semibold tracking-tight" title={typeof storedTitle === "string" && storedTitle ? storedTitle : undefined}>
+                  <PageHeading className="min-w-0 truncate text-xl font-semibold tracking-tight" title={typeof storedTitle === "string" && storedTitle ? storedTitle : undefined}>
                     {headingTitle}
-                  </h2>
+                  </PageHeading>
                 ) : (
                   // A new item reads like the other create pages: a large title and what happens next.
                   <div className="grid gap-1">
-                    <h2 className="text-2xl font-semibold tracking-tight">{headingTitle}</h2>
+                    <PageHeading className="text-2xl font-semibold tracking-tight">{headingTitle}</PageHeading>
                     <p className="text-sm text-muted-foreground">{t("contentManager.imagesAfterCreate")}</p>
                   </div>
                 )}
