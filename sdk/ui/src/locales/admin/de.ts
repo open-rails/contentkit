@@ -173,6 +173,7 @@ export const admin: typeof en = {
     publishing: "Veröffentlichung ausstehend",
     published: "Veröffentlicht",
     publishedNotice: "Veröffentlichung vorgemerkt.",
+    sectionNotSaved: "{section} wurde nicht gespeichert. Prüfe den Bereich und versuche es erneut.",
     view: "Ansehen",
     deleteTitle: "„{title}“ löschen?",
     deleteBody: "Er verschwindet von der Website. Unter „Gelöscht“ kannst du ihn wiederherstellen.",

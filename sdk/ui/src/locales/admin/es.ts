@@ -173,6 +173,7 @@ export const admin: typeof en = {
     publishing: "Publicación pendiente",
     published: "Publicada",
     publishedNotice: "Publicación en cola.",
+    sectionNotSaved: "No se guardó {section}. Revísalo e inténtalo de nuevo.",
     view: "Ver",
     deleteTitle: "¿Eliminar «{title}»?",
     deleteBody: "Deja de estar en el sitio. Puedes restaurarla desde Eliminadas.",

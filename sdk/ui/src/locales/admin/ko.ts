@@ -173,6 +173,7 @@ export const admin: typeof en = {
     publishing: "공개 대기 중",
     published: "게시됨",
     publishedNotice: "공개 대기 중.",
+    sectionNotSaved: "{section}을(를) 저장하지 못했습니다. 확인 후 다시 시도하세요.",
     view: "보기",
     deleteTitle: "“{title}”을(를) 삭제할까요?",
     deleteBody: "사이트에서 내려갑니다. 삭제됨에서 복원할 수 있습니다.",

@@ -173,6 +173,7 @@ export const admin: typeof en = {
     publishing: "公開待ち",
     published: "公開中",
     publishedNotice: "公開待ち.",
+    sectionNotSaved: "{section}は保存されませんでした。確認してもう一度お試しください。",
     view: "表示",
     deleteTitle: "「{title}」を削除しますか？",
     deleteBody: "サイトから外れます。「削除済み」から元に戻せます。",

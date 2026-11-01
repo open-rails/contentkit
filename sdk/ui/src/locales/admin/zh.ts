@@ -173,6 +173,7 @@ export const admin: typeof en = {
     publishing: "等待发布",
     published: "已发布",
     publishedNotice: "发布已排队.",
+    sectionNotSaved: "{section}未保存。请检查后重试。",
     view: "查看",
     deleteTitle: "删除“{title}”？",
     deleteBody: "它将从网站下线。你可以在“已删除”中恢复。",

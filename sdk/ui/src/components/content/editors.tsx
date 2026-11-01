@@ -178,27 +178,32 @@ function ContentDetailsForm({ content, ...p }: Common & { content: Content }) {
   const [saved, setSaved] = useState(false);
   const save = useAction("content.save", p.onError);
   const dirty = fields.dirty.length > 0 || attrs.dirty.length > 0;
+  const coordinated = useContext(EditorSaveContext) !== null;
+  const submit = async () => {
+    setInvalid(null);
+    setSaved(false);
+    let attributes: Record<string, unknown>;
+    try {
+      attributes = parseAttributes(declared, attrs.value);
+    } catch (err) {
+      setInvalid((err as Error).message);
+      return false;
+    }
+    const settleFields = fields.checkpoint(), settleAttrs = attrs.checkpoint();
+    const d = await save.run(() => client.contents.update(content.id, { comments, attributes, revision: content.revision }));
+    if (!d) return false;
+    const clean = settleFields({ comments: d.comments }) && settleAttrs(formOf(declared, d.attributes));
+    setSaved(clean);
+    return clean;
+  };
+  useEditorSaveTask(`details:${content.id}`, { label: t("contentEditor.details"), dirty, pending: save.pending, valid: true, save: submit, order: 0 });
   return (
     <Section title={t("contentEditor.details")} aside={<SaveState dirty={dirty} saved={saved} />} ckui="content-details">
       <form
         className="grid gap-3"
         onSubmit={(e) => {
           e.preventDefault();
-          setInvalid(null);
-          setSaved(false);
-          let attributes: Record<string, unknown>;
-          try {
-            attributes = parseAttributes(declared, attrs.value);
-          } catch (err) {
-            return setInvalid((err as Error).message);
-          }
-          const settleFields = fields.checkpoint(), settleAttrs = attrs.checkpoint();
-          void save.run(() => client.contents.update(content.id, { comments, attributes, revision: content.revision })).then((d) => {
-            if (!d) return;
-            const cleanFields = settleFields({ comments: d.comments });
-            const cleanAttrs = settleAttrs(formOf(declared, d.attributes));
-            setSaved(cleanFields && cleanAttrs);
-          });
+          if (!coordinated) void submit();
         }}
       >
         {spec?.comment_modes?.length !== 1 && (
@@ -240,14 +245,16 @@ function ContentDetailsForm({ content, ...p }: Common & { content: Content }) {
           >
             {t("common.cancel")}
           </Button>
-          <Button
-            type="submit"
-            size="sm"
-            variant={dirty ? "default" : "outline"}
-            disabled={save.pending}
-          >
-            {save.pending ? t("common.saving") : t("common.save")}
-          </Button>
+          {!coordinated && (
+            <Button
+              type="submit"
+              size="sm"
+              variant={dirty ? "default" : "outline"}
+              disabled={save.pending}
+            >
+              {save.pending ? t("common.saving") : t("common.save")}
+            </Button>
+          )}
         </div>
       </form>
     </Section>

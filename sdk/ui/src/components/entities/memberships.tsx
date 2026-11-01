@@ -1,5 +1,5 @@
 import { cn } from "cn";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { ContentKitUiAppearance } from "../../appearance.js";
 import type { ContentKitClient } from "../../client/client.js";
 import type { ContentMemberships, EntityCard, EntityKind, Membership } from "../../client/generated/wire.js";
@@ -13,6 +13,7 @@ import { SaveState } from "../content/editors.js";
 import { contentError, ErrorLine, useAction } from "../social/parts.js";
 import { EntityChips, type VersionChoice } from "./entity-chips.js";
 import { labelOf, type Labels } from "./parts.js";
+import { EditorSaveContext, useEditorSaveTask } from "../content/editor-save.js";
 
 export type { VersionChoice } from "./entity-chips.js";
 
@@ -81,6 +82,18 @@ export function MembershipEditor(p: MembershipEditorProps) {
   }, [initial]);
   const save = useAction("membership.save", p.onError);
   const [saved, setSaved] = useState(false);
+  const coordinated = useContext(EditorSaveContext) !== null;
+  const submit = async () => {
+    setSaved(false);
+    const out = await save.run(() => cg.set(draft.map(strip), [...entityKinds], newNames));
+    if (!out) return false;
+    setSaved(true);
+    setCreated((all) => Object.fromEntries(Object.entries(all).filter(([kind]) => scopeMissing(kind))));
+    setDraft(out.memberships.filter((x) => entityKinds.includes(out.entities.find((g) => g.id === x.group_id)?.kind ?? "")).map((x) => ({ ...x, content_id: undefined, key: ++seq.current })));
+    p.onSaved?.(out);
+    return true;
+  };
+  useEditorSaveTask(`memberships:${p.content}`, { label: t("contentAdmin.entities"), dirty, pending: save.pending, valid: true, save: submit, order: 20 });
   const change = (key: number, patch: Partial<Membership>) => {
     setSaved(false);
     setDraft((d) => d.map((x) => (x.key === key ? { ...x, ...patch } : x)));
@@ -121,14 +134,7 @@ export function MembershipEditor(p: MembershipEditorProps) {
       className="grid gap-5"
       onSubmit={(e) => {
         e.preventDefault();
-        setSaved(false);
-        void save.run(() => cg.set(draft.map(strip), [...entityKinds], newNames)).then((out) => {
-          if (!out) return;
-          setSaved(true);
-          setCreated((all) => Object.fromEntries(Object.entries(all).filter(([kind]) => scopeMissing(kind))));
-          setDraft(out.memberships.filter((x) => entityKinds.includes(out.entities.find((g) => g.id === x.group_id)?.kind ?? "")).map((x) => ({ ...x, content_id: undefined, key: ++seq.current })));
-          p.onSaved?.(out);
-        });
+        if (!coordinated) void submit();
       }}
     >
       {entityKinds.map((kind) => {
@@ -186,14 +192,16 @@ export function MembershipEditor(p: MembershipEditorProps) {
             {t("memberships.discard")}
           </Button>
         )}
-        <Button
-          type="submit"
-          size="sm"
-          variant={dirty ? "default" : "outline"}
-          disabled={save.pending || !dirty}
-        >
-          {save.pending ? t("common.saving") : t("common.save")}
-        </Button>
+        {!coordinated && (
+          <Button
+            type="submit"
+            size="sm"
+            variant={dirty ? "default" : "outline"}
+            disabled={save.pending || !dirty}
+          >
+            {save.pending ? t("common.saving") : t("common.save")}
+          </Button>
+        )}
       </div>
     </form>,
   );
