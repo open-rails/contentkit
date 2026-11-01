@@ -19,7 +19,7 @@ export interface EntityDirectoryProps {
   kind: string;
   /** Names, counts and paths in this language; default the provider's. */
   language?: string;
-  /** Count contents of this kind only; default every kind. */
+  /** Count contents of this kind only, listing just entities that have some; default every kind. */
   contentKind?: string;
   /** Children of this entity. */
   parent?: string;

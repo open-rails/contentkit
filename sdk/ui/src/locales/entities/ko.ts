@@ -32,6 +32,7 @@ export const entities: typeof en = {
     newTitle: "새로 만들기: {kind}",
     nameIn: "이름({language})",
     createIntro: "이름부터 시작하세요. 이미지, 멤버 등은 만든 뒤에 추가할 수 있습니다.",
+    taken: "이미 사용 중인 이름 또는 슬러그입니다. 다른 것을 고르거나 기존 항목을 편집하세요.",
     identity: "기본 정보",
     identityHint: "대표 이름과 페이지 주소에 쓰이는 슬러그입니다.",
     slugHint: "입력하는 이름을 따라갑니다. 직접 정하려면 수정하세요.",

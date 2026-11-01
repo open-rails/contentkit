@@ -41,7 +41,9 @@ type ListOptions struct {
 	// prefixes paths. Empty: names and paths in the first configured
 	// language, counts over every language.
 	Language string
-	// ContentKind scopes counts to one content kind; empty sums them.
+	// ContentKind scopes counts to one content kind; empty sums them. A
+	// public listing then keeps only entities with that kind's content
+	// (in Language when set), so a directory never leads to an empty page.
 	ContentKind string
 	Sort        entities.Sort
 	// Cursor is the previous page's NextCursor under the same Sort.
@@ -177,6 +179,11 @@ func (s *Store) compile(opts ListOptions, ids []string) (cardQuery, error) {
 	countKind := ""
 	if ck := strings.TrimSpace(opts.ContentKind); ck != "" {
 		countKind, c.args["content_kind"] = " AND f.kind = @content_kind", ck
+		if !opts.IncludeInternal {
+			where = append(where, fmt.Sprintf(`EXISTS (SELECT 1 FROM %s f WHERE f.tenant_id=g.tenant_id
+ AND (f.entity_ids @> ARRAY[g.id] OR f.owner_entity_id=g.id) AND %s
+ AND (@count_language='' OR @count_language::text=ANY(f.languages))%s)`, s.table("content_facets"), liveListed, countKind))
+		}
 	}
 	if opts.Cursor != "" {
 		var cur listCursor

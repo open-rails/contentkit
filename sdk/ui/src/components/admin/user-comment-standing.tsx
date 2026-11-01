@@ -9,7 +9,7 @@ import { Badge } from "#ckui/ui/badge";
 import { Button } from "#ckui/ui/button";
 import { Skeleton } from "#ckui/ui/skeleton";
 import { CommentBanDialog } from "../social/bans.js";
-import { ConfirmDialog, ErrorLine, formatDate, RelativeTime, useAction } from "../social/parts.js";
+import { ConfirmDialog, ContentTarget, ErrorLine, formatDate, RelativeTime, useAction, useContentTitles } from "../social/parts.js";
 import { AdminRoot, LoadFailed, NoAccess, Rows, type AdminFlowProps } from "./shell.js";
 
 export interface UserCommentStandingProps extends AdminFlowProps {
@@ -140,6 +140,7 @@ function status(c: AdminComment): "deleted" | "held" | "rejected" | "published" 
 function Recent({ user, client, itemHref, pageSize = 10, onError }: Inner) {
   const { t } = useMessages();
   const list = useAdminComments({ author: user, pageSize, client });
+  const titles = useContentTitles(client, list.items.map((c) => c.content_id));
   const del = useAction("comment.delete", onError);
   const restore = useAction("comment.restore", onError);
   return (
@@ -163,14 +164,7 @@ function Recent({ user, client, itemHref, pageSize = 10, onError }: Inner) {
                   <RelativeTime at={c.created_at} />
                   <Badge variant={s === "published" ? "outline" : s === "held" ? "secondary" : "destructive"}>{t(`moderation.${s}`)}</Badge>
                   <span>
-                    {t("moderation.on")}{" "}
-                    {href ? (
-                      <a className="hover:underline" href={href}>
-                        {c.content_kind}/{c.content_id}
-                      </a>
-                    ) : (
-                      `${c.content_kind}/${c.content_id}`
-                    )}
+                    {t("moderation.on")} <ContentTarget kind={c.content_kind} id={c.content_id} title={titles[c.content_id]} href={href} />
                   </span>
                 </div>
                 <p className={cn("line-clamp-3 break-words whitespace-pre-wrap", c.deleted && "text-muted-foreground line-through")}>{c.body}</p>

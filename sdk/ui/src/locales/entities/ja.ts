@@ -32,6 +32,7 @@ export const entities: typeof en = {
     newTitle: "新規: {kind}",
     nameIn: "名前（{language}）",
     createIntro: "まず名前から。画像やメンバーなどは作成後に追加できます。",
+    taken: "その名前またはスラッグはすでに使われています。別のものを選ぶか、既存の項目を編集してください。",
     identity: "基本情報",
     identityHint: "メインの名前と、ページのアドレスに使われるスラッグ。",
     slugHint: "入力に合わせて名前から作られます。自分で編集することもできます。",

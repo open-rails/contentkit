@@ -27,9 +27,11 @@ import { contentError, ErrorLine, formatDate, RelativeTime, useAction } from "..
 import { ReaderContentEditor } from "./reader-content-editor.js";
 import { ContentUploadBody } from "./content-upload.js";
 import { AccessEditor, ContentDetailsEditor, VersionsEditor, offersAccessChoice, versionLabel } from "../content/editors.js";
+import { EditorSaveContext, useEditorSaveCoordinator } from "../content/editor-save.js";
 import { MembershipEditor } from "../entities/memberships.js";
 import { labelOf, type Labels } from "../entities/parts.js";
 import { AdminRoot, LoadFailed, NoAccess, Pager, Rows, Segmented, pageOf, useConfirm, type AdminFlowProps, type AdminRouteProps } from "./shell.js";
+import { PageHeading } from "../page-heading.js";
 
 type Choice = string | { value: string; label: string };
 
@@ -77,7 +79,12 @@ export type ContentStatus = "draft" | "scheduled" | "publishing" | "published";
 /** An item's status as the manager names it. */
 export function contentStatus(c: Content): ContentStatus {
   if (c.state === "draft") return "draft";
-  if (!c.live) return c.publish_at && Date.parse(c.publish_at) > Date.now() ? "scheduled" : "publishing";
+  if (!c.live) {
+    // Unpublishing an item's only version leaves the item published with
+    // nothing to put live; it is a draft, not a publication in progress.
+    if (c.versions && !c.versions.some((v) => v.state === "published")) return "draft";
+    return c.publish_at && Date.parse(c.publish_at) > Date.now() ? "scheduled" : "publishing";
+  }
   return "published";
 }
 
@@ -367,7 +374,10 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
   const heading = noun?.other ?? t("contentManager.title");
   const newLabel = noun ? t("contentManager.newNamed", { one: noun.one }) : t("contentManager.new");
   // From md up the rows line up as a table: select, item, status, access, date, actions.
-  const columns = [canSelect && "1rem", "minmax(0,1fr)", "8rem", showEditionAccess && "8rem", "9rem", "6.5rem"].filter(Boolean).join(" ");
+  // Every row is its own grid, so columns are fixed widths: status fits
+  // "Publication pending" in every language once it wraps, and the deleted
+  // view's actions fit "Manage versions".
+  const columns = [canSelect && "1rem", "minmax(0,1fr)", "9rem", showEditionAccess && "8rem", "9rem", deleted && !hasHiddenVersion ? "12rem" : "6.5rem"].filter(Boolean).join(" ");
   const toggle = (c: Content, on: boolean) =>
     setSelected((cur) => {
       const n = new Set(cur);
@@ -379,7 +389,7 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
     <div className="grid gap-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-baseline gap-2">
-          <h2 className="text-xl font-semibold tracking-tight first-letter:uppercase">{heading}</h2>
+          <PageHeading className="text-xl font-semibold tracking-tight first-letter:uppercase">{heading}</PageHeading>
           {total !== undefined && (
             <span className="text-sm text-muted-foreground tabular-nums">
               {new Intl.NumberFormat(m.language).format(total)}
@@ -526,7 +536,6 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
             const href = s === "published" ? contentHref?.(c) : undefined;
             const editionRule = selectedEdition(c)?.access;
             const isPremium = editionRule?.level === "tier";
-            const more = href || hasHiddenVersion;
             return (
               <li
                 key={c.id}
@@ -588,7 +597,12 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
                       <Button size="sm" variant="outline" onClick={() => open(c)}>
                         {t("comments.edit")}
                       </Button>
-                      {more ? (
+                      {/* View alone is a button; a menu only holds several actions. */}
+                      {href && !hasHiddenVersion ? (
+                        <a href={href} className={buttonVariants({ size: "icon-sm", variant: "ghost" })} aria-label={t("contentManager.view")} title={t("contentManager.view")}>
+                          <HugeiconsIcon icon={ViewIcon} strokeWidth={2} />
+                        </a>
+                      ) : hasHiddenVersion ? (
                         <DropdownMenu>
                           <DropdownMenuTrigger
                             render={<Button size="icon-sm" variant="ghost" aria-label={t("contentManager.moreActions", { title: c.title })} />}
@@ -644,7 +658,7 @@ const dot: Record<ContentStatus, string> = { published: "bg-success", scheduled:
 function StatusDot({ status }: { status: ContentStatus }) {
   const { t } = useMessages();
   return (
-    <span className="inline-flex items-center gap-2 whitespace-nowrap text-foreground font-medium">
+    <span className="inline-flex items-center gap-2 text-foreground font-medium">
       <span aria-hidden className={cn("size-2 shrink-0 rounded-full", dot[status])} />
       {t(`contentManager.${status}`)}
     </span>
@@ -653,9 +667,11 @@ function StatusDot({ status }: { status: ContentStatus }) {
 
 /** A row's cover, portrait for reader works and wide for the rest, or a quiet placeholder. */
 function RowCover({ url, portrait }: { url?: string; portrait?: boolean }) {
+  // A deleted item's cover may no longer be served; show the placeholder.
+  const [failed, setFailed] = useState<string>();
   const box = cn("shrink-0 rounded-md bg-muted ring-1 ring-foreground/5", portrait ? "aspect-[7/10] w-11" : "aspect-video w-24");
-  return url ? (
-    <img src={url} alt="" loading="lazy" className={cn(box, "object-cover")} />
+  return url && failed !== url ? (
+    <img src={url} alt="" loading="lazy" className={cn(box, "object-cover")} onError={() => setFailed(url)} />
   ) : (
     <span aria-hidden className={cn(box, "grid place-items-center text-muted-foreground")}>
       <HugeiconsIcon icon={Image01Icon} strokeWidth={1.5} className="size-5" />
@@ -749,6 +765,8 @@ function StandardContentEditor({ id, client: own, kind, languages: offered, rend
   const [language, setLanguage] = useState(languages[0]?.value ?? "en");
   const [selectedVersion, setSelectedVersion] = useState<string>();
   const ed = useContent(id, kind, language, { client, version: selectedVersion });
+  // The details and entities panels save with the post, not on their own.
+  const coordinator = useEditorSaveCoordinator();
   // A hidden version's cover is edited here; a visible version's in its own form.
   const model = useKinds({ client }).kinds;
   const hidden = !!model?.kinds[kind]?.versions.hidden;
@@ -825,6 +843,10 @@ function StandardContentEditor({ id, client: own, kind, languages: offered, rend
         onCreated?.(created);
         return;
       }
+      // Panels first: they write with the item's current revision, which a
+      // text save would advance underneath them.
+      const blocked = await coordinator.save(() => true);
+      if (blocked) return setError(t("contentManager.sectionNotSaved", { section: blocked }));
       synced(await ed.saveText(text()));
       setNotice(t("pollEditor.saved"));
     } catch (e) {
@@ -837,6 +859,10 @@ function StandardContentEditor({ id, client: own, kind, languages: offered, rend
     if (live && dirty && !f.title.trim()) return setError(t("contentManager.titleRequired"));
     try {
       // Publishing makes the stored text public, so unsaved edits are saved first.
+      if (live) {
+        const blocked = await coordinator.save(() => true);
+        if (blocked) return setError(t("readerEditor.fixSection", { section: blocked }));
+      }
       if (live && dirty) synced(await ed.saveText(text()));
       if (live) await ed.publish(f.publishAt ? new Date(f.publishAt).toISOString() : undefined);
       else await ed.unpublish();
@@ -889,13 +915,13 @@ function StandardContentEditor({ id, client: own, kind, languages: offered, rend
             <header className="grid gap-2" data-ckui="content-head">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 {item ? (
-                  <h2 className="min-w-0 truncate text-xl font-semibold tracking-tight" title={typeof storedTitle === "string" && storedTitle ? storedTitle : undefined}>
+                  <PageHeading className="min-w-0 truncate text-xl font-semibold tracking-tight" title={typeof storedTitle === "string" && storedTitle ? storedTitle : undefined}>
                     {headingTitle}
-                  </h2>
+                  </PageHeading>
                 ) : (
                   // A new item reads like the other create pages: a large title and what happens next.
                   <div className="grid gap-1">
-                    <h2 className="text-2xl font-semibold tracking-tight">{headingTitle}</h2>
+                    <PageHeading className="text-2xl font-semibold tracking-tight">{headingTitle}</PageHeading>
                     <p className="text-sm text-muted-foreground">{t("contentManager.imagesAfterCreate")}</p>
                   </div>
                 )}
@@ -906,7 +932,7 @@ function StandardContentEditor({ id, client: own, kind, languages: offered, rend
                         type="submit"
                         size="sm"
                         variant="outline"
-                        disabled={ed.saving || item.state === "deleted"}
+                        disabled={ed.saving || coordinator.pending || item.state === "deleted"}
                       >
                         {ed.saving ? (
                           <span className="inline-flex items-center gap-1.5">
@@ -922,7 +948,7 @@ function StandardContentEditor({ id, client: own, kind, languages: offered, rend
                           type="button"
                           size="sm"
                           variant="default"
-                          disabled={ed.saving}
+                          disabled={ed.saving || coordinator.pending}
                           onClick={() => void publish(true)}
                         >
                           {t("contentManager.publish")}
@@ -935,8 +961,8 @@ function StandardContentEditor({ id, client: own, kind, languages: offered, rend
                       <Button
                         type="submit"
                         size="sm"
-                        variant={dirty ? "default" : "outline"}
-                        disabled={ed.saving || item.state === "deleted"}
+                        variant={dirty || coordinator.dirty ? "default" : "outline"}
+                        disabled={ed.saving || coordinator.pending || item.state === "deleted"}
                       >
                         {ed.saving ? (
                           <span className="inline-flex items-center gap-1.5">
@@ -1163,7 +1189,8 @@ function StandardContentEditor({ id, client: own, kind, languages: offered, rend
           )}
         </div>
 
-        {/* Aside Column */}
+        {/* Aside Column: only these panels save with the header; versions keep their own actions. */}
+        <EditorSaveContext.Provider value={coordinator.context}>
         <aside className="grid gap-6">
           {!item && <CreatePreview title={f.title} description={f.description} publishAt={f.publishAt} placeholder={newHeading} />}
           {item && <ContentDetailsEditor content={item} client={client} onError={onError} labels={labels} />}
@@ -1184,6 +1211,7 @@ function StandardContentEditor({ id, client: own, kind, languages: offered, rend
             </section>
           )}
         </aside>
+        </EditorSaveContext.Provider>
       </div>
       {dialog}
     </>
