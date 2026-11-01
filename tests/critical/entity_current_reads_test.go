@@ -40,8 +40,13 @@ func TestEntityCountsAndCoversWithoutWorkers(t *testing.T) {
 		for _, sort := range []string{"name", "count", "newest"} {
 			page, err := public.GetEntities(t.Context(), ck.GetEntitiesQuery{Kind: "tag", ContentKind: "article", Language: "en", Sort: sort, Page: 1})
 			must(t, err)
-			if len(page.Entities) != 2 || page.Total == nil || *page.Total != 2 {
-				t.Fatalf("directory %s: %+v", sort, page)
+			if listed := 2 * want; len(page.Entities) != listed || page.Total == nil || *page.Total != listed {
+				t.Fatalf("directory %s: %+v; want %d entities", sort, page, listed)
+			}
+			german, err := public.GetEntities(t.Context(), ck.GetEntitiesQuery{Kind: "tag", ContentKind: "article", Language: "de", Sort: sort, Page: 1})
+			must(t, err)
+			if len(german.Entities) != 0 || german.Total == nil || *german.Total != 0 {
+				t.Fatalf("directory %s listed tags without German articles: %+v", sort, german)
 			}
 			for _, card := range page.Entities {
 				if card.Count != want || cover == "" && card.Cover != nil || cover != "" && (card.Cover == nil || card.Cover.ContentID != cover) {
@@ -50,7 +55,11 @@ func TestEntityCountsAndCoversWithoutWorkers(t *testing.T) {
 			}
 			lettered, err := public.GetEntities(t.Context(), ck.GetEntitiesQuery{Kind: "tag", ContentKind: "article", Language: "en", Sort: sort, Letter: "c", Page: 1})
 			must(t, err)
-			if len(lettered.Entities) != 1 || lettered.Entities[0].ID != child.ID || lettered.Total == nil || *lettered.Total != 1 || lettered.Entities[0].Count != want {
+			if want == 0 {
+				if len(lettered.Entities) != 0 {
+					t.Fatalf("directory %s letter c listed an empty tag: %+v", sort, lettered)
+				}
+			} else if len(lettered.Entities) != 1 || lettered.Entities[0].ID != child.ID || lettered.Total == nil || *lettered.Total != 1 || lettered.Entities[0].Count != want {
 				t.Fatalf("directory %s letter c: %+v; want child with count=%d and total 1", sort, lettered, want)
 			}
 		}

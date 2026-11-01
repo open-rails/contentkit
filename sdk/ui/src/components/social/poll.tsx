@@ -1,7 +1,7 @@
 import { Tick02Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { cn } from "cn";
-import { useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { useContext, useState, type ReactNode } from "react";
 import type { ContentKitClient } from "../../client/client.js";
 import { toContentKitError, type ContentKitError } from "../../client/errors.js";
 import type { Poll as PollData } from "../../client/generated/wire.js";
@@ -49,21 +49,9 @@ export function Poll(p: PollProps) {
   const signedOut = ctx?.viewer === null;
   // Signed out where the server takes no anonymous votes.
   const mustSignIn = signedOut && config?.anonymous.votes === false;
-  // A vote clicked while signed out is cast once the visitor has signed in.
-  const afterSignIn = useRef<string | null>(null);
-  const viewer = ctx?.viewer;
-  const { poll: current, loading, vote: castVote } = r;
-  useEffect(() => {
-    const option = afterSignIn.current;
-    if (!option || !viewer || loading || !current) return;
-    afterSignIn.current = null;
-    if (current.voted || current.closed) return;
-    castVote(option).catch((e) => {
-      const err = toContentKitError(e);
-      setError(err);
-      report(err, "poll.vote");
-    });
-  }, [viewer, loading, current, castVote, report]);
+  // A vote clicked while signed out stays highlighted after sign-in, to be
+  // confirmed: the visitor may have dismissed that sign-in, and votes are final.
+  const [picked, setPicked] = useState<string | null>(null);
   const root = (children: ReactNode) => (
     <ContentKitUiRoot appearance={p.appearance} className={cn("grid min-w-0 content-start gap-3 text-sm text-card-foreground", p.variant !== "embedded" && "rounded-xl border border-border bg-card p-4", p.className)} data-ckui="poll">
       {children}
@@ -99,12 +87,13 @@ export function Poll(p: PollProps) {
   };
   const vote = (option: string) => {
     if (mustSignIn) {
-      afterSignIn.current = option;
+      setPicked(option);
       return signIn?.();
     }
     setError(null);
+    setPicked(null);
     r.vote(option).catch((e) => {
-      if (toContentKitError(e).code === "unauthorized" && signIn && signedOut) afterSignIn.current = option;
+      if (toContentKitError(e).code === "unauthorized" && signIn && signedOut) setPicked(option);
       fail(e, "poll.vote");
     });
   };
@@ -128,6 +117,7 @@ export function Poll(p: PollProps) {
         poll={poll}
         results={p.results === "always" || poll.voted || poll.closed}
         canVote={!poll.voted && !poll.closed && !r.pending && (!mustSignIn || !!signIn)}
+        picked={signedOut ? null : picked}
         onVote={vote}
       />
       <ErrorLine error={error} />
@@ -140,7 +130,7 @@ export function Poll(p: PollProps) {
   );
 }
 
-function Choices({ poll, results, canVote, onVote }: { poll: PollData; results: boolean; canVote: boolean; onVote: (option: string) => void }) {
+function Choices({ poll, results, canVote, picked, onVote }: { poll: PollData; results: boolean; canVote: boolean; picked: string | null; onVote: (option: string) => void }) {
   const m = useMessages();
   const { t } = m;
   const options = [...poll.options].sort((a, b) => a.position - b.position);
@@ -148,7 +138,7 @@ function Choices({ poll, results, canVote, onVote }: { poll: PollData; results: 
   const total = poll.total_votes || options.reduce((n, o) => n + o.vote_count, 0);
   return (
     <>
-      {canVote && <p className="text-xs text-muted-foreground">{t("poll.choose")}</p>}
+      {canVote && <p className="text-xs text-muted-foreground">{t(options.some((o) => o.id === picked) ? "poll.confirm" : "poll.choose")}</p>}
       <ul className={cn("grid gap-2 sm:gap-3", images && "grid-cols-2")} aria-labelledby={`poll-${poll.id}`}>
         {options.map((o) => {
           const mine = poll.my_option === o.id;
@@ -177,7 +167,7 @@ function Choices({ poll, results, canVote, onVote }: { poll: PollData; results: 
           return (
             <li key={o.id} data-option={o.id} data-mine={mine || undefined} {...meter}>
               {choose ? (
-                <button type="button" className="grid min-h-11 w-full gap-1.5 rounded-md border border-border p-2 text-start hover:border-primary/60 hover:bg-muted/60 focus-visible:outline-2 focus-visible:outline-ring" onClick={choose}>
+                <button type="button" aria-pressed={picked === o.id || undefined} className="grid min-h-11 w-full gap-1.5 rounded-md border border-border p-2 text-start hover:border-primary/60 hover:bg-muted/60 focus-visible:outline-2 focus-visible:outline-ring aria-pressed:border-primary aria-pressed:bg-primary/5" onClick={choose}>
                   {body}
                 </button>
               ) : (

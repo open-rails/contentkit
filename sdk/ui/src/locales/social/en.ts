@@ -110,6 +110,7 @@ export const social = {
     votes_other: "{count} votes",
     yourVote: "Your vote",
     choose: "Choose an option to vote. Votes can't be changed.",
+    confirm: "Choose your highlighted option again to vote. Votes can't be changed.",
     final: "Your vote is final.",
     closes: "Closes {date}",
     closed: "This poll is closed.",
