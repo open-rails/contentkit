@@ -786,7 +786,9 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
                 </>
               )}
               <div className="flex flex-wrap items-center justify-end gap-2">
-                {version?.state === "published" && (
+                {/* A ready version of a never-published gallery is not live, so
+                    there is nothing to unpublish yet. */}
+                {version?.state === "published" && item?.state === "published" && (
                   <Button variant="outline" disabled={actions.pending} onClick={() => void actions.run(async () => {
                     if (unsaved && !(await confirm({ title: t("contentManager.unpublish"), description: t("readerEditor.discardBeforeUnpublish"), confirm: t("contentManager.unpublish") }))) return false;
                     await client.contents.updateVersion(item!.id, version.id, { state: "draft" });

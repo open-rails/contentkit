@@ -77,7 +77,12 @@ export type ContentStatus = "draft" | "scheduled" | "publishing" | "published";
 /** An item's status as the manager names it. */
 export function contentStatus(c: Content): ContentStatus {
   if (c.state === "draft") return "draft";
-  if (!c.live) return c.publish_at && Date.parse(c.publish_at) > Date.now() ? "scheduled" : "publishing";
+  if (!c.live) {
+    // Unpublishing an item's only version leaves the item published with
+    // nothing to put live; it is a draft, not a publication in progress.
+    if (c.versions && !c.versions.some((v) => v.state === "published")) return "draft";
+    return c.publish_at && Date.parse(c.publish_at) > Date.now() ? "scheduled" : "publishing";
+  }
   return "published";
 }
 
