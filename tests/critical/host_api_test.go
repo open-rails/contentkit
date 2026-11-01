@@ -200,6 +200,9 @@ func TestHostAPIContract(t *testing.T) {
 		_, err = host.GetVersions(t.Context(), ck.GetVersionsQuery{Ids: []string{"not-a-version"}})
 		requireError(t, err, 400, "invalid_request")
 
+		// Purge skips locked rows; finish the deletion's publication work so
+		// this single sweep cannot race its locks and leave the edition behind.
+		awaitPublicationJobsIdle(t, w, a)
 		w.clock.set(w.clock.now().Add(31 * 24 * time.Hour))
 		producer, err := river.NewClient(riverpgxv5.New(w.pool), &river.Config{Schema: w.schema + "_river"})
 		must(t, err)
