@@ -154,6 +154,7 @@ export const social = {
     optionRequired: "Every option needs a label.",
     newIntro: "Ask one question. It shows on the site from the time it goes live.",
     questionHint: "What voters read, with an optional image.",
+    questionVoted: "People have already voted on this wording. Only fix typos; a changed meaning changes what they answered.",
     optionsHint: "Drag to reorder. Every option needs a label; images are optional.",
     optionsLive: "Drag to reorder. Changes to options save as you make them.",
     optionsLocked: "Choices are locked because voting has started.",

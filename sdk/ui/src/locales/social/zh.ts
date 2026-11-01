@@ -155,6 +155,7 @@ export const social: typeof en = {
     optionRequired: "每个选项都需要文字。",
     newIntro: "提出一个问题。它会在上线时间起显示在网站上。",
     questionHint: "投票者看到的内容，可附一张图片。",
+    questionVoted: "已经有人按此措辞投票。只修正错别字；改变含义会改变他们所回答的内容。",
     optionsHint: "拖动以排序。每个选项都需要文字；图片可选。",
     optionsLive: "拖动以排序。选项的更改会立即保存。",
     optionsLocked: "投票已开始，无法更改选项。",
