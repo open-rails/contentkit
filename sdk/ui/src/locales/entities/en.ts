@@ -31,6 +31,7 @@ export const entities = {
     newTitle: "New {kind}",
     nameIn: "Name ({language})",
     createIntro: "Start with its name. Images, members and the rest can be added once it exists.",
+    taken: "That name or slug is already taken. Choose another, or edit the existing one.",
     identity: "Identity",
     identityHint: "The main name and the slug used in its page address.",
     slugHint: "Follows the name as you type. Edit it to set your own.",

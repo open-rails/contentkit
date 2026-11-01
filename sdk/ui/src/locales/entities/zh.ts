@@ -32,6 +32,7 @@ export const entities: typeof en = {
     newTitle: "新建：{kind}",
     nameIn: "名称（{language}）",
     createIntro: "先填写名称。图片、成员等可在创建后添加。",
+    taken: "该名称或 slug 已被使用。请换一个，或编辑已有的条目。",
     identity: "基本信息",
     identityHint: "主名称以及页面地址中使用的 slug。",
     slugHint: "会随输入的名称自动生成，也可以自行修改。",

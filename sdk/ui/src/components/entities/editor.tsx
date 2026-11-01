@@ -633,7 +633,8 @@ function CreateForm({ kind, spec, languages, labels, g, onCreated, onCancel, onE
           </Card>
         )}
         {invalid && <ErrorLine>{invalid}</ErrorLine>}
-        {create.error && <ErrorLine>{contentError(m, create.error)}</ErrorLine>}
+        {/* Nothing exists yet to change elsewhere: a conflict here is a taken name or slug. */}
+        {create.error && <ErrorLine>{toContentKitError(create.error).code === "conflict" ? t("entityEditor.taken") : contentError(m, create.error)}</ErrorLine>}
         <div className="flex flex-wrap items-center justify-end gap-3">
           <p className="me-auto text-xs text-muted-foreground">
             <span className="text-destructive">*</span> {t("entityEditor.required")}

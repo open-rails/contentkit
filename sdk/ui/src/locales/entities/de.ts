@@ -32,6 +32,7 @@ export const entities: typeof en = {
     newTitle: "Neu: {kind}",
     nameIn: "Name ({language})",
     createIntro: "Beginne mit dem Namen. Bilder, Mitglieder und der Rest lassen sich danach hinzufügen.",
+    taken: "Dieser Name oder Slug ist bereits vergeben. Wähle einen anderen oder bearbeite den vorhandenen Eintrag.",
     identity: "Identität",
     identityHint: "Der Hauptname und der Slug in der Seitenadresse.",
     slugHint: "Folgt beim Tippen dem Namen. Bearbeite ihn für einen eigenen.",
