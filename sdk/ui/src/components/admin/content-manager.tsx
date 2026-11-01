@@ -372,7 +372,10 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
   const heading = noun?.other ?? t("contentManager.title");
   const newLabel = noun ? t("contentManager.newNamed", { one: noun.one }) : t("contentManager.new");
   // From md up the rows line up as a table: select, item, status, access, date, actions.
-  const columns = [canSelect && "1rem", "minmax(0,1fr)", "8rem", showEditionAccess && "8rem", "9rem", "6.5rem"].filter(Boolean).join(" ");
+  // Every row is its own grid, so columns are fixed widths: status fits
+  // "Publication pending" in every language once it wraps, and the deleted
+  // view's actions fit "Manage versions".
+  const columns = [canSelect && "1rem", "minmax(0,1fr)", "9rem", showEditionAccess && "8rem", "9rem", deleted && !hasHiddenVersion ? "12rem" : "6.5rem"].filter(Boolean).join(" ");
   const toggle = (c: Content, on: boolean) =>
     setSelected((cur) => {
       const n = new Set(cur);
@@ -593,7 +596,12 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
                       <Button size="sm" variant="outline" onClick={() => open(c)}>
                         {t("comments.edit")}
                       </Button>
-                      {more ? (
+                      {/* View alone is a button; a menu only holds several actions. */}
+                      {href && !hasHiddenVersion ? (
+                        <a href={href} className={buttonVariants({ size: "icon-sm", variant: "ghost" })} aria-label={t("contentManager.view")} title={t("contentManager.view")}>
+                          <HugeiconsIcon icon={ViewIcon} strokeWidth={2} />
+                        </a>
+                      ) : hasHiddenVersion ? (
                         <DropdownMenu>
                           <DropdownMenuTrigger
                             render={<Button size="icon-sm" variant="ghost" aria-label={t("contentManager.moreActions", { title: c.title })} />}
@@ -649,7 +657,7 @@ const dot: Record<ContentStatus, string> = { published: "bg-success", scheduled:
 function StatusDot({ status }: { status: ContentStatus }) {
   const { t } = useMessages();
   return (
-    <span className="inline-flex items-center gap-2 whitespace-nowrap text-foreground font-medium">
+    <span className="inline-flex items-center gap-2 text-foreground font-medium">
       <span aria-hidden className={cn("size-2 shrink-0 rounded-full", dot[status])} />
       {t(`contentManager.${status}`)}
     </span>
@@ -659,8 +667,10 @@ function StatusDot({ status }: { status: ContentStatus }) {
 /** A row's cover, portrait for reader works and wide for the rest, or a quiet placeholder. */
 function RowCover({ url, portrait }: { url?: string; portrait?: boolean }) {
   const box = cn("shrink-0 rounded-md bg-muted ring-1 ring-foreground/5", portrait ? "aspect-[7/10] w-11" : "aspect-video w-24");
-  return url ? (
-    <img src={url} alt="" loading="lazy" className={cn(box, "object-cover")} />
+  // A deleted item's cover may no longer be served; show the placeholder.
+  const [failed, setFailed] = useState<string>();
+  return url && failed !== url ? (
+    <img src={url} alt="" loading="lazy" className={cn(box, "object-cover")} onError={() => setFailed(url)} />
   ) : (
     <span aria-hidden className={cn(box, "grid place-items-center text-muted-foreground")}>
       <HugeiconsIcon icon={Image01Icon} strokeWidth={1.5} className="size-5" />
