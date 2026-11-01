@@ -193,7 +193,7 @@ export const social: typeof en = {
     filter: "Filtern",
     byAuthor: "Kommentare von {name}",
     clearAuthor: "Alle anzeigen",
-    theirComments: "Ihre Kommentare",
+    theirComments: "Kommentare dieser Person",
   },
   time: {
     justNow: "gerade eben",

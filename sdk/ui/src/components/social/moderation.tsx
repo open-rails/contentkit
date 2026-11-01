@@ -19,7 +19,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "#ckui/ui/tabs";
 import { AdminRoot, NoAccess, Pager, Rows, pageOf, useGuarded, type AdminFlowProps, type AdminRouteProps } from "../admin/shell.js";
 import { CommentBanDialog, CommentBans } from "./bans.js";
 import { BannedWords, IPBans } from "./rules.js";
-import { contentError, ErrorLine, RelativeTime, UserAvatar, UserName } from "./parts.js";
+import { ContentTarget, contentError, ErrorLine, RelativeTime, useContentTitles, UserAvatar, UserName } from "./parts.js";
 
 export type ModerationSection = "comments" | "queue" | "bans" | "words" | "ips";
 
@@ -151,6 +151,7 @@ function AllComments({ loc, view, client, ...p }: SectionProps) {
   const list = usePaged(store, keyOf("admin-comments-page", scope, kind, author, size), { type: "admin-comments" }, page, size, (q, signal) =>
     client.comments.adminList({ ...q, contentKind: kind || undefined, author: author || undefined }, signal),
   );
+  const titles = useContentTitles(client, list.items.map((c) => c.content_id));
   const report = useErrorReporter(p.onError);
   const guarded = useGuarded();
   const [error, setError] = useState<ContentKitError | null>(null);
@@ -223,14 +224,7 @@ function AllComments({ loc, view, client, ...p }: SectionProps) {
                 <Badge variant={s === "published" ? "outline" : s === "held" ? "secondary" : "destructive"}>{t(`moderation.${s}`)}</Badge>
                 {c.reply_to_id && <Badge variant="outline">{t("moderation.reply")}</Badge>}
                 <span className="text-xs text-muted-foreground">
-                  {t("moderation.on")}{" "}
-                  {href ? (
-                    <a className="hover:underline" href={href}>
-                      {c.content_kind}/{c.content_id}
-                    </a>
-                  ) : (
-                    `${c.content_kind}/${c.content_id}`
-                  )}
+                  {t("moderation.on")} <ContentTarget kind={c.content_kind} id={c.content_id} title={titles[c.content_id]} href={href} />
                 </span>
               </div>
               <p className={cn("line-clamp-4 break-words whitespace-pre-wrap", c.deleted && "text-muted-foreground line-through")}>{c.body}</p>
@@ -270,11 +264,12 @@ function Queue(p: Rest) {
   const m = useMessages();
   const { t } = m;
   const queue = useModerationQueue({ kind: "comment", pageSize: p.pageSize, client: p.client });
+  const titles = useContentTitles(p.client, queue.items.map((it) => it.ref.content_id));
   return (
     <div className="grid gap-3">
       <Listing loading={queue.loading || queue.loadingMore} error={queue.error} empty={t("moderation.queueEmpty")} count={queue.items.length} reload={queue.items.length && queue.hasMore ? () => void queue.loadMore() : queue.reload}>
         {queue.items.map((it) => (
-          <HeldRow key={it.id} item={it} itemHref={p.itemHref} userHref={p.userHref} onResolve={queue.resolve} reload={queue.reload} onError={p.onError} />
+          <HeldRow key={it.id} item={it} title={titles[it.ref.content_id]} itemHref={p.itemHref} userHref={p.userHref} onResolve={queue.resolve} reload={queue.reload} onError={p.onError} />
         ))}
       </Listing>
       {queue.hasMore && !queue.error && (
@@ -288,6 +283,7 @@ function Queue(p: Rest) {
 
 function HeldRow(p: {
   item: HeldItem;
+  title?: string;
   itemHref?: Rest["itemHref"];
   userHref?: Rest["userHref"];
   onResolve: (item: HeldItem, d: Decision, reason?: string) => Promise<void>;
@@ -330,7 +326,7 @@ function HeldRow(p: {
         <RelativeTime at={it.held_at} className="text-xs text-muted-foreground" />
         {href && (
           <a className="text-xs text-muted-foreground hover:underline" href={href}>
-            {t("moderation.on")} {it.ref.content_kind}/{it.ref.content_id}
+            {t("moderation.on")} {p.title || `${it.ref.content_kind}/${it.ref.content_id}`}
           </a>
         )}
       </div>
