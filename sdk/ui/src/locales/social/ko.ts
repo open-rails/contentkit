@@ -111,6 +111,7 @@ export const social: typeof en = {
     votes_other: "{count}표",
     yourVote: "내 투표",
     choose: "투표할 항목을 선택하세요. 투표는 변경할 수 없습니다.",
+    confirm: "표시된 항목을 다시 선택하면 투표됩니다. 투표는 변경할 수 없습니다.",
     final: "투표는 변경할 수 없습니다.",
     closes: "{date}에 마감",
     closed: "마감된 투표입니다.",
