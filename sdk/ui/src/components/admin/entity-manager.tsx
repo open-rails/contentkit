@@ -19,6 +19,7 @@ import { ScopedEntities } from "../entities/scoped.js";
 import { RenditionImg } from "../rendition-img.js";
 import { contentError, useAction } from "../social/parts.js";
 import { AdminRoot, LoadFailed, NoAccess, Rows, Segmented, type AdminFlowProps, type AdminRouteProps } from "./shell.js";
+import { PageHeading } from "../page-heading.js";
 
 export interface EntityManagerProps extends AdminFlowProps, AdminRouteProps {
   /** The entity kinds managed, in tab order; default the content model's site-owned kinds. */
@@ -158,7 +159,7 @@ function List({ loc, href, kind, kinds, client, contentKind, labels, onError, pa
   return (
     <div className="grid gap-5" data-ckui="entity-list" data-kind={kind}>
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-xl font-semibold tracking-tight">{label}</h2>
+        <PageHeading className="text-xl font-semibold tracking-tight">{label}</PageHeading>
         <Button size="sm" aria-label={t("entityManager.new", { kind: labelOf(labels, kind, "one") })} onClick={() => loc.go(`${kind}/new`)}>
           <HugeiconsIcon icon={Add01Icon} strokeWidth={2} data-icon="inline-start" />
           {t("entityManager.newShort")}

@@ -156,6 +156,7 @@ export const social: typeof en = {
     optionRequired: "모든 선택지에 이름이 필요합니다.",
     newIntro: "질문 하나를 만듭니다. 공개 시점부터 사이트에 표시됩니다.",
     questionHint: "투표자가 보는 내용이며, 이미지는 선택입니다.",
+    questionVoted: "이 문구로 이미 투표가 진행되었습니다. 오타만 고치세요. 의미를 바꾸면 응답의 의미도 바뀝니다.",
     optionsHint: "드래그해 순서를 바꾸세요. 모든 선택지에 라벨이 필요하며 이미지는 선택입니다.",
     optionsLive: "드래그해 순서를 바꾸세요. 선택지 변경은 바로 저장됩니다.",
     optionsLocked: "투표가 시작되어 선택지를 변경할 수 없습니다.",

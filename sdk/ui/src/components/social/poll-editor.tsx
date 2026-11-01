@@ -22,6 +22,7 @@ import { Textarea } from "#ckui/ui/textarea";
 import { localInput } from "./bans.js";
 import { SortableList } from "../sortable-list.js";
 import { ConfirmDialog, contentError, ErrorLine, formatDate } from "./parts.js";
+import { PageHeading } from "../page-heading.js";
 
 export interface PollEditorProps {
   /** The poll to edit; none creates one. */
@@ -123,7 +124,7 @@ export function PollEditor(p: PollEditorProps) {
       {ed.poll ? (
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="grid gap-1">
-            <h2 className="text-2xl font-semibold tracking-tight">{t("pollEditor.editTitle")}</h2>
+            <PageHeading className="text-2xl font-semibold tracking-tight">{t("pollEditor.editTitle")}</PageHeading>
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-muted-foreground">
               <PollStateDot state={pollState(ed.poll)} />
               <span aria-hidden>·</span>
@@ -144,7 +145,7 @@ export function PollEditor(p: PollEditorProps) {
         </div>
       ) : (
         <div className="grid gap-1">
-          <h2 className="text-2xl font-semibold tracking-tight">{t("pollEditor.newTitle")}</h2>
+          <PageHeading className="text-2xl font-semibold tracking-tight">{t("pollEditor.newTitle")}</PageHeading>
           <p className="text-muted-foreground">{t("pollEditor.newIntro")}</p>
         </div>
       )}
@@ -398,6 +399,7 @@ function EditFields(p: {
   const ids = useId();
   const { poll, editor } = p;
   const choicesLocked = poll.total_votes > 0;
+  const wentLive = Date.parse(poll.live_at) <= Date.now();
   const [question, setQuestion] = useState(poll.question);
   const [liveAt, setLiveAt] = useState(localInput(new Date(poll.live_at)));
   const [closesAt, setClosesAt] = useState(poll.closes_at ? localInput(new Date(poll.closes_at)) : "");
@@ -426,7 +428,7 @@ function EditFields(p: {
   return (
     <div className={LAYOUT} data-ckui="poll-edit">
       <div className="grid min-w-0 gap-5">
-        <Card title={<Required>{t("pollEditor.question")}</Required>} hint={t("pollEditor.questionHint")} ckui="poll-question">
+        <Card title={<Required>{t("pollEditor.question")}</Required>} hint={t(choicesLocked ? "pollEditor.questionVoted" : "pollEditor.questionHint")} ckui="poll-question">
           <Field id={`${ids}-q`} label={t("pollEditor.question")} hideLabel error={questionError}>
             <Textarea
               ref={questionRef}
@@ -499,7 +501,8 @@ function EditFields(p: {
               <span className="flex h-10 items-center rounded-md border border-input bg-muted/30 px-3 text-muted-foreground">{languageName(poll.language)}</span>
             </div>
             <Field id={`${ids}-live`} label={t("pollEditor.liveAt")}>
-              <Input id={`${ids}-live`} className="h-10" type="datetime-local" value={liveAt} onChange={(e) => setLiveAt(e.target.value)} />
+              {/* Moving a live poll's start would hide it, votes and all. */}
+              <Input id={`${ids}-live`} className="h-10" type="datetime-local" value={liveAt} disabled={wentLive} onChange={(e) => setLiveAt(e.target.value)} />
             </Field>
             <Field id={`${ids}-closes`} label={t("pollEditor.closesAt")}>
               <Input id={`${ids}-closes`} className="h-10" type="datetime-local" value={closesAt} min={liveAt} onChange={(e) => setClosesAt(e.target.value)} />

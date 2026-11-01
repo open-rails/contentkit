@@ -1,6 +1,7 @@
 import { cn } from "cn";
 import { useCallback, useEffect, useId, useState, type ReactNode } from "react";
 import { toContentKitError, type ContentKitError } from "../../client/errors.js";
+import type { ContentKitClient } from "../../client/client.js";
 import type { PublicUser } from "../../client/generated/wire.js";
 import { useMessages } from "../../i18n/context.js";
 import type { Translator } from "../../i18n/messages.js";
@@ -168,5 +169,37 @@ export function ErrorLine({ error, children, className }: { error?: ContentKitEr
     <p role="alert" className={cn("text-sm text-destructive", className)}>
       {children ?? contentError(m, error)}
     </p>
+  );
+}
+
+/**
+ * Titles of the contents comments are on, from one staff lookup per set of
+ * ids; a content the caller can't manage keeps its raw reference.
+ */
+export function useContentTitles(client: ContentKitClient | undefined, ids: readonly string[]): Record<string, string> {
+  const key = [...new Set(ids)].sort().slice(0, 100).join(",");
+  const [titles, setTitles] = useState<Record<string, string>>({});
+  useEffect(() => {
+    if (!client || !key) return;
+    const controller = new AbortController();
+    const wanted = key.split(",");
+    client.contents.manage({ ids: wanted, limit: wanted.length }, controller.signal).then(
+      (items) => setTitles((cur) => ({ ...cur, ...Object.fromEntries(items.map((c) => [c.id, c.title])) })),
+      () => {},
+    );
+    return () => controller.abort();
+  }, [client, key]);
+  return titles;
+}
+
+/** Where a comment is: the content's title when known, else its kind and id. */
+export function ContentTarget({ kind, id, title, href }: { kind: string; id: string; title?: string; href?: string }) {
+  const label = title || `${kind}/${id}`;
+  return href ? (
+    <a className="hover:underline" href={href}>
+      {label}
+    </a>
+  ) : (
+    <>{label}</>
   );
 }

@@ -156,6 +156,7 @@ export const social: typeof en = {
     optionRequired: "Jede Möglichkeit braucht eine Beschriftung.",
     newIntro: "Stelle eine Frage. Sie erscheint auf der Website, sobald sie live geht.",
     questionHint: "Was Abstimmende lesen, mit optionalem Bild.",
+    questionVoted: "Es wurde bereits über diese Formulierung abgestimmt. Korrigiere nur Tippfehler; eine neue Bedeutung ändert, worauf geantwortet wurde.",
     optionsHint: "Zum Sortieren ziehen. Jede Option braucht eine Beschriftung; Bilder sind optional.",
     optionsLive: "Zum Sortieren ziehen. Änderungen an Optionen werden sofort gespeichert.",
     optionsLocked: "Die Auswahlmöglichkeiten sind gesperrt, da die Abstimmung begonnen hat.",
@@ -194,7 +195,7 @@ export const social: typeof en = {
     filter: "Filtern",
     byAuthor: "Kommentare von {name}",
     clearAuthor: "Alle anzeigen",
-    theirComments: "Ihre Kommentare",
+    theirComments: "Kommentare dieser Person",
   },
   time: {
     justNow: "gerade eben",

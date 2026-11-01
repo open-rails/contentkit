@@ -172,6 +172,7 @@ export const admin = {
     publishing: "Publication pending",
     published: "Published",
     publishedNotice: "Publication queued.",
+    sectionNotSaved: "{section} wasn't saved. Check it and try again.",
     view: "View",
     deleteTitle: "Delete “{title}”?",
     deleteBody: "It leaves the site. You can restore it from Deleted.",

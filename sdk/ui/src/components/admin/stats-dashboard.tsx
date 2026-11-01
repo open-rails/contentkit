@@ -266,7 +266,9 @@ function Chart({
   const y = (n: number) => 190 - (n / scale) * 178;
   const count = (d: ActivityDay, id: string) => (id ? value(d, id) : d.readers);
   return (
-    <figure className="grid gap-2" data-ckui="stats-chart">
+    // One shrinkable column: an auto track grew to the date labels' combined
+    // width and pushed narrow pages sideways.
+    <figure className="grid grid-cols-[minmax(0,1fr)] gap-2" data-ckui="stats-chart">
       <figcaption className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
         {lines.map((s) => (
           <span key={s.id} className="flex items-center gap-1.5">

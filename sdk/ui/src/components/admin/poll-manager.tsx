@@ -16,6 +16,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "#
 import { PollEditor, PollStateDot, pollState } from "../social/poll-editor.js";
 import { ErrorLine, formatDate, useAction } from "../social/parts.js";
 import { AdminRoot, LoadFailed, NoAccess, Pager, Rows, pageOf, useConfirm, type AdminFlowProps, type AdminRouteProps } from "./shell.js";
+import { PageHeading } from "../page-heading.js";
 
 export { pollState };
 
@@ -141,7 +142,7 @@ function List({ loc, client, languages: offered, pageSize = 20, onError }: Inner
   return (
     <div className="grid gap-5">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-xl font-semibold tracking-tight">{t("pollManager.title")}</h2>
+        <PageHeading className="text-xl font-semibold tracking-tight">{t("pollManager.title")}</PageHeading>
         <Button size="sm" onClick={() => loc.go("new")}>
           <HugeiconsIcon icon={Add01Icon} strokeWidth={2} data-icon="inline-start" />
           {t("pollManager.new")}

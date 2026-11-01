@@ -156,6 +156,7 @@ export const social: typeof en = {
     optionRequired: "Cada opción necesita un texto.",
     newIntro: "Haz una pregunta. Aparece en el sitio desde que se publica.",
     questionHint: "Lo que leen los votantes, con una imagen opcional.",
+    questionVoted: "Ya se ha votado con esta redacción. Corrige solo erratas; cambiar el sentido cambia lo que respondieron.",
     optionsHint: "Arrastra para reordenar. Cada opción necesita un texto; las imágenes son opcionales.",
     optionsLive: "Arrastra para reordenar. Los cambios en las opciones se guardan al hacerlos.",
     optionsLocked: "Las opciones están bloqueadas porque la votación ha comenzado.",
@@ -194,7 +195,7 @@ export const social: typeof en = {
     filter: "Filtrar",
     byAuthor: "Comentarios de {name}",
     clearAuthor: "Mostrar los de todos",
-    theirComments: "Sus comentarios",
+    theirComments: "Comentarios de este usuario",
   },
   time: {
     justNow: "justo ahora",
