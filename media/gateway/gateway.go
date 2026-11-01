@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -33,9 +34,16 @@ import (
 )
 
 const (
-	publicCacheControl  = "public, max-age=300, stale-while-revalidate=86400"
-	privateCacheControl = "private, max-age=31536000, immutable"
+	publicCacheControl = "public, max-age=300, stale-while-revalidate=86400"
 )
+
+// privateCacheControl lets a browser reuse a private blob only while the
+// token that authorized it is valid. The bytes behind a name never change, but
+// the right to read them does: a longer lifetime would skip the token, key and
+// deletion-fence checks after expiry.
+func privateCacheControl(expires, now time.Time) string {
+	return "private, max-age=" + strconv.FormatInt(max(0, int64(expires.Sub(now)/time.Second)), 10) + ", immutable"
+}
 
 // Config configures a Handler.
 // Route exposes exactly one tenant account or app root on a media host.
@@ -150,12 +158,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	cacheControl := publicCacheControl
 	var dl *string // a private file's unsigned download name
 	if o.area != layout.AreaPublic {
-		if err := h.authorize(r, o.area, key); err != nil {
+		now := time.Now()
+		expires, err := h.authorize(r, o.area, key, now)
+		if err != nil {
 			h.cfg.Logger.Debug("media-gateway: denied", "key", key, "reason", err)
 			h.fail(w, http.StatusNotFound)
 			return
 		}
-		cacheControl = privateCacheControl
+		cacheControl = privateCacheControl(expires, now)
 	}
 	if q := r.URL.Query(); q.Has("dl") {
 		dl = new(q.Get("dl"))
@@ -249,9 +259,9 @@ func (h *Handler) parse(r *http.Request) (object, bool) {
 var errNoToken = errors.New("no token")
 
 // authorize accepts exact-file or whole-item private tokens from the URL or
-// an mt cookie (a browser may send several).
-func (h *Handler) authorize(r *http.Request, area, key string) (err error) {
-	now := time.Now()
+// an mt cookie (a browser may send several). It returns when the accepted
+// token expires.
+func (h *Handler) authorize(r *http.Request, area, key string, now time.Time) (expires time.Time, err error) {
 	var toks []string
 	if t := r.URL.Query().Get("t"); t != "" {
 		toks = append(toks, t)
@@ -260,13 +270,13 @@ func (h *Handler) authorize(r *http.Request, area, key string) (err error) {
 		toks = append(toks, c.Value)
 	}
 	for _, tok := range toks {
-		e := h.cfg.Ring.VerifyPrivate(tok, key, now)
+		exp, e := h.cfg.Ring.VerifyPrivateUntil(tok, key, now)
 		if e == nil {
-			return nil
+			return exp, nil
 		}
 		err = cmp.Or(err, e)
 	}
-	return cmp.Or(err, errNoToken)
+	return time.Time{}, cmp.Or(err, errNoToken)
 }
 
 func (h *Handler) defaultName(o object) string {
