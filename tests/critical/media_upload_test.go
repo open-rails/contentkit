@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -138,6 +139,30 @@ func TestUploadAcceptanceAndRetry(t *testing.T) {
 		}
 		if seen["pages/4.png"] {
 			t.Fatal("refused fifth file was adopted")
+		}
+	})
+	t.Run("late_page_without_index_goes_after_its_name_predecessor", func(t *testing.T) {
+		ref := galleryRef(t, client, "late page placement")
+		commit := func(ops ...media.Op) {
+			t.Helper()
+			_, err := client.PostMediaUploadCommit(t.Context(), media.CommitBody{Ref: ref, OperationID: uuid.NewString(), Ops: ops})
+			must(t, err)
+		}
+		commit(stageFile(t, client, ref, "pages/01.png", payload), stageFile(t, client, ref, "pages/03.png", payload))
+		first := 0
+		commit(media.Op{Op: media.OpMove, Path: "pages/03.png", Index: &first})
+		commit(stageFile(t, client, ref, "pages/02.png", payload))
+		read, err := client.GetMediaVersion(t.Context(), ref.Kind, ref.ID, ref.Version, ck.GetMediaVersionQuery{Editor: true})
+		must(t, err)
+		var order []string
+		for _, file := range read.Files {
+			if file.Upload {
+				order = append(order, file.Path)
+			}
+		}
+		// 02 follows 01; the page moved to the front stays there.
+		if want := []string{"pages/03.png", "pages/01.png", "pages/02.png"}; !slices.Equal(order, want) {
+			t.Fatalf("page order = %v; want %v", order, want)
 		}
 	})
 	t.Run("CK-J11-S01_lost_commit_response_replays_exact_batch", func(t *testing.T) {

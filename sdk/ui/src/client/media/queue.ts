@@ -11,6 +11,8 @@ export interface QueueItem {
   /** The upload path the commit puts; the server's canonical one once uploaded. */
   path: string;
   meta?: Record<string, unknown>;
+  /** A page the commit places among the item's pages by file name instead of appending, until the queue is rearranged. */
+  byName?: boolean;
   status: ItemStatus;
   progress?: Progress;
   error?: ContentKitError;
@@ -56,7 +58,8 @@ const END = 2 ** 31 - 1;
 /**
  * An ordered file queue for one item: uploads in the background, keeps the
  * order the user arranges, and commits the uploads as puts appended in that
- * order. Framework-free; the React hooks wrap it.
+ * order; pages added byName go where their file names sort. Framework-free;
+ * the React hooks wrap it.
  */
 export class ItemUploadQueue {
   private items: QueueItem[] = [];
@@ -89,13 +92,14 @@ export class ItemUploadQueue {
   /** Queues files; state restores a multipart upload saved through onState before a reload. */
   add(
     files: Iterable<File>,
-    opts: { path?: (f: File) => string; state?: (f: File) => UploadState | undefined } = {},
+    opts: { path?: (f: File) => string; state?: (f: File) => UploadState | undefined; byName?: (f: File) => boolean } = {},
   ): QueueItem[] {
     const added = [...files].map(
       (file): QueueItem => ({
         id: crypto.randomUUID(),
         file,
         path: opts.path?.(file) ?? fill(this.o.path, { name: file.name }),
+        ...(opts.byName?.(file) ? { byName: true } : {}),
         status: "queued",
         state: opts.state?.(file),
       }),
@@ -111,6 +115,8 @@ export class ItemUploadQueue {
     if (from < 0) return;
     const [item] = this.items.splice(from, 1);
     this.items.splice(Math.max(0, Math.min(index, this.items.length)), 0, item!);
+    // An arranged queue commits in its own order, not by name.
+    this.items = this.items.map((i) => (i.byName ? { ...i, byName: false } : i));
     this.changed();
   }
 
@@ -229,9 +235,11 @@ export class ItemUploadQueue {
     const strays = (o.attach ?? []).filter((path) => !this.items.some((i) => stem(i.path) === stem(path)));
     if (ready.length === 0 && strays.length === 0) return [];
     const ops = ready.flatMap((i): Op[] => {
-      const attach: Op = { op: "attach", path: i.path, index: END, ...(i.meta ? { meta: i.meta } : {}) };
+      // Without an index the server places the page by file name.
+      const at = i.byName ? {} : { index: END };
+      const attach: Op = { op: "attach", path: i.path, ...at, ...(i.meta ? { meta: i.meta } : {}) };
       if (i.unattached) return [attach];
-      return [{ op: "put", path: i.path, source_name: i.result!.sourceName, blob: i.result!.blob, create_id: i.id, index: END, ...(i.meta ? { meta: i.meta } : {}) }];
+      return [{ op: "put", path: i.path, source_name: i.result!.sourceName, blob: i.result!.blob, create_id: i.id, ...at, ...(i.meta ? { meta: i.meta } : {}) }];
     });
     for (const path of strays) ops.push({ op: "attach", path, index: END });
     const sources = Object.fromEntries(ready.map((i) => [i.result!.blob, { file: i.file, type: i.result!.type }]));
