@@ -46,6 +46,9 @@ interface Slot {
   version: number;
   /** Identifies the full read; item patches and appended pages retain it. */
   readVersion: number;
+  /** When the latest fetch started, and the trailing fetch a burst of changes still owes. */
+  started?: number;
+  again?: ReturnType<typeof setTimeout>;
 }
 
 interface Binding {
@@ -56,6 +59,9 @@ interface Binding {
 const activeBinding = (s: Slot) => [...s.bindings.values()].at(-1);
 
 const IDLE: Resource<never> = { data: undefined, loading: false, loaded: false };
+
+/** Refetches driven by a burst of change events (one per page) are at least this far apart (ms). */
+const CHANGE_GAP = 1000;
 
 /**
  * The content reads hooks share, per client: one request per key while any
@@ -96,6 +102,7 @@ export class ResourceStore {
       // Kept across a StrictMode remount; dropped once no hook shows it.
       queueMicrotask(() => {
         if (slot.listeners.size || this.slots.get(key) !== slot) return;
+        clearTimeout(slot.again);
         slot.ctl?.abort();
         slot.moreCtl?.abort();
         this.slots.delete(key);
@@ -121,6 +128,9 @@ export class ResourceStore {
     const s = this.slots.get(key);
     const binding = s && activeBinding(s);
     if (!s || !binding || (!force && (s.entry.loaded || s.ctl))) return;
+    clearTimeout(s.again);
+    s.again = undefined;
+    s.started = Date.now();
     s.ctl?.abort();
     s.moreCtl?.abort();
     s.moreCtl = undefined;
@@ -132,7 +142,8 @@ export class ResourceStore {
         if (s.ctl !== ctl) return;
         s.ctl = undefined;
         s.readVersion = ++this.version;
-        this.update(s, { data, loading: false, loaded: true, error: undefined });
+        // An owed trailing fetch keeps it loading: this data predates a change.
+        this.update(s, { data, loading: !!s.again, loaded: true, error: undefined });
       },
       (e) => {
         if (s.ctl !== ctl) return;
@@ -141,7 +152,7 @@ export class ResourceStore {
         // A superseded request returned above. An abort from the still-current
         // fetch must settle too; otherwise no request remains but loading stays
         // true forever. Keep the error until an explicit retry succeeds.
-        this.update(s, { loading: false, loaded: true, error });
+        this.update(s, { loading: !!s.again, loaded: true, error });
       },
     );
   }
@@ -204,7 +215,27 @@ export class ResourceStore {
     for (const [key, s] of this.slots) if (match(s.tag) && s.listeners.size) this.load(key, true);
   }
 
+  /**
+   * Refetches key after a change, at most once per CHANGE_GAP: a burst of
+   * changes waits for one trailing fetch instead of restarting the fetch for
+   * each.
+   */
+  reloadChanged(key: string): void {
+    const s = this.slots.get(key);
+    if (!s?.listeners.size) return;
+    const wait = s.ctl ? CHANGE_GAP : (s.started ?? 0) + CHANGE_GAP - Date.now();
+    if (wait <= 0) return this.load(key, true);
+    s.again ??= setTimeout(() => {
+      s.again = undefined;
+      if (this.slots.get(key) === s) this.reloadChanged(key);
+    }, wait);
+    if (!s.entry.loading) this.update(s, { loading: true });
+  }
+
   private apply(c: ContentKitChange, scope: string | null): void {
+    const changed = (match: (tag: Tag) => boolean) => {
+      for (const [key, s] of this.slots) if (match(s.tag)) this.reloadChanged(key);
+    };
     const patch = <T>(match: (tag: Tag) => boolean, fn: (data: T) => T) => {
       this.patch<T>((t) => match(t) && (t.readScope ?? "{}") === scope, fn);
       this.invalidate((t) => match(t) && (t.readScope ?? "{}") !== scope);
@@ -234,7 +265,7 @@ export class ResourceStore {
     switch (c.type) {
       case "media.committed":
       case "media.processed":
-        this.invalidate((t) => t.type === "page-notices" && t.id === c.ref.version);
+        changed((t) => t.type === "page-notices" && t.id === c.ref.version);
         break;
       case "comment.created": {
         const parent = c.comment.reply_to_id;
@@ -354,7 +385,8 @@ export class ResourceStore {
         this.invalidate((t) => t.type === "moderation-rules" && t.scope === c.rules);
         break;
       case "reader.changed":
-        this.invalidate((t) => (t.type === "reader-plan" || t.type === "page-notices") && t.id === c.version);
+        this.invalidate((t) => t.type === "reader-plan" && t.id === c.version);
+        changed((t) => t.type === "page-notices" && t.id === c.version);
         break;
       case "moderation.resolved":
         items<{ id: string }>(["held"], (x) => (x.id === c.id ? null : x));
