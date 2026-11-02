@@ -54,7 +54,7 @@ type Op struct {
 	Blob       string         `json:"blob,omitempty"`      // put: the staged upload (u-{uuid}) or a blob in the folder
 	CreateID   string         `json:"create_id,omitempty"` // put: create-only UUID; repeat the same ID to retry
 	Replace    bool           `json:"replace,omitempty"`   // put: explicitly replace the target, including another source alias
-	Index      *int           `json:"index,omitempty"`     // put, move, attach: among the attached uploads of its Upload
+	Index      *int           `json:"index,omitempty"`     // put, move, attach: among the attached uploads of its Upload; put and attach without it go by file name (natural order), after the last upload that sorts before theirs
 	Meta       map[string]any `json:"meta,omitempty"`      // put, copy: upload meta; attach: merged; meta: item meta; remove: auto_cover guards ownership
 	Edit       *Edit          `json:"edit,omitempty"`      // put, edit, copy, frame
 	Unattached bool           `json:"unattached,omitempty"`

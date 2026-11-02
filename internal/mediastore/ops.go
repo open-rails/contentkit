@@ -851,7 +851,10 @@ func (o *opRun) count(g int) int {
 }
 
 // insert puts upload f among group g's attached uploads (or its unattached
-// ones): at index when given, else at its natural-sort position.
+// ones): at index when given, else right after the last one whose name sorts
+// naturally before f's, first when none does. In name order that is f's
+// sorted place; an upload moved out of name order keeps its place and does
+// not draw f to it.
 func (o *opRun) insert(g int, f media.File, index *int, attached bool) {
 	m := o.m
 	var members []int
@@ -865,10 +868,17 @@ func (o *opRun) insert(g int, f media.File, index *int, attached bool) {
 		at = members[len(members)-1] + 1
 	}
 	name := path.Base(f.Path)
-	for n, i := range members {
-		if index != nil && n == max(*index, 0) || index == nil && natLess(name, path.Base(m.Files[i].Path)) {
-			at = i
-			break
+	switch {
+	case index != nil:
+		if n := max(*index, 0); n < len(members) {
+			at = members[n]
+		}
+	case len(members) > 0:
+		at = members[0]
+		for _, i := range members {
+			if natLess(path.Base(m.Files[i].Path), name) {
+				at = i + 1
+			}
 		}
 	}
 	m.Files = slices.Insert(m.Files, at, f)

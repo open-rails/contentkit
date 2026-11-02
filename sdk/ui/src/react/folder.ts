@@ -211,7 +211,9 @@ export function useMediaFolder(ref: RefBody | null | undefined, o: MediaFolderOp
         return t;
       };
       const paths = new Map<File, string>();
+      const pages = new Set<File>();
       for (const { file, rule } of sortPageFiles(s.accepted)) {
+        if (rule.page) pages.add(file);
         const t = takenIn(rule);
         const requested = opts.current.name?.(file);
         const name = rule.page ? uniquePageName(requested ?? file.name, t) : requested ?? uniqueName(file.name, t);
@@ -219,7 +221,8 @@ export function useMediaFolder(ref: RefBody | null | undefined, o: MediaFolderOp
         paths.set(file, ruleDir(rule.path) + name);
       }
       if (paths.size) {
-        q.add(paths.keys(), { path: (f) => paths.get(f)! });
+        // Pages go among the existing ones by file name, as the first upload's do.
+        q.add(paths.keys(), { path: (f) => paths.get(f)!, byName: (f) => pages.has(f) });
         // New files lift a block and restart a queue discard() paused.
         q.start();
         setStall(undefined);
