@@ -178,7 +178,8 @@ export function useMediaFolder(ref: RefBody | null | undefined, o: MediaFolderOp
   const [committing, setCommitting] = useState(false);
   const [error, setError] = useState<ContentKitError>();
   // An automatic commit that failed: no more until commit() or new files.
-  const [stall, setStall] = useState<{ key: string; error: ContentKitError }>();
+  // held: discard() keeps a rate-limited stall from retrying the discarded pages.
+  const [stall, setStall] = useState<{ key: string; error: ContentKitError; held?: boolean }>();
   const stalled = stall?.key === key ? stall.error : undefined;
   const opts = useRef(o);
   opts.current = o;
@@ -306,10 +307,10 @@ export function useMediaFolder(ref: RefBody | null | undefined, o: MediaFolderOp
     commit().catch((e: unknown) => setStall({ key, error: toContentKitError(e) }));
   }, [auto, headReady, committing, stalled, commit, key]);
   useEffect(() => {
-    if (stalled?.code !== "rate_limited") return;
+    if (stalled?.code !== "rate_limited" || stall?.held) return;
     const timer = setTimeout(() => setStall(undefined), Math.min(30, stalled.retryAfter ?? 1) * 1000);
     return () => clearTimeout(timer);
-  }, [stalled]);
+  }, [stalled, stall?.held]);
   const manualCommit = useCallback(async () => {
     setStall(undefined);
     return commit();
@@ -393,6 +394,7 @@ export function useMediaFolder(ref: RefBody | null | undefined, o: MediaFolderOp
     ),
     commit: manualCommit,
     discard: useCallback(() => {
+      setStall((s) => (s ? { ...s, held: true } : s));
       pending.current = [];
       setWaiting([]);
       for (const i of q.getSnapshot().items) q.remove(i.id);

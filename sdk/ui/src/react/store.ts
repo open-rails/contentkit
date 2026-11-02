@@ -44,6 +44,8 @@ interface Slot {
   /** When the latest read started, and the trailing read a change still owes. */
   started?: number;
   again?: ReturnType<typeof setTimeout>;
+  /** A local patch landed after the read in flight started: that read is older than what shows. */
+  stale?: boolean;
 }
 
 const IDLE: ReadEntry = { read: null, loading: false, loaded: false };
@@ -100,6 +102,7 @@ export class ReadStore {
               const before = slot.entry.read;
               const read = slot.options.status ? update.read : before ? { ...before, status: update.read.status, state: update.read.state, full: update.read.status?.state === "full" } : null;
               if (read) this.update(slot, { read, error: undefined, ...(slot.options.status ? { loading: false, loaded: true } : {}) });
+              if (read && slot.ctl) slot.stale = true;
               if (!slot.options.status) this.load(slot.key, "changed");
               if (read && finished(before, read)) completed = true;
             }
@@ -201,6 +204,7 @@ export class ReadStore {
     }
     clearTimeout(s.again);
     s.again = undefined;
+    s.stale = false;
     s.started = Date.now();
     s.ctl?.abort();
     clearTimeout(s.timer);
@@ -210,6 +214,8 @@ export class ReadStore {
       (read) => {
         if (s.ctl !== ctl) return;
         s.ctl = undefined;
+        // Never show a read older than a patch already shown; the owed read replaces it.
+        if (s.stale) return this.load(s.key, "changed");
         const before = s.entry.read;
         this.update(s, { read, loading: !!s.again, loaded: true, error: undefined });
         this.schedule(s);
@@ -236,6 +242,8 @@ export class ReadStore {
     if (!s) return;
     s.ctl?.abort();
     s.ctl = undefined;
+    clearTimeout(s.again);
+    s.again = undefined;
     this.update(s, { read, loading: false, loaded: true, error: undefined });
     this.schedule(s);
   }
@@ -295,7 +303,10 @@ export class ReadStore {
       if (s.options.prefix && !file.path.startsWith(s.options.prefix)) continue;
       this.update(s, { read: withUpload(read, file.path, file) });
       // A read in flight may predate the processing.
-      if (s.ctl) this.load(key, "changed");
+      if (s.ctl) {
+        s.stale = true;
+        this.load(key, "changed");
+      }
     }
   }
 

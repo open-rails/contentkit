@@ -193,3 +193,39 @@ test("a burst of commits reads once more after the burst, not once per commit", 
   assert.equal(store.snapshot("pages").loading, false);
   assert.equal(store.snapshot("pages").read?.total, 2, "the trailing read is shown");
 });
+
+test("a read that predates a processed page never replaces it; a set() read stands", async (t) => {
+  mock.timers.enable({ apis: ["setTimeout", "Date"], now: 1_000_000 });
+  t.after(() => mock.timers.reset());
+  let emit!: (change: unknown, scope: string | null) => void;
+  const page = (pending: boolean) => ({ path: "pages/1.jpg", upload: true, ...(pending ? { pending: ["reader"] } : {}) });
+  const result = (pending: boolean): ReadResult => ({ access: "full", expires: 0, total: 1, offset: 0, limit: 0, uploads: [], files: [page(pending)] } as unknown as ReadResult);
+  let release!: (r: ReadResult) => void;
+  let calls = 0;
+  const client = { subscribe: (listener: typeof emit) => ((emit = listener), () => {}), media: { read: () => (calls++, new Promise<ReadResult>((resolve) => (release = resolve))) } } as unknown as ContentKitClient;
+  const store = new ReadStore(client);
+  const ref = { kind: "gallery", id: "g1", version: "v1" };
+  const pendingOf = () => !!(store.snapshot("pages").read?.files[0] as { pending?: string[] } | undefined)?.pending;
+  store.subscribe("pages", ref, { editor: true }, () => {}, {}, "{}");
+  store.load("pages");
+  release(result(true));
+  await settle();
+  assert.equal(pendingOf(), true);
+
+  // A read starts, the page finishes processing, then the older read lands.
+  mock.timers.tick(1000);
+  emit({ type: "media.committed", ref }, "{}");
+  assert.equal(calls, 2);
+  emit({ type: "media.processed", ref, file: page(false) }, "{}");
+  assert.equal(pendingOf(), false);
+  release(result(true));
+  await settle();
+  assert.equal(pendingOf(), false, "the older read must not flip the page back to processing");
+
+  mock.timers.tick(1000);
+  assert.equal(calls, 3, "the owed read follows");
+  store.set("pages", result(false));
+  mock.timers.tick(1000);
+  assert.equal(calls, 3, "a set() read cancels the owed one");
+  assert.equal(store.snapshot("pages").loading, false);
+});
