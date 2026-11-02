@@ -1420,7 +1420,12 @@ the host's periodic jobs. The worker migrates its schema itself.
   revalidation. ContentKit does not enqueue CDN invalidation jobs. Never
   cache `private/` in a shared cache: the token is not part of a cache key
   the CDN checks, so a cached object would be served without one. Private
-  blobs are hash-named and `private, max-age=31536000, immutable`.
+  blobs are hash-named, so their bytes never change, but a browser may reuse
+  one only while the token that authorized it is valid: the gateway answers
+  `private, max-age={seconds until that token expires}, immutable`. After
+  that the browser asks again, so expiry, key rotation and deletion take
+  effect there (a cached copy can still outlive its entitlement by the
+  token's remaining life).
 - **Denials are 404 by design**: a missing, malformed, expired, wrong-scope
   or unknown-key token on `private/` gets the same response as a
   missing object (status, headers, body; `Cache-Control: no-store`), decided
