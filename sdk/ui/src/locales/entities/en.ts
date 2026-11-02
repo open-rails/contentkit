@@ -122,6 +122,7 @@ export const entities = {
     chipDetails: "Edit {name}",
     newHint: "New names (highlighted) are created when you save.",
     newChip: "{name}: new, created on save",
+    createOption: "Create “{name}”",
     needsScope: "Link exactly one {scope} to create these; they are not saved until then.",
   },
   membership: {

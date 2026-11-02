@@ -1734,7 +1734,7 @@ type GetManageEntitiesQuery struct {
 	Scope string
 	// only the entity with this slug
 	Slug string
-	// match a canonical name, alias or slug
+	// match a canonical name, alias or slug; sorted by name, the exact matches come first
 	Q string
 	// only sort names starting with this letter
 	Letter string

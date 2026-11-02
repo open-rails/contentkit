@@ -123,6 +123,7 @@ export const entities: typeof en = {
     chipDetails: "编辑 {name}",
     newHint: "新名称（高亮显示）会在保存时创建。",
     newChip: "{name}：新建，保存时创建",
+    createOption: "创建“{name}”",
     needsScope: "请只关联一个{scope}后再创建；在此之前不会保存。",
   },
   membership: {

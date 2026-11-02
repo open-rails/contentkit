@@ -194,6 +194,37 @@ test("a burst of commits reads once more after the burst, not once per commit", 
   assert.equal(store.snapshot("pages").read?.total, 2, "the trailing read is shown");
 });
 
+test("a burst of page events re-reads page notices once a second and once after the burst", async (t) => {
+  mock.timers.enable({ apis: ["setTimeout", "Date"], now: 1_000_000 });
+  t.after(() => mock.timers.reset());
+  let emit!: (change: unknown, scope: string | null) => void;
+  const store = new ResourceStore({ subscribe: (listener: typeof emit) => ((emit = listener), () => {}) } as unknown as ContentKitClient);
+  let calls = 0;
+  store.subscribe("notices", { type: "page-notices", id: "v1" }, () => {});
+  store.bind("notices", async () => ++calls);
+  store.load("notices");
+  await settle();
+  assert.equal(calls, 1);
+
+  const ref = { kind: "gallery", id: "g1", version: "v1" };
+  for (let page = 0; page < 5; page++) emit({ type: page % 2 ? "media.processed" : "media.committed", ref }, "{}");
+  emit({ type: "media.committed", ref: { ...ref, version: "v2" } }, "{}");
+  await settle();
+  assert.equal(calls, 1, "events right after a read wait for one trailing read");
+  assert.equal(store.snapshot("notices").loading, true, "a newer read is owed");
+
+  mock.timers.tick(1000);
+  await settle();
+  assert.equal(calls, 2);
+  assert.equal(store.snapshot("notices").data, 2, "the trailing read is shown");
+  assert.equal(store.snapshot("notices").loading, false);
+
+  mock.timers.tick(1000);
+  emit({ type: "media.committed", ref }, "{}");
+  await settle();
+  assert.equal(calls, 3, "an event a gap after the last read reads at once");
+});
+
 test("a read that predates a processed page never replaces it; a set() read stands", async (t) => {
   mock.timers.enable({ apis: ["setTimeout", "Date"], now: 1_000_000 });
   t.after(() => mock.timers.reset());
