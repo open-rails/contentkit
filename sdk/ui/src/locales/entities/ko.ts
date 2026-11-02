@@ -123,6 +123,7 @@ export const entities: typeof en = {
     chipDetails: "{name} 편집",
     newHint: "새 이름(강조 표시)은 저장할 때 생성됩니다.",
     newChip: "{name}: 새 항목, 저장 시 생성",
+    createOption: "‘{name}’ 만들기",
     needsScope: "만들려면 {scope}을(를) 정확히 하나 연결하세요. 그전까지는 저장되지 않습니다.",
   },
   membership: {

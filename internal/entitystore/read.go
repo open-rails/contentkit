@@ -140,11 +140,19 @@ func (s *Store) compile(opts ListOptions, ids []string) (cardQuery, error) {
 	if !opts.IncludeInternal {
 		where = append(where, "NOT g.internal")
 	}
+	// The name order; a query's name order puts the entities it names exactly first.
+	key := sortName
 	if query := strings.TrimSpace(opts.Query); query != "" {
 		c.args["query"] = query
 		where = append(where, fmt.Sprintf(`(strpos(%[1]s.contentkit_keyword_normalize(g.slug), %[1]s.contentkit_keyword_normalize(@query)) > 0
  OR EXISTS (SELECT 1 FROM %[2]s query_name WHERE query_name.tenant_id = g.tenant_id AND query_name.entity_id = g.id
  AND strpos(query_name.normalized, %[1]s.contentkit_keyword_normalize(@query)) > 0))`, s.qs, s.table("content_entity_names")))
+		key = fmt.Sprintf(`(CASE WHEN %[1]s.contentkit_keyword_normalize(g.slug) = %[1]s.contentkit_keyword_normalize(@query)
+ OR EXISTS (SELECT 1 FROM %[2]s exact_name WHERE exact_name.tenant_id = g.tenant_id AND exact_name.entity_id = g.id
+ AND exact_name.normalized = %[1]s.contentkit_keyword_normalize(@query)) THEN '0' ELSE '1' END || %[3]s)`, s.qs, s.table("content_entity_names"), sortName)
+		if c.sort == entities.SortName {
+			order = key + ", g.id"
+		}
 	}
 	if ids != nil {
 		where, c.args["ids"] = append(where, "g.id = ANY(@ids::text[])"), ids
@@ -197,7 +205,7 @@ func (s *Store) compile(opts ListOptions, ids []string) (cardQuery, error) {
 		c.args["cid"] = cur.ID
 		switch c.sort {
 		case entities.SortName:
-			where, c.args["cs"] = append(where, "("+sortName+", g.id) > (@cs, @cid)"), cur.Name
+			where, c.args["cs"] = append(where, "("+key+", g.id) > (@cs, @cid)"), cur.Name
 		case entities.SortCount:
 			where, c.args["cn"] = append(where, "(coalesce(cc.n, 0) < @cn OR (coalesce(cc.n, 0) = @cn AND g.id > @cid))"), cur.Count
 		case entities.SortNewest:
@@ -277,7 +285,7 @@ LEFT JOIN %[4]s cd ON cd.tenant_id = g.tenant_id AND cd.content_kind = g.kind AN
 %[7]s
 %[8]s`,
 		from, s.table("content_entity_names"), s.table("content_entity_text"), s.table("content_codes"),
-		count, sortName, counts, predicate, scope, parent, displayJoins, covers, autoCover)
+		count, key, counts, predicate, scope, parent, displayJoins, covers, autoCover)
 	c.sql = base + " ORDER BY " + order + paging
 	if opts.Page > 0 {
 		c.count = "SELECT count(*) FROM " + countFrom + " WHERE " + strings.Join(where, " AND ")

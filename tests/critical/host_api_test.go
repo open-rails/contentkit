@@ -156,6 +156,23 @@ func TestHostAPIContract(t *testing.T) {
 		if got := match(ck.GetManageEntitiesMatchQuery{Kind: "character", Name: []string{"Alice"}}); len(got["Alice"]) != 0 {
 			t.Fatalf("unscoped match reached scoped entities: %v", got)
 		}
+		// A staff name search lists the entities a query names exactly, by name or
+		// alias, before the looser matches, across cursor pages.
+		fan := tag("bladed-fan", "Bladed Fan")
+		var searched []entities.EntityID
+		for cursor := ""; ; {
+			page, err := host.GetManageEntities(t.Context(), ck.GetManageEntitiesQuery{Kind: "tag", Q: "blade", Limit: 1, Cursor: cursor})
+			must(t, err)
+			for _, card := range page.Entities {
+				searched = append(searched, card.ID)
+			}
+			if cursor = page.NextCursor; cursor == "" {
+				break
+			}
+		}
+		if !reflect.DeepEqual(searched, []entities.EntityID{aliased.ID, fan.ID}) {
+			t.Fatalf("search order = %v; want the exact alias %s before %s", searched, aliased.ID, fan.ID)
+		}
 		_, err = host.GetManageEntitiesMatch(t.Context(), ck.GetManageEntitiesMatchQuery{Name: []string{"Alice"}})
 		requireError(t, err, 400, "invalid_request")
 		_, err = host.GetManageEntitiesMatch(t.Context(), ck.GetManageEntitiesMatchQuery{Kind: "tag"})
