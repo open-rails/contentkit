@@ -173,11 +173,15 @@ func (s *Service) canEdit(ctx context.Context, actor access.Actor, k *mediastore
 	if err != nil || !res[target].Editor {
 		return media.UploadGrant{}, err
 	}
-	owner := ""
-	if actor.Member() {
-		owner = actor.AccountID()
+	if !actor.Member() {
+		return media.UploadGrant{Allowed: true, Exempt: true}, nil
 	}
-	return media.UploadGrant{Allowed: true, Owner: owner, Exempt: !actor.Member()}, nil
+	// Staff who edit any content are a trusted role, as for entities.
+	staff, err := gate.Can(ctx, s.o.Auth, actor, string(access.ContentWrite))
+	if err != nil {
+		return media.UploadGrant{}, err
+	}
+	return media.UploadGrant{Allowed: true, Owner: actor.AccountID(), Exempt: staff}, nil
 }
 
 // itemCommitted records a changed version's facts and queues its publication.

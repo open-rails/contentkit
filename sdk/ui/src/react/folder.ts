@@ -178,7 +178,8 @@ export function useMediaFolder(ref: RefBody | null | undefined, o: MediaFolderOp
   const [committing, setCommitting] = useState(false);
   const [error, setError] = useState<ContentKitError>();
   // An automatic commit that failed: no more until commit() or new files.
-  const [stall, setStall] = useState<{ key: string; error: ContentKitError }>();
+  // held: discard() keeps a rate-limited stall from retrying the discarded pages.
+  const [stall, setStall] = useState<{ key: string; error: ContentKitError; held?: boolean }>();
   const stalled = stall?.key === key ? stall.error : undefined;
   const opts = useRef(o);
   opts.current = o;
@@ -271,16 +272,20 @@ export function useMediaFolder(ref: RefBody | null | undefined, o: MediaFolderOp
     [client, report],
   );
 
+  // A rate limit retried until it lifts is reported once.
+  const limited = useRef(false);
   const commit = useCallback(async () => {
     setCommitting(true);
     try {
       const files = await q.commit(undefined, { head: opts.current.commit === "auto", attach: live.current.leftover.map((f) => f.path) });
       setError(undefined);
+      limited.current = false;
       return files;
     } catch (e) {
       const err = toContentKitError(e);
       setError(err);
-      report(err, "folder.commit");
+      if (err.code !== "rate_limited" || !limited.current) report(err, "folder.commit");
+      limited.current = err.code === "rate_limited";
       throw err;
     } finally {
       setCommitting(false);
@@ -293,13 +298,19 @@ export function useMediaFolder(ref: RefBody | null | undefined, o: MediaFolderOp
   }, [raw.items, listed, read.loading, q]);
 
   // A draft commits the uploaded head of the queue as it finishes, and what
-  // an earlier visit left pending once a read states it; a failed commit waits for commit().
+  // an earlier visit left pending once a read states it; a failed commit waits for commit(),
+  // except a rate-limited one, which tries again once the limit allows it.
   const auto = o.commit === "auto";
   const headReady = items.find((i) => i.status !== "committed")?.status === "uploaded" || (leftover.length > 0 && !read.loading);
   useEffect(() => {
     if (!auto || !headReady || committing || stalled) return;
     commit().catch((e: unknown) => setStall({ key, error: toContentKitError(e) }));
   }, [auto, headReady, committing, stalled, commit, key]);
+  useEffect(() => {
+    if (stalled?.code !== "rate_limited" || stall?.held) return;
+    const timer = setTimeout(() => setStall(undefined), Math.min(30, stalled.retryAfter ?? 1) * 1000);
+    return () => clearTimeout(timer);
+  }, [stalled, stall?.held]);
   const manualCommit = useCallback(async () => {
     setStall(undefined);
     return commit();
@@ -383,6 +394,7 @@ export function useMediaFolder(ref: RefBody | null | undefined, o: MediaFolderOp
     ),
     commit: manualCommit,
     discard: useCallback(() => {
+      setStall((s) => (s ? { ...s, held: true } : s));
       pending.current = [];
       setWaiting([]);
       for (const i of q.getSnapshot().items) q.remove(i.id);

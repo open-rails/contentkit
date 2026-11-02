@@ -190,6 +190,31 @@ func TestMediaAdmissionBoundaries(t *testing.T) {
 			requireMediaPaths(t, read, control.path)
 		}
 	})
+	t.Run("CK-J03-S11_content_staff_skip_the_commit_limit", func(t *testing.T) {
+		w := newWorld(t)
+		a := w.apps[0]
+		attachMedia(t, w, a, func(c *ck.Config) {
+			c.Media.CommitLimit = ck.RateLimitConfig{PerSecond: 0.001, Burst: 1}
+		})
+		commitTwice := func(role iam.Role) error {
+			user, token := w.person(t, 0)
+			authtest.GrantRole(t, w.tenant[0], a.group, iam.UserSubject(user.ID), role)
+			client := a.client(token)
+			ref := galleryRef(t, client, "Commit limit")
+			for i, name := range []string{"pages/one.png", "pages/two.png"} {
+				op := stageFile(t, client, ref, name, imageBytes(t))
+				if _, err := client.PostMediaUploadCommit(t.Context(), media.CommitBody{Ref: ref, OperationID: uuid.NewString(), Ops: []media.Op{op}}); err != nil {
+					if i == 0 {
+						t.Fatalf("first commit: %v", err)
+					}
+					return err
+				}
+			}
+			return nil
+		}
+		must(t, commitTwice(w.writer))
+		requireError(t, commitTwice(w.contributor), 429, "rate_limited")
+	})
 	t.Run("CK-J03-S10_media_read_limit_is_per_viewer", func(t *testing.T) {
 		w := newWorld(t)
 		a := w.apps[0]
