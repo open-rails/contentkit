@@ -6,6 +6,7 @@ import { keyOf, useContentScope, useResource } from "./use-resource.js";
 export interface UsePageNotices {
   notices: PageNotices["notices"];
   loading: boolean;
+  /** Re-reads after a change, at most once a second, then once after the last change. */
   reload: () => void;
   dismiss: (notice: string) => Promise<void>;
   restore: (notice: string) => Promise<void>;
@@ -26,5 +27,6 @@ export function usePageNotices(content: string | null | undefined, version: stri
     if (!content || !version || !key) return;
     store.set(key, await client.versions.restorePageNotice(content, version, notice));
   }, [client, content, version, key, store]);
-  return { notices: current?.notices ?? [], loading: !!key && (r.loading || !r.loaded), reload: r.reload, dismiss, restore };
+  const reload = useCallback(() => key && store.reloadChanged(key), [key, store]);
+  return { notices: current?.notices ?? [], loading: !!key && (r.loading || !r.loaded), reload, dismiss, restore };
 }

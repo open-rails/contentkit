@@ -123,6 +123,7 @@ export const entities: typeof en = {
     chipDetails: "Editar {name}",
     newHint: "Los nombres nuevos (resaltados) se crean al guardar.",
     newChip: "{name}: nuevo, se crea al guardar",
+    createOption: "Crear «{name}»",
     needsScope: "Vincula exactamente un(a) {scope} para crearlos; hasta entonces no se guardan.",
   },
   membership: {

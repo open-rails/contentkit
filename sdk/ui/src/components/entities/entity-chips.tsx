@@ -1,4 +1,4 @@
-import { Cancel01Icon } from "@hugeicons/core-free-icons";
+import { Add01Icon, Cancel01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { cn } from "cn";
 import { useEffect, useId, useMemo, useRef, useState } from "react";
@@ -60,19 +60,20 @@ export function splitTokens(text: string): string[] {
     .filter(Boolean);
 }
 
-/** An exact name or slug match wins; a lone result is an alias match. */
+/** The entity a typed name means: an exact name or slug match, never a loose one. */
 export function resolveToken(token: string, found: readonly EntityCard[], kind: string): EntityCard | undefined {
   const own = found.filter((g) => g.kind === kind);
   const key = fold(token);
-  return own.find((g) => fold(g.name) === key) ?? own.find((g) => fold(g.slug) === key) ?? (own.length === 1 ? own[0] : undefined);
+  return own.find((g) => fold(g.name) === key) ?? own.find((g) => fold(g.slug) === key);
 }
 
 /**
  * A content's links to one entity kind as chips: type or paste names
  * separated by commas, remove with × or Backspace. A chip with roles,
- * versions, positions or a proposal opens those details. A name without a
- * match is new, created on save, where the kind is creatable; elsewhere it
- * stays marked and is not saved.
+ * versions, positions or a proposal opens those details. Enter, a comma or
+ * leaving the field takes the entity named exactly as typed; any other name
+ * is new, created on save, where the kind is creatable; elsewhere it stays
+ * marked and is not saved. A looser suggestion is taken only when chosen.
  */
 export function EntityChips(p: EntityChipsProps) {
   const { t } = useMessages();
@@ -92,7 +93,8 @@ export function EntityChips(p: EntityChipsProps) {
     p.onCreatedChange?.(names);
   };
   const [open, setOpen] = useState<number | null>(null);
-  const [active, setActive] = useState(0);
+  // The option the user moved to; until then the exact match, else "create".
+  const [active, setActive] = useState<number | null>(null);
   const fragment = text.trim();
   const found = useTypeahead(fragment, { entity_kinds: [p.kind], display_language: p.language, limit: 8, client: p.client, management: p.management });
   const name = (m: Membership) => {
@@ -102,8 +104,15 @@ export function EntityChips(p: EntityChipsProps) {
   // A whole-content link without a role is the one duplicate to skip.
   const plain = useMemo(() => new Set(p.memberships.filter((m) => (p.allowVersionChange === false || !m.version_id) && !m.role).map((m) => m.group_id)), [p.memberships, p.allowVersionChange]);
   const suggestions = useMemo(() => found.entities.filter((g) => g.kind === p.kind && !plain.has(g.id)).slice(0, 6), [found.entities, p.kind, plain]);
-  const listOpen = fragment !== "" && suggestions.length > 0;
-  useEffect(() => setActive(0), [fragment]);
+  const exact = resolveToken(fragment, suggestions, p.kind);
+  const typed = fold(fragment);
+  const listed = [...p.memberships.map(name), ...pending, ...created].some((n) => fold(n) === typed);
+  const offerCreate = creatable && fragment !== "" && !exact && !listed;
+  // null is the "create" option.
+  const options: (EntityCard | null)[] = offerCreate ? [null, ...suggestions] : suggestions;
+  const listOpen = fragment !== "" && options.length > 0;
+  useEffect(() => setActive(null), [fragment, suggestions]);
+  const current = active ?? (exact ? options.indexOf(exact) : offerCreate ? 0 : -1);
   const detailed = (m: Membership) => (allowsEntityScope(p.spec, "version") && p.allowVersionChange !== false) || !!p.spec.roles?.length || !!p.spec.ordered || m.state === "proposed";
   const add = (card: EntityCard) => {
     if (plain.has(card.id)) return false;
@@ -222,7 +231,7 @@ export function EntityChips(p: EntityChipsProps) {
           aria-label={t("memberships.add", { kind: p.label })}
           aria-expanded={listOpen}
           aria-controls={`${id}-list`}
-          aria-activedescendant={listOpen ? `${id}-${active}` : undefined}
+          aria-activedescendant={listOpen && current >= 0 ? `${id}-${current}` : undefined}
           aria-autocomplete="list"
           autoComplete="off"
           disabled={p.disabled}
@@ -240,13 +249,14 @@ export function EntityChips(p: EntityChipsProps) {
               removeLast();
             } else if (e.key === "ArrowDown" && listOpen) {
               e.preventDefault();
-              setActive((a) => Math.min(suggestions.length - 1, a + 1));
+              setActive(Math.min(options.length - 1, current + 1));
             } else if (e.key === "ArrowUp" && listOpen) {
               e.preventDefault();
-              setActive((a) => Math.max(0, a - 1));
+              setActive(Math.max(0, current - 1));
             } else if (e.key === "Enter") {
               e.preventDefault();
-              if (listOpen) pick(suggestions[active]!);
+              const option = listOpen ? options[current] : undefined;
+              if (option) pick(option);
               else if (fragment) {
                 commit([fragment]);
                 setText("");
@@ -256,23 +266,43 @@ export function EntityChips(p: EntityChipsProps) {
         />
         {listOpen && (
           <ul id={`${id}-list`} role="listbox" aria-label={p.label} className="absolute start-0 top-full z-10 mt-1 grid w-full overflow-hidden rounded-md border border-border bg-popover text-popover-foreground shadow-md">
-            {suggestions.map((g, i) => (
-              <li
-                key={g.id}
-                id={`${id}-${i}`}
-                role="option"
-                aria-selected={i === active}
-                className={cn("flex cursor-pointer items-baseline justify-between gap-2 px-3 py-1.5 text-sm", i === active && "bg-accent text-accent-foreground")}
-                onMouseEnter={() => setActive(i)}
-                onMouseDown={(e) => {
-                  e.preventDefault();
-                  pick(g);
-                }}
-              >
-                <span className="min-w-0 truncate">{g.name || g.slug}</span>
-                <span className="text-xs text-muted-foreground">{g.slug}</span>
-              </li>
-            ))}
+            {options.map((g, i) =>
+              g ? (
+                <li
+                  key={g.id}
+                  id={`${id}-${i}`}
+                  role="option"
+                  aria-selected={i === current}
+                  className={cn("flex cursor-pointer items-baseline justify-between gap-2 px-3 py-1.5 text-sm", i === current && "bg-accent text-accent-foreground")}
+                  onMouseEnter={() => setActive(i)}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    pick(g);
+                  }}
+                >
+                  <span className="min-w-0 truncate">{g.name || g.slug}</span>
+                  <span className="text-xs text-muted-foreground">{g.slug}</span>
+                </li>
+              ) : (
+                <li
+                  key="create"
+                  id={`${id}-${i}`}
+                  role="option"
+                  aria-selected={i === current}
+                  className={cn("flex cursor-pointer items-center gap-2 px-3 py-1.5 text-sm", suggestions.length > 0 && "border-b border-border", i === current && "bg-accent text-accent-foreground")}
+                  data-ckui="entity-create-option"
+                  onMouseEnter={() => setActive(i)}
+                  onMouseDown={(e) => {
+                    e.preventDefault();
+                    commit([fragment]);
+                    setText("");
+                  }}
+                >
+                  <HugeiconsIcon icon={Add01Icon} className="size-3.5 shrink-0 text-muted-foreground" strokeWidth={2} aria-hidden />
+                  <span className="min-w-0 truncate">{t("memberships.createOption", { name: fragment })}</span>
+                </li>
+              ),
+            )}
           </ul>
         )}
       </div>

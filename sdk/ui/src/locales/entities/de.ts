@@ -123,6 +123,7 @@ export const entities: typeof en = {
     chipDetails: "{name} bearbeiten",
     newHint: "Neue Namen (hervorgehoben) werden beim Speichern angelegt.",
     newChip: "{name}: neu, wird beim Speichern angelegt",
+    createOption: "„{name}“ anlegen",
     needsScope: "Verknüpfe genau ein(e) {scope}, um diese anzulegen; bis dahin werden sie nicht gespeichert.",
   },
   membership: {
