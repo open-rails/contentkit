@@ -25,9 +25,12 @@ export interface ReadPolicy {
 /**
  * How load() treats a read in flight: "initial" reads only when nothing is
  * loaded or loading; "refresh" joins one in flight (timers, a player's grant
- * refresh); "reload" restarts it (after a change the in-flight read predates).
+ * refresh); "reload" restarts it (after a change the in-flight read predates);
+ * "changed" is a reload after a server change event, at most one per
+ * CHANGE_GAP: a burst of events (one per committed or processed page) waits
+ * for one trailing read instead of restarting the read for each.
  */
-export type LoadMode = "initial" | "refresh" | "reload";
+export type LoadMode = "initial" | "refresh" | "reload" | "changed";
 
 interface Slot {
   key: string;
@@ -38,12 +41,18 @@ interface Slot {
   entry: ReadEntry;
   ctl?: AbortController;
   timer?: ReturnType<typeof setTimeout>;
+  /** When the latest read started, and the trailing read a change still owes. */
+  started?: number;
+  again?: ReturnType<typeof setTimeout>;
 }
 
 const IDLE: ReadEntry = { read: null, loading: false, loaded: false };
 
 /** rate_limited reads are retried this often before the error shows. */
 const RATE_LIMIT_RETRIES = 3;
+
+/** Change-driven reads of one slot are at least this far apart (ms). */
+const CHANGE_GAP = 1000;
 
 export function readKey(ref: RefBody, o: ReadOptions = {}): string {
   return JSON.stringify([ref.kind, ref.id, ref.version ?? "", o.prefix ?? "", o.offset ?? 0, o.limit ?? 0, !!o.download, !!o.editor, !!o.status, [...new Set(o.paths ?? [])].sort()]);
@@ -91,7 +100,7 @@ export class ReadStore {
               const before = slot.entry.read;
               const read = slot.options.status ? update.read : before ? { ...before, status: update.read.status, state: update.read.state, full: update.read.status?.state === "full" } : null;
               if (read) this.update(slot, { read, error: undefined, ...(slot.options.status ? { loading: false, loaded: true } : {}) });
-              if (!slot.options.status) this.load(slot.key, "reload");
+              if (!slot.options.status) this.load(slot.key, "changed");
               if (read && finished(before, read)) completed = true;
             }
             if (completed) this.reloadViewers(s.ref);
@@ -162,6 +171,7 @@ export class ReadStore {
         if (slot.listeners.size) return this.schedule(slot);
         slot.ctl?.abort();
         clearTimeout(slot.timer);
+        clearTimeout(slot.again);
         this.slots.delete(key);
         this.stopUnusedObservers();
       });
@@ -177,6 +187,21 @@ export class ReadStore {
     if (!s) return;
     if (mode === "initial" && (s.entry.loaded || s.ctl)) return;
     if (mode === "refresh" && s.ctl) return;
+    if (mode === "changed") {
+      const wait = s.ctl ? CHANGE_GAP : (s.started ?? 0) + CHANGE_GAP - Date.now();
+      if (wait > 0) {
+        s.again ??= setTimeout(() => {
+          s.again = undefined;
+          this.load(s.key, "changed");
+        }, wait);
+        // A newer read is owed: what lands first is not yet final.
+        if (!s.entry.loading) this.update(s, { loading: true });
+        return;
+      }
+    }
+    clearTimeout(s.again);
+    s.again = undefined;
+    s.started = Date.now();
     s.ctl?.abort();
     clearTimeout(s.timer);
     const ctl = (s.ctl = new AbortController());
@@ -186,7 +211,7 @@ export class ReadStore {
         if (s.ctl !== ctl) return;
         s.ctl = undefined;
         const before = s.entry.read;
-        this.update(s, { read, loading: false, loaded: true, error: undefined });
+        this.update(s, { read, loading: !!s.again, loaded: true, error: undefined });
         this.schedule(s);
         if (s.options.editor && finished(before, read)) this.reloadViewers(s.ref);
       },
@@ -199,7 +224,7 @@ export class ReadStore {
         // expires; the refresh timer retries it meanwhile.
         const fault = error.transient || error.status >= 500 || error.status === 408 || error.code === "rate_limited" || error.code === "aborted";
         const keep = fault && !!before && (!before.expires || before.expires * 1000 > Date.now());
-        this.update(s, { read: keep ? before : null, loading: false, loaded: true, error });
+        this.update(s, { read: keep ? before : null, loading: !!s.again, loaded: true, error });
         if (keep) this.schedule(s);
       },
     );
@@ -246,7 +271,7 @@ export class ReadStore {
   // Uploads finished processing: the item's viewer reads list new files and URLs.
   private reloadViewers(ref: RefBody): void {
     for (const [key, s] of this.slots) {
-      if (!s.options.editor && sameItem(s.ref, ref) && (s.entry.loaded || s.ctl)) this.load(key, "reload");
+      if (!s.options.editor && sameItem(s.ref, ref) && (s.entry.loaded || s.ctl)) this.load(key, "changed");
     }
   }
 
@@ -256,7 +281,7 @@ export class ReadStore {
     for (const [key, s] of this.slots) {
       if (!sameItem(s.ref, ref)) continue;
       if (change.type === "media.committed") {
-        if (s.entry.loaded || s.ctl) this.load(key, "reload");
+        if (s.entry.loaded || s.ctl) this.load(key, "changed");
         continue;
       }
       const read = s.entry.read;
@@ -264,13 +289,13 @@ export class ReadStore {
       if (!read) continue;
       // Viewer URLs and responses from an earlier scope require a fresh read.
       if (!s.options.editor || s.options.status || s.scope !== scope) {
-        this.load(key, "reload");
+        this.load(key, "changed");
         continue;
       }
       if (s.options.prefix && !file.path.startsWith(s.options.prefix)) continue;
       this.update(s, { read: withUpload(read, file.path, file) });
       // A read in flight may predate the processing.
-      if (s.ctl) this.load(key, "reload");
+      if (s.ctl) this.load(key, "changed");
     }
   }
 

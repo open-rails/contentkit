@@ -167,3 +167,29 @@ test("a reaction updates cards in rails and content pages and leaves other card-
   assert.equal(likes(store.snapshot("rail").data as never[]), "a:1");
   assert.equal(store.snapshot("count").data, 3);
 });
+
+test("a burst of commits reads once more after the burst, not once per commit", async (t) => {
+  mock.timers.enable({ apis: ["setTimeout", "Date"], now: 1_000_000 });
+  t.after(() => mock.timers.reset());
+  let emit!: (change: unknown, scope: string | null) => void;
+  let calls = 0;
+  const read = (): ReadResult => ({ access: "full", expires: 0, total: calls, offset: 0, limit: 0, files: [] } as ReadResult);
+  const client = { subscribe: (listener: typeof emit) => ((emit = listener), () => {}), media: { read: async () => (calls++, read()) } } as unknown as ContentKitClient;
+  const store = new ReadStore(client);
+  const ref = { kind: "gallery", id: "g1", version: "v1" };
+  store.subscribe("pages", ref, { editor: true }, () => {});
+  store.load("pages");
+  await settle();
+  assert.equal(calls, 1);
+
+  for (let page = 0; page < 5; page++) emit({ type: "media.committed", ref }, "{}");
+  await settle();
+  assert.equal(calls, 1, "commits right after a read wait for one trailing read");
+  assert.equal(store.snapshot("pages").loading, true, "a newer read is owed");
+
+  mock.timers.tick(1000);
+  await settle();
+  assert.equal(calls, 2);
+  assert.equal(store.snapshot("pages").loading, false);
+  assert.equal(store.snapshot("pages").read?.total, 2, "the trailing read is shown");
+});
