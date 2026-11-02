@@ -85,7 +85,8 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
   const offered = p.languages?.map((l) => (typeof l === "string" ? { value: l, label: l } : l));
   const languages = offered?.length ? offered : model.languages.map((l) => ({ value: l, label: l }));
   const languageKey = languages.map((l) => l.value).join("|");
-  const [language, setLanguage] = useState(languages[0]?.value ?? "en");
+  // A new item starts in the admin's language when the site offers it.
+  const [language, setLanguage] = useState(() => (!p.id && languages.find((l) => l.value === m.language || l.value === m.language?.split("-")[0])?.value) || (languages[0]?.value ?? "en"));
   const [chosen, setChosen] = useState("");
   const ed = useContent(p.id, p.kind, language, { client });
   const [created, setCreated] = useState<Content | null>(null);
