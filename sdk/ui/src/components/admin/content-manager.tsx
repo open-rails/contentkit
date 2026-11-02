@@ -536,6 +536,9 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
             const href = s === "published" ? contentHref?.(c) : undefined;
             const editionRule = selectedEdition(c)?.access;
             const isPremium = editionRule?.level === "tier";
+            // The versions' own languages; the deleted ones only when nothing else is left.
+            const kept = c.versions.filter((v) => v.state !== "deleted");
+            const rowLanguages = [...new Set((kept.length ? kept : c.versions).flatMap((v) => v.languages))];
             return (
               <li
                 key={c.id}
@@ -565,7 +568,7 @@ function List({ loc, open, client, kind, languages: offered, contentHref, labels
                     <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                       <span className="font-mono">{c.code}</span>
                       <span aria-hidden>·</span>
-                      <span className="uppercase">{c.language}</span>
+                      <span className="uppercase">{rowLanguages.length ? rowLanguages.join(" ") : c.language}</span>
                     </div>
                   </div>
                 </div>
