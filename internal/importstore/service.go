@@ -149,8 +149,9 @@ type section struct {
 	skip string // why the engine skips it
 	// prepare resolves record i into its store input.
 	prepare func(r *resolver, i int) (in any, external string, err error)
-	// write writes prepared inputs in tx.
-	write func(ctx context.Context, tx pgx.Tx, in []any) error
+	// write writes prepared inputs in tx. Given later, it leaves its
+	// recounts there.
+	write func(ctx context.Context, tx pgx.Tx, in []any, later *contentstore.Recounts) error
 	// first, if set, reports whether a prepared input is written ahead of
 	// the rest, so a one-by-one retry keeps the section's lock order.
 	first func(in any) bool
@@ -158,7 +159,7 @@ type section struct {
 
 // runChunk writes records [from, to) of a section in one transaction: all
 // together, else (one failed) each in its own savepoint, so only failures
-// are left out.
+// are left out, and then recounts once what the written ones touched.
 func (s *Service) runChunk(ctx context.Context, run *batchRun, sec section, from, to int) error {
 	tx, err := s.o.Pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
@@ -186,7 +187,7 @@ func (s *Service) runChunk(ctx context.Context, run *batchRun, sec section, from
 	if sec.first != nil {
 		sort.SliceStable(ready, func(a, b int) bool { return sec.first(ready[a].in) && !sec.first(ready[b].in) })
 	}
-	write := func(list []pending) error {
+	write := func(list []pending, later *contentstore.Recounts) error {
 		sp, err := tx.Begin(ctx)
 		if err != nil {
 			return err
@@ -200,26 +201,38 @@ func (s *Service) runChunk(ctx context.Context, run *batchRun, sec section, from
 		if err := s.putIDs(ctx, sp, run.b.Source, ms); err != nil {
 			return err
 		}
-		if err := sec.write(ctx, sp, ins); err != nil {
+		if err := sec.write(ctx, sp, ins, later); err != nil {
 			return err
 		}
 		return sp.Commit(ctx)
 	}
 	written := ready
-	if err := write(ready); err != nil {
+	if err := write(ready, nil); err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 		written = nil
+		var later contentstore.Recounts
 		for _, p := range ready {
-			if err := write([]pending{p}); err != nil {
+			var own contentstore.Recounts
+			if err := write([]pending{p}, &own); err != nil {
 				if ctx.Err() != nil {
 					return ctx.Err()
 				}
 				run.fail(sec.name, p.index, p.external, err)
 				continue
 			}
+			later.Merge(&own)
 			written = append(written, p)
+		}
+		if err := s.o.Content.Recount(ctx, tx, &later); err != nil {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			for _, p := range written {
+				run.fail(sec.name, p.index, p.external, err)
+			}
+			return nil
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {

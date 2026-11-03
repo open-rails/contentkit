@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -71,8 +72,9 @@ func (rt *Runtime) fenceSubjects(ctx context.Context, tx pgx.Tx, users []string)
 
 // ImportComments writes comments in tx, inserting new ones and updating
 // stored ones whose import changed (a moderator's decision stays), then
-// recounts their references' comment counts and their threads' replies.
-func (rt *Runtime) ImportComments(ctx context.Context, tx pgx.Tx, in []content.ImportComment) error {
+// recounts their references' comment counts and their threads' replies, or
+// leaves that to later.
+func (rt *Runtime) ImportComments(ctx context.Context, tx pgx.Tx, in []content.ImportComment, later *Recounts) error {
 	if len(in) == 0 {
 		return nil
 	}
@@ -285,15 +287,13 @@ func (rt *Runtime) ImportComments(ctx context.Context, tx pgx.Tx, in []content.I
   EXCLUDED.anon_name, EXCLUDED.body, EXCLUDED.deleted_at, EXCLUDED.created_at, EXCLUDED.author_hidden)`, rt.tenant, string(data)); err != nil {
 		return err
 	}
-	if err := rt.recount(ctx, tx, keys); err != nil {
-		return err
-	}
-	return rt.recountReplies(ctx, tx, threads)
+	return rt.settle(ctx, tx, later, Recounts{keys: keys, threads: threads})
 }
 
 // ImportReactions writes reactions in tx: a new value takes a fresh
-// preference revision, so preference sync exports it. Counts follow.
-func (rt *Runtime) ImportReactions(ctx context.Context, tx pgx.Tx, in []content.ImportReaction) error {
+// preference revision, so preference sync exports it. Counts follow, or
+// later recounts them.
+func (rt *Runtime) ImportReactions(ctx context.Context, tx pgx.Tx, in []content.ImportReaction, later *Recounts) error {
 	if len(in) == 0 {
 		return nil
 	}
@@ -348,6 +348,11 @@ func (rt *Runtime) ImportReactions(ctx context.Context, tx pgx.Tx, in []content.
 	if err := rt.fenceSubjects(ctx, tx, users); err != nil {
 		return err
 	}
+	// Reacted-to comments lock before their reactions, as live reactions and
+	// author hiding lock them.
+	if _, err := rt.lockComments(ctx, tx, slices.Collect(maps.Keys(keys))); err != nil {
+		return err
+	}
 	s := rt.store
 	for _, part := range []struct {
 		rows   []row
@@ -371,12 +376,12 @@ func (rt *Runtime) ImportReactions(ctx context.Context, tx pgx.Tx, in []content.
 			return err
 		}
 	}
-	return rt.recount(ctx, tx, keys)
+	return rt.settle(ctx, tx, later, Recounts{keys: keys})
 }
 
 // ImportFavorites writes bookmarks in tx: a new one takes a fresh preference
-// revision. Counts follow.
-func (rt *Runtime) ImportFavorites(ctx context.Context, tx pgx.Tx, in []content.ImportFavorite) error {
+// revision. Counts follow, or later recounts them.
+func (rt *Runtime) ImportFavorites(ctx context.Context, tx pgx.Tx, in []content.ImportFavorite, later *Recounts) error {
 	if len(in) == 0 {
 		return nil
 	}
@@ -429,7 +434,50 @@ func (rt *Runtime) ImportFavorites(ctx context.Context, tx pgx.Tx, in []content.
  WHERE f.value <> 1`, rt.tenant, string(data)); err != nil {
 		return err
 	}
-	return rt.recount(ctx, tx, keys)
+	return rt.settle(ctx, tx, later, Recounts{keys: keys})
+}
+
+// Recounts are the counts imports leave to recount once, after records are
+// written one by one: a busy reference's recount can take seconds.
+type Recounts struct {
+	keys    map[keyRow]bool
+	threads map[string]bool
+	polls   map[string]bool
+}
+
+// Merge adds o's recounts to r.
+func (r *Recounts) Merge(o *Recounts) {
+	r.keys, r.threads, r.polls = union(r.keys, o.keys), union(r.threads, o.threads), union(r.polls, o.polls)
+}
+
+func union[K comparable](a, b map[K]bool) map[K]bool {
+	if a == nil {
+		a = make(map[K]bool, len(b))
+	}
+	maps.Copy(a, b)
+	return a
+}
+
+// Recount sets what r names to what its rows hold. Run after the writes that
+// left r, in their tx, it newly locks only rollups and poll options: those
+// writes hold r's comments and threads.
+func (rt *Runtime) Recount(ctx context.Context, tx pgx.Tx, r *Recounts) error {
+	if err := rt.recount(ctx, tx, r.keys); err != nil {
+		return err
+	}
+	if err := rt.recountReplies(ctx, tx, r.threads); err != nil {
+		return err
+	}
+	return rt.recountVotes(ctx, tx, r.polls)
+}
+
+// settle recounts r now, or leaves it to later.
+func (rt *Runtime) settle(ctx context.Context, tx pgx.Tx, later *Recounts, r Recounts) error {
+	if later != nil {
+		later.Merge(&r)
+		return nil
+	}
+	return rt.Recount(ctx, tx, &r)
 }
 
 // recount sets the references' counts to what their rows hold: likes and
@@ -450,21 +498,14 @@ func (rt *Runtime) recount(ctx context.Context, tx pgx.Tx, keys map[keyRow]bool)
 	if err != nil {
 		return err
 	}
-	var comments []string
-	for _, k := range list {
-		if k.Kind == content.KindComment && k.Version == "" {
-			comments = append(comments, k.ID)
-		}
-	}
 	// Each count below is its own statement: under READ COMMITTED it reads
 	// a snapshot taken after the locks are held, so it includes the live
 	// writes it waited for. Comments lock before rollups, comments in id order
 	// and rollups in list order, as erasure and live reactions lock them.
 	s := rt.store
-	if len(comments) > 0 {
-		if _, err := tx.Exec(ctx, `SELECT 1 FROM `+s.t.comments+` WHERE tenant_id = $1 AND id = ANY($2::uuid[]) ORDER BY id FOR UPDATE`, rt.tenant, comments); err != nil {
-			return err
-		}
+	comments, err := rt.lockComments(ctx, tx, list)
+	if err != nil {
+		return err
 	}
 	if _, err := tx.Exec(ctx, `INSERT INTO `+s.t.counts+` (tenant_id, content_kind, content_id, content_version_id)
 SELECT $1, k.kind, k.id, k.version FROM ROWS FROM (jsonb_to_recordset($2::jsonb) AS (kind text, id text, version text)) WITH ORDINALITY AS k(kind, id, version, n) ORDER BY k.n
@@ -499,6 +540,22 @@ FROM n WHERE x.tenant_id = $1 AND x.content_kind = n.kind AND x.content_id = n.i
  FROM unnest($2::text[]) AS x(id)) n
  WHERE c.tenant_id = $1 AND c.id = n.id::uuid AND (c.likes, c.dislikes) IS DISTINCT FROM (n.likes, n.dislikes)`, rt.tenant, comments, content.KindComment)
 	return err
+}
+
+// lockComments locks the comments among keys in id order and returns their
+// ids.
+func (rt *Runtime) lockComments(ctx context.Context, tx pgx.Tx, keys []keyRow) ([]string, error) {
+	var ids []string
+	for _, k := range keys {
+		if k.Kind == content.KindComment && k.Version == "" {
+			ids = append(ids, k.ID)
+		}
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	_, err := tx.Exec(ctx, `SELECT 1 FROM `+rt.store.t.comments+` WHERE tenant_id = $1 AND id = ANY($2::uuid[]) ORDER BY id FOR UPDATE`, rt.tenant, ids)
+	return ids, err
 }
 
 // recountReplies sets top-level comments' reply counts to their published
@@ -652,8 +709,8 @@ func (rt *Runtime) ImportPolls(ctx context.Context, tx pgx.Tx, in []content.Impo
 }
 
 // ImportVotes writes votes in tx (one per person, or IP, per poll; the last
-// wins) and recounts their polls' options.
-func (rt *Runtime) ImportVotes(ctx context.Context, tx pgx.Tx, in []content.ImportVote) error {
+// wins) and recounts their polls' options, or leaves that to later.
+func (rt *Runtime) ImportVotes(ctx context.Context, tx pgx.Tx, in []content.ImportVote, later *Recounts) error {
 	if len(in) == 0 {
 		return nil
 	}
@@ -667,7 +724,8 @@ func (rt *Runtime) ImportVotes(ctx context.Context, tx pgx.Tx, in []content.Impo
 	now := time.Now()
 	index := map[string]int{}
 	var byUser, byIP []row
-	var users, polls []string
+	var users []string
+	polls := map[string]bool{}
 	for _, v := range in {
 		if contentref.ValidateID(v.PollID) != nil || contentref.ValidateID(v.OptionID) != nil {
 			return invalidImport("a vote names a poll and an option by id")
@@ -684,7 +742,7 @@ func (rt *Runtime) ImportVotes(ctx context.Context, tx pgx.Tx, in []content.Impo
 		default:
 			return invalidImport("a vote needs a user_id or an ip")
 		}
-		polls = append(polls, v.PollID)
+		polls[v.PollID] = true
 		if i, ok := index[id]; ok {
 			(*list)[i] = x
 			continue
@@ -699,7 +757,7 @@ func (rt *Runtime) ImportVotes(ctx context.Context, tx pgx.Tx, in []content.Impo
 	// Match live voting's question lock before inspecting options. Stable order
 	// prevents multi-poll imports from locking the same questions in reverse.
 	if _, err := tx.Exec(ctx, `SELECT 1 FROM `+s.t.pollQuestions+`
- WHERE tenant_id = $1 AND id = ANY($2::uuid[]) ORDER BY id FOR SHARE`, rt.tenant, polls); err != nil {
+ WHERE tenant_id = $1 AND id = ANY($2::uuid[]) ORDER BY id FOR SHARE`, rt.tenant, slices.Collect(maps.Keys(polls))); err != nil {
 		return err
 	}
 	all, err := json.Marshal(append(slices.Clone(byUser), byIP...))
@@ -734,10 +792,19 @@ func (rt *Runtime) ImportVotes(ctx context.Context, tx pgx.Tx, in []content.Impo
 			return err
 		}
 	}
-	_, err = tx.Exec(ctx, `UPDATE `+s.t.pollOptions+` o SET vote_count = n.votes FROM (SELECT x.id, coalesce(c.votes, 0) AS votes
+	return rt.settle(ctx, tx, later, Recounts{polls: polls})
+}
+
+// recountVotes sets the polls' options' vote counts to their votes.
+func (rt *Runtime) recountVotes(ctx context.Context, tx pgx.Tx, polls map[string]bool) error {
+	if len(polls) == 0 {
+		return nil
+	}
+	s := rt.store
+	_, err := tx.Exec(ctx, `UPDATE `+s.t.pollOptions+` o SET vote_count = n.votes FROM (SELECT x.id, coalesce(c.votes, 0) AS votes
  FROM `+s.t.pollOptions+` x LEFT JOIN (SELECT option_id, count(*)::int AS votes FROM `+s.t.pollVotes+` WHERE tenant_id = $2 AND question_id = ANY($1::uuid[])
   GROUP BY option_id) c ON c.option_id = x.id WHERE x.tenant_id = $2 AND x.question_id = ANY($1::uuid[])) n
- WHERE o.tenant_id = $2 AND o.id = n.id AND o.vote_count <> n.votes`, slices.Compact(slices.Sorted(slices.Values(polls))), rt.tenant)
+ WHERE o.tenant_id = $2 AND o.id = n.id AND o.vote_count <> n.votes`, slices.Sorted(maps.Keys(polls)), rt.tenant)
 	return err
 }
 
@@ -757,10 +824,11 @@ func (rt *Runtime) RaisePreferenceFloor(ctx context.Context, tx pgx.Tx, floor in
 }
 
 // ImportDeletes deletes comments and polls in tx as their delete routes do:
-// a comment is tombstoned and its reference's and thread's counts follow; a
-// poll tombstone and exact media retirement intent commit together. The
-// existing content-deletion sweep erases files; deleted rows remain for history.
-func (rt *Runtime) ImportDeletes(ctx context.Context, tx pgx.Tx, comments, polls []string) error {
+// a comment is tombstoned and its reference's and thread's counts follow (or
+// later recounts them); a poll tombstone and exact media retirement intent
+// commit together. The existing content-deletion sweep erases files; deleted
+// rows remain for history.
+func (rt *Runtime) ImportDeletes(ctx context.Context, tx pgx.Tx, comments, polls []string, later *Recounts) error {
 	s := rt.store
 	if len(comments) > 0 {
 		threadsQuery := `SELECT array_agg(id::text ORDER BY id), array_agg(coalesce(reply_to_id::text, '') ORDER BY id)
@@ -802,10 +870,7 @@ func (rt *Runtime) ImportDeletes(ctx context.Context, tx pgx.Tx, comments, polls
 		if err := rows.Err(); err != nil {
 			return err
 		}
-		if err := rt.recount(ctx, tx, keys); err != nil {
-			return err
-		}
-		if err := rt.recountReplies(ctx, tx, threads); err != nil {
+		if err := rt.settle(ctx, tx, later, Recounts{keys: keys, threads: threads}); err != nil {
 			return err
 		}
 	}
