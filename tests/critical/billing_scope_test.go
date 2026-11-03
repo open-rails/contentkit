@@ -127,6 +127,23 @@ func TestCommerceEntitlementBoundaries(t *testing.T) {
 			})
 		}
 	})
+	t.Run("paywall_sells_only_the_rule's_own_right", func(t *testing.T) {
+		reader, id := newReader(t)
+		for _, want := range []struct {
+			item catalog.Content
+			sell []string
+		}{{one, []string{versionKey}}, {tier, []string{"gold"}}, {entityItem, []string{entityKey}}} {
+			got, err := reader.GetVersion(t.Context(), want.item.Versions[0].ID, ck.GetVersionQuery{})
+			must(t, err)
+			if got.Decision.Allowed || !slices.Equal(got.Decision.Sell, want.sell) {
+				t.Fatalf("item %s decision=%+v, want sell %v", want.item.ID, got.Decision, want.sell)
+			}
+		}
+		// A version key the rule does not sell still opens that version.
+		grant(t, id, product(keyOf(access.VersionKey(a.cfg.Scope.AppID.String(), tier.ID, tier.Versions[0].ID))), nil)
+		assertVersion(t, reader, tier, 0, true)
+		assertVersion(t, reader, tier, 1, false)
+	})
 	t.Run("CK-J06-S02_future_window_cannot_open_content_early", func(t *testing.T) {
 		reader, id := newReader(t)
 		hours := 1
