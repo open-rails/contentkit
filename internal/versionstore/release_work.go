@@ -329,6 +329,11 @@ func (s *Service) planRelease(ctx context.Context, tx pgx.Tx, t versions.Target)
 		// Publication is all-or-nothing for required outputs. Partial
 		// processing is observable to editors, never a partial reader release.
 		plan.Waiting = true
+		if prior != nil && prior.Released && len(k.Missing(prior.View)) > 0 {
+			// A release without a required upload is withdrawn, not kept while
+			// this waits. Re-planning at once leaves the request waiting.
+			live, plan.Waiting, plan.NextAt = false, false, &now
+		}
 	}
 	var identity []any
 	if k != nil {
@@ -876,7 +881,9 @@ func (s *Service) runRelease(ctx context.Context, id string) (resultErr error) {
 			if err != nil {
 				return err
 			}
-			if latest.Fingerprint != plan.Fingerprint {
+			// A plan frozen before its media stopped being ready, such as one
+			// made before an upload became required, never activates.
+			if latest.Fingerprint != plan.Fingerprint || latest.Waiting {
 				current = false
 				return s.scheduleReleaseAtTx(ctx, tx, t, s.o.Now())
 			}
