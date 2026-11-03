@@ -88,7 +88,9 @@ func TestRequiredUploadHoldsRelease(t *testing.T) {
 	}
 	video, err := os.ReadFile(encoded)
 	must(t, err)
-	source := func() ck.MediaFile { return ck.MediaFile{Path: "source.mp4", Type: "video/mp4", Body: bytes.NewReader(video)} }
+	source := func() ck.MediaFile {
+		return ck.MediaFile{Path: "source.mp4", Type: "video/mp4", Body: bytes.NewReader(video)}
+	}
 	poster := func() ck.MediaFile {
 		return ck.MediaFile{Path: "poster.png", Type: "image/png", Body: bytes.NewReader(imageBytes(t))}
 	}
@@ -117,7 +119,9 @@ func TestRequiredUploadHoldsRelease(t *testing.T) {
 		publish(ref)
 		return ref
 	}
-	cover := func() ck.MediaFile { return ck.MediaFile{Path: "cover.png", Type: "image/png", Body: bytes.NewReader(imageBytes(t))} }
+	cover := func() ck.MediaFile {
+		return ck.MediaFile{Path: "cover.png", Type: "image/png", Body: bytes.NewReader(imageBytes(t))}
+	}
 	version := func(ref media.RefBody) catalog.Version {
 		v, err := admin.GetContentVersion(t.Context(), ref.ID, ref.Version, ck.GetContentVersionQuery{})
 		must(t, err)
