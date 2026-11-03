@@ -112,6 +112,7 @@ func (k *RegisteredKind) readiness(m *Manifest, includeUnattached bool) media.Re
 			r.Processing = append(r.Processing, p.To)
 		}
 	}
+	r.Missing = k.Missing(m)
 	switch {
 	case m.Full && len(r.Processing) > 0:
 		r.State = media.StateFull
@@ -119,10 +120,26 @@ func (k *RegisteredKind) readiness(m *Manifest, includeUnattached bool) media.Re
 		r.State = media.StateProcessing
 	case len(r.Failed) > 0:
 		r.State = media.StateFailed
+	case len(r.Missing) > 0:
+		r.State = media.StateMissing
 	default:
 		r.State = media.StateReady
 	}
 	return r
+}
+
+// Missing are the paths of the required uploads m holds no attached file of.
+func (k *RegisteredKind) Missing(m *Manifest) []string {
+	var out []string
+	for i, u := range k.Uploads {
+		if u.Required && (m == nil || !slices.ContainsFunc(m.Files, func(f media.File) bool {
+			j, _, _, _, ok := k.upload(f.Path)
+			return ok && j == i && f.IsUpload() && k.attached(m, f)
+		})) {
+			out = append(out, u.Path)
+		}
+	}
+	return out
 }
 
 // Normalize brings m to its canonical form under k after an edit: the

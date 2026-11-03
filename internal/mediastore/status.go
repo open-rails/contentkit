@@ -83,7 +83,8 @@ func (r *Reader) statusProgress(ctx context.Context, ref contentref.ContentRef, 
 }
 
 func statusOf(k *RegisteredKind, m *Manifest, progress media.EncodeStatus) *media.MediaStatus {
-	out := &media.MediaStatus{State: k.Readiness(m).State, Presets: []media.PresetStatus{}, Failures: []media.ProcessingFailure{}}
+	readiness := k.Readiness(m)
+	out := &media.MediaStatus{State: readiness.State, Presets: []media.PresetStatus{}, Failures: []media.ProcessingFailure{}}
 	if slices.ContainsFunc(m.Files, func(f media.File) bool {
 		return f.IsUpload() && statusHasPending(k, m, f) && isVideoType(f.Type)
 	}) {
@@ -207,6 +208,8 @@ func statusOf(k *RegisteredKind, m *Manifest, progress media.EncodeStatus) *medi
 		out.State = media.StateProcessing
 	case failures:
 		out.State = media.StateFailed
+	case len(readiness.Missing) > 0:
+		out.State = media.StateMissing
 	default:
 		out.State = media.StateReady
 	}
