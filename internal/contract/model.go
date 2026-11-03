@@ -56,7 +56,7 @@ var enums = []enum{
 	{"OpName", []string{media.OpPut, media.OpEdit, media.OpMove, media.OpRename, media.OpRemove, media.OpAttach,
 		media.OpCopy, media.OpFrame, media.OpMeta, media.OpRegenerate}, []string{"media.Op.op"}},
 	{"Access", []string{media.AccessFull, media.AccessPartial, media.AccessNone}, []string{"media.ReadResult.access"}},
-	{"ItemState", []string{media.StateReady, media.StateProcessing, media.StateFailed}, []string{"media.ReadResult.state"}},
+	{"ItemState", []string{media.StateReady, media.StateProcessing, media.StateFailed, media.StateMissing}, []string{"media.ReadResult.state"}},
 	{"EncodePhase", media.EncodePhases, []string{"media.EncodeProgress.phase"}},
 	{"PollKind", []string{content.PollMultipleChoice}, []string{"content.Poll.kind", "content.PollInput.kind"}},
 	{"ModerationState", []string{content.ModerationApproved, content.ModerationHeld, content.ModerationRejected},

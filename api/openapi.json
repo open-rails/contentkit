@@ -19425,7 +19425,8 @@
         "enum": [
           "ready",
           "processing",
-          "failed"
+          "failed",
+          "missing"
         ]
       },
       "EncodePhase": {

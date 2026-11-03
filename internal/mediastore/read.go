@@ -582,7 +582,7 @@ func (r *Reader) read(ctx context.Context, ref contentref.ContentRef, actor acce
 	}
 	if editor {
 		out.State, out.Full, out.Uploads = k.Readiness(g.Manifest).State, g.Manifest.Full, k.UploadRules()
-		if out.State == media.StateReady && slices.ContainsFunc(g.Manifest.Files, func(f media.File) bool { return !f.Unattached && statusArchivePending(k, f) }) {
+		if (out.State == media.StateReady || out.State == media.StateMissing) && slices.ContainsFunc(g.Manifest.Files, func(f media.File) bool { return !f.Unattached && statusArchivePending(k, f) }) {
 			out.State = media.StateProcessing
 		}
 	}
