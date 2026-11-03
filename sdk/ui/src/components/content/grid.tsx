@@ -131,7 +131,8 @@ function CardGridBody({ list, render, filterKinds, filterLanguage, horizontal, s
   const lockedCount = list.summary?.locked_count ?? 0;
   const filteredCount = p.showFilteredSummary === false ? 0 : (list.summary?.filtered_count ?? 0);
   const collapse = p.locked === "collapse" && !expanded && lockedCount > 0;
-  const lockedTile = collapse && lockedCount > 0 && columns >= Math.max(0, p.lockedSummaryMinColumns ?? 0);
+  const pastEnd = !list.loading && list.items.length === 0 && positionOffset > 0;
+  const lockedTile = collapse && !pastEnd && lockedCount > 0 && columns >= Math.max(0, p.lockedSummaryMinColumns ?? 0);
   const entries = useMemo(() => {
     const result: ({ key: string; card: Card; position: number } | { key: string; premium: true; card?: Card })[] = [];
     let inserted = false;
@@ -170,7 +171,7 @@ function CardGridBody({ list, render, filterKinds, filterLanguage, horizontal, s
   const lowerBound = list.summary?.truncated ? "≥ " : "";
   const premiumLabel = lowerBound + (p.summaryLabels?.premium?.(lockedCount) ?? m.plural("contents.lockedShow", lockedCount));
   const filteredLabel = lowerBound + (p.summaryLabels?.filtered?.(filteredCount) ?? m.plural("releases.filteredMore", filteredCount));
-  const showGrid = entries.length > 0 || filteredCount > 0 || (collapse && lockedCount > 0);
+  const showGrid = entries.length > 0 || (!pastEnd && (filteredCount > 0 || (collapse && lockedCount > 0)));
   return (
     <ContentKitUiRoot appearance={p.appearance} className={cn("grid gap-4 text-sm", p.className)} data-ckui="content-grid" aria-busy={list.loading}>
       {list.loading && !list.items.length ? (
