@@ -2586,6 +2586,19 @@
       ]
     },
     {
+      "id": "CK-J09-S32",
+      "journey": "CK-J09",
+      "behavior": "A required upload holds a version back: without it nothing releases, editors read it as missing, and a release made without it is withdrawn",
+      "status": "verified",
+      "cases": [
+        "TestRequiredUploadReadiness",
+        "TestRequiredUploadHoldsRelease"
+      ],
+      "evidence": [
+        "Pure readiness table: a required upload counts once attached (pages also once included); staged or encoding reads processing, failed reads failed, absent reads missing. Real worker, S3 and publication: a clip released without its source and a gallery released without pages before the rule are withdrawn by Reconcile (exactly two queued), leave the anonymous listings, read missing to editors with their publications waiting, while the encoded clip and the gallery with pages stay live; the withdrawn clip's version read is 404. A release whose storage copy failed under the old rule keeps its frozen plan; retried after the rule, it waits instead of going live. A clip published without its source never activates a release (not released, no release, no published_at). After its source is uploaded the clip stays unreleased while its encode output is held, then releases; a second Reconcile queues none. Focused local runs passed with the race detector; mutations (keeping a release that lacks its source; readiness ignoring Required; activating a frozen plan that now waits) failed them."
+      ]
+    },
+    {
       "id": "CK-J31-S01",
       "journey": "CK-J31",
       "behavior": "Host resolves entity ids in every state, merged ones to their final survivor",
