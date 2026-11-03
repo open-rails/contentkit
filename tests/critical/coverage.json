@@ -7019,7 +7019,9 @@
         "TestConcurrentImportedReplyMoves",
         "TestMovedImportedReplyDeletionWithModeration",
         "TestImportFallbackRecountsOnce",
-        "TestImportedCommentLikeLockOrder"
+        "TestImportedCommentLikeLockOrder",
+        "TestImportDeferredRecounts",
+        "TestDeferredRecountKeepsRequeuedTarget"
       ],
       "implemented_security_cases": [
         "TestHTTPAuthenticationMatrix/CK-API-166_POST_/v1/import/malformed_credential",
@@ -7035,7 +7037,7 @@
       "evidence": [
         "Selected phase1 credential failures, foreign app-key binding, declared staff permission gate when applicable, HEAD inheritance and no protected body disclosure. Positive functionality and deeper route-specific profiles remain P1."
       ],
-      "qualified_scope": "phase1 security, scoped reply-count concurrency, one recount per fallback chunk and imported comment-like lock order; not full route functionality"
+      "qualified_scope": "phase1 security, scoped reply-count concurrency, one recount per fallback chunk, imported comment-like lock order and deferred recounts; not full route functionality"
     },
     {
       "id": "CK-API-167",
