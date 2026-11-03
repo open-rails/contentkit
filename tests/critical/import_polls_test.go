@@ -1,11 +1,15 @@
 package critical_test
 
 import (
+	"context"
+	"fmt"
 	"reflect"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contentref"
@@ -229,6 +233,130 @@ func TestImportedPollChoiceRaces(t *testing.T) {
 			must(t, err)
 			if got.TotalVotes != 1 || got.Options[2].Label != p.Options[2].Label || got.Options[2].VoteCount != 1 {
 				t.Fatalf("choice race changed voted choice or counts: %+v", got)
+			}
+		})
+	}
+}
+
+// A live vote on the option an import recounts, cast just before the recount
+// or while it is paused after its snapshot, must survive the recount.
+func TestImportedVoteRecountKeepsLiveVote(t *testing.T) {
+	w := newWorld(t, func(c *ck.Config) { c.Interactions.Limits.Disabled = true })
+	a := w.apps[0]
+	admin := a.engine.Client()
+	qs := pgx.Identifier{w.schema}.Sanitize()
+	blockedBy := func(t *testing.T, pid uint32) uint32 {
+		t.Helper()
+		var waiter uint32
+		waitForWithin(t, 10*time.Second, func() bool {
+			must(t, w.pool.QueryRow(t.Context(), `SELECT coalesce(min(pid),0) FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid))`, pid).Scan(&waiter))
+			return waiter != 0
+		})
+		return waiter
+	}
+	queryOf := func(t *testing.T, pid uint32) string {
+		t.Helper()
+		var query string
+		must(t, w.pool.QueryRow(t.Context(), "SELECT query FROM pg_stat_activity WHERE pid=$1", pid).Scan(&query))
+		return query
+	}
+	for _, mode := range []string{"vote_during_recount", "vote_before_recount"} {
+		t.Run(mode, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+			defer cancel()
+			_, token := w.person(t, 0)
+			created := time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
+			record := importer.PollRecord{ExternalID: mode, Question: "Choose", Language: "en", CreatedAt: &created,
+				Options: []importer.PollOptionRecord{{ExternalID: mode + "-one", Label: "One"}, {ExternalID: mode + "-two", Label: "Two", Position: 1}}}
+			initial, err := admin.PostImport(ctx, importer.Batch{Source: "vote-recount-race", Polls: []importer.PollRecord{record}})
+			must(t, err)
+			if len(initial.Failed) != 0 {
+				t.Fatalf("poll import fixture failed: %+v", initial)
+			}
+			p, err := admin.GetPoll(ctx, initial.IDs[importer.RecordPoll][record.ExternalID])
+			must(t, err)
+			option := p.Options[0].ID
+			gate := w.schema + ":" + mode
+			holder, err := w.pool.Acquire(ctx)
+			must(t, err)
+			defer holder.Release()
+			_, err = holder.Exec(ctx, "SELECT pg_advisory_lock(hashtextextended($1,0))", gate)
+			must(t, err)
+			locked := true
+			defer func() {
+				cleanupCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				if locked {
+					_, _ = holder.Exec(cleanupCtx, "SELECT pg_advisory_unlock(hashtextextended($1,0))", gate)
+				}
+				_, err := holder.Exec(cleanupCtx, `DROP TRIGGER IF EXISTS critical_vote_recount ON `+qs+`.content_poll_options; DROP FUNCTION IF EXISTS `+qs+`.critical_vote_recount()`)
+				must(t, err)
+			}()
+			// The gate holds the transaction that sees its own vote on the poll:
+			// the import votes by IP, the live voter by account.
+			pause := `CREATE FUNCTION %[1]s.critical_vote_recount() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN
+ IF EXISTS (SELECT 1 FROM %[1]s.content_poll_votes WHERE question_id = TG_ARGV[0]::uuid AND CASE TG_ARGV[2] WHEN 'ip' THEN ip IS NOT NULL ELSE user_id IS NOT NULL END) THEN
+  PERFORM pg_advisory_xact_lock(hashtextextended(TG_ARGV[1],0));
+ END IF;
+ RETURN NULL; END$$;
+`
+			if mode == "vote_during_recount" {
+				// A statement trigger fires after the recount UPDATE takes its
+				// snapshot and before it touches a row.
+				pause += `CREATE TRIGGER critical_vote_recount BEFORE UPDATE ON %[1]s.content_poll_options FOR EACH STATEMENT EXECUTE FUNCTION %[1]s.critical_vote_recount('%[2]s','%[3]s','ip')`
+			} else {
+				pause += `CREATE TRIGGER critical_vote_recount AFTER UPDATE ON %[1]s.content_poll_options FOR EACH ROW EXECUTE FUNCTION %[1]s.critical_vote_recount('%[2]s','%[3]s','user')`
+			}
+			_, err = w.pool.Exec(ctx, fmt.Sprintf(pause, qs, p.ID, gate))
+			must(t, err)
+			imported, live := make(chan error, 1), make(chan error, 1)
+			runImport := func() {
+				result, err := admin.PostImport(ctx, importer.Batch{Source: "vote-recount-race",
+					Votes: []importer.VoteRecord{{Poll: importer.Ref{ID: p.ID}, Option: importer.Ref{ID: option}, IP: "198.51.100.70"}}})
+				if err == nil && (len(result.Failed) != 0 || result.Written[importer.SectionVotes] != 1) {
+					err = fmt.Errorf("vote import failed: %+v", result)
+				}
+				imported <- err
+			}
+			vote := func() {
+				_, err := a.client(token).PostPollVote(ctx, p.ID, content.PollVote{OptionID: option})
+				live <- err
+			}
+			if mode == "vote_during_recount" {
+				go runImport()
+				importPID := blockedBy(t, holder.Conn().PgConn().PID())
+				if query := queryOf(t, importPID); !strings.Contains(query, "SET vote_count = n.votes") {
+					t.Fatalf("import paused outside its vote recount: %s", query)
+				}
+				go vote()
+				// The live vote either commits now or waits for the import's option lock.
+				waitForWithin(t, 10*time.Second, func() bool {
+					var waiting bool
+					must(t, w.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid)))`, importPID).Scan(&waiting))
+					return waiting || len(live) > 0
+				})
+			} else {
+				go vote()
+				livePID := blockedBy(t, holder.Conn().PgConn().PID())
+				if query := queryOf(t, livePID); !strings.Contains(query, "vote_count = vote_count + 1") {
+					t.Fatalf("live vote paused outside its count: %s", query)
+				}
+				go runImport()
+				if query := queryOf(t, blockedBy(t, livePID)); !strings.Contains(query, "content_poll_options") {
+					t.Fatalf("import waited outside its vote recount: %s", query)
+				}
+			}
+			_, err = holder.Exec(ctx, "SELECT pg_advisory_unlock(hashtextextended($1,0))", gate)
+			must(t, err)
+			locked = false
+			must(t, <-imported)
+			must(t, <-live)
+			got, err := admin.GetPoll(ctx, p.ID)
+			must(t, err)
+			var votes int
+			must(t, w.pool.QueryRow(ctx, `SELECT count(*) FROM `+qs+`.content_poll_votes WHERE tenant_id=$1 AND option_id=$2`, a.cfg.Scope.AppID.String(), option).Scan(&votes))
+			if votes != 2 || got.Options[0].VoteCount != 2 || got.TotalVotes != 2 {
+				t.Fatalf("import recount lost a live vote: count=%d total=%d votes=%d; want 2", got.Options[0].VoteCount, got.TotalVotes, votes)
 			}
 		})
 	}
