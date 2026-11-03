@@ -480,6 +480,127 @@ func (rt *Runtime) settle(ctx context.Context, tx pgx.Tx, later *Recounts, r Rec
 	return rt.Recount(ctx, tx, &r)
 }
 
+// queued is one target a bulk import left to recount.
+type queued struct {
+	Target  string `json:"target"` // counts, replies or votes
+	Kind    string `json:"kind"`
+	ID      string `json:"id"`
+	Version string `json:"version,omitempty"`
+	Mark    int64  `json:"mark,omitempty"`
+}
+
+// QueueRecounts queues r's targets for RecountQueued instead of recounting
+// them, in tx after the writes that left r: queue rows lock last, in key
+// order. Queuing a queued target again bumps its mark, so a recount already
+// under way leaves it queued.
+func (rt *Runtime) QueueRecounts(ctx context.Context, tx pgx.Tx, r *Recounts) error {
+	var rows []queued
+	for k := range r.keys {
+		rows = append(rows, queued{Target: "counts", Kind: k.Kind, ID: k.ID, Version: k.Version})
+	}
+	for id := range r.threads {
+		rows = append(rows, queued{Target: "replies", Kind: content.KindComment, ID: id})
+	}
+	for id := range r.polls {
+		rows = append(rows, queued{Target: "votes", Kind: "poll", ID: id})
+	}
+	if len(rows) == 0 {
+		return nil
+	}
+	data, err := json.Marshal(rows)
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `INSERT INTO `+rt.store.t.recounts+` AS q (tenant_id, target, content_kind, content_id, content_version_id)
+ SELECT $1, r.target, r.kind, r.id, r.version FROM jsonb_to_recordset($2::jsonb) AS r(target text, kind text, id text, version text)
+ ORDER BY r.target, r.kind, r.id, r.version
+ ON CONFLICT (tenant_id, target, content_kind, content_id, content_version_id) DO UPDATE SET mark = q.mark + 1, marked_at = now()`, rt.tenant, string(data))
+	return err
+}
+
+// recountBatch is the most queued targets one transaction recounts.
+const recountBatch = 50
+
+// RecountQueued recounts up to limit queued targets, oldest first, a batch
+// per transaction, and returns how many it took off the queue's front.
+func (rt *Runtime) RecountQueued(ctx context.Context, limit int) (int, error) {
+	done := 0
+	for done < limit {
+		n, err := rt.recountQueued(ctx, min(recountBatch, limit-done))
+		if err != nil || n == 0 {
+			return done, err
+		}
+		done += n
+	}
+	return done, nil
+}
+
+// recountQueued recounts the n oldest queued targets in one transaction.
+// It locks as an import's recount does (comments, then rollups, then poll
+// options) and then dequeues, without waiting, the targets no import has
+// queued again since it read them.
+func (rt *Runtime) recountQueued(ctx context.Context, n int) (int, error) {
+	s := rt.store
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	if err != nil {
+		return 0, err
+	}
+	defer tx.Rollback(ctx)
+	rows, err := tx.Query(ctx, `SELECT target, content_kind, content_id, coalesce(content_version_id, ''), mark FROM `+s.t.recounts+`
+ WHERE tenant_id = $1 ORDER BY marked_at, target, content_kind, content_id, content_version_id LIMIT $2`, rt.tenant, n)
+	if err != nil {
+		return 0, err
+	}
+	taken, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (queued, error) {
+		var q queued
+		err := row.Scan(&q.Target, &q.Kind, &q.ID, &q.Version, &q.Mark)
+		return q, err
+	})
+	if err != nil || len(taken) == 0 {
+		return 0, err
+	}
+	r := Recounts{keys: map[keyRow]bool{}, threads: map[string]bool{}, polls: map[string]bool{}}
+	var comments []keyRow
+	for _, q := range taken {
+		switch q.Target {
+		case "counts":
+			r.keys[keyRow{q.Kind, q.ID, q.Version}] = true
+			comments = append(comments, keyRow{q.Kind, q.ID, q.Version})
+		case "replies":
+			r.threads[q.ID] = true
+			comments = append(comments, keyRow{Kind: content.KindComment, ID: q.ID})
+		case "votes":
+			r.polls[q.ID] = true
+		}
+	}
+	// The threads lock with the recounted comments, before rollups.
+	if _, err := rt.lockComments(ctx, tx, comments); err != nil {
+		return 0, err
+	}
+	if err := rt.Recount(ctx, tx, &r); err != nil {
+		return 0, err
+	}
+	data, err := json.Marshal(taken)
+	if err != nil {
+		return 0, err
+	}
+	if _, err := tx.Exec(ctx, `WITH done AS (SELECT q.ctid FROM `+s.t.recounts+` q
+ JOIN jsonb_to_recordset($2::jsonb) AS d(target text, kind text, id text, version text, mark bigint)
+  ON q.target = d.target AND q.content_kind = d.kind AND q.content_id = d.id AND q.content_version_id IS NOT DISTINCT FROM d.version AND q.mark = d.mark
+ WHERE q.tenant_id = $1 FOR UPDATE OF q SKIP LOCKED)
+DELETE FROM `+s.t.recounts+` q USING done WHERE q.ctid = done.ctid`, rt.tenant, string(data)); err != nil {
+		return 0, err
+	}
+	return len(taken), tx.Commit(ctx)
+}
+
+// QueuedRecounts is how many targets wait for RecountQueued.
+func (rt *Runtime) QueuedRecounts(ctx context.Context) (int, error) {
+	var n int
+	err := rt.store.pool.QueryRow(ctx, `SELECT count(*) FROM `+rt.store.t.recounts+` WHERE tenant_id = $1`, rt.tenant).Scan(&n)
+	return n, err
+}
+
 // recount sets the references' counts to what their rows hold: likes and
 // dislikes, favorites, published top-level comments, and a comment's own
 // like and dislike counters.

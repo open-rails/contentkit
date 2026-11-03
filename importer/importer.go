@@ -22,6 +22,9 @@ import (
 // included.
 const MaxRecords = 20_000
 
+// MaxRecount bounds the queued targets one batch recounts.
+const MaxRecount = 1000
+
 // Batch is one import call. Its sections are written in field order, each in
 // transactions of up to a thousand records; a record may name what an
 // earlier section or an earlier call wrote, by id or by external id.
@@ -51,6 +54,16 @@ type Batch struct {
 	// Deletes, written last, remove records gone from the source. Records
 	// are never deleted by their absence from a batch.
 	Deletes []DeleteRecord `json:"deletes,omitempty"`
+	// DeferRecounts queues the targets of the batch's comments, reactions,
+	// favorites, votes and comment deletes for a later recount instead of
+	// recounting them after each chunk. Their counts lag until a batch with
+	// Recount reaches them. For a long import that touches the same targets
+	// in many batches.
+	DeferRecounts bool `json:"defer_recounts,omitempty"`
+	// Recount, after the batch's records, recounts up to this many queued
+	// targets, oldest first (at most MaxRecount). Send it until the result's
+	// RecountsQueued is 0.
+	Recount int `json:"recount,omitempty"`
 }
 
 // Ref names a record by its ContentKit id or by its external id under the
@@ -417,6 +430,11 @@ type Result struct {
 	Failed  []RecordFailure `json:"failed"`
 	// IDs maps each written record's external id to its id, by entity.
 	IDs map[string]map[string]string `json:"ids"`
+	// Recounted is how many queued targets the batch's Recount recounted.
+	Recounted int `json:"recounted,omitempty"`
+	// RecountsQueued is how many targets still wait for a recount, when the
+	// batch defers recounts or recounts.
+	RecountsQueued *int `json:"recounts_queued,omitempty"`
 }
 
 // RecordFailure is one record not written. Sending it again (or the whole

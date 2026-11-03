@@ -74,6 +74,16 @@ and prices are managed through OpenRails, not the ContentKit import.
 Imports update content facets and interaction counts in their writing
 transactions, and queue search-document updates. Entity counts and automatic
 covers derive from current facets on reads; there is no periodic recount.
+
+A recount reads every row of each target a chunk touched, so a long import
+that touches the same popular targets in batch after batch can set
+`defer_recounts`. Its comments, reactions, favorites, votes and comment
+deletes then queue their targets (counts, reply counts, poll option counts)
+instead of recounting them, and those counts lag. At the end, send batches with
+`recount` (up to 1000 each, records optional) until `recounts_queued` is 0:
+each recounts the oldest queued targets once, and the counts then include
+every row, live writes made meanwhile among them. A target queued again
+while a recount reads it stays queued for the next one.
 Channel lifecycle changes finish through direct idempotent AuthKit calls. There
 is no channel-sync worker. Incomplete channels remain unavailable for authoring.
 

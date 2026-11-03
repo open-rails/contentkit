@@ -72,9 +72,10 @@ func New(o Options) (*Service, error) {
 
 var sourceRE = regexp.MustCompile(`^[a-z0-9][a-z0-9_.-]{0,63}$`)
 
-// Import writes a batch, section by section. It fails as a whole only for a
-// batch it refuses outright or when ctx ends; records that fail are in the
-// result.
+// Import writes a batch, section by section, then recounts the queued
+// targets it asks for. It fails as a whole only for a batch it refuses
+// outright, a recount that fails, or when ctx ends; records that fail are
+// in the result.
 func (s *Service) Import(ctx context.Context, b importer.Batch) (importer.Result, error) {
 	res := importer.Result{Written: map[string]int{}, Failed: []importer.RecordFailure{}, IDs: map[string]map[string]string{}}
 	if !sourceRE.MatchString(b.Source) {
@@ -82,6 +83,9 @@ func (s *Service) Import(ctx context.Context, b importer.Batch) (importer.Result
 	}
 	if n := b.RecordCount(); n > importer.MaxRecords {
 		return res, fmt.Errorf("%w: %d records; at most %d per batch", ErrInvalid, n, importer.MaxRecords)
+	}
+	if b.Recount < 0 || b.Recount > importer.MaxRecount {
+		return res, fmt.Errorf("%w: recount %d; 0 to %d per batch", ErrInvalid, b.Recount, importer.MaxRecount)
 	}
 	if len(b.Channels) > 0 && s.o.Channels == nil {
 		return res, fmt.Errorf("%w: channels are not configured", ErrInvalid)
@@ -110,6 +114,19 @@ func (s *Service) Import(ctx context.Context, b importer.Batch) (importer.Result
 				return res, err
 			}
 		}
+	}
+	if b.Recount > 0 {
+		n, err := s.o.Content.RecountQueued(ctx, b.Recount)
+		if res.Recounted = n; err != nil {
+			return res, err
+		}
+	}
+	if b.DeferRecounts || b.Recount > 0 {
+		n, err := s.o.Content.QueuedRecounts(ctx)
+		if err != nil {
+			return res, err
+		}
+		res.RecountsQueued = &n
 	}
 	if len(res.Written) > 0 && s.o.Rebuild != nil {
 		if err := s.o.Rebuild(ctx); err != nil {
@@ -159,7 +176,8 @@ type section struct {
 
 // runChunk writes records [from, to) of a section in one transaction: all
 // together, else (one failed) each in its own savepoint, so only failures
-// are left out, and then recounts once what the written ones touched.
+// are left out. After one-by-one writes it recounts once what the written
+// ones touched; a batch that defers recounts queues them instead.
 func (s *Service) runChunk(ctx context.Context, run *batchRun, sec section, from, to int) error {
 	tx, err := s.o.Pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
@@ -206,13 +224,17 @@ func (s *Service) runChunk(ctx context.Context, run *batchRun, sec section, from
 		}
 		return sp.Commit(ctx)
 	}
+	var later contentstore.Recounts
+	var settle *contentstore.Recounts
+	if run.b.DeferRecounts {
+		settle = &later
+	}
 	written := ready
-	if err := write(ready, nil); err != nil {
+	if err := write(ready, settle); err != nil {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		written = nil
-		var later contentstore.Recounts
+		written, later, settle = nil, contentstore.Recounts{}, &later
 		for _, p := range ready {
 			var own contentstore.Recounts
 			if err := write([]pending{p}, &own); err != nil {
@@ -225,7 +247,13 @@ func (s *Service) runChunk(ctx context.Context, run *batchRun, sec section, from
 			later.Merge(&own)
 			written = append(written, p)
 		}
-		if err := s.o.Content.Recount(ctx, tx, &later); err != nil {
+	}
+	if settle != nil {
+		finish := s.o.Content.Recount
+		if run.b.DeferRecounts {
+			finish = s.o.Content.QueueRecounts
+		}
+		if err := finish(ctx, tx, settle); err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
