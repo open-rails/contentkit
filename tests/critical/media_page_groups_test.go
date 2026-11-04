@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image"
 	"image/color"
@@ -29,31 +30,42 @@ import (
 	"github.com/riverqueue/river/rivertest"
 )
 
-// The image processor records a gallery's rendered pages in groups. The host
-// runs without its media worker: the test places the staged pages and runs
-// the real processor against real PostgreSQL and object storage, so it alone
-// renders and records them.
+// The image processor records a gallery's rendered pages one at a time, or in
+// groups when configured. The host runs without its media worker: the test
+// places the staged pages and runs the real processor against real PostgreSQL
+// and object storage, so it alone renders and records them.
 func TestMediaPageGroups(t *testing.T) {
 	m := newResilientMedia(t, func(c *ck.Config) { c.Media.Kinds[0].Uploads[0].Max = 64 })
+
+	t.Run("by_default_each_page_takes_its_own_manifest_edit_and_report", func(t *testing.T) {
+		g := newPageGroups(t, m, "One record per page", landscapePages(t, 5, 60))
+		before := g.manifestEdits(t)
+		must(t, g.processor(t, mediaimage.Config{Workers: 1}).Process(g.job(t.Context()), mediastore.ProcessJob{Ref: g.target}))
+		if edits := g.manifestEdits(t) - before; edits != 5 {
+			t.Fatalf("5 pages took %d manifest edits; by default each takes its own", edits)
+		}
+		if _, readers := g.readers(t); len(readers) != 5 {
+			t.Fatalf("%d of 5 pages recorded their reader output", len(readers))
+		}
+		progress := g.readerProgress(t)
+		want := []string{media.EventProcessingProgressed + ":1/5", media.EventProcessingProgressed + ":2/5", media.EventProcessingProgressed + ":3/5",
+			media.EventProcessingProgressed + ":4/5", media.EventProcessingCompleted + ":5/5"}
+		if len(progress) < 5 || !slices.Equal(progress[len(progress)-5:], want) {
+			t.Fatalf("processing events %v do not report each page, want them to end %v", progress, want)
+		}
+	})
 
 	t.Run("forty_pages_take_two_manifest_edits_and_report_each_group", func(t *testing.T) {
 		g := newPageGroups(t, m, "Grouped page records", landscapePages(t, 40, 0))
 		before := g.manifestEdits(t)
-		must(t, g.processor(t, mediaimage.Config{Workers: 2, GroupWait: time.Minute}).Process(g.job(t.Context()), mediastore.ProcessJob{Ref: g.target}))
+		must(t, g.processor(t, mediaimage.Config{Workers: 2, GroupSize: 32, GroupWait: time.Minute}).Process(g.job(t.Context()), mediastore.ProcessJob{Ref: g.target}))
 		if edits := g.manifestEdits(t) - before; edits != 2 {
 			t.Fatalf("40 pages took %d manifest edits; groups of 32 take 2", edits)
 		}
 		if _, readers := g.readers(t); len(readers) != 40 {
 			t.Fatalf("%d of 40 pages recorded their reader output", len(readers))
 		}
-		var progress []string
-		for _, event := range g.processingEvents(t) {
-			for _, preset := range event.fact.Presets {
-				if preset.Name == "reader" {
-					progress = append(progress, fmt.Sprintf("%s:%d/%d", event.typ, preset.Completed, preset.Total))
-				}
-			}
-		}
+		progress := g.readerProgress(t)
 		want := []string{media.EventProcessingProgressed + ":32/40", media.EventProcessingCompleted + ":40/40"}
 		if len(progress) < 2 || !slices.Equal(progress[len(progress)-2:], want) {
 			t.Fatalf("processing events %v do not report each group, want them to end %v", progress, want)
@@ -61,12 +73,77 @@ func TestMediaPageGroups(t *testing.T) {
 		awaitMediaReady(t, g.client, g.ref)
 	})
 
+	t.Run("a_retried_job_records_each_page_on_its_own_with_grouping_on", func(t *testing.T) {
+		g := newPageGroups(t, m, "Retried with grouping on", landscapePages(t, 5, 70))
+		before := g.manifestEdits(t)
+		must(t, g.processor(t, mediaimage.Config{Workers: 2, GroupSize: 32, GroupWait: time.Minute}).Process(g.job(t.Context()), mediastore.ProcessJob{Ref: g.target, Retry: true}))
+		if edits := g.manifestEdits(t) - before; edits != 5 {
+			t.Fatalf("a retry took %d manifest edits for 5 pages; it records each on its own", edits)
+		}
+		if _, readers := g.readers(t); len(readers) != 5 {
+			t.Fatalf("%d of 5 pages recorded their reader output", len(readers))
+		}
+	})
+
+	t.Run("the_group_wait_records_a_partial_group", func(t *testing.T) {
+		pages := landscapePages(t, 6, 80)
+		g := newPageGroups(t, m, "Partial group after the wait", pages)
+		g.store.holdRead(g.blobKey(t, pages[5].path))
+		before := g.manifestEdits(t)
+		processor := g.processor(t, mediaimage.Config{Workers: 2, GroupSize: 32, GroupWait: 50 * time.Millisecond})
+		done := make(chan error, 1)
+		go func() { done <- processor.Process(g.job(t.Context()), mediastore.ProcessJob{Ref: g.target}) }()
+		g.store.awaitHeld(t)
+		// Far from 32, the group is recorded only because its wait ran out.
+		waitForWithin(t, 30*time.Second, func() bool {
+			_, readers := g.readers(t)
+			return len(readers) == 5
+		})
+		waited := g.manifestEdits(t) - before
+		if waited < 1 || waited > 5 {
+			t.Fatalf("the five finished pages took %d manifest edits", waited)
+		}
+		close(g.store.release)
+		must(t, <-done)
+		if edits := g.manifestEdits(t) - before; edits != waited+1 {
+			t.Fatalf("the held page took %d manifest edits, want 1", edits-waited)
+		}
+		if _, readers := g.readers(t); len(readers) != 6 {
+			t.Fatalf("%d of 6 pages recorded their reader output", len(readers))
+		}
+	})
+
+	t.Run("halving_isolates_one_unrecordable_page_of_32_in_eleven_edits", func(t *testing.T) {
+		pages := landscapePages(t, 32, 90)
+		g := newPageGroups(t, m, "One page that cannot be recorded", pages)
+		bad := pages[20].path
+		g.store.refuseOutputOf(g.blobKey(t, bad))
+		before := g.manifestEdits(t)
+		// One worker renders the pages in order, so the refused output is the bad page's.
+		err := g.processor(t, mediaimage.Config{Workers: 1, GroupSize: 32, GroupWait: time.Minute}).Process(g.job(t.Context()), mediastore.ProcessJob{Ref: g.target})
+		if !errors.Is(err, errOutputRefused) {
+			t.Fatalf("processing returned %v, want the bad page's error", err)
+		}
+		// The group and the halves holding the bad page fail: 32, 16, 8, 4, 2
+		// and 1 pages. The five halves beside them are kept.
+		if edits := g.manifestEdits(t) - before; edits != 11 {
+			t.Fatalf("isolating one page of 32 took %d manifest edits, want 11", edits)
+		}
+		snapshot, readers := g.readers(t)
+		if _, ok := readers[bad]; ok || len(readers) != 31 {
+			t.Fatalf("%d pages recorded, want the 31 others", len(readers))
+		}
+		if f, _ := snapshot.Get(bad); f.Fail() != nil {
+			t.Fatalf("the unrecorded page was marked failed: %+v", f.Fail())
+		}
+	})
+
 	t.Run("an_unrenderable_page_fails_alone_in_its_group", func(t *testing.T) {
 		pages := landscapePages(t, 6, 10)
 		pages[3].data = pageImage(t, 400, 400, 13)
 		g := newPageGroups(t, m, "One page over the pixel limit", pages)
 		before := g.manifestEdits(t)
-		must(t, g.processor(t, mediaimage.Config{Workers: 2, GroupWait: time.Minute, MaxPixels: 100_000}).Process(g.job(t.Context()), mediastore.ProcessJob{Ref: g.target}))
+		must(t, g.processor(t, mediaimage.Config{Workers: 2, GroupSize: 32, GroupWait: time.Minute, MaxPixels: 100_000}).Process(g.job(t.Context()), mediastore.ProcessJob{Ref: g.target}))
 		if edits := g.manifestEdits(t) - before; edits != 1 {
 			t.Fatalf("one group took %d manifest edits", edits)
 		}
@@ -88,7 +165,7 @@ func TestMediaPageGroups(t *testing.T) {
 		g.store.holdRead(original)
 		done := make(chan error, 1)
 		go func() {
-			done <- g.processor(t, mediaimage.Config{Workers: 2, GroupWait: time.Minute}).Process(g.job(t.Context()), mediastore.ProcessJob{Ref: g.target})
+			done <- g.processor(t, mediaimage.Config{Workers: 2, GroupSize: 32, GroupWait: time.Minute}).Process(g.job(t.Context()), mediastore.ProcessJob{Ref: g.target})
 		}()
 		g.store.awaitHeld(t)
 		_, err := g.client.PostMediaUploadCommit(t.Context(), media.CommitBody{Ref: g.ref, OperationID: uuid.NewString(),
@@ -135,7 +212,7 @@ func TestMediaPageGroups(t *testing.T) {
 		defer cancel()
 		done := make(chan error, 1)
 		go func() {
-			done <- g.processor(t, mediaimage.Config{Workers: 2, GroupWait: time.Minute}).Process(g.job(ctx), mediastore.ProcessJob{Ref: g.target})
+			done <- g.processor(t, mediaimage.Config{Workers: 2, GroupSize: 32, GroupWait: time.Minute}).Process(g.job(ctx), mediastore.ProcessJob{Ref: g.target})
 		}()
 		g.store.awaitHeld(t)
 		waitForWithin(t, 30*time.Second, func() bool { return len(g.store.written()) == 5 })
@@ -163,7 +240,7 @@ WHERE tenant_id=$1 AND folder_prefix=$2 AND object_key=ANY($3) AND retired_at IS
 		if owned != len(unrecorded) {
 			t.Fatalf("%d of %d unrecorded outputs keep their allocation", owned, len(unrecorded))
 		}
-		must(t, g.processor(t, mediaimage.Config{Workers: 2, GroupWait: time.Minute}).Process(g.job(t.Context()), mediastore.ProcessJob{Ref: g.target}))
+		must(t, g.processor(t, mediaimage.Config{Workers: 2, GroupSize: 32, GroupWait: time.Minute}).Process(g.job(t.Context()), mediastore.ProcessJob{Ref: g.target}))
 		if edits := g.manifestEdits(t) - before; edits != 1 {
 			t.Fatalf("retry took %d manifest edits, want 1", edits)
 		}
@@ -184,13 +261,13 @@ WHERE tenant_id=$1 AND folder_prefix=$2 AND object_key=ANY($3) AND retired_at IS
 		// Measure what recording one page adds, on a gallery of the same shape.
 		sample := newPageGroups(t, m, "Manifest growth sample", landscapePages(t, 6, 40))
 		empty := sample.size(t)
-		must(t, sample.processor(t, mediaimage.Config{Workers: 2, GroupWait: time.Minute}).Process(sample.job(t.Context()), mediastore.ProcessJob{Ref: sample.target}))
+		must(t, sample.processor(t, mediaimage.Config{Workers: 2, GroupSize: 32, GroupWait: time.Minute}).Process(sample.job(t.Context()), mediastore.ProcessJob{Ref: sample.target}))
 		perPage := (sample.size(t) - empty) / 6
 		// Leave room for three and a half pages under the edit bound
 		// (MaxManifestBytes less mediastore's 4 KiB editHeadroom).
 		g := newPageGroups(t, m, "Nearly full gallery", landscapePages(t, 6, 50))
 		g.pad(t, media.MaxManifestBytes-4<<10-perPage*7/2)
-		must(t, g.processor(t, mediaimage.Config{Workers: 2, GroupWait: time.Minute}).Process(g.job(t.Context()), mediastore.ProcessJob{Ref: g.target}))
+		must(t, g.processor(t, mediaimage.Config{Workers: 2, GroupSize: 32, GroupWait: time.Minute}).Process(g.job(t.Context()), mediastore.ProcessJob{Ref: g.target}))
 		snapshot, readers := g.readers(t)
 		if !snapshot.Full || len(readers) != 3 {
 			t.Fatalf("full=%v with %d of 6 pages recorded; alone, three fit before the bound", snapshot.Full, len(readers))
@@ -331,14 +408,11 @@ func (g *pageGroups) readers(t *testing.T) (*mediastore.Manifest, map[string]med
 	return snapshot, out
 }
 
-type processingEvent struct {
-	typ  string
-	fact media.ProcessingEvent
-}
-
-func (g *pageGroups) processingEvents(t *testing.T) []processingEvent {
+// readerProgress lists the gallery's processing events as type:completed/total
+// of its reader preset.
+func (g *pageGroups) readerProgress(t *testing.T) []string {
 	t.Helper()
-	var out []processingEvent
+	var out []string
 	query := catalog.EventQuery{Types: []string{media.EventProcessingProgressed, media.EventProcessingCompleted}}
 	for {
 		page, err := g.client.ListEvents(t.Context(), query)
@@ -347,9 +421,13 @@ func (g *pageGroups) processingEvents(t *testing.T) []processingEvent {
 			if record.ContentID != g.ref.ID {
 				continue
 			}
-			event := processingEvent{typ: record.Type}
-			must(t, json.Unmarshal(record.Data, &event.fact))
-			out = append(out, event)
+			var fact media.ProcessingEvent
+			must(t, json.Unmarshal(record.Data, &fact))
+			for _, preset := range fact.Presets {
+				if preset.Name == "reader" {
+					out = append(out, fmt.Sprintf("%s:%d/%d", record.Type, preset.Completed, preset.Total))
+				}
+			}
 		}
 		if !page.HasMore {
 			return out
@@ -393,8 +471,9 @@ func (g *pageGroups) pad(t *testing.T, size int64) {
 }
 
 // pageStore is the real bucket. Its test can hold one source after its bytes
-// were read, as a slow decode would, and sees which rendered outputs were
-// written.
+// were read, as a slow decode would, sees which rendered outputs were written,
+// and can refuse to confirm one source's output, so that page cannot be
+// recorded.
 type pageStore struct {
 	media.Store
 	mu      sync.Mutex
@@ -402,6 +481,29 @@ type pageStore struct {
 	held    chan struct{}
 	release chan struct{}
 	outputs []string
+	refuse  string // a source; the next output written after it is read is refused
+	arm     bool
+	refused string
+}
+
+var errOutputRefused = errors.New("test bucket refuses this output")
+
+// refuseOutputOf refuses the output written after source is read: the
+// processor must render one source at a time.
+func (s *pageStore) refuseOutputOf(source string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.refuse = source
+}
+
+func (s *pageStore) Head(ctx context.Context, key string) (media.Object, error) {
+	s.mu.Lock()
+	refused := s.refused != "" && key == s.refused
+	s.mu.Unlock()
+	if refused {
+		return media.Object{}, errOutputRefused
+	}
+	return s.Store.Head(ctx, key)
 }
 
 func (s *pageStore) holdRead(key string) {
@@ -432,6 +534,9 @@ func (s *pageStore) Get(ctx context.Context, key string, options media.GetOption
 	if hold {
 		s.hold = ""
 	}
+	if err == nil && key == s.refuse {
+		s.refuse, s.arm = "", true
+	}
 	s.mu.Unlock()
 	if !hold {
 		return body, object, err
@@ -455,6 +560,9 @@ func (s *pageStore) Put(ctx context.Context, key string, body io.Reader, size in
 	if err == nil && options.ContentType == "image/webp" {
 		s.mu.Lock()
 		s.outputs = append(s.outputs, key)
+		if s.arm {
+			s.refused, s.arm = key, false
+		}
 		s.mu.Unlock()
 	}
 	return object, err

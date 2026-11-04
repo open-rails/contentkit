@@ -73,6 +73,9 @@ type Config struct {
 	DerivativeWorkers int
 	// ImageSources bounds sources decoded at once within one derivative job.
 	ImageSources int
+	// PageGroup is image.Config's GroupSize: rendered images recorded and
+	// reported per manifest edit (default 1, each on its own).
+	PageGroup int
 	// MaxPixels, MaxFrames and MaxAnimationSeconds bound decoded images
 	// (image.Config's defaults when zero).
 	MaxPixels           int
@@ -221,7 +224,7 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 			hooks = append(hooks, leader)
 		}
 	}
-	images, err := image.New(image.Config{Store: c.Store, Manifests: manifests, Workers: c.ImageSources, MaxPixels: c.MaxPixels, MaxFrames: c.MaxFrames, MaxAnimationSeconds: c.MaxAnimationSeconds})
+	images, err := image.New(image.Config{Store: c.Store, Manifests: manifests, Workers: c.ImageSources, MaxPixels: c.MaxPixels, MaxFrames: c.MaxFrames, MaxAnimationSeconds: c.MaxAnimationSeconds, GroupSize: c.PageGroup})
 	if err != nil {
 		return nil, err
 	}
@@ -419,7 +422,8 @@ func (w *derivativeWorker) Work(ctx context.Context, job *river.Job[workqueue.De
 	}
 	defer func() { err = w.c.finishAttempt(ctx, job.JobRow, err, fail) }()
 	a := job.Args
-	pj := mediastore.ProcessJob{Ref: a.Ref, Preset: a.Preset, Force: a.Force, Editor: a.Editor}
+	// A rescued attempt (process death) keeps its number but leaves an error.
+	pj := mediastore.ProcessJob{Ref: a.Ref, Preset: a.Preset, Force: a.Force, Editor: a.Editor, Retry: len(job.Errors) > 0}
 	if _, err := w.c.Kinds.Item(pj.Ref); err != nil {
 		return river.JobCancel(err)
 	}

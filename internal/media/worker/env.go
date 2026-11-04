@@ -70,6 +70,7 @@ func StoreFromEnv() (*mediaS3.Store, error) {
 //	MEDIA_WORKER_ENCODER         auto (default: per codec NVENC if a probe encode works, else CPU), cpu or nvenc
 //	MEDIA_WORKER_CONCURRENCY     image/video derivative jobs per process (default 1)
 //	MEDIA_WORKER_INGEST_CONCURRENCY  ingest jobs per process (default 2)
+//	MEDIA_WORKER_PAGE_GROUP      rendered images per manifest edit and progress report (default 1; e.g. 32 for bulk imports; retries use 1)
 //	MEDIA_WORKER_SHUTDOWN_GRACE  time running jobs get on SIGTERM before cancel (default 30s)
 func (c *Config) TuningFromEnv() error {
 	for k, p := range map[string]*string{"MEDIA_ACCOUNT_SCHEMA": &c.AccountSchema, "MEDIA_ACCOUNT_WORKER_SCHEMA": &c.AccountWorkerSchema, "MEDIA_WORKER_SCHEMA": &c.Schema, "MEDIA_CONTENT_SCHEMA": &c.ContentSchema, "MEDIA_HOST_RIVER_SCHEMA": &c.HostSchema, "MEDIA_WORKER_TMP": &c.TempDir,
@@ -85,7 +86,7 @@ func (c *Config) TuningFromEnv() error {
 		}
 	}
 	for k, p := range map[string]*int{"MEDIA_WORKER_THREADS": &c.Threads, "MEDIA_WORKER_CONCURRENCY": &c.DerivativeWorkers,
-		"MEDIA_WORKER_INGEST_CONCURRENCY": &c.IngestWorkers} {
+		"MEDIA_WORKER_INGEST_CONCURRENCY": &c.IngestWorkers, "MEDIA_WORKER_PAGE_GROUP": &c.PageGroup} {
 		n, err := intEnv(k, *p)
 		if err != nil {
 			return err

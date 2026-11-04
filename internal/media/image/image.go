@@ -2,8 +2,8 @@
 // Image presets' private WebP files, the Zip presets, the public presets'
 // owned generations, editor views, and the kinds' default public images. A
 // Processor runs one media.ProcessJob: it redoes stale or pending outputs,
-// records them in one manifest edit per group of sources, and keeps public/
-// in step.
+// records them in one manifest edit per source (or per group of sources),
+// and keeps public/ in step.
 package image
 
 import (
@@ -23,6 +23,7 @@ import (
 	mediastore "github.com/open-rails/contentkit/internal/mediastore"
 
 	"github.com/google/uuid"
+	"github.com/open-rails/helpers/deps"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/open-rails/contentkit/media"
@@ -44,8 +45,10 @@ type Config struct {
 	MaxFrames           int
 	MaxAnimationSeconds float64
 	TempDir             string // zip scratch; default os.TempDir()
-	// One manifest edit records GroupSize rendered sources (default 32), or
-	// fewer once the first has waited GroupWait (default 5s).
+	// Each rendered source is recorded and reported on its own (GroupSize 1,
+	// the default). Above 1, one manifest edit records GroupSize of them, or
+	// those finished within GroupWait (default 5s) of the group's first; a
+	// retried job (ProcessJob.Retry) still records each on its own.
 	GroupSize int
 	GroupWait time.Duration
 }
@@ -74,7 +77,7 @@ func New(c Config) (*Processor, error) {
 		c.MaxAnimationSeconds = 60
 	}
 	if c.GroupSize <= 0 {
-		c.GroupSize = 32
+		c.GroupSize = 1
 	}
 	if c.GroupWait <= 0 {
 		c.GroupWait = 5 * time.Second
@@ -144,8 +147,10 @@ func (p *Processor) Process(ctx context.Context, job mediastore.ProcessJob) erro
 		} else {
 			forceZips = false
 		}
-		if len(todo) > 0 {
+		if len(todo) > 0 && p.c.GroupSize > 1 && !job.Retry {
 			err = p.renderInGroups(ctx, item, m, todo)
+		} else if len(todo) > 0 {
+			err = p.renderEach(ctx, item, m, todo)
 		} else {
 			err = p.zipPass(ctx, item, m, zips)
 		}
@@ -295,6 +300,33 @@ func (p *Processor) publicStale(ctx context.Context, item mediastore.Item, f med
 	return false, nil
 }
 
+// renderEach renders todo, Workers sources at a time, and records and reports
+// each as it finishes. A rendered source is recorded even when another failed
+// or the job ended meanwhile, so an exhausted job's FailPending finds only
+// sources that were not rendered or could not be recorded.
+func (p *Processor) renderEach(ctx context.Context, item mediastore.Item, m *mediastore.Manifest, todo []work) error {
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(p.c.Workers)
+	for _, w := range todo {
+		g.Go(func() error {
+			if err := gctx.Err(); err != nil {
+				return err
+			}
+			d, err := p.render(gctx, item, m, w)
+			if err != nil {
+				return p.joinDropIfGone(ctx, item, err, d.written)
+			}
+			ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+			defer cancel()
+			if err := p.record(ctx, item, []done{d}, nil, nil); err != nil {
+				return err
+			}
+			return mediastore.CompleteProcessing(ctx, p.c.Manifests, item.Ref(), nil)
+		})
+	}
+	return g.Wait()
+}
+
 // renderInGroups renders todo, Workers sources at a time, and records the
 // finished sources in groups: GroupSize of them, or those finished within
 // GroupWait of the group's first, and the rest at the end. Each recorded
@@ -399,6 +431,9 @@ func (p *Processor) record(ctx context.Context, item mediastore.Item, results []
 	var written []string // every public key the results may have written
 	for _, d := range results {
 		written = append(written, d.written...)
+	}
+	if err := ctx.Err(); err != nil {
+		return p.joinDropIfGone(ctx, item, err, written)
 	}
 	var orphaned []string
 	k := item.Kind()
@@ -533,16 +568,12 @@ func (p *Processor) record(ctx context.Context, item mediastore.Item, results []
 	switch {
 	case errors.Is(err, mediastore.ErrNotFound):
 		orphaned = written
-	case err != nil && len(results) > 1 && ctx.Err() == nil:
+	case err != nil && len(results) > 1 && ctx.Err() == nil && !outage(err):
 		// One source that does not fit, or cannot be recorded, must not drop
-		// the rest: alone, each is kept or refused as it would be by itself.
-		var first error
-		for _, d := range results {
-			if err := p.record(ctx, item, []done{d}, nil, nil); err != nil && first == nil {
-				first = err
-			}
-		}
-		return first
+		// the rest: each half is tried again, down to the source alone, which
+		// is kept or refused as it would be by itself.
+		half := len(results) / 2
+		return errors.Join(p.record(ctx, item, results[:half], nil, nil), p.record(ctx, item, results[half:], nil, nil))
 	case errors.Is(err, mediastore.ErrManifestTooLarge):
 		// The outputs do not fit: mark the item Full, which stops processing
 		// (the rendered blobs go by age).
@@ -564,6 +595,11 @@ func (p *Processor) record(ctx context.Context, item mediastore.Item, results []
 		}
 	}
 	return nil
+}
+
+// outage reports a store or database that refuses every edit alike.
+func outage(err error) bool {
+	return errors.Is(err, media.ErrUnavailable) || deps.PostgresUnavailable(err)
 }
 
 // joinDropIfGone adds dropIfGone's outcome for keys to err.
