@@ -33,6 +33,17 @@ func counted[T any](fn func(ctx context.Context, tx pgx.Tx, in []T, later *conte
 	}
 }
 
+// screened adapts a store's screen to a section's.
+func screened[T any](fn func(ctx context.Context, tx pgx.Tx, in []T) ([]error, error)) func(context.Context, pgx.Tx, []any) ([]error, error) {
+	return func(ctx context.Context, tx pgx.Tx, in []any) ([]error, error) {
+		list := make([]T, len(in))
+		for i, v := range in {
+			list[i] = v.(T)
+		}
+		return fn(ctx, tx, list)
+	}
+}
+
 // sections are the batch's record entities in write order.
 func (run *batchRun) sections() []section {
 	s, b := run.s, run.b
@@ -54,11 +65,15 @@ func (run *batchRun) sections() []section {
 			write: typed(func(ctx context.Context, tx pgx.Tx, in []codes.Alias) error {
 				return codes.PutAliases(ctx, codes.Pgx(tx), s.qs, s.o.Tenant, in)
 			})},
-		{name: importer.SectionComments, n: len(b.Comments), prepare: run.comment, write: counted(s.o.Content.ImportComments)},
-		{name: importer.SectionReactions, n: len(b.Reactions), prepare: run.reaction, write: counted(s.o.Content.ImportReactions)},
-		{name: importer.SectionFavorites, n: len(b.Favorites), prepare: run.favorite, write: counted(s.o.Content.ImportFavorites)},
+		{name: importer.SectionComments, n: len(b.Comments), prepare: run.comment, write: counted(s.o.Content.ImportComments),
+			screen: screened(s.o.Content.ScreenComments)},
+		{name: importer.SectionReactions, n: len(b.Reactions), prepare: run.reaction, write: counted(s.o.Content.ImportReactions),
+			screen: screened(s.o.Content.ScreenReactions)},
+		{name: importer.SectionFavorites, n: len(b.Favorites), prepare: run.favorite, write: counted(s.o.Content.ImportFavorites),
+			screen: screened(s.o.Content.ScreenFavorites)},
 		{name: importer.SectionPolls, n: len(b.Polls), prepare: run.poll, write: typed(s.o.Content.ImportPolls)},
-		{name: importer.SectionVotes, n: len(b.Votes), prepare: run.vote, write: counted(s.o.Content.ImportVotes)},
+		{name: importer.SectionVotes, n: len(b.Votes), prepare: run.vote, write: counted(s.o.Content.ImportVotes),
+			screen: screened(s.o.Content.ScreenVotes)},
 		{name: importer.SectionLegacyReading, n: len(b.LegacyReading), prepare: run.legacyReading,
 			write: typed(func(ctx context.Context, _ pgx.Tx, in []discovery.ImportLegacyReading) error {
 				return s.o.Signals.ImportLegacyReading(ctx, in)
@@ -320,7 +335,7 @@ func (run *batchRun) deletion(r *resolver, i int) (any, string, error) {
 // then comments and polls. Entities go first because deleting one takes the
 // entity hierarchy lock, which every hierarchy writer takes before content
 // rows; deleting content first would hold content rows while waiting on it.
-// The section's first puts entity records ahead, so a one-by-one retry keeps
+// The section's first puts entity records ahead, so a retry in halves keeps
 // that order.
 func (s *Service) deletes(ctx context.Context, tx pgx.Tx, in []deletion, later *contentstore.Recounts) error {
 	by := map[string][]string{}

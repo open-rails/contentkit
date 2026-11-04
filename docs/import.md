@@ -60,8 +60,11 @@ Sections are written in order: entities, channels, contents, memberships,
 aliases, comments, reactions, favorites, polls, votes, signals,
 deletes; a
 record may name what an earlier section or call wrote. Each section runs in
-transactions of up to 1000 records: all at once, else each in its own
-savepoint, so the result lists only the records that failed
+transactions of up to 1000 records. Comments, reactions, favorites and votes
+that fail on their own (an invalid value, no user, an erased person, an
+option of another poll) are refused first. The rest are written all at once,
+else in halves, each in its own savepoint and halved again until a record
+that fails is alone, so the result lists only the records that failed
 (`section`, `index`, `external_id`, `code`, `error`) and the rest commit.
 Fix the cause and send them, or the whole batch, again. A batch holds at
 most 20,000 records.

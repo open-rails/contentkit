@@ -172,15 +172,19 @@ type section struct {
 	// write writes prepared inputs in tx. Given later, it leaves its
 	// recounts there.
 	write func(ctx context.Context, tx pgx.Tx, in []any, later *contentstore.Recounts) error
+	// screen, if set, refuses in tx, each on its own, the prepared inputs
+	// write would refuse: one error per input, nil for those it lets through.
+	screen func(ctx context.Context, tx pgx.Tx, in []any) ([]error, error)
 	// first, if set, reports whether a prepared input is written ahead of
-	// the rest, so a one-by-one retry keeps the section's lock order.
+	// the rest, so a retry in halves keeps the section's lock order.
 	first func(in any) bool
 }
 
-// runChunk writes records [from, to) of a section in one transaction: all
-// together, else (one failed) each in its own savepoint, so only failures
-// are left out. After one-by-one writes it recounts once what the written
-// ones touched; a batch that defers recounts queues them instead.
+// runChunk writes records [from, to) of a section in one transaction: those
+// the screen lets through all together, else (one failed) in halves, each in
+// its own savepoint and halved again until a failing one is a single record,
+// so only failures are left out. After split writes it recounts once what the
+// written ones touched; a batch that defers recounts queues them instead.
 func (s *Service) runChunk(ctx context.Context, run *batchRun, sec section, from, to int) error {
 	tx, err := s.o.Pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
@@ -207,6 +211,11 @@ func (s *Service) runChunk(ctx context.Context, run *batchRun, sec section, from
 	}
 	if sec.first != nil {
 		sort.SliceStable(ready, func(a, b int) bool { return sec.first(ready[a].in) && !sec.first(ready[b].in) })
+	}
+	if sec.screen != nil {
+		if ready, err = s.screen(ctx, tx, run, sec, ready); err != nil {
+			return err
+		}
 	}
 	write := func(list []pending, later *contentstore.Recounts) error {
 		sp, err := tx.Begin(ctx)
@@ -238,17 +247,31 @@ func (s *Service) runChunk(ctx context.Context, run *batchRun, sec section, from
 			return ctx.Err()
 		}
 		written, later, settle = nil, contentstore.Recounts{}, &later
-		for _, p := range ready {
-			var own contentstore.Recounts
-			if err := write([]pending{p}, &own); err != nil {
-				if ctx.Err() != nil {
+		var split func(list []pending) error
+		split = func(list []pending) error {
+			for _, part := range halves(list) {
+				var own contentstore.Recounts
+				err := write(part, &own)
+				switch {
+				case err == nil:
+					later.Merge(&own)
+					written = append(written, part...)
+				case ctx.Err() != nil:
 					return ctx.Err()
+				case len(part) > 1:
+					if err := split(part); err != nil {
+						return err
+					}
+				default:
+					for _, p := range part {
+						run.fail(sec.name, p.index, p.external, err)
+					}
 				}
-				run.fail(sec.name, p.index, p.external, err)
-				continue
 			}
-			later.Merge(&own)
-			written = append(written, p)
+			return nil
+		}
+		if err := split(ready); err != nil {
+			return err
 		}
 	}
 	if settle != nil {
@@ -282,6 +305,44 @@ func (s *Service) runChunk(ctx context.Context, run *batchRun, sec section, from
 		}
 	}
 	return nil
+}
+
+// halves splits list in two; a single record is its own half.
+func halves(list []pending) [][]pending {
+	if len(list) < 2 {
+		return [][]pending{list}
+	}
+	return [][]pending{list[:len(list)/2], list[len(list)/2:]}
+}
+
+// screen fails the records the section's screen refuses and returns the
+// rest. A screen that cannot run leaves them all to the write.
+func (s *Service) screen(ctx context.Context, tx pgx.Tx, run *batchRun, sec section, ready []pending) ([]pending, error) {
+	ins := make([]any, len(ready))
+	for i, p := range ready {
+		ins[i] = p.in
+	}
+	var errs []error
+	err := pgx.BeginFunc(ctx, tx, func(sp pgx.Tx) (err error) {
+		errs, err = sec.screen(ctx, sp, ins)
+		return err
+	})
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		s.o.Logger.WarnContext(ctx, "contentkit: import screen failed; the writes decide", "section", sec.name, "err", err)
+		return ready, nil
+	}
+	kept := ready[:0]
+	for i, p := range ready {
+		if errs[i] != nil {
+			run.fail(sec.name, p.index, p.external, errs[i])
+			continue
+		}
+		kept = append(kept, p)
+	}
+	return kept, nil
 }
 
 // finish completes a committed chunk's channel lifecycle and entity media

@@ -48,15 +48,22 @@ func stamp(t *time.Time, or time.Time) time.Time {
 	return or
 }
 
-// fenceSubjects locks the users' erasure fences, as every write by them
-// does, and refuses an erased one.
-func (rt *Runtime) fenceSubjects(ctx context.Context, tx pgx.Tx, users []string) error {
+// lockSubjects locks the users' erasure fences in order, as every write by
+// them does, and returns the users locked.
+func (rt *Runtime) lockSubjects(ctx context.Context, tx pgx.Tx, users []string) ([]string, error) {
 	users = slices.Compact(slices.Sorted(slices.Values(slices.DeleteFunc(slices.Clone(users), func(u string) bool { return u == "" }))))
 	if len(users) == 0 {
-		return nil
+		return nil, nil
 	}
-	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1 || u, 0)) FROM unnest($2::text[]) AS u ORDER BY u`,
-		rt.schema+"\x1ferasure\x1f"+rt.tenant+"\x1f", users); err != nil {
+	_, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1 || u, 0)) FROM unnest($2::text[]) AS u ORDER BY u`,
+		rt.schema+"\x1ferasure\x1f"+rt.tenant+"\x1f", users)
+	return users, err
+}
+
+// fenceSubjects locks the users' erasure fences and refuses an erased one.
+func (rt *Runtime) fenceSubjects(ctx context.Context, tx pgx.Tx, users []string) error {
+	users, err := rt.lockSubjects(ctx, tx, users)
+	if err != nil || len(users) == 0 {
 		return err
 	}
 	var erased string
@@ -66,6 +73,175 @@ func (rt *Runtime) fenceSubjects(ctx context.Context, tx pgx.Tx, users []string)
 	}
 	if erased != "" {
 		return fmt.Errorf("%w: %s", ErrSubjectErased, erased)
+	}
+	return nil
+}
+
+// screen refuses each record check refuses, then each by an erased user,
+// holding the others' erasure fences; check also returns the record's user.
+func screen[T any](ctx context.Context, tx pgx.Tx, rt *Runtime, in []T, check func(T) (string, error)) ([]error, error) {
+	errs, users := make([]error, len(in)), make([]string, len(in))
+	for i, x := range in {
+		var user string
+		if user, errs[i] = check(x); errs[i] == nil {
+			users[i] = strings.TrimSpace(user)
+		}
+	}
+	locked, err := rt.lockSubjects(ctx, tx, users)
+	if err != nil || len(locked) == 0 {
+		return errs, err
+	}
+	rows, err := tx.Query(ctx, `SELECT actor_id FROM `+rt.erasedSubjectsTable()+` WHERE tenant_id = $1 AND actor_id = ANY($2)`, rt.tenant, locked)
+	if err != nil {
+		return nil, err
+	}
+	erased, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return nil, err
+	}
+	for i, user := range users {
+		if user != "" && slices.Contains(erased, user) {
+			errs[i] = fmt.Errorf("%w: %s", ErrSubjectErased, user)
+		}
+	}
+	return errs, nil
+}
+
+// ScreenComments returns, per comment, why ImportComments would refuse it
+// alone or for its erased author, holding the others' erasure fences.
+func (rt *Runtime) ScreenComments(ctx context.Context, tx pgx.Tx, in []content.ImportComment) ([]error, error) {
+	return screen(ctx, tx, rt, in, func(c content.ImportComment) (string, error) {
+		_, err := rt.checkComment(c)
+		return c.UserID, err
+	})
+}
+
+// ScreenReactions is ScreenComments for ImportReactions.
+func (rt *Runtime) ScreenReactions(ctx context.Context, tx pgx.Tx, in []content.ImportReaction) ([]error, error) {
+	return screen(ctx, tx, rt, in, func(r content.ImportReaction) (string, error) {
+		_, err := rt.checkReaction(r)
+		return r.UserID, err
+	})
+}
+
+// ScreenFavorites is ScreenComments for ImportFavorites.
+func (rt *Runtime) ScreenFavorites(ctx context.Context, tx pgx.Tx, in []content.ImportFavorite) ([]error, error) {
+	return screen(ctx, tx, rt, in, func(f content.ImportFavorite) (string, error) {
+		_, err := rt.checkFavorite(f)
+		return f.UserID, err
+	})
+}
+
+// ScreenVotes is ScreenComments for ImportVotes, and refuses too each vote
+// for an option its poll lacks.
+func (rt *Runtime) ScreenVotes(ctx context.Context, tx pgx.Tx, in []content.ImportVote) ([]error, error) {
+	errs, err := screen(ctx, tx, rt, in, func(v content.ImportVote) (string, error) { return v.UserID, checkVote(v) })
+	if err != nil {
+		return nil, err
+	}
+	type ask struct {
+		I        int    `json:"i"`
+		PollID   string `json:"poll_id"`
+		OptionID string `json:"option_id"`
+	}
+	var asks []ask
+	for i, v := range in {
+		if errs[i] == nil {
+			asks = append(asks, ask{i, v.PollID, v.OptionID})
+		}
+	}
+	if len(asks) == 0 {
+		return errs, nil
+	}
+	data, err := json.Marshal(asks)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := tx.Query(ctx, `SELECT r.i FROM jsonb_to_recordset($1::jsonb) AS r(i int, poll_id text, option_id text)
+ WHERE NOT EXISTS (SELECT 1 FROM `+rt.store.t.pollOptions+` o
+  WHERE o.tenant_id = $2 AND o.id = r.option_id::uuid AND o.question_id = r.poll_id::uuid)`, string(data), rt.tenant)
+	if err != nil {
+		return nil, err
+	}
+	stray, err := pgx.CollectRows(rows, pgx.RowTo[int])
+	if err != nil {
+		return nil, err
+	}
+	for _, i := range stray {
+		errs[i] = fmt.Errorf("%w: option %s of a multiple-choice poll", ErrNotFound, in[i].OptionID)
+	}
+	return errs, nil
+}
+
+// checkComment refuses a comment for what it holds alone.
+func (rt *Runtime) checkComment(c content.ImportComment) (keyRow, error) {
+	if err := contentref.ValidateID(c.ID); err != nil {
+		return keyRow{}, invalidImport("comment id: %v", err)
+	}
+	k, err := rt.importRef(c.Ref)
+	if err != nil {
+		return k, err
+	}
+	if k.Kind == content.KindComment {
+		return k, invalidImport("a comment is on content, not on a comment")
+	}
+	if language := strings.TrimSpace(c.Language); len(language) > 16 {
+		return k, invalidImport("language %q", language)
+	}
+	if strings.TrimSpace(c.UserID) == "" && strings.TrimSpace(c.AnonName) == "" {
+		return k, invalidImport("comment %s needs a user_id or an anon_name", c.ID)
+	}
+	if strings.TrimSpace(c.Body) == "" {
+		return k, invalidImport("comment %s has no body", c.ID)
+	}
+	if c.ReplyToID != "" {
+		if err := contentref.ValidateID(c.ReplyToID); err != nil {
+			return k, invalidImport("reply_to: %v", err)
+		}
+		if c.ReplyToID == c.ID {
+			return k, invalidImport("comment %s replies to itself", c.ID)
+		}
+	}
+	return k, nil
+}
+
+// checkReaction refuses a reaction for what it holds alone.
+func (rt *Runtime) checkReaction(r content.ImportReaction) (keyRow, error) {
+	k, err := rt.importRef(r.Ref)
+	if err != nil {
+		return k, err
+	}
+	if r.Value < -1 || r.Value > 1 {
+		return k, invalidImport("reaction value %d is -1, 0 or 1", r.Value)
+	}
+	if strings.TrimSpace(r.UserID) == "" && strings.TrimSpace(r.IP) == "" {
+		return k, invalidImport("a reaction needs a user_id or an ip")
+	}
+	return k, nil
+}
+
+// checkFavorite refuses a favorite for what it holds alone.
+func (rt *Runtime) checkFavorite(f content.ImportFavorite) (keyRow, error) {
+	k, err := rt.importRef(f.Ref)
+	if err != nil {
+		return k, err
+	}
+	if k.Kind == content.KindComment {
+		return k, invalidImport("comments are not favorited")
+	}
+	if strings.TrimSpace(f.UserID) == "" {
+		return k, invalidImport("a favorite needs a user_id")
+	}
+	return k, nil
+}
+
+// checkVote refuses a vote for what it holds alone.
+func checkVote(v content.ImportVote) error {
+	if contentref.ValidateID(v.PollID) != nil || contentref.ValidateID(v.OptionID) != nil {
+		return invalidImport("a vote names a poll and an option by id")
+	}
+	if strings.TrimSpace(v.UserID) == "" && strings.TrimSpace(v.IP) == "" {
+		return invalidImport("a vote needs a user_id or an ip")
 	}
 	return nil
 }
@@ -97,40 +273,25 @@ func (rt *Runtime) ImportComments(ctx context.Context, tx pgx.Tx, in []content.I
 	byID := map[string]int{}
 	var users, parents []string
 	for _, c := range in {
-		if err := contentref.ValidateID(c.ID); err != nil {
-			return invalidImport("comment id: %v", err)
+		k, err := rt.checkComment(c)
+		if err != nil {
+			return err
 		}
 		if _, dup := byID[c.ID]; dup {
 			return invalidImport("comment %s is imported twice", c.ID)
 		}
-		k, err := rt.importRef(c.Ref)
-		if err != nil {
-			return err
-		}
-		if k.Kind == content.KindComment {
-			return invalidImport("a comment is on content, not on a comment")
-		}
 		r := row{ID: c.ID, Kind: k.Kind, ContentID: k.ID, Version: k.Version, Language: strings.TrimSpace(c.Language), DeletedAt: c.DeletedAt}
-		if len(r.Language) > 16 {
-			return invalidImport("language %q", r.Language)
-		}
-		switch user, anon := strings.TrimSpace(c.UserID), strings.TrimSpace(c.AnonName); {
-		case user != "":
+		if user := strings.TrimSpace(c.UserID); user != "" {
 			r.UserID = &user
 			users = append(users, user)
-		case anon != "":
-			if anon, err = rt.rules.maskOnly(ctx, anon); err != nil {
+		} else {
+			anon, err := rt.rules.maskOnly(ctx, strings.TrimSpace(c.AnonName))
+			if err != nil {
 				return err
 			}
 			r.AnonName = &anon
-		default:
-			return invalidImport("comment %s needs a user_id or an anon_name", c.ID)
 		}
-		body := strings.TrimSpace(c.Body)
-		if body == "" {
-			return invalidImport("comment %s has no body", c.ID)
-		}
-		if r.Body, err = rt.processor.Sanitize(ctx, body); err != nil {
+		if r.Body, err = rt.processor.Sanitize(ctx, strings.TrimSpace(c.Body)); err != nil {
 			return err
 		}
 		if r.Body = strings.TrimSpace(r.Body); r.Body == "" {
@@ -139,12 +300,6 @@ func (rt *Runtime) ImportComments(ctx context.Context, tx pgx.Tx, in []content.I
 			return err
 		}
 		if c.ReplyToID != "" {
-			if err := contentref.ValidateID(c.ReplyToID); err != nil {
-				return invalidImport("reply_to: %v", err)
-			}
-			if c.ReplyToID == c.ID {
-				return invalidImport("comment %s replies to itself", c.ID)
-			}
 			parent := c.ReplyToID
 			r.ReplyTo = &parent
 			parents = append(parents, parent)
@@ -311,25 +466,19 @@ func (rt *Runtime) ImportReactions(ctx context.Context, tx pgx.Tx, in []content.
 	var users []string
 	keys := map[keyRow]bool{}
 	for _, r := range in {
-		k, err := rt.importRef(r.Ref)
+		k, err := rt.checkReaction(r)
 		if err != nil {
 			return err
-		}
-		if r.Value < -1 || r.Value > 1 {
-			return invalidImport("reaction value %d is -1, 0 or 1", r.Value)
 		}
 		x := row{keyRow: k, Value: r.Value, CreatedAt: stamp(r.CreatedAt, now)}
 		x.UpdatedAt = stamp(r.UpdatedAt, x.CreatedAt)
 		user, ip := strings.TrimSpace(r.UserID), strings.TrimSpace(r.IP)
 		var id string
-		switch {
-		case user != "":
+		if user != "" {
 			x.UserID, id = &user, "u\x00"+user
 			users = append(users, user)
-		case ip != "":
+		} else {
 			x.IP, id = &ip, "i\x00"+ip
-		default:
-			return invalidImport("a reaction needs a user_id or an ip")
 		}
 		keys[k] = true
 		// The last of a repeated reaction wins.
@@ -396,17 +545,11 @@ func (rt *Runtime) ImportFavorites(ctx context.Context, tx pgx.Tx, in []content.
 	var users []string
 	keys := map[keyRow]bool{}
 	for _, f := range in {
-		k, err := rt.importRef(f.Ref)
+		k, err := rt.checkFavorite(f)
 		if err != nil {
 			return err
 		}
-		if k.Kind == content.KindComment {
-			return invalidImport("comments are not favorited")
-		}
 		user := strings.TrimSpace(f.UserID)
-		if user == "" {
-			return invalidImport("a favorite needs a user_id")
-		}
 		users, keys[k] = append(users, user), true
 		id := user + "\x00" + k.Kind + "\x00" + k.ID + "\x00" + k.Version
 		x := row{keyRow: k, UserID: user, CreatedAt: stamp(f.CreatedAt, now)}
@@ -438,7 +581,7 @@ func (rt *Runtime) ImportFavorites(ctx context.Context, tx pgx.Tx, in []content.
 }
 
 // Recounts are the counts imports leave to recount once, after records are
-// written one by one: a busy reference's recount can take seconds.
+// written in parts: a busy reference's recount can take seconds.
 type Recounts struct {
 	keys    map[keyRow]bool
 	threads map[string]bool
@@ -866,20 +1009,17 @@ func (rt *Runtime) ImportVotes(ctx context.Context, tx pgx.Tx, in []content.Impo
 	var users []string
 	polls := map[string]bool{}
 	for _, v := range in {
-		if contentref.ValidateID(v.PollID) != nil || contentref.ValidateID(v.OptionID) != nil {
-			return invalidImport("a vote names a poll and an option by id")
+		if err := checkVote(v); err != nil {
+			return err
 		}
 		x := row{PollID: v.PollID, OptionID: v.OptionID, CreatedAt: stamp(v.CreatedAt, now)}
 		user, ip := strings.TrimSpace(v.UserID), strings.TrimSpace(v.IP)
 		id, list := v.PollID+"\x00", &byUser
-		switch {
-		case user != "":
+		if user != "" {
 			x.UserID, id = &user, id+"u"+user
 			users = append(users, user)
-		case ip != "":
+		} else {
 			x.IP, id, list = &ip, id+"i"+ip, &byIP
-		default:
-			return invalidImport("a vote needs a user_id or an ip")
 		}
 		polls[v.PollID] = true
 		if i, ok := index[id]; ok {
