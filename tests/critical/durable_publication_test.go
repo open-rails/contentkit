@@ -1,15 +1,25 @@
 package critical_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/open-rails/contentkit/internal/jobhook"
+	mediastore "github.com/open-rails/contentkit/internal/mediastore"
 
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
+	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/media/layout"
 	"github.com/riverqueue/river"
 )
 
@@ -130,5 +140,69 @@ func TestDurableTextPublication(t *testing.T) {
 	must(t, err)
 	if locked.Decision.Allowed || locked.Body != "" {
 		t.Fatal("reader clock opened a future audience without its publication worker")
+	}
+}
+
+// A manifest that fails validation fails every attempt alike. Its publication
+// job is cancelled after the first failure instead of retrying, and the
+// request keeps its failed row and error for the editor.
+func TestInvalidManifestPublicationIsNotRetried(t *testing.T) {
+	w := newWorld(t)
+	a := w.apps[0]
+	storage := attachMedia(t, w, a, func(c *ck.Config) {
+		c.Media.Config.Kinds[0].Publish = &media.Publish{Pages: "pages/{name}", Renditions: []string{"reader"}}
+	})
+	admin := a.engine.Client()
+	ref := galleryRef(t, admin, "Invalid manifest")
+	_, err := admin.IngestMedia(t.Context(), http.DefaultClient, ref, uuid.NewString(), []ck.MediaFile{{Path: "pages/one.png", Type: "image/png", Body: bytes.NewReader(imageBytes(t))}})
+	must(t, err)
+	awaitMediaReady(t, admin, ref)
+
+	config, err := a.cfg.MediaKinds()
+	must(t, err)
+	registry, err := mediastore.NewRegistry(config, mediastore.Hooks{})
+	must(t, err)
+	target, err := registry.VersionRef(ref.Kind, ref.ID, ref.Version)
+	must(t, err)
+	item, err := registry.Item(target)
+	must(t, err)
+	var manifest *mediastore.Manifest
+	var i int
+	// The editor view is written after the page is ready; wait for it so its
+	// writer cannot replace the stale view planted below.
+	waitFor(t, func() bool {
+		body, _, err := storage.store.Get(t.Context(), item.ManifestKey(), media.GetOptions{})
+		must(t, err)
+		stored, err := io.ReadAll(body)
+		body.Close()
+		must(t, err)
+		manifest, err = mediastore.DecodeManifest(stored)
+		must(t, err)
+		i = manifest.Find("pages/one.png")
+		return i >= 0 && manifest.Files[i].Editor != nil
+	})
+	// An editor view in an area the layout does not accept, as written before
+	// the future/ area was renamed.
+	_, name, _ := layout.SplitBlobRef(manifest.Files[i].Editor.Blob)
+	manifest.Files[i].Editor.Blob = "future/" + name
+	rewritten, err := json.Marshal(manifest)
+	must(t, err)
+	_, err = storage.store.Put(t.Context(), item.ManifestKey(), bytes.NewReader(rewritten), int64(len(rewritten)), media.PutOptions{ContentType: "application/json"})
+	must(t, err)
+
+	_, err = admin.PostContentPublish(t.Context(), ref.ID, catalog.PublishInput{})
+	must(t, err)
+	request := currentPublicationJob(t, a, ref.Version).ID
+	var job, row, failure string
+	var attempts int
+	waitForWithin(t, 45*time.Second, func() bool {
+		wakeDuePublicationJobs(t, a)
+		must(t, w.pool.QueryRow(t.Context(), `SELECT j.state,j.attempt,r.state,coalesce(r.error,'') FROM `+pgx.Identifier{publicationRiverSchema(a), "river_job"}.Sanitize()+` j
+ JOIN `+pgx.Identifier{w.schema, "content_publication_requests"}.Sanitize()+` r ON r.id::text=j.args->>'id'
+ WHERE j.kind='contentkit_publication' AND r.id=$1 ORDER BY j.id DESC LIMIT 1`, request).Scan(&job, &attempts, &row, &failure))
+		return job != "available" && job != "running"
+	})
+	if job != "cancelled" || attempts != 1 || row != "failed" || !strings.Contains(failure, "invalid editor view") {
+		t.Fatalf("invalid manifest publication: job %s after %d attempts, request %s with error %q; want a cancelled job after one attempt and a failed request keeping its error", job, attempts, row, failure)
 	}
 }

@@ -157,9 +157,20 @@ func (m *Manifest) StagedNames() []string {
 	return out
 }
 
+// ErrInvalidManifest wraps every Validate refusal: the stored manifest or the
+// edit is malformed, so repeating the same work cannot succeed.
+var ErrInvalidManifest = errors.New("media: invalid manifest")
+
 // Validate requires unique paths, well-formed blobs and edits, and upload
 // and derived fields where they belong.
 func (m *Manifest) Validate() error {
+	if err := m.validate(); err != nil {
+		return fmt.Errorf("%w: %w", ErrInvalidManifest, err)
+	}
+	return nil
+}
+
+func (m *Manifest) validate() error {
 	if m.Incarnation != "" {
 		id, err := uuid.Parse(m.Incarnation)
 		if err != nil || id == uuid.Nil || id.String() != m.Incarnation {

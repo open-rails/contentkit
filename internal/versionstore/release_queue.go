@@ -310,7 +310,9 @@ func (w *publicationWorker) Work(ctx context.Context, job *river.Job[publication
 		// five-second readiness polling or repeated stale copy attempt.
 		return nil
 	}
-	if errors.Is(err, ErrNotFound) {
+	// Missing content and a malformed manifest fail every attempt alike; the
+	// request keeps its failed row and error, and no retry repeats them.
+	if errors.Is(err, ErrNotFound) || errors.Is(err, mediastore.ErrInvalidManifest) {
 		return river.JobCancel(err)
 	}
 	return err
