@@ -429,9 +429,10 @@ func (s *Store) eraseVersionBatch(ctx context.Context, cutoff time.Time, after s
 	return len(vids), next, tx.Commit(ctx)
 }
 
-// eraseInteractions deletes purged content's comments (with their reactions
-// and counts), reactions, favorites, counts and access history: of whole items
-// when vids is nil, else of those versions (vids[i] of item ids[i]).
+// eraseInteractions deletes purged content's comments (with their reactions,
+// counts and queued recounts), reactions, favorites, counts, queued recounts
+// and access history: of whole items when vids is nil, else of those versions
+// (vids[i] of item ids[i]).
 func (s *Store) eraseInteractions(ctx context.Context, tx pgx.Tx, kinds, ids, vids []string) error {
 	target := `(content_kind, content_id) IN (SELECT * FROM unnest($2::text[], $3::text[]))`
 	args := []any{s.tenant, kinds, ids}
@@ -440,6 +441,12 @@ func (s *Store) eraseInteractions(ctx context.Context, tx pgx.Tx, kinds, ids, vi
 		target = `(content_kind, content_id, content_version_id) IN (SELECT * FROM unnest($2::text[], $3::text[], $4::text[]))`
 		args = append(args, vids)
 		history, historyArgs = `version_id = ANY($2)`, []any{s.tenant, vids}
+	}
+	// Queued recounts go last, as imports queue them after their rows, so
+	// note the comments before they go.
+	var comments []string
+	if err := tx.QueryRow(ctx, `SELECT coalesce(array_agg(id::text), '{}') FROM `+s.t.comments+` WHERE tenant_id = $1 AND `+target, args...).Scan(&comments); err != nil {
+		return err
 	}
 	for _, q := range []string{
 		`DELETE FROM ` + s.t.reactions + ` WHERE tenant_id = $1 AND content_kind = '` + content.KindComment + `' AND content_version_id IS NULL
@@ -450,10 +457,15 @@ func (s *Store) eraseInteractions(ctx context.Context, tx pgx.Tx, kinds, ids, vi
 		`DELETE FROM ` + s.t.reactions + ` WHERE tenant_id = $1 AND ` + target,
 		`DELETE FROM ` + s.t.favorites + ` WHERE tenant_id = $1 AND ` + target,
 		`DELETE FROM ` + s.t.counts + ` WHERE tenant_id = $1 AND ` + target,
+		`DELETE FROM ` + s.t.recounts + ` WHERE tenant_id = $1 AND ` + target,
 	} {
 		if _, err := tx.Exec(ctx, q, args...); err != nil {
 			return err
 		}
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM `+s.t.recounts+` WHERE tenant_id = $1 AND content_kind = '`+content.KindComment+`' AND content_version_id IS NULL
+ AND content_id = ANY($2)`, s.tenant, comments); err != nil {
+		return err
 	}
 	_, err := tx.Exec(ctx, `DELETE FROM `+s.t.accessHistory+` WHERE tenant_id = $1 AND `+history, historyArgs...)
 	return err

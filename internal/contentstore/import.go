@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -47,15 +48,22 @@ func stamp(t *time.Time, or time.Time) time.Time {
 	return or
 }
 
-// fenceSubjects locks the users' erasure fences, as every write by them
-// does, and refuses an erased one.
-func (rt *Runtime) fenceSubjects(ctx context.Context, tx pgx.Tx, users []string) error {
+// lockSubjects locks the users' erasure fences in order, as every write by
+// them does, and returns the users locked.
+func (rt *Runtime) lockSubjects(ctx context.Context, tx pgx.Tx, users []string) ([]string, error) {
 	users = slices.Compact(slices.Sorted(slices.Values(slices.DeleteFunc(slices.Clone(users), func(u string) bool { return u == "" }))))
 	if len(users) == 0 {
-		return nil
+		return nil, nil
 	}
-	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1 || u, 0)) FROM unnest($2::text[]) AS u ORDER BY u`,
-		rt.schema+"\x1ferasure\x1f"+rt.tenant+"\x1f", users); err != nil {
+	_, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1 || u, 0)) FROM unnest($2::text[]) AS u ORDER BY u`,
+		rt.schema+"\x1ferasure\x1f"+rt.tenant+"\x1f", users)
+	return users, err
+}
+
+// fenceSubjects locks the users' erasure fences and refuses an erased one.
+func (rt *Runtime) fenceSubjects(ctx context.Context, tx pgx.Tx, users []string) error {
+	users, err := rt.lockSubjects(ctx, tx, users)
+	if err != nil || len(users) == 0 {
 		return err
 	}
 	var erased string
@@ -69,10 +77,180 @@ func (rt *Runtime) fenceSubjects(ctx context.Context, tx pgx.Tx, users []string)
 	return nil
 }
 
+// screen refuses each record check refuses, then each by an erased user,
+// holding the others' erasure fences; check also returns the record's user.
+func screen[T any](ctx context.Context, tx pgx.Tx, rt *Runtime, in []T, check func(T) (string, error)) ([]error, error) {
+	errs, users := make([]error, len(in)), make([]string, len(in))
+	for i, x := range in {
+		var user string
+		if user, errs[i] = check(x); errs[i] == nil {
+			users[i] = strings.TrimSpace(user)
+		}
+	}
+	locked, err := rt.lockSubjects(ctx, tx, users)
+	if err != nil || len(locked) == 0 {
+		return errs, err
+	}
+	rows, err := tx.Query(ctx, `SELECT actor_id FROM `+rt.erasedSubjectsTable()+` WHERE tenant_id = $1 AND actor_id = ANY($2)`, rt.tenant, locked)
+	if err != nil {
+		return nil, err
+	}
+	erased, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return nil, err
+	}
+	for i, user := range users {
+		if user != "" && slices.Contains(erased, user) {
+			errs[i] = fmt.Errorf("%w: %s", ErrSubjectErased, user)
+		}
+	}
+	return errs, nil
+}
+
+// ScreenComments returns, per comment, why ImportComments would refuse it
+// alone or for its erased author, holding the others' erasure fences.
+func (rt *Runtime) ScreenComments(ctx context.Context, tx pgx.Tx, in []content.ImportComment) ([]error, error) {
+	return screen(ctx, tx, rt, in, func(c content.ImportComment) (string, error) {
+		_, err := rt.checkComment(c)
+		return c.UserID, err
+	})
+}
+
+// ScreenReactions is ScreenComments for ImportReactions.
+func (rt *Runtime) ScreenReactions(ctx context.Context, tx pgx.Tx, in []content.ImportReaction) ([]error, error) {
+	return screen(ctx, tx, rt, in, func(r content.ImportReaction) (string, error) {
+		_, err := rt.checkReaction(r)
+		return r.UserID, err
+	})
+}
+
+// ScreenFavorites is ScreenComments for ImportFavorites.
+func (rt *Runtime) ScreenFavorites(ctx context.Context, tx pgx.Tx, in []content.ImportFavorite) ([]error, error) {
+	return screen(ctx, tx, rt, in, func(f content.ImportFavorite) (string, error) {
+		_, err := rt.checkFavorite(f)
+		return f.UserID, err
+	})
+}
+
+// ScreenVotes is ScreenComments for ImportVotes, and refuses too each vote
+// for an option its poll lacks.
+func (rt *Runtime) ScreenVotes(ctx context.Context, tx pgx.Tx, in []content.ImportVote) ([]error, error) {
+	errs, err := screen(ctx, tx, rt, in, func(v content.ImportVote) (string, error) { return v.UserID, checkVote(v) })
+	if err != nil {
+		return nil, err
+	}
+	type ask struct {
+		I        int    `json:"i"`
+		PollID   string `json:"poll_id"`
+		OptionID string `json:"option_id"`
+	}
+	var asks []ask
+	for i, v := range in {
+		if errs[i] == nil {
+			asks = append(asks, ask{i, v.PollID, v.OptionID})
+		}
+	}
+	if len(asks) == 0 {
+		return errs, nil
+	}
+	data, err := json.Marshal(asks)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := tx.Query(ctx, `SELECT r.i FROM jsonb_to_recordset($1::jsonb) AS r(i int, poll_id text, option_id text)
+ WHERE NOT EXISTS (SELECT 1 FROM `+rt.store.t.pollOptions+` o
+  WHERE o.tenant_id = $2 AND o.id = r.option_id::uuid AND o.question_id = r.poll_id::uuid)`, string(data), rt.tenant)
+	if err != nil {
+		return nil, err
+	}
+	stray, err := pgx.CollectRows(rows, pgx.RowTo[int])
+	if err != nil {
+		return nil, err
+	}
+	for _, i := range stray {
+		errs[i] = fmt.Errorf("%w: option %s of a multiple-choice poll", ErrNotFound, in[i].OptionID)
+	}
+	return errs, nil
+}
+
+// checkComment refuses a comment for what it holds alone.
+func (rt *Runtime) checkComment(c content.ImportComment) (keyRow, error) {
+	if err := contentref.ValidateID(c.ID); err != nil {
+		return keyRow{}, invalidImport("comment id: %v", err)
+	}
+	k, err := rt.importRef(c.Ref)
+	if err != nil {
+		return k, err
+	}
+	if k.Kind == content.KindComment {
+		return k, invalidImport("a comment is on content, not on a comment")
+	}
+	if language := strings.TrimSpace(c.Language); len(language) > 16 {
+		return k, invalidImport("language %q", language)
+	}
+	if strings.TrimSpace(c.UserID) == "" && strings.TrimSpace(c.AnonName) == "" {
+		return k, invalidImport("comment %s needs a user_id or an anon_name", c.ID)
+	}
+	if strings.TrimSpace(c.Body) == "" {
+		return k, invalidImport("comment %s has no body", c.ID)
+	}
+	if c.ReplyToID != "" {
+		if err := contentref.ValidateID(c.ReplyToID); err != nil {
+			return k, invalidImport("reply_to: %v", err)
+		}
+		if c.ReplyToID == c.ID {
+			return k, invalidImport("comment %s replies to itself", c.ID)
+		}
+	}
+	return k, nil
+}
+
+// checkReaction refuses a reaction for what it holds alone.
+func (rt *Runtime) checkReaction(r content.ImportReaction) (keyRow, error) {
+	k, err := rt.importRef(r.Ref)
+	if err != nil {
+		return k, err
+	}
+	if r.Value < -1 || r.Value > 1 {
+		return k, invalidImport("reaction value %d is -1, 0 or 1", r.Value)
+	}
+	if strings.TrimSpace(r.UserID) == "" && strings.TrimSpace(r.IP) == "" {
+		return k, invalidImport("a reaction needs a user_id or an ip")
+	}
+	return k, nil
+}
+
+// checkFavorite refuses a favorite for what it holds alone.
+func (rt *Runtime) checkFavorite(f content.ImportFavorite) (keyRow, error) {
+	k, err := rt.importRef(f.Ref)
+	if err != nil {
+		return k, err
+	}
+	if k.Kind == content.KindComment {
+		return k, invalidImport("comments are not favorited")
+	}
+	if strings.TrimSpace(f.UserID) == "" {
+		return k, invalidImport("a favorite needs a user_id")
+	}
+	return k, nil
+}
+
+// checkVote refuses a vote for what it holds alone.
+func checkVote(v content.ImportVote) error {
+	if contentref.ValidateID(v.PollID) != nil || contentref.ValidateID(v.OptionID) != nil {
+		return invalidImport("a vote names a poll and an option by id")
+	}
+	if strings.TrimSpace(v.UserID) == "" && strings.TrimSpace(v.IP) == "" {
+		return invalidImport("a vote needs a user_id or an ip")
+	}
+	return nil
+}
+
 // ImportComments writes comments in tx, inserting new ones and updating
 // stored ones whose import changed (a moderator's decision stays), then
-// recounts their references' comment counts and their threads' replies.
-func (rt *Runtime) ImportComments(ctx context.Context, tx pgx.Tx, in []content.ImportComment) error {
+// recounts their references' comment counts and their threads' replies, or
+// leaves that to later.
+func (rt *Runtime) ImportComments(ctx context.Context, tx pgx.Tx, in []content.ImportComment, later *Recounts) error {
 	if len(in) == 0 {
 		return nil
 	}
@@ -95,40 +273,25 @@ func (rt *Runtime) ImportComments(ctx context.Context, tx pgx.Tx, in []content.I
 	byID := map[string]int{}
 	var users, parents []string
 	for _, c := range in {
-		if err := contentref.ValidateID(c.ID); err != nil {
-			return invalidImport("comment id: %v", err)
+		k, err := rt.checkComment(c)
+		if err != nil {
+			return err
 		}
 		if _, dup := byID[c.ID]; dup {
 			return invalidImport("comment %s is imported twice", c.ID)
 		}
-		k, err := rt.importRef(c.Ref)
-		if err != nil {
-			return err
-		}
-		if k.Kind == content.KindComment {
-			return invalidImport("a comment is on content, not on a comment")
-		}
 		r := row{ID: c.ID, Kind: k.Kind, ContentID: k.ID, Version: k.Version, Language: strings.TrimSpace(c.Language), DeletedAt: c.DeletedAt}
-		if len(r.Language) > 16 {
-			return invalidImport("language %q", r.Language)
-		}
-		switch user, anon := strings.TrimSpace(c.UserID), strings.TrimSpace(c.AnonName); {
-		case user != "":
+		if user := strings.TrimSpace(c.UserID); user != "" {
 			r.UserID = &user
 			users = append(users, user)
-		case anon != "":
-			if anon, err = rt.rules.maskOnly(ctx, anon); err != nil {
+		} else {
+			anon, err := rt.rules.maskOnly(ctx, strings.TrimSpace(c.AnonName))
+			if err != nil {
 				return err
 			}
 			r.AnonName = &anon
-		default:
-			return invalidImport("comment %s needs a user_id or an anon_name", c.ID)
 		}
-		body := strings.TrimSpace(c.Body)
-		if body == "" {
-			return invalidImport("comment %s has no body", c.ID)
-		}
-		if r.Body, err = rt.processor.Sanitize(ctx, body); err != nil {
+		if r.Body, err = rt.processor.Sanitize(ctx, strings.TrimSpace(c.Body)); err != nil {
 			return err
 		}
 		if r.Body = strings.TrimSpace(r.Body); r.Body == "" {
@@ -137,12 +300,6 @@ func (rt *Runtime) ImportComments(ctx context.Context, tx pgx.Tx, in []content.I
 			return err
 		}
 		if c.ReplyToID != "" {
-			if err := contentref.ValidateID(c.ReplyToID); err != nil {
-				return invalidImport("reply_to: %v", err)
-			}
-			if c.ReplyToID == c.ID {
-				return invalidImport("comment %s replies to itself", c.ID)
-			}
 			parent := c.ReplyToID
 			r.ReplyTo = &parent
 			parents = append(parents, parent)
@@ -285,15 +442,13 @@ func (rt *Runtime) ImportComments(ctx context.Context, tx pgx.Tx, in []content.I
   EXCLUDED.anon_name, EXCLUDED.body, EXCLUDED.deleted_at, EXCLUDED.created_at, EXCLUDED.author_hidden)`, rt.tenant, string(data)); err != nil {
 		return err
 	}
-	if err := rt.recount(ctx, tx, keys); err != nil {
-		return err
-	}
-	return rt.recountReplies(ctx, tx, threads)
+	return rt.settle(ctx, tx, later, Recounts{keys: keys, threads: threads})
 }
 
 // ImportReactions writes reactions in tx: a new value takes a fresh
-// preference revision, so preference sync exports it. Counts follow.
-func (rt *Runtime) ImportReactions(ctx context.Context, tx pgx.Tx, in []content.ImportReaction) error {
+// preference revision, so preference sync exports it. Counts follow, or
+// later recounts them.
+func (rt *Runtime) ImportReactions(ctx context.Context, tx pgx.Tx, in []content.ImportReaction, later *Recounts) error {
 	if len(in) == 0 {
 		return nil
 	}
@@ -311,25 +466,19 @@ func (rt *Runtime) ImportReactions(ctx context.Context, tx pgx.Tx, in []content.
 	var users []string
 	keys := map[keyRow]bool{}
 	for _, r := range in {
-		k, err := rt.importRef(r.Ref)
+		k, err := rt.checkReaction(r)
 		if err != nil {
 			return err
-		}
-		if r.Value < -1 || r.Value > 1 {
-			return invalidImport("reaction value %d is -1, 0 or 1", r.Value)
 		}
 		x := row{keyRow: k, Value: r.Value, CreatedAt: stamp(r.CreatedAt, now)}
 		x.UpdatedAt = stamp(r.UpdatedAt, x.CreatedAt)
 		user, ip := strings.TrimSpace(r.UserID), strings.TrimSpace(r.IP)
 		var id string
-		switch {
-		case user != "":
+		if user != "" {
 			x.UserID, id = &user, "u\x00"+user
 			users = append(users, user)
-		case ip != "":
+		} else {
 			x.IP, id = &ip, "i\x00"+ip
-		default:
-			return invalidImport("a reaction needs a user_id or an ip")
 		}
 		keys[k] = true
 		// The last of a repeated reaction wins.
@@ -346,6 +495,11 @@ func (rt *Runtime) ImportReactions(ctx context.Context, tx pgx.Tx, in []content.
 		*list = append(*list, x)
 	}
 	if err := rt.fenceSubjects(ctx, tx, users); err != nil {
+		return err
+	}
+	// Reacted-to comments lock before their reactions, as live reactions and
+	// author hiding lock them.
+	if _, err := rt.lockComments(ctx, tx, slices.Collect(maps.Keys(keys))); err != nil {
 		return err
 	}
 	s := rt.store
@@ -371,12 +525,12 @@ func (rt *Runtime) ImportReactions(ctx context.Context, tx pgx.Tx, in []content.
 			return err
 		}
 	}
-	return rt.recount(ctx, tx, keys)
+	return rt.settle(ctx, tx, later, Recounts{keys: keys})
 }
 
 // ImportFavorites writes bookmarks in tx: a new one takes a fresh preference
-// revision. Counts follow.
-func (rt *Runtime) ImportFavorites(ctx context.Context, tx pgx.Tx, in []content.ImportFavorite) error {
+// revision. Counts follow, or later recounts them.
+func (rt *Runtime) ImportFavorites(ctx context.Context, tx pgx.Tx, in []content.ImportFavorite, later *Recounts) error {
 	if len(in) == 0 {
 		return nil
 	}
@@ -391,17 +545,11 @@ func (rt *Runtime) ImportFavorites(ctx context.Context, tx pgx.Tx, in []content.
 	var users []string
 	keys := map[keyRow]bool{}
 	for _, f := range in {
-		k, err := rt.importRef(f.Ref)
+		k, err := rt.checkFavorite(f)
 		if err != nil {
 			return err
 		}
-		if k.Kind == content.KindComment {
-			return invalidImport("comments are not favorited")
-		}
 		user := strings.TrimSpace(f.UserID)
-		if user == "" {
-			return invalidImport("a favorite needs a user_id")
-		}
 		users, keys[k] = append(users, user), true
 		id := user + "\x00" + k.Kind + "\x00" + k.ID + "\x00" + k.Version
 		x := row{keyRow: k, UserID: user, CreatedAt: stamp(f.CreatedAt, now)}
@@ -429,7 +577,189 @@ func (rt *Runtime) ImportFavorites(ctx context.Context, tx pgx.Tx, in []content.
  WHERE f.value <> 1`, rt.tenant, string(data)); err != nil {
 		return err
 	}
-	return rt.recount(ctx, tx, keys)
+	return rt.settle(ctx, tx, later, Recounts{keys: keys})
+}
+
+// Recounts are the counts imports leave to recount once, after records are
+// written in parts: a busy reference's recount can take seconds.
+type Recounts struct {
+	keys    map[keyRow]bool
+	threads map[string]bool
+	polls   map[string]bool
+}
+
+// Merge adds o's recounts to r.
+func (r *Recounts) Merge(o *Recounts) {
+	r.keys, r.threads, r.polls = union(r.keys, o.keys), union(r.threads, o.threads), union(r.polls, o.polls)
+}
+
+func union[K comparable](a, b map[K]bool) map[K]bool {
+	if a == nil {
+		a = make(map[K]bool, len(b))
+	}
+	maps.Copy(a, b)
+	return a
+}
+
+// Recount sets what r names to what its rows hold. Run after the writes that
+// left r, in their tx, it newly locks only rollups and poll options: those
+// writes hold r's comments and threads.
+func (rt *Runtime) Recount(ctx context.Context, tx pgx.Tx, r *Recounts) error {
+	if err := rt.recount(ctx, tx, r.keys); err != nil {
+		return err
+	}
+	if err := rt.recountReplies(ctx, tx, r.threads); err != nil {
+		return err
+	}
+	return rt.recountVotes(ctx, tx, r.polls)
+}
+
+// settle recounts r now, or leaves it to later.
+func (rt *Runtime) settle(ctx context.Context, tx pgx.Tx, later *Recounts, r Recounts) error {
+	if later != nil {
+		later.Merge(&r)
+		return nil
+	}
+	return rt.Recount(ctx, tx, &r)
+}
+
+// queued is one target a bulk import left to recount.
+type queued struct {
+	Target   string    `json:"target"` // counts, replies or votes
+	Kind     string    `json:"kind"`
+	ID       string    `json:"id"`
+	Version  string    `json:"version,omitempty"`
+	Mark     int64     `json:"mark,omitempty"`
+	MarkedAt time.Time `json:"-"`
+}
+
+// QueueRecounts queues r's targets for RecountQueued instead of recounting
+// them, in tx after the writes that left r: queue rows lock last, in key
+// order. Each queuing takes a new mark from a sequence, so a recount that
+// read an older mark leaves the target queued.
+func (rt *Runtime) QueueRecounts(ctx context.Context, tx pgx.Tx, r *Recounts) error {
+	var rows []queued
+	for k := range r.keys {
+		rows = append(rows, queued{Target: "counts", Kind: k.Kind, ID: k.ID, Version: k.Version})
+	}
+	for id := range r.threads {
+		rows = append(rows, queued{Target: "replies", Kind: content.KindComment, ID: id})
+	}
+	for id := range r.polls {
+		rows = append(rows, queued{Target: "votes", Kind: "poll", ID: id})
+	}
+	if len(rows) == 0 {
+		return nil
+	}
+	data, err := json.Marshal(rows)
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `INSERT INTO `+rt.store.t.recounts+` AS q (tenant_id, target, content_kind, content_id, content_version_id)
+ SELECT $1, r.target, r.kind, r.id, r.version FROM jsonb_to_recordset($2::jsonb) AS r(target text, kind text, id text, version text)
+ ORDER BY r.target, r.kind, r.id, r.version
+ ON CONFLICT (tenant_id, target, content_kind, content_id, content_version_id) DO UPDATE SET mark = EXCLUDED.mark, marked_at = now()`, rt.tenant, string(data))
+	return err
+}
+
+// recountBatch is the most queued targets one transaction recounts.
+const recountBatch = 50
+
+// RecountQueued recounts up to limit queued targets, oldest first, a batch
+// per transaction, and returns how many it dequeued. A target an import
+// holds or queues again meanwhile stays queued, and the call moves on.
+func (rt *Runtime) RecountQueued(ctx context.Context, limit int) (int, error) {
+	done, read := 0, 0
+	var after *queued
+	for read < limit {
+		taken, n, err := rt.recountQueued(ctx, min(recountBatch, limit-read), after)
+		if err != nil || len(taken) == 0 {
+			return done, err
+		}
+		read, done, after = read+len(taken), done+n, &taken[len(taken)-1]
+	}
+	return done, nil
+}
+
+// recountQueued recounts in one transaction the n oldest queued targets
+// past after, and returns them and how many it dequeued. It locks as an
+// import's recount does (comments, then rollups, then polls), then
+// dequeues without waiting the targets whose mark it read.
+func (rt *Runtime) recountQueued(ctx context.Context, n int, after *queued) ([]queued, int, error) {
+	s := rt.store
+	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
+	if err != nil {
+		return nil, 0, err
+	}
+	defer tx.Rollback(ctx)
+	var cursor queued
+	if after != nil {
+		cursor = *after
+	}
+	rows, err := tx.Query(ctx, `SELECT target, content_kind, content_id, coalesce(content_version_id, ''), mark, marked_at FROM `+s.t.recounts+`
+ WHERE tenant_id = $1 AND ($3::timestamptz IS NULL
+  OR (marked_at, target, content_kind, content_id, coalesce(content_version_id, '')) > ($3::timestamptz, $4::text, $5::text, $6::text, $7::text))
+ ORDER BY marked_at, target, content_kind, content_id, coalesce(content_version_id, '') LIMIT $2`,
+		rt.tenant, n, cursorTime(after), cursor.Target, cursor.Kind, cursor.ID, cursor.Version)
+	if err != nil {
+		return nil, 0, err
+	}
+	taken, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (queued, error) {
+		var q queued
+		err := row.Scan(&q.Target, &q.Kind, &q.ID, &q.Version, &q.Mark, &q.MarkedAt)
+		return q, err
+	})
+	if err != nil || len(taken) == 0 {
+		return nil, 0, err
+	}
+	r := Recounts{keys: map[keyRow]bool{}, threads: map[string]bool{}, polls: map[string]bool{}}
+	var comments []keyRow
+	for _, q := range taken {
+		switch q.Target {
+		case "counts":
+			r.keys[keyRow{q.Kind, q.ID, q.Version}] = true
+			comments = append(comments, keyRow{q.Kind, q.ID, q.Version})
+		case "replies":
+			r.threads[q.ID] = true
+			comments = append(comments, keyRow{Kind: content.KindComment, ID: q.ID})
+		case "votes":
+			r.polls[q.ID] = true
+		}
+	}
+	// The threads lock with the recounted comments, before rollups.
+	if _, err := rt.lockComments(ctx, tx, comments); err != nil {
+		return nil, 0, err
+	}
+	if err := rt.Recount(ctx, tx, &r); err != nil {
+		return nil, 0, err
+	}
+	data, err := json.Marshal(taken)
+	if err != nil {
+		return nil, 0, err
+	}
+	tag, err := tx.Exec(ctx, `WITH done AS (SELECT q.ctid FROM `+s.t.recounts+` q
+ JOIN jsonb_to_recordset($2::jsonb) AS d(target text, kind text, id text, version text, mark bigint)
+  ON q.target = d.target AND q.content_kind = d.kind AND q.content_id = d.id AND q.content_version_id IS NOT DISTINCT FROM d.version AND q.mark = d.mark
+ WHERE q.tenant_id = $1 FOR UPDATE OF q SKIP LOCKED)
+DELETE FROM `+s.t.recounts+` q USING done WHERE q.ctid = done.ctid`, rt.tenant, string(data))
+	if err != nil {
+		return nil, 0, err
+	}
+	return taken, int(tag.RowsAffected()), tx.Commit(ctx)
+}
+
+func cursorTime(q *queued) *time.Time {
+	if q == nil {
+		return nil
+	}
+	return &q.MarkedAt
+}
+
+// QueuedRecounts is how many targets wait for RecountQueued.
+func (rt *Runtime) QueuedRecounts(ctx context.Context) (int, error) {
+	var n int
+	err := rt.store.pool.QueryRow(ctx, `SELECT count(*) FROM `+rt.store.t.recounts+` WHERE tenant_id = $1`, rt.tenant).Scan(&n)
+	return n, err
 }
 
 // recount sets the references' counts to what their rows hold: likes and
@@ -450,21 +780,14 @@ func (rt *Runtime) recount(ctx context.Context, tx pgx.Tx, keys map[keyRow]bool)
 	if err != nil {
 		return err
 	}
-	var comments []string
-	for _, k := range list {
-		if k.Kind == content.KindComment && k.Version == "" {
-			comments = append(comments, k.ID)
-		}
-	}
 	// Each count below is its own statement: under READ COMMITTED it reads
 	// a snapshot taken after the locks are held, so it includes the live
 	// writes it waited for. Comments lock before rollups, comments in id order
 	// and rollups in list order, as erasure and live reactions lock them.
 	s := rt.store
-	if len(comments) > 0 {
-		if _, err := tx.Exec(ctx, `SELECT 1 FROM `+s.t.comments+` WHERE tenant_id = $1 AND id = ANY($2::uuid[]) ORDER BY id FOR UPDATE`, rt.tenant, comments); err != nil {
-			return err
-		}
+	comments, err := rt.lockComments(ctx, tx, list)
+	if err != nil {
+		return err
 	}
 	if _, err := tx.Exec(ctx, `INSERT INTO `+s.t.counts+` (tenant_id, content_kind, content_id, content_version_id)
 SELECT $1, k.kind, k.id, k.version FROM ROWS FROM (jsonb_to_recordset($2::jsonb) AS (kind text, id text, version text)) WITH ORDINALITY AS k(kind, id, version, n) ORDER BY k.n
@@ -499,6 +822,22 @@ FROM n WHERE x.tenant_id = $1 AND x.content_kind = n.kind AND x.content_id = n.i
  FROM unnest($2::text[]) AS x(id)) n
  WHERE c.tenant_id = $1 AND c.id = n.id::uuid AND (c.likes, c.dislikes) IS DISTINCT FROM (n.likes, n.dislikes)`, rt.tenant, comments, content.KindComment)
 	return err
+}
+
+// lockComments locks the comments among keys in id order and returns their
+// ids.
+func (rt *Runtime) lockComments(ctx context.Context, tx pgx.Tx, keys []keyRow) ([]string, error) {
+	var ids []string
+	for _, k := range keys {
+		if k.Kind == content.KindComment && k.Version == "" {
+			ids = append(ids, k.ID)
+		}
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	_, err := tx.Exec(ctx, `SELECT 1 FROM `+rt.store.t.comments+` WHERE tenant_id = $1 AND id = ANY($2::uuid[]) ORDER BY id FOR UPDATE`, rt.tenant, ids)
+	return ids, err
 }
 
 // recountReplies sets top-level comments' reply counts to their published
@@ -652,8 +991,8 @@ func (rt *Runtime) ImportPolls(ctx context.Context, tx pgx.Tx, in []content.Impo
 }
 
 // ImportVotes writes votes in tx (one per person, or IP, per poll; the last
-// wins) and recounts their polls' options.
-func (rt *Runtime) ImportVotes(ctx context.Context, tx pgx.Tx, in []content.ImportVote) error {
+// wins) and recounts their polls' options, or leaves that to later.
+func (rt *Runtime) ImportVotes(ctx context.Context, tx pgx.Tx, in []content.ImportVote, later *Recounts) error {
 	if len(in) == 0 {
 		return nil
 	}
@@ -667,24 +1006,22 @@ func (rt *Runtime) ImportVotes(ctx context.Context, tx pgx.Tx, in []content.Impo
 	now := time.Now()
 	index := map[string]int{}
 	var byUser, byIP []row
-	var users, polls []string
+	var users []string
+	polls := map[string]bool{}
 	for _, v := range in {
-		if contentref.ValidateID(v.PollID) != nil || contentref.ValidateID(v.OptionID) != nil {
-			return invalidImport("a vote names a poll and an option by id")
+		if err := checkVote(v); err != nil {
+			return err
 		}
 		x := row{PollID: v.PollID, OptionID: v.OptionID, CreatedAt: stamp(v.CreatedAt, now)}
 		user, ip := strings.TrimSpace(v.UserID), strings.TrimSpace(v.IP)
 		id, list := v.PollID+"\x00", &byUser
-		switch {
-		case user != "":
+		if user != "" {
 			x.UserID, id = &user, id+"u"+user
 			users = append(users, user)
-		case ip != "":
+		} else {
 			x.IP, id, list = &ip, id+"i"+ip, &byIP
-		default:
-			return invalidImport("a vote needs a user_id or an ip")
 		}
-		polls = append(polls, v.PollID)
+		polls[v.PollID] = true
 		if i, ok := index[id]; ok {
 			(*list)[i] = x
 			continue
@@ -699,7 +1036,7 @@ func (rt *Runtime) ImportVotes(ctx context.Context, tx pgx.Tx, in []content.Impo
 	// Match live voting's question lock before inspecting options. Stable order
 	// prevents multi-poll imports from locking the same questions in reverse.
 	if _, err := tx.Exec(ctx, `SELECT 1 FROM `+s.t.pollQuestions+`
- WHERE tenant_id = $1 AND id = ANY($2::uuid[]) ORDER BY id FOR SHARE`, rt.tenant, polls); err != nil {
+ WHERE tenant_id = $1 AND id = ANY($2::uuid[]) ORDER BY id FOR SHARE`, rt.tenant, slices.Collect(maps.Keys(polls))); err != nil {
 		return err
 	}
 	all, err := json.Marshal(append(slices.Clone(byUser), byIP...))
@@ -734,13 +1071,26 @@ func (rt *Runtime) ImportVotes(ctx context.Context, tx pgx.Tx, in []content.Impo
 			return err
 		}
 	}
-	ids := slices.Compact(slices.Sorted(slices.Values(polls)))
-	// Lock the options in their own statement, so the recount's snapshot
-	// includes the live votes it waited for.
+	return rt.settle(ctx, tx, later, Recounts{polls: polls})
+}
+
+// recountVotes sets the polls' options' vote counts to their votes.
+func (rt *Runtime) recountVotes(ctx context.Context, tx pgx.Tx, polls map[string]bool) error {
+	if len(polls) == 0 {
+		return nil
+	}
+	s := rt.store
+	ids := slices.Sorted(maps.Keys(polls))
+	// Questions lock before their options, as votes and poll imports lock
+	// them. The options lock in their own statement, so the recount's
+	// snapshot includes the live votes it waited for.
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM `+s.t.pollQuestions+` WHERE tenant_id = $2 AND id = ANY($1::uuid[]) ORDER BY id FOR SHARE`, ids, rt.tenant); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(ctx, `SELECT 1 FROM `+s.t.pollOptions+` WHERE tenant_id = $2 AND question_id = ANY($1::uuid[]) ORDER BY id FOR NO KEY UPDATE`, ids, rt.tenant); err != nil {
 		return err
 	}
-	_, err = tx.Exec(ctx, `UPDATE `+s.t.pollOptions+` o SET vote_count = n.votes FROM (SELECT x.id, coalesce(c.votes, 0) AS votes
+	_, err := tx.Exec(ctx, `UPDATE `+s.t.pollOptions+` o SET vote_count = n.votes FROM (SELECT x.id, coalesce(c.votes, 0) AS votes
  FROM `+s.t.pollOptions+` x LEFT JOIN (SELECT option_id, count(*)::int AS votes FROM `+s.t.pollVotes+` WHERE tenant_id = $2 AND question_id = ANY($1::uuid[])
   GROUP BY option_id) c ON c.option_id = x.id WHERE x.tenant_id = $2 AND x.question_id = ANY($1::uuid[])) n
  WHERE o.tenant_id = $2 AND o.id = n.id AND o.vote_count <> n.votes`, ids, rt.tenant)
@@ -763,10 +1113,11 @@ func (rt *Runtime) RaisePreferenceFloor(ctx context.Context, tx pgx.Tx, floor in
 }
 
 // ImportDeletes deletes comments and polls in tx as their delete routes do:
-// a comment is tombstoned and its reference's and thread's counts follow; a
-// poll tombstone and exact media retirement intent commit together. The
-// existing content-deletion sweep erases files; deleted rows remain for history.
-func (rt *Runtime) ImportDeletes(ctx context.Context, tx pgx.Tx, comments, polls []string) error {
+// a comment is tombstoned and its reference's and thread's counts follow (or
+// later recounts them); a poll tombstone and exact media retirement intent
+// commit together. The existing content-deletion sweep erases files; deleted
+// rows remain for history.
+func (rt *Runtime) ImportDeletes(ctx context.Context, tx pgx.Tx, comments, polls []string, later *Recounts) error {
 	s := rt.store
 	if len(comments) > 0 {
 		threadsQuery := `SELECT array_agg(id::text ORDER BY id), array_agg(coalesce(reply_to_id::text, '') ORDER BY id)
@@ -808,10 +1159,7 @@ func (rt *Runtime) ImportDeletes(ctx context.Context, tx pgx.Tx, comments, polls
 		if err := rows.Err(); err != nil {
 			return err
 		}
-		if err := rt.recount(ctx, tx, keys); err != nil {
-			return err
-		}
-		if err := rt.recountReplies(ctx, tx, threads); err != nil {
+		if err := rt.settle(ctx, tx, later, Recounts{keys: keys, threads: threads}); err != nil {
 			return err
 		}
 	}

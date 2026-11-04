@@ -13054,6 +13054,12 @@
             "items": {
               "$ref": "#/components/schemas/DeleteRecord"
             }
+          },
+          "defer_recounts": {
+            "type": "boolean"
+          },
+          "recount": {
+            "type": "integer"
           }
         }
       },
@@ -18402,6 +18408,12 @@
                 "type": "string"
               }
             }
+          },
+          "recounted": {
+            "type": "integer"
+          },
+          "recounts_queued": {
+            "type": "integer"
           }
         },
         "required": [
