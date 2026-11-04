@@ -11,6 +11,17 @@ export const ko: ContentKitUiMessageBundle = {
   ...entities,
   ...discovery,
   ...content,
+  channels: {
+    repost: "리포스트",
+    removeRepost: "리포스트 취소",
+    repostHint: "이 게시물을 내가 게시할 수 있는 채널에 공유합니다. 원본의 작성자, 댓글, 접근 설정은 그대로 유지됩니다.",
+    removeHint: "이 참조를 내 채널에서 제거합니다. 원본 게시물은 변경되지 않습니다.",
+    destination: "공유할 채널",
+    loading: "채널을 불러오는 중…",
+    noDestination: "게시할 수 있는 다른 채널이 없습니다.",
+    repostedBy: "{name}님이 리포스트함",
+    channel: "채널",
+  },
   common: {
     cancel: "취소",
     close: "닫기",
