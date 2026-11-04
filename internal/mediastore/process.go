@@ -19,6 +19,9 @@ type ProcessJob struct {
 	Force  bool                  `json:"force,omitempty"`  // redo current outputs too
 	Editor bool                  `json:"editor,omitempty"` // also render missing editor views
 	Class  media.VideoJobClass   `json:"class,omitempty"`
+	// Retry is set by the worker on an attempt after one that failed, timed
+	// out or died: producers record each output on its own.
+	Retry bool `json:"-"`
 }
 
 // ProcessQueue enqueues processing in the media worker (workqueue.Queue).
