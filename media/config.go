@@ -116,6 +116,9 @@ type Upload struct {
 	// Video bounds a video upload as probed from its real stream;
 	// nil or zero fields take the defaults (DefaultVideoLimits).
 	Video *VideoLimits `json:"video,omitempty"`
+	// Required: a version is not ready, so never released, until it holds
+	// an attached upload at Path.
+	Required bool `json:"required,omitempty"`
 }
 
 // Publish declares which existing version files a reader may consume. Its

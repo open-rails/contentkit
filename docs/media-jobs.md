@@ -26,7 +26,11 @@ Publish records intent for now or a future date. The existing release request
 waits until every required output is complete, copies the selected output set
 into `public/` or `private/`, verifies it, then activates the reader snapshot.
 An existing completed release remains readable while a replacement processes.
-A video becoming partially playable does not complete publication.
+A video becoming partially playable does not complete publication. An upload a
+kind marks `Required` counts as a required output: without it the release
+waits, and an existing release that lacks it is withdrawn rather than kept.
+`Engine.Reconcile` queues that withdrawal for releases made before the upload
+was required.
 
 There is no standalone playable flag, daily playable scan, version preparation
 worker, body-image-copy worker or version-fork operation. New versions have their

@@ -4,11 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
+	"strconv"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	mediastore "github.com/open-rails/contentkit/internal/mediastore"
+	"github.com/open-rails/contentkit/media"
 	versions "github.com/open-rails/contentkit/media/versions"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
@@ -63,6 +66,77 @@ func (s *Service) SchedulePublicationTx(ctx context.Context, tx pgx.Tx, targets 
 		}
 	}
 	return nil
+}
+
+// ReplanMissingUploads re-plans released versions whose live release lacks a
+// required upload, which withdraws them. client only inserts the jobs.
+func (s *Service) ReplanMissingUploads(ctx context.Context, client *river.Client[pgx.Tx]) (int, error) {
+	if s.reg == nil {
+		return 0, nil
+	}
+	var kinds []string
+	for kind := range s.o.Kinds.Kinds {
+		k, err := s.releaseMedia(kind)
+		if err != nil {
+			return 0, err
+		}
+		if k != nil && slices.ContainsFunc(k.Uploads, func(u media.Upload) bool { return u.Required }) {
+			kinds = append(kinds, kind)
+		}
+	}
+	if len(kinds) == 0 {
+		return 0, nil
+	}
+	scheduler := publicationService(s.o.Pool, s.o.Schema, s.o.Tenant, s.reg)
+	scheduler.o.Now, scheduler.client = s.o.Now, client
+	const batch = 100
+	replanned, after := 0, ""
+	for {
+		rows, err := s.o.Pool.Query(ctx, `SELECT v.content_id,v.id,c.kind,coalesce(jsonb_path_query_array(r.result,'$.view.files[*] ? (!exists(@.preset)).path'),'[]')
+ FROM `+s.t.versions+` v JOIN `+s.t.items+` c ON c.tenant_id=v.tenant_id AND c.id=v.content_id
+ JOIN `+s.releaseRequestsTable()+` r ON r.tenant_id=v.tenant_id AND r.id=v.release_id AND r.state IN ('retiring','completed')
+ WHERE v.tenant_id=$1 AND v.released AND v.state<>'deleted' AND c.state<>'deleted' AND c.kind=ANY($2) AND v.id>$3 ORDER BY v.id LIMIT `+strconv.Itoa(batch), s.o.Tenant, kinds, after)
+		if err != nil {
+			return replanned, err
+		}
+		var targets []versions.Target
+		n := 0
+		for rows.Next() {
+			var t versions.Target
+			var kind string
+			var paths []string
+			if err := rows.Scan(&t.Content, &t.Version, &kind, &paths); err != nil {
+				rows.Close()
+				return replanned, err
+			}
+			n, after = n+1, t.Version
+			k, err := s.reg.Kind(kind)
+			if err != nil {
+				rows.Close()
+				return replanned, err
+			}
+			view := &mediastore.Manifest{}
+			for _, path := range paths {
+				view.Files = append(view.Files, media.File{Path: path})
+			}
+			if len(k.Missing(view)) > 0 {
+				targets = append(targets, t)
+			}
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return replanned, err
+		}
+		if len(targets) > 0 {
+			if err := pgx.BeginFunc(ctx, s.o.Pool, func(tx pgx.Tx) error { return scheduler.SchedulePublicationTx(ctx, tx, targets) }); err != nil {
+				return replanned, err
+			}
+			replanned += len(targets)
+		}
+		if n < batch {
+			return replanned, nil
+		}
+	}
 }
 
 // wakePublicationTx resumes an accepted publication without the processor's clock.

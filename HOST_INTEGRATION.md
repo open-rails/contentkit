@@ -47,7 +47,8 @@ Which process works jobs is code, never configuration. The standalone
 `contentkit-media-worker` image's ([Media worker schema](#media-worker-schema)).
 `Engine.Reconcile` repairs derived catalog state (facets, access snapshots,
 search marks and content paths) after a model change; the server CLI runs it as
-`contentkit reconcile`.
+`contentkit reconcile`. It also queues the withdrawal of live releases that
+lack an upload a kind marks `Required`; run it after adding one.
 
 ## Host references
 
@@ -967,7 +968,7 @@ layouts.
 ```go
 var Gallery = media.Kind{Name: "gallery", KeepOriginals: true,
 	Uploads: []media.Upload{
-		{Path: "originals/{name}", Types: images, MaxBytes: 10 << 20},
+		{Path: "originals/{name}", Types: images, MaxBytes: 10 << 20, Required: true},
 		{Path: "cover", Types: images, MaxBytes: 10 << 20},
 	},
 	Private: []media.Private{
@@ -984,7 +985,7 @@ var Gallery = media.Kind{Name: "gallery", KeepOriginals: true,
 
 var Video = media.Kind{Name: "video", KeepOriginals: true,
 	Uploads: []media.Upload{
-		{Path: "source", Types: videoTypes, MaxBytes: maxVideo},
+		{Path: "source", Types: videoTypes, MaxBytes: maxVideo, Required: true},
 		{Path: "subs/{name}", Types: media.SubtitleTypes, MaxBytes: 32 << 20},
 		{Path: "poster", Types: images, MaxBytes: 10 << 20, Frames: "source"},
 	},
@@ -1023,7 +1024,9 @@ worker, _ := cfg.MediaRegistry() // the stock worker's MEDIA_KINDS_FILE
   a file's path adds its extension (`cover.png`), and a put to the same stem
   replaces it. `Max` caps an Upload's files, `Frames` lets the `frame` op
   grab the upload from a video upload, `Named` lets the server name it (`i-{uuid}`, inline images;
-  it needs a `Max`).
+  it needs a `Max`). `Required` holds a version back until it has an
+  attached upload there: its media state reads `missing` and its publication
+  waits, and a live release without one is withdrawn when it is re-planned.
 - **Private presets** have one producer: `Image` (with `Shapes`, below),
   `HLS` (byte-range fMP4 ladder, audio and subtitle tracks, seek sprite; each
   track's segment table is its own private blob), `MP4` (one rung, H.264),

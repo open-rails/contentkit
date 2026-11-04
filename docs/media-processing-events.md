@@ -39,7 +39,7 @@ own their cursors. Retention is independent of observers and completion receipts
 survive log expiry.
 
 The stock worker needs no host callbacks. When an ingest or derivative job ends
-and the item's processing has settled (ready, failed or full), its completion
+and the item's processing has settled (ready, failed, full or missing), its completion
 transaction wakes the durable `contentkit_publication` request directly. While
 the item is still processing it does not, because a live edition releases only
 fully processed media. If an earlier release is running, its normal follow-up
