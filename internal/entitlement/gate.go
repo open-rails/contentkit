@@ -466,8 +466,11 @@ func verdict(p itemPlan, kn *knowledge, now time.Time, paywall bool) (Decision, 
 		d.Sell = slices.Clone(p.tiers)
 	case access.ChannelLevel:
 		d.Sell = []access.Key{p.channels[len(p.channels)-1]}
+	case access.PPV, access.ChannelPPV:
+		// Only a per-version rule sells its version; a held version key still
+		// opens any rule.
+		d.Sell = []access.Key{p.version}
 	}
-	d.Sell = append(d.Sell, p.version)
 	if !requiresHeld {
 		d.Requires = p.requires
 	}
