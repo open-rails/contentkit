@@ -36,7 +36,7 @@ export function SortMenu<S extends string>({ value, sorts, onChange, label, clas
   const name = label ?? ((s: S) => sortLabel(m, s as ListSort));
   return (
     <Select value={value} onValueChange={(v) => onChange(v as S)}>
-      <SelectTrigger size="sm" aria-label={m.t("listing.sort")} className={className} data-ckui="listing-sort">
+      <SelectTrigger size="sm" aria-label={m.t("listing.sort")} className={cn("comfortable:data-[size=sm]:h-10", className)} data-ckui="listing-sort">
         <SelectValue>{(v: string) => name(v as S)}</SelectValue>
       </SelectTrigger>
       <SelectContent>
