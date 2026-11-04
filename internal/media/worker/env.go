@@ -71,7 +71,7 @@ func StoreFromEnv() (*mediaS3.Store, error) {
 //	MEDIA_WORKER_CONCURRENCY     image/video derivative jobs per process (default 1)
 //	MEDIA_WORKER_INGEST_CONCURRENCY  ingest jobs per process (default 2)
 //	MEDIA_WORKER_SHUTDOWN_GRACE  time running jobs get on SIGTERM before cancel (default 30s)
-//	MEDIA_WORKER_VIDEO_SLICE     time a derivative job keeps encoding its own video before yielding, e.g. 20m; never ahead of another video's first playback (default 0: after every chunk; at most half the job timeout)
+//	MEDIA_WORKER_VIDEO_SLICE     time a derivative job keeps encoding its own video before yielding, e.g. 20m; ends when its video becomes playable (default 0: after every chunk; at most half the job timeout)
 func (c *Config) TuningFromEnv() error {
 	for k, p := range map[string]*string{"MEDIA_ACCOUNT_SCHEMA": &c.AccountSchema, "MEDIA_ACCOUNT_WORKER_SCHEMA": &c.AccountWorkerSchema, "MEDIA_WORKER_SCHEMA": &c.Schema, "MEDIA_CONTENT_SCHEMA": &c.ContentSchema, "MEDIA_HOST_RIVER_SCHEMA": &c.HostSchema, "MEDIA_WORKER_TMP": &c.TempDir,
 		"MEDIA_WORKER_PRESET": &c.Preset, "MEDIA_WORKER_TOP_PRESET": &c.TopPreset, "MEDIA_WORKER_ENCODER": &c.VideoEncoder} {

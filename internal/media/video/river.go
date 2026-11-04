@@ -44,20 +44,21 @@ func (c WorkerConfig) defaults() WorkerConfig {
 // The media worker also runs image producers; no video River handler is registered.
 func (c WorkerConfig) Run(ctx context.Context, job *river.Job[workqueue.DerivativeArgs]) error {
 	c = c.defaults()
+	start := time.Now()
 	defer c.clearProgress(ctx, job.ID)
 	if err := c.Encoder.ms.Recover(ctx, job.Args.Ref); err != nil {
 		return err
 	}
 	// The shared derivative worker owns retry exhaustion, outage snoozes, and
 	// crash recovery for both image and video work.
-	return c.convert(ctx, job)
+	return c.convert(ctx, job, start)
 }
 
 // convert owns the whole conversion. Each step checkpoints at most one
 // bounded chunk and publishes a finished rung; an attempt takes one step, or
 // as many as its Slice allows, before yielding the same job.
 // The item lock prevents duplicate requests from encoding the same chunk.
-func (c WorkerConfig) convert(ctx context.Context, job *river.Job[workqueue.DerivativeArgs]) error {
+func (c WorkerConfig) convert(ctx context.Context, job *river.Job[workqueue.DerivativeArgs], start time.Time) error {
 	release, ok, err := pglock.Acquire(ctx, c.Pool, "contentkit:media:video:"+job.Args.Ref.String(), false)
 	if err != nil {
 		return err
@@ -89,7 +90,6 @@ func (c WorkerConfig) convert(ctx context.Context, job *river.Job[workqueue.Deri
 			return err
 		}
 	}
-	start := *job.AttemptedAt
 next:
 	for {
 		if err := c.planVideo(ctx, job.Args); err != nil {
