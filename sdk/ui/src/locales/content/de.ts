@@ -88,7 +88,7 @@ export const content: typeof en = {
     saveSegments: "Kapitel speichern",
   },
   myStats: {
-    accessFor: "{tier} seit",
+    accessFor: "Zeit mit {tier}",
     accessDescription: "Gesamte Zugriffszeit; ein Monat entspricht 30 Tagen.",
     lessThanDay: "Weniger als 1 Tag",
     unavailable: "Einige Statistiken sind vorübergehend nicht verfügbar.",
