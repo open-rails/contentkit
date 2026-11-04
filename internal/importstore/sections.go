@@ -13,12 +13,29 @@ import (
 	"github.com/open-rails/contentkit/entities"
 	importer "github.com/open-rails/contentkit/importer"
 	"github.com/open-rails/contentkit/internal/codes"
+	contentstore "github.com/open-rails/contentkit/internal/contentstore"
 	"github.com/open-rails/contentkit/signal"
 )
 
 // typed adapts a store's batch write to a section's.
-func typed[T any](fn func(ctx context.Context, tx pgx.Tx, in []T) error) func(context.Context, pgx.Tx, []any) error {
-	return func(ctx context.Context, tx pgx.Tx, in []any) error {
+func typed[T any](fn func(ctx context.Context, tx pgx.Tx, in []T) error) func(context.Context, pgx.Tx, []any, *contentstore.Recounts) error {
+	return counted(func(ctx context.Context, tx pgx.Tx, in []T, _ *contentstore.Recounts) error { return fn(ctx, tx, in) })
+}
+
+// counted adapts a store's batch write that can leave its recounts to later.
+func counted[T any](fn func(ctx context.Context, tx pgx.Tx, in []T, later *contentstore.Recounts) error) func(context.Context, pgx.Tx, []any, *contentstore.Recounts) error {
+	return func(ctx context.Context, tx pgx.Tx, in []any, later *contentstore.Recounts) error {
+		list := make([]T, len(in))
+		for i, v := range in {
+			list[i] = v.(T)
+		}
+		return fn(ctx, tx, list, later)
+	}
+}
+
+// screened adapts a store's screen to a section's.
+func screened[T any](fn func(ctx context.Context, tx pgx.Tx, in []T) ([]error, error)) func(context.Context, pgx.Tx, []any) ([]error, error) {
+	return func(ctx context.Context, tx pgx.Tx, in []any) ([]error, error) {
 		list := make([]T, len(in))
 		for i, v := range in {
 			list[i] = v.(T)
@@ -48,11 +65,15 @@ func (run *batchRun) sections() []section {
 			write: typed(func(ctx context.Context, tx pgx.Tx, in []codes.Alias) error {
 				return codes.PutAliases(ctx, codes.Pgx(tx), s.qs, s.o.Tenant, in)
 			})},
-		{name: importer.SectionComments, n: len(b.Comments), prepare: run.comment, write: typed(s.o.Content.ImportComments)},
-		{name: importer.SectionReactions, n: len(b.Reactions), prepare: run.reaction, write: typed(s.o.Content.ImportReactions)},
-		{name: importer.SectionFavorites, n: len(b.Favorites), prepare: run.favorite, write: typed(s.o.Content.ImportFavorites)},
+		{name: importer.SectionComments, n: len(b.Comments), prepare: run.comment, write: counted(s.o.Content.ImportComments),
+			screen: screened(s.o.Content.ScreenComments)},
+		{name: importer.SectionReactions, n: len(b.Reactions), prepare: run.reaction, write: counted(s.o.Content.ImportReactions),
+			screen: screened(s.o.Content.ScreenReactions)},
+		{name: importer.SectionFavorites, n: len(b.Favorites), prepare: run.favorite, write: counted(s.o.Content.ImportFavorites),
+			screen: screened(s.o.Content.ScreenFavorites)},
 		{name: importer.SectionPolls, n: len(b.Polls), prepare: run.poll, write: typed(s.o.Content.ImportPolls)},
-		{name: importer.SectionVotes, n: len(b.Votes), prepare: run.vote, write: typed(s.o.Content.ImportVotes)},
+		{name: importer.SectionVotes, n: len(b.Votes), prepare: run.vote, write: counted(s.o.Content.ImportVotes),
+			screen: screened(s.o.Content.ScreenVotes)},
 		{name: importer.SectionLegacyReading, n: len(b.LegacyReading), prepare: run.legacyReading,
 			write: typed(func(ctx context.Context, _ pgx.Tx, in []discovery.ImportLegacyReading) error {
 				return s.o.Signals.ImportLegacyReading(ctx, in)
@@ -61,7 +82,7 @@ func (run *batchRun) sections() []section {
 			write: typed(func(ctx context.Context, _ pgx.Tx, in []discovery.ImportSignal) error {
 				return s.o.Signals.ImportSignals(ctx, in)
 			})},
-		{name: importer.SectionDeletes, n: len(b.Deletes), prepare: run.deletion, write: typed(s.deletes),
+		{name: importer.SectionDeletes, n: len(b.Deletes), prepare: run.deletion, write: counted(s.deletes),
 			first: func(in any) bool {
 				e := in.(deletion).entity
 				return e == importer.RecordEntity || e == importer.RecordChannel
@@ -314,9 +335,9 @@ func (run *batchRun) deletion(r *resolver, i int) (any, string, error) {
 // then comments and polls. Entities go first because deleting one takes the
 // entity hierarchy lock, which every hierarchy writer takes before content
 // rows; deleting content first would hold content rows while waiting on it.
-// The section's first puts entity records ahead, so a one-by-one retry keeps
+// The section's first puts entity records ahead, so a retry in halves keeps
 // that order.
-func (s *Service) deletes(ctx context.Context, tx pgx.Tx, in []deletion) error {
+func (s *Service) deletes(ctx context.Context, tx pgx.Tx, in []deletion, later *contentstore.Recounts) error {
 	by := map[string][]string{}
 	for _, d := range in {
 		if d.id == "" {
@@ -339,7 +360,7 @@ func (s *Service) deletes(ctx context.Context, tx pgx.Tx, in []deletion) error {
 	if err := s.o.Catalog.ImportDeletes(ctx, tx, by[importer.RecordContent], by[importer.RecordVersion]); err != nil {
 		return err
 	}
-	return s.o.Content.ImportDeletes(ctx, tx, by[importer.RecordComment], by[importer.RecordPoll])
+	return s.o.Content.ImportDeletes(ctx, tx, by[importer.RecordComment], by[importer.RecordPoll], later)
 }
 
 func (run *batchRun) legacyReading(r *resolver, i int) (any, string, error) {
