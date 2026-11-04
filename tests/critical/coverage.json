@@ -998,11 +998,13 @@
       "status": "verified",
       "evidence": [
         "Two independently authorized app runtimes share the same real S3 bucket and PostgreSQL tables, yet cannot adopt each other's staged allocations; both own-app positive controls work.",
-        "Signed media child282aa358; combined race85.683s, restored browser positive19.270s and real migration9.836s. Final integrated run remains required."
+        "Signed media child282aa358; combined race85.683s, restored browser positive19.270s and real migration9.836s. Final integrated run remains required.",
+        "A folder's owner check reads only its first and last owner in index order: a second parent sorting before or after the owner, or differing only by version, is refused, and the single owner reads again once it is gone."
       ],
       "cases": [
         "TestMediaAdmissionBoundaries/CK-J09-S03_two_apps_share_storage_without_sharing_upload_allocations",
-        "TestUploadAcceptanceAndRetry/CK-J09-S03_foreign_owner_and_version_cannot_adopt_staged_bytes"
+        "TestUploadAcceptanceAndRetry/CK-J09-S03_foreign_owner_and_version_cannot_adopt_staged_bytes",
+        "TestMediaFolderOwner"
       ]
     },
     {

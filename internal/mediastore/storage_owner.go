@@ -69,8 +69,13 @@ func (j *Jobs) itemForFolder(ctx context.Context, prefix string) (Item, error) {
 // existing claim. This check never runs in the media gateway.
 func (j *PGJournal) checkFolderOwner(ctx context.Context, q folderQuerier, item Item, require bool) error {
 	j = j.forTenant(item.Ref().TenantID)
-	rows, err := q.Query(ctx, `SELECT DISTINCT content_kind,content_id,content_version_id FROM `+j.table+`
-WHERE tenant_id=$1 AND folder_prefix=$2 LIMIT 2`, item.Ref().TenantID, item.Prefix())
+	// The folder's least and greatest owners are equal only when it has one
+	// owner (UNION keeps one row then), so two index lookups decide it
+	// however many commits the folder holds.
+	rows, err := q.Query(ctx, `(SELECT content_kind,content_id,content_version_id FROM `+j.table+`
+WHERE tenant_id=$1 AND folder_prefix=$2 ORDER BY content_kind,content_id,content_version_id LIMIT 1)
+UNION (SELECT content_kind,content_id,content_version_id FROM `+j.table+`
+WHERE tenant_id=$1 AND folder_prefix=$2 ORDER BY content_kind DESC,content_id DESC,content_version_id DESC LIMIT 1)`, item.Ref().TenantID, item.Prefix())
 	if err != nil {
 		return err
 	}
