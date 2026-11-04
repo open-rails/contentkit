@@ -68,7 +68,7 @@ CREATE TRIGGER critical_recount BEFORE UPDATE ON %[1]s.content_interaction_count
 		}
 		return *r.RecountsQueued
 	}
-	// One bad comment sends its chunk through the one-by-one writes too.
+	// One bad comment fails alone; the rest still only queue.
 	first := importer.Batch{Source: "deferred-recounts", DeferRecounts: true,
 		Comments: []importer.CommentRecord{comment("parent", "Parent", nil), comment("two", "Two", nil), comment("reply-one", "Reply one", parent),
 			comment("blank", "   ", nil), comment("three", "Three", nil), comment("reply-two", "Reply two", parent)},

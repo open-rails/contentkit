@@ -12,10 +12,10 @@ import (
 	"github.com/open-rails/contentkit/importer"
 )
 
-// One bad record sends its chunk to the one-by-one fallback. The good records
-// land, the bad one fails alone, and the article's counts are recounted once
-// per section, after its records, to counts that keep the live rows. A failed
-// final recount keeps none of the chunk.
+// A bad record fails alone and the good ones land; the article's counts are
+// recounted once per section, after its records, to counts that keep the
+// live rows. A recount that fails sends the chunk to its writes in halves,
+// and their final recount failing too keeps none of the chunk.
 func TestImportFallbackRecountsOnce(t *testing.T) {
 	w := newWorld(t, func(cfg *ck.Config) { cfg.Interactions.Limits.Disabled = true })
 	a := w.apps[0]
@@ -179,7 +179,10 @@ func TestImportedCommentLikeLockOrder(t *testing.T) {
 	qs := pgx.Identifier{w.schema}.Sanitize()
 	_, err = w.pool.Exec(ctx, fmt.Sprintf(`CREATE FUNCTION %[1]s.critical_imported_like() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN PERFORM pg_advisory_xact_lock(hashtextextended(TG_ARGV[0],0)); RETURN NEW; END$$;
 CREATE TRIGGER critical_imported_like AFTER INSERT ON %[1]s.content_reactions FOR EACH ROW
- WHEN (NEW.content_id = '%[2]s' AND NEW.user_id IS NULL) EXECUTE FUNCTION %[1]s.critical_imported_like('%[3]s')`, qs, liked.ID, gate))
+ WHEN (NEW.content_id = '%[2]s' AND NEW.user_id IS NULL) EXECUTE FUNCTION %[1]s.critical_imported_like('%[3]s');
+CREATE FUNCTION %[1]s.critical_refused_like() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN RAISE EXCEPTION 'refused like' USING ERRCODE = 'check_violation'; END$$;
+CREATE TRIGGER critical_refused_like BEFORE INSERT ON %[1]s.content_reactions FOR EACH ROW
+ WHEN (NEW.content_id = '%[4]s') EXECUTE FUNCTION %[1]s.critical_refused_like()`, qs, liked.ID, gate, item.ID))
 	must(t, err)
 	blockedBy := func(pid uint32) uint32 {
 		t.Helper()
@@ -190,10 +193,10 @@ CREATE TRIGGER critical_imported_like AFTER INSERT ON %[1]s.content_reactions FO
 		})
 		return waiter
 	}
-	// The bad like sends the chunk to the one-by-one fallback.
+	// The like the write refuses sends the chunk to its writes in halves.
 	batch := importer.Batch{Source: "imported-like-lock-order", Reactions: []importer.ReactionRecord{
 		{Target: importer.TargetRef{Comment: &importer.Ref{ID: liked.ID}}, IP: "127.0.0.1", Value: 1},
-		{Target: importer.TargetRef{Content: &importer.Ref{ID: item.ID}}, IP: "127.0.0.1", Value: 5}}}
+		{Target: importer.TargetRef{Content: &importer.Ref{ID: item.ID}}, IP: "127.0.0.1", Value: 1}}}
 	imported := make(chan importer.Result, 1)
 	importErr, live := make(chan error, 1), make(chan error, 1)
 	go func() {
@@ -214,7 +217,7 @@ CREATE TRIGGER critical_imported_like AFTER INSERT ON %[1]s.content_reactions FO
 	must(t, <-importErr)
 	result := <-imported
 	if len(result.Failed) != 1 || result.Failed[0].Index != 1 || result.Written[importer.SectionReactions] != 1 {
-		t.Fatalf("import wrote %v and failed %+v; want the like written and the bad value failed", result.Written, result.Failed)
+		t.Fatalf("import wrote %v and failed %+v; want the like written and the refused one failed", result.Written, result.Failed)
 	}
 	if got := readComment(t, a, item.ID, liked.ID); got.Likes != 1 {
 		t.Fatalf("one address liked twice; comment likes %d, want 1", got.Likes)
