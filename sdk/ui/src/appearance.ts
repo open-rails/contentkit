@@ -36,9 +36,17 @@ export interface ContentKitUiVariables {
   stickyTop?: string;
 }
 
+/**
+ * Control size, unrelated to the provider's image pixel `density`. `compact` (default) keeps the dense
+ * controls; `comfortable` makes reader-facing ones (directory letters, entity chips, sort triggers, history
+ * and comment-composer actions) at least 40px tall.
+ */
+export type ContentKitUiDensity = "compact" | "comfortable";
+
 export interface ContentKitUiAppearance {
   theme?: ContentKitUiTheme;
   variables?: ContentKitUiVariables;
+  density?: ContentKitUiDensity;
 }
 
 const kebab = (k: string) => k.replace(/[A-Z]/g, (c) => "-" + c.toLowerCase());
