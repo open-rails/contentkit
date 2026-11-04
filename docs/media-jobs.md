@@ -62,10 +62,13 @@ then yields its job behind the other queued videos. Every queued video so
 advances one chunk per pass, and a large backlog finishes its videos only near
 its end. `VideoSlice` (stock workers: `MEDIA_WORKER_VIDEO_SLICE`, a duration
 such as `20m`) lets an attempt keep taking its own video's next chunks until
-that long after it started, so videos finish one after another. It is capped at
-half of `JobTimeout`, leaving the other half for the last chunk it starts.
-Shutdown ends a slice after its current chunk. The default, 0, yields after
-every chunk.
+that long after it started, so videos finish one after another. A slice never
+delays another video's first playback: it ends when its own video becomes
+playable, and after any chunk while a job of higher priority waits, so a
+playable video's ladder or a backfill never runs ahead of a video still
+waiting to play. It is capped at half of `JobTimeout`, leaving the other half
+for the last chunk it starts. Shutdown ends a slice after its current chunk.
+The default, 0, yields after every chunk.
 
 ## Adoption
 

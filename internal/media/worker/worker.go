@@ -83,8 +83,9 @@ type Config struct {
 	JobTimeout time.Duration
 	// VideoSlice is how long a derivative attempt keeps encoding its own
 	// video's chunks before yielding to the other queued jobs; 0 (the
-	// default) yields after every chunk. At most half of JobTimeout, so the
-	// last chunk a slice starts still has the other half.
+	// default) yields after every chunk. A slice ends early when its video
+	// becomes playable or a job of higher priority waits. At most half of
+	// JobTimeout, so the last chunk a slice starts still has the other half.
 	VideoSlice time.Duration
 	// ShutdownGrace is how long running jobs get to finish on shutdown
 	// before they are cancelled and retried elsewhere; default 30 s.

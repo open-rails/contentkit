@@ -161,13 +161,16 @@ next:
 						if _, err := c.Pool.Exec(ctx, `UPDATE `+c.jobTable()+` SET priority = 2 WHERE id = $1`, job.ID); err != nil {
 							return err
 						}
+						return river.JobSnooze(0) // ends a slice too
 					}
 				}
 			}
 			// Yield even when this was the last rung: the next attempt (or the next
 			// step of a slice) confirms no work remains, and a newly queued short
 			// video can run between chunks.
-			if c.inSlice(ctx, start) {
+			if more, err := c.inSlice(ctx, job, start); err != nil {
+				return err
+			} else if more {
 				continue next
 			}
 			return river.JobSnooze(0)
@@ -177,14 +180,22 @@ next:
 }
 
 // inSlice reports whether an attempt that started at start takes its next
-// step itself rather than yielding.
-func (c WorkerConfig) inSlice(ctx context.Context, start time.Time) bool {
+// step itself rather than yielding: within its Slice, while no derivative job
+// of higher priority (a video's first playback, ahead of ladders and
+// backfills) waits.
+func (c WorkerConfig) inSlice(ctx context.Context, job *river.Job[workqueue.DerivativeArgs], start time.Time) (bool, error) {
 	select {
 	case <-c.Stopping:
-		return false
+		return false, nil
 	default:
 	}
-	return c.Slice > 0 && ctx.Err() == nil && time.Since(start) < c.Slice
+	if c.Slice <= 0 || ctx.Err() != nil || time.Since(start) >= c.Slice {
+		return false, nil
+	}
+	var waiting bool
+	err := c.Pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM `+c.jobTable()+` WHERE queue = $1 AND priority < $2
+   AND (state = 'available' OR state IN ('retryable', 'scheduled') AND scheduled_at <= now()))`, job.Queue, job.Priority).Scan(&waiting)
+	return !waiting, err
 }
 
 func (c WorkerConfig) clearProgress(ctx context.Context, id int64) {
