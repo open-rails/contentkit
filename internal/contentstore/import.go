@@ -324,24 +324,48 @@ func (rt *Runtime) ImportComments(ctx context.Context, tx pgx.Tx, in []content.I
 		key             keyRow
 	}
 	known := map[string]stored{}
-	observedIDs := append(slices.Clone(ids), parents...)
-	res, err := tx.Query(ctx, `SELECT id::text, tenant_id, coalesce(reply_to_id::text, ''), content_kind, content_id, content_version_id FROM `+s.t.comments+`
- WHERE id = ANY($1::uuid[])`, observedIDs)
-	if err != nil {
-		return err
-	}
-	for res.Next() {
-		var id string
-		var c stored
-		if err := res.Scan(&id, &c.tenant, &c.replyTo, &c.key.Kind, &c.key.ID, versionid.Into(&c.key.Version)); err != nil {
-			res.Close()
+	var observedIDs []string
+	load := func(want []string) error {
+		observedIDs = append(observedIDs, want...)
+		res, err := tx.Query(ctx, `SELECT id::text, tenant_id, coalesce(reply_to_id::text, ''), content_kind, content_id, content_version_id FROM `+s.t.comments+`
+ WHERE id = ANY($1::uuid[])`, want)
+		if err != nil {
 			return err
 		}
-		known[id] = c
+		defer res.Close()
+		for res.Next() {
+			var id string
+			var c stored
+			if err := res.Scan(&id, &c.tenant, &c.replyTo, &c.key.Kind, &c.key.ID, versionid.Into(&c.key.Version)); err != nil {
+				return err
+			}
+			known[id] = c
+		}
+		return res.Err()
 	}
-	res.Close()
-	if err := res.Err(); err != nil {
+	if err := load(append(slices.Clone(ids), parents...)); err != nil {
 		return err
+	}
+	// A parent stored by an earlier write leads to a thread root that may be
+	// neither in this write nor loaded yet.
+	asked := map[string]bool{}
+	for range 16 {
+		var up []string
+		for _, c := range known {
+			if _, ok := byID[c.replyTo]; c.replyTo == "" || ok || asked[c.replyTo] {
+				continue
+			}
+			if _, ok := known[c.replyTo]; !ok {
+				asked[c.replyTo] = true
+				up = append(up, c.replyTo)
+			}
+		}
+		if len(up) == 0 {
+			break
+		}
+		if err := load(up); err != nil {
+			return err
+		}
 	}
 	keys := map[keyRow]bool{}
 	threads := map[string]bool{}
@@ -402,7 +426,7 @@ func (rt *Runtime) ImportComments(ctx context.Context, tx pgx.Tx, in []content.I
 	// A concurrent import may have moved a reply while these locks waited.
 	// Retry through the importer's savepoint fallback instead of locking its
 	// newly discovered parent out of order or missing that parent's recount.
-	res, err = tx.Query(ctx, `SELECT id::text, tenant_id, coalesce(reply_to_id::text, ''), content_kind, content_id, content_version_id FROM `+s.t.comments+`
+	res, err := tx.Query(ctx, `SELECT id::text, tenant_id, coalesce(reply_to_id::text, ''), content_kind, content_id, content_version_id FROM `+s.t.comments+`
  WHERE id = ANY($1::uuid[])`, observedIDs)
 	if err != nil {
 		return err
