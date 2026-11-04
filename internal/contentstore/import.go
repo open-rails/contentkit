@@ -734,10 +734,16 @@ func (rt *Runtime) ImportVotes(ctx context.Context, tx pgx.Tx, in []content.Impo
 			return err
 		}
 	}
+	ids := slices.Compact(slices.Sorted(slices.Values(polls)))
+	// Lock the options in their own statement, so the recount's snapshot
+	// includes the live votes it waited for.
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM `+s.t.pollOptions+` WHERE tenant_id = $2 AND question_id = ANY($1::uuid[]) ORDER BY id FOR NO KEY UPDATE`, ids, rt.tenant); err != nil {
+		return err
+	}
 	_, err = tx.Exec(ctx, `UPDATE `+s.t.pollOptions+` o SET vote_count = n.votes FROM (SELECT x.id, coalesce(c.votes, 0) AS votes
  FROM `+s.t.pollOptions+` x LEFT JOIN (SELECT option_id, count(*)::int AS votes FROM `+s.t.pollVotes+` WHERE tenant_id = $2 AND question_id = ANY($1::uuid[])
   GROUP BY option_id) c ON c.option_id = x.id WHERE x.tenant_id = $2 AND x.question_id = ANY($1::uuid[])) n
- WHERE o.tenant_id = $2 AND o.id = n.id AND o.vote_count <> n.votes`, slices.Compact(slices.Sorted(slices.Values(polls))), rt.tenant)
+ WHERE o.tenant_id = $2 AND o.id = n.id AND o.vote_count <> n.votes`, ids, rt.tenant)
 	return err
 }
 
