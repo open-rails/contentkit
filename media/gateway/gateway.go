@@ -22,7 +22,6 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
@@ -34,16 +33,15 @@ import (
 )
 
 const (
+	// Generation-named public files and content-hashed private blobs never
+	// change, so a browser keeps its copy. Tokens and the deletion fence guard
+	// new reads, not bytes a browser already holds.
+	immutablePublicCacheControl = "public, max-age=31536000, immutable"
+	privateCacheControl         = "private, max-age=31536000, immutable"
+	// Any other public name may serve new bytes: a Stable preset is overwritten
+	// in place, and a kind's default stands in for a missing file.
 	publicCacheControl = "public, max-age=300, stale-while-revalidate=86400"
 )
-
-// privateCacheControl lets a browser reuse a private blob only while the
-// token that authorized it is valid. The bytes behind a name never change, but
-// the right to read them does: a longer lifetime would skip the token, key and
-// deletion-fence checks after expiry.
-func privateCacheControl(expires, now time.Time) string {
-	return "private, max-age=" + strconv.FormatInt(max(0, int64(expires.Sub(now)/time.Second)), 10) + ", immutable"
-}
 
 // Config configures a Handler.
 // Route exposes exactly one tenant account or app root on a media host.
@@ -156,16 +154,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	key := o.key()
 	cacheControl := publicCacheControl
+	if _, generated := layout.SplitGeneration(o.name); generated {
+		cacheControl = immutablePublicCacheControl
+	}
 	var dl *string // a private file's unsigned download name
 	if o.area != layout.AreaPublic {
-		now := time.Now()
-		expires, err := h.authorize(r, o.area, key, now)
-		if err != nil {
+		if err := h.authorize(r, o.area, key); err != nil {
 			h.cfg.Logger.Debug("media-gateway: denied", "key", key, "reason", err)
 			h.fail(w, http.StatusNotFound)
 			return
 		}
-		cacheControl = privateCacheControl(expires, now)
+		cacheControl = privateCacheControl
 	}
 	if q := r.URL.Query(); q.Has("dl") {
 		dl = new(q.Get("dl"))
@@ -197,6 +196,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			_ = resp.Body.Close()
 			o.name, o.id, o.version = name, layout.DefaultID, ""
 			key = o.key()
+			cacheControl = publicCacheControl
 			resp, err = h.fetch(r, o.bucket, key)
 		}
 	}
@@ -259,9 +259,9 @@ func (h *Handler) parse(r *http.Request) (object, bool) {
 var errNoToken = errors.New("no token")
 
 // authorize accepts exact-file or whole-item private tokens from the URL or
-// an mt cookie (a browser may send several). It returns when the accepted
-// token expires.
-func (h *Handler) authorize(r *http.Request, area, key string, now time.Time) (expires time.Time, err error) {
+// an mt cookie (a browser may send several).
+func (h *Handler) authorize(r *http.Request, area, key string) (err error) {
+	now := time.Now()
 	var toks []string
 	if t := r.URL.Query().Get("t"); t != "" {
 		toks = append(toks, t)
@@ -270,13 +270,13 @@ func (h *Handler) authorize(r *http.Request, area, key string, now time.Time) (e
 		toks = append(toks, c.Value)
 	}
 	for _, tok := range toks {
-		exp, e := h.cfg.Ring.VerifyPrivateUntil(tok, key, now)
+		e := h.cfg.Ring.VerifyPrivate(tok, key, now)
 		if e == nil {
-			return exp, nil
+			return nil
 		}
 		err = cmp.Or(err, e)
 	}
-	return time.Time{}, cmp.Or(err, errNoToken)
+	return cmp.Or(err, errNoToken)
 }
 
 func (h *Handler) defaultName(o object) string {
@@ -284,13 +284,9 @@ func (h *Handler) defaultName(o object) string {
 	if target := files[o.name]; target != "" {
 		return target
 	}
-	// A retired publication still has the logical name before its UUID.
-	stem, ext := o.name, ""
-	if i := strings.LastIndexByte(stem, '.'); i >= 0 {
-		stem, ext = stem[:i], stem[i:]
-	}
-	if len(stem) > 37 && stem[len(stem)-37] == '-' && layout.ValidStagedName(layout.StagedPrefix+stem[len(stem)-36:]) {
-		return files[stem[:len(stem)-37]+ext]
+	// A retired publication still has the logical name before its generation.
+	if logical, ok := layout.SplitGeneration(o.name); ok {
+		return files[logical]
 	}
 	return ""
 }
@@ -342,6 +338,9 @@ func (h *Handler) relay(w http.ResponseWriter, r *http.Request, key string, resp
 		if v := resp.Header.Values(name); len(v) > 0 && (body || name != "Content-Length" && name != "Content-Type") {
 			hdr[name] = v // error bodies are not relayed
 		}
+	}
+	if !body && resp.StatusCode != http.StatusNotModified {
+		cacheControl = "no-store" // a 412 or 416 answers this request, not the object
 	}
 	hdr.Set("Cache-Control", cacheControl)
 	if dl != nil {
