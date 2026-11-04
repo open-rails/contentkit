@@ -7018,6 +7018,7 @@
         "TestImportReplyCountsWithModeration",
         "TestConcurrentImportedReplyMoves",
         "TestMovedImportedReplyDeletionWithModeration",
+        "TestImportReplyToStoredReply",
         "TestImportFallbackRecountsOnce",
         "TestImportedCommentLikeLockOrder",
         "TestImportDeferredRecounts",
