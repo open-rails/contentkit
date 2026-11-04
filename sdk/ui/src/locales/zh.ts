@@ -11,6 +11,17 @@ export const zh: ContentKitUiMessageBundle = {
   ...entities,
   ...discovery,
   ...content,
+  channels: {
+    repost: "转发",
+    removeRepost: "取消转发",
+    repostHint: "将这篇文章转发到你可以发布的频道。原文的作者、评论和访问设置保持不变。",
+    removeHint: "从你的频道中移除此引用。原文保持不变。",
+    destination: "目标频道",
+    loading: "正在加载你的频道…",
+    noDestination: "你没有其他可以发布的频道。",
+    repostedBy: "{name} 转发",
+    channel: "频道",
+  },
   common: {
     cancel: "取消",
     close: "关闭",

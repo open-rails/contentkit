@@ -11,6 +11,17 @@ export const de: ContentKitUiMessageBundle = {
   ...entities,
   ...discovery,
   ...content,
+  channels: {
+    repost: "Teilen",
+    removeRepost: "Teilen entfernen",
+    repostHint: "Teile diesen Beitrag in einem Kanal, in dem du veröffentlichst. Das Original behält seinen Autor, seine Kommentare und seine Zugriffseinstellungen.",
+    removeHint: "Entferne diesen Verweis aus deinem Kanal. Der ursprüngliche Beitrag bleibt unverändert.",
+    destination: "Zielkanal",
+    loading: "Deine Kanäle werden geladen…",
+    noDestination: "Du hast keinen weiteren Kanal, in dem du veröffentlichen kannst.",
+    repostedBy: "Geteilt von {name}",
+    channel: "Kanal",
+  },
   common: {
     cancel: "Abbrechen",
     close: "Schließen",
