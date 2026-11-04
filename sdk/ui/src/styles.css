@@ -20,6 +20,9 @@
 @custom-variant data-horizontal (&[data-orientation="horizontal"]);
 @custom-variant data-vertical (&[data-orientation="vertical"]);
 
+/* `comfortable:` styles a control under an appearance with density "comfortable". */
+@custom-variant comfortable (&:where([data-ckui-density="comfortable"], [data-ckui-density="comfortable"] *));
+
 @custom-variant dark {
   &:where([data-ckui-theme="dark"], [data-ckui-theme="dark"] *) {
     @slot;
