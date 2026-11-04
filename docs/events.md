@@ -74,9 +74,10 @@ Retained facts live in the shared Helpers event log in the catalog schema.
 New facts enter the shared pending queue in the domain transaction. At commit,
 the shared flush locks the touched scopes in sorted order and assigns positions.
 Numeric event IDs can therefore commit out of order; only cursors and stream
-positions define ordering. Discovery invalidates its summary cache with the
-committed position, independently of ID allocation and pruning. Reading an empty
-app still makes no writes and keeps previously issued empty cursors valid.
+positions define ordering. Discovery's list summaries don't use positions: each
+process caches them for a minute, so counts can lag a catalog change by that
+long. Reading an empty app still makes no writes and keeps previously issued
+empty cursors valid.
 
 The schema-global epoch remains authoritative for public catalog cursors. Shared
 stream epochs are seeded identity metadata; an older transaction may create a
