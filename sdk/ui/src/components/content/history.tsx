@@ -5,6 +5,7 @@ import { useMessages } from "../../i18n/context.js";
 import { useHistory } from "../../react/discovery.js";
 import { useKinds } from "../../react/entities.js";
 import { Button } from "#ckui/ui/button";
+import { ContentKitUiRoot } from "../../scope.js";
 import { formatDate, relativeTime, useAction } from "../social/parts.js";
 import { ContentFilterDialog } from "./filter-dialog.js";
 import { ContentCard } from "./card.js";
@@ -25,14 +26,19 @@ export function ContentHistory({ query = {}, heading, ...p }: CardListProps & { 
         <div className="flex flex-wrap items-center justify-between gap-2">
           {heading}
           {list.items.length > 0 && (
-            <Button size="sm" variant="outline" className="ms-auto" disabled={forget.pending} onClick={() => void forget.run(() => list.forget(query.kind ? { kind: query.kind } : {}))}>
-              {t("contents.clearHistory")}
-            </Button>
+            // The host's heading stays outside the scoped root so it keeps its own type.
+            <ContentKitUiRoot appearance={p.appearance} className="ms-auto">
+              <Button size="sm" variant="outline" className="comfortable:h-10" disabled={forget.pending} onClick={() => void forget.run(() => list.forget(query.kind ? { kind: query.kind } : {}))}>
+                {t("contents.clearHistory")}
+              </Button>
+            </ContentKitUiRoot>
           )}
         </div>
       )}
       {list.filterSummaryUnknown && p.showFilteredSummary !== false && (
-        <Button ref={filterTrigger} variant="outline" className="justify-self-start" onClick={() => setFiltersOpen(true)}>{t("releases.manageFilters")}</Button>
+        <ContentKitUiRoot appearance={p.appearance} className="justify-self-start">
+          <Button ref={filterTrigger} variant="outline" className="comfortable:h-10" onClick={() => setFiltersOpen(true)}>{t("releases.manageFilters")}</Button>
+        </ContentKitUiRoot>
       )}
       <ContentFilterDialog client={p.client} language={q.language} open={filtersOpen} onOpenChange={setFiltersOpen} returnFocus={() => filterTrigger.current} />
       <CardGrid
@@ -70,7 +76,7 @@ export function ContentHistory({ query = {}, heading, ...p }: CardListProps & { 
               cardTitle={p.cardTitle}
             >
               <HistoryProgress card={card} presentation={kinds?.kinds[card.kind]?.presentation} />
-              <Button size="xs" variant="ghost" className="justify-self-start" disabled={forget.pending} onClick={() => void forget.run(() => list.forget({ content_id: card.id }))}>
+              <Button size="xs" variant="ghost" className="justify-self-start comfortable:h-10" disabled={forget.pending} onClick={() => void forget.run(() => list.forget({ content_id: card.id }))}>
                 {t("contents.removeFromHistory")}
               </Button>
             </ContentCard>

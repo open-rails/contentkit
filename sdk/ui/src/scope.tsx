@@ -7,6 +7,7 @@ export const AppearanceContext = createContext<ContentKitUiAppearance | undefine
 export interface ScopeProps {
   className: string;
   "data-ckui-theme": ContentKitUiTheme;
+  "data-ckui-density"?: "comfortable";
   style?: CSSProperties;
 }
 
@@ -14,11 +15,11 @@ export interface ScopeProps {
 export function useScopeProps(appearance?: ContentKitUiAppearance): ScopeProps {
   const ctx = useContext(AppearanceContext);
   const a = appearance ?? ctx;
-  return { className: "ckui", "data-ckui-theme": appearanceTheme(a), style: appearanceStyle(a) };
+  return { className: "ckui", "data-ckui-theme": appearanceTheme(a), "data-ckui-density": a?.density === "comfortable" ? "comfortable" : undefined, style: appearanceStyle(a) };
 }
 
 /** Every in-page surface renders inside one of these. */
 export function ContentKitUiRoot({ className, style, appearance, ...props }: ComponentProps<"div"> & { appearance?: ContentKitUiAppearance }) {
   const scope = useScopeProps(appearance);
-  return <div data-ckui-theme={scope["data-ckui-theme"]} className={cn(scope.className, className)} style={{ ...scope.style, ...style }} {...props} />;
+  return <div data-ckui-theme={scope["data-ckui-theme"]} data-ckui-density={scope["data-ckui-density"]} className={cn(scope.className, className)} style={{ ...scope.style, ...style }} {...props} />;
 }
