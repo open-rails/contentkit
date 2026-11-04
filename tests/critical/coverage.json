@@ -969,13 +969,15 @@
       "evidence": [
         "A real Go upload produces public16/32 pixel covers and a48x32 private reader rendition with actual decoded image bytes. A built browser client also uploads and reads the concrete output.",
         "Reviewed against current public behavior; exact cases passed in integrated/focused race receipts retained with this task. Full qualification still requires every selected contract and one integrated execution.",
-        "A real versioned upload prepares its reader output and both cover renditions in internal/ and its originals in originals/; release copies the outputs to served public/ or private/ keys readable through the gateway and retires the internal/ source."
+        "A real versioned upload prepares its reader output and both cover renditions in internal/ and its originals in originals/; release copies the outputs to served public/ or private/ keys readable through the gateway and retires the internal/ source.",
+        "Rendered pages are recorded in groups: forty pages take two manifest edits with progress per group; an unrenderable page fails alone; a page replaced mid-render keeps no stale output; cancellation records nothing and the next run converges; a group over the manifest bound keeps what fits and marks it full."
       ],
       "cases": [
         "TestInternalArea/CK-J09-S01_real_image_upload_produces_a_readable_rendition",
         "TestShippedBrowserClient/CK-J09-S01",
         "TestInternalArea/CK-J09-S01_versioned_derivatives_are_prepared_in_internal",
-        "TestInternalArea/CK-J09-S01_release_copies_internal_outputs_to_served_areas"
+        "TestInternalArea/CK-J09-S01_release_copies_internal_outputs_to_served_areas",
+        "TestMediaPageGroups"
       ]
     },
     {

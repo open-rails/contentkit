@@ -2,7 +2,8 @@
 // Image presets' private WebP files, the Zip presets, the public presets'
 // owned generations, editor views, and the kinds' default public images. A
 // Processor runs one media.ProcessJob: it redoes stale or pending outputs,
-// records them in one manifest edit per pass, and keeps public/ in step.
+// records them in one manifest edit per group of sources, and keeps public/
+// in step.
 package image
 
 import (
@@ -17,7 +18,6 @@ import (
 	"net/url"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 
 	mediastore "github.com/open-rails/contentkit/internal/mediastore"
@@ -44,6 +44,10 @@ type Config struct {
 	MaxFrames           int
 	MaxAnimationSeconds float64
 	TempDir             string // zip scratch; default os.TempDir()
+	// One manifest edit records GroupSize rendered sources (default 32), or
+	// fewer once the first has waited GroupWait (default 5s).
+	GroupSize int
+	GroupWait time.Duration
 }
 
 // Processor runs image jobs. It is safe for concurrent use and idempotent:
@@ -68,6 +72,12 @@ func New(c Config) (*Processor, error) {
 	}
 	if c.MaxAnimationSeconds <= 0 {
 		c.MaxAnimationSeconds = 60
+	}
+	if c.GroupSize <= 0 {
+		c.GroupSize = 32
+	}
+	if c.GroupWait <= 0 {
+		c.GroupWait = 5 * time.Second
 	}
 	if err := start(); err != nil {
 		return nil, fmt.Errorf("media/image: libvips: %w", err)
@@ -135,21 +145,9 @@ func (p *Processor) Process(ctx context.Context, job mediastore.ProcessJob) erro
 			forceZips = false
 		}
 		if len(todo) > 0 {
-			// Each source commits and reports when it is ready. Keep the existing
-			// source concurrency; no whole-gallery completion barrier hides progress.
-			g, workCtx := errgroup.WithContext(ctx)
-			g.SetLimit(p.c.Workers)
-			for _, source := range todo {
-				g.Go(func() error {
-					if err := p.pass(workCtx, item, m, []work{source}, nil); err != nil {
-						return err
-					}
-					return mediastore.CompleteProcessing(workCtx, p.c.Manifests, item.Ref(), nil)
-				})
-			}
-			err = g.Wait()
+			err = p.renderInGroups(ctx, item, m, todo)
 		} else {
-			err = p.pass(ctx, item, m, nil, zips)
+			err = p.zipPass(ctx, item, m, zips)
 		}
 		if err != nil {
 			if errors.Is(err, mediastore.ErrManifestTooLarge) {
@@ -297,41 +295,87 @@ func (p *Processor) publicStale(ctx context.Context, item mediastore.Item, f med
 	return false, nil
 }
 
-// pass renders todo and the stale zips and records them in one manifest
-// edit. An upload whose blob or edit changed meanwhile keeps nothing this
-// pass made for it; the next pass redoes it.
-//
-// Public writes use manifest-owned generations. Publication verifies ownership
-// again; a delayed write from a retired generation cannot overwrite this one.
-func (p *Processor) pass(ctx context.Context, item mediastore.Item, m *mediastore.Manifest, todo []work, zips []*media.Private) (err error) {
-	var (
-		mu      sync.Mutex
-		results []done
-		written []string // every public key this pass may have written
-	)
-	defer func() {
-		if err != nil && len(written) > 0 {
-			err = errors.Join(err, p.dropIfGone(ctx, item, written))
-		}
-	}()
-	g, gctx := errgroup.WithContext(ctx)
+// renderInGroups renders todo, Workers sources at a time, and records the
+// finished sources in groups: GroupSize of them, or those finished within
+// GroupWait of the group's first, and the rest at the end. Each recorded
+// group is reported, so progress still shows while a large gallery costs a
+// few dozen manifest edits rather than one per page. A source that failed to
+// render, or finished after a group failed, is left for the job's retry.
+func (p *Processor) renderInGroups(ctx context.Context, item mediastore.Item, m *mediastore.Manifest, todo []work) error {
+	type rendered struct {
+		done
+		err error
+	}
+	renderCtx, stop := context.WithCancel(ctx)
+	defer stop()
+	g, gctx := errgroup.WithContext(renderCtx)
 	g.SetLimit(p.c.Workers)
-	for _, w := range todo {
-		g.Go(func() error {
-			d, err := p.render(gctx, item, m, w)
-			mu.Lock()
-			defer mu.Unlock()
-			written = append(written, d.written...)
-			if err != nil {
+	finished := make(chan rendered, len(todo))
+	var renderErr error
+	go func() {
+		for _, w := range todo {
+			g.Go(func() error {
+				if err := gctx.Err(); err != nil {
+					return err
+				}
+				d, err := p.render(gctx, item, m, w)
+				finished <- rendered{d, err}
 				return err
+			})
+		}
+		renderErr = g.Wait()
+		close(finished)
+	}()
+	var (
+		group []done
+		due   <-chan time.Time
+		lost  []string // public keys written for sources left unrecorded
+		err   error
+	)
+	flush := func() {
+		if len(group) > 0 {
+			if err = p.record(ctx, item, group, nil, nil); err == nil {
+				err = mediastore.CompleteProcessing(ctx, p.c.Manifests, item.Ref(), nil)
 			}
-			results = append(results, d)
-			return nil
-		})
+		}
+		group, due = nil, nil
 	}
-	if err := g.Wait(); err != nil {
-		return err
+	for open := true; open; {
+		select {
+		case r, ok := <-finished:
+			switch {
+			case !ok:
+				open = false
+				flush()
+			case r.err != nil || err != nil:
+				lost = append(lost, r.written...)
+			default:
+				group = append(group, r.done)
+				if len(group) == 1 {
+					due = time.After(p.c.GroupWait)
+				}
+				if len(group) == p.c.GroupSize {
+					flush()
+				}
+			}
+		case <-due:
+			flush()
+		}
+		if err != nil {
+			stop()
+		}
 	}
+	if err == nil {
+		err = renderErr
+	}
+	if err != nil {
+		return p.joinDropIfGone(ctx, item, err, lost)
+	}
+	return nil
+}
+
+// zipPass builds the stale zips and records them in one manifest edit.
+func (p *Processor) zipPass(ctx context.Context, item mediastore.Item, m *mediastore.Manifest, zips []*media.Private) error {
 	zipped := map[string]media.File{}
 	for _, z := range zips {
 		f, ok, err := p.buildZip(ctx, item, m, z)
@@ -342,9 +386,23 @@ func (p *Processor) pass(ctx context.Context, item mediastore.Item, m *mediastor
 			zipped[z.Name] = f
 		}
 	}
+	return p.record(ctx, item, nil, zips, zipped)
+}
+
+// record saves rendered uploads and built zips in one manifest edit. An
+// upload whose blob or edit changed meanwhile keeps nothing made for it; the
+// next pass redoes it.
+//
+// Public writes use manifest-owned generations. Publication verifies ownership
+// again; a delayed write from a retired generation cannot overwrite this one.
+func (p *Processor) record(ctx context.Context, item mediastore.Item, results []done, zips []*media.Private, zipped map[string]media.File) error {
+	var written []string // every public key the results may have written
+	for _, d := range results {
+		written = append(written, d.written...)
+	}
 	var orphaned []string
 	k := item.Kind()
-	_, err = p.c.Manifests.EditExisting(ctx, item.Ref(), func(cur *mediastore.Manifest) error {
+	_, err := p.c.Manifests.EditExisting(ctx, item.Ref(), func(cur *mediastore.Manifest) error {
 		orphaned = orphaned[:0]
 		// A blob this edit newly references may have been swept or taken
 		// down before it took the folder lock (one shared with an upload
@@ -474,7 +532,17 @@ func (p *Processor) pass(ctx context.Context, item mediastore.Item, m *mediastor
 	})
 	switch {
 	case errors.Is(err, mediastore.ErrNotFound):
-		err, orphaned = nil, written
+		orphaned = written
+	case err != nil && len(results) > 1 && ctx.Err() == nil:
+		// One source that does not fit, or cannot be recorded, must not drop
+		// the rest: alone, each is kept or refused as it would be by itself.
+		var first error
+		for _, d := range results {
+			if err := p.record(ctx, item, []done{d}, nil, nil); err != nil && first == nil {
+				first = err
+			}
+		}
+		return first
 	case errors.Is(err, mediastore.ErrManifestTooLarge):
 		// The outputs do not fit: mark the item Full, which stops processing
 		// (the rendered blobs go by age).
@@ -483,7 +551,7 @@ func (p *Processor) pass(ctx context.Context, item mediastore.Item, m *mediastor
 		}
 		return p.dropIfGone(ctx, item, written)
 	case err != nil:
-		return err
+		return p.joinDropIfGone(ctx, item, err, written)
 	}
 	for _, d := range results {
 		if d.err != nil {
@@ -492,10 +560,18 @@ func (p *Processor) pass(ctx context.Context, item mediastore.Item, m *mediastor
 	}
 	if len(orphaned) > 0 {
 		if err := p.c.Manifests.DropUnreferenced(ctx, item.Ref(), mediastore.Unreferenced{Public: orphaned}); err != nil {
-			return err
+			return p.joinDropIfGone(ctx, item, err, written)
 		}
 	}
 	return nil
+}
+
+// joinDropIfGone adds dropIfGone's outcome for keys to err.
+func (p *Processor) joinDropIfGone(ctx context.Context, item mediastore.Item, err error, keys []string) error {
+	if len(keys) == 0 {
+		return err
+	}
+	return errors.Join(err, p.dropIfGone(ctx, item, keys))
 }
 
 // dropIfGone removes failed-pass outputs only after the item was deleted.
