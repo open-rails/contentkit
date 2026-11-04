@@ -74,8 +74,8 @@ var sourceRE = regexp.MustCompile(`^[a-z0-9][a-z0-9_.-]{0,63}$`)
 
 // Import writes a batch, section by section, then recounts the queued
 // targets it asks for. It fails as a whole only for a batch it refuses
-// outright, a recount that fails, or when ctx ends; records that fail are
-// in the result.
+// outright or when ctx ends; records that fail are in the result, and a
+// recount that fails leaves the rest queued.
 func (s *Service) Import(ctx context.Context, b importer.Batch) (importer.Result, error) {
 	res := importer.Result{Written: map[string]int{}, Failed: []importer.RecordFailure{}, IDs: map[string]map[string]string{}}
 	if !sourceRE.MatchString(b.Source) {
@@ -118,7 +118,10 @@ func (s *Service) Import(ctx context.Context, b importer.Batch) (importer.Result
 	if b.Recount > 0 {
 		n, err := s.o.Content.RecountQueued(ctx, b.Recount)
 		if res.Recounted = n; err != nil {
-			return res, err
+			if ctx.Err() != nil {
+				return res, ctx.Err()
+			}
+			s.o.Logger.WarnContext(ctx, "contentkit: import recount stopped; the rest stays queued", "recounted", n, "err", err)
 		}
 	}
 	if b.DeferRecounts || b.Recount > 0 {

@@ -79,11 +79,15 @@ A recount reads every row of each target a chunk touched, so a long import
 that touches the same popular targets in batch after batch can set
 `defer_recounts`. Its comments, reactions, favorites, votes and comment
 deletes then queue their targets (counts, reply counts, poll option counts)
-instead of recounting them, and those counts lag. At the end, send batches with
-`recount` (up to 1000 each, records optional) until `recounts_queued` is 0:
-each recounts the oldest queued targets once, and the counts then include
-every row, live writes made meanwhile among them. A target queued again
-while a recount reads it stays queued for the next one.
+instead of recounting them, and those counts lag until the importer drains the
+queue: nothing drains it on its own. At the end, send batches with `recount`
+(up to 1000 each, records optional) until `recounts_queued` is 0. Each
+recounts the oldest queued targets and takes them off the queue (`recounted`),
+and the counts then include every row, live writes made meanwhile among them.
+A target an import holds or queues again during a recount stays queued for
+the next one, as does the rest of a recount that fails; the batch's records
+are unaffected. One drain at a time is enough: drains in parallel take the
+same oldest targets.
 Channel lifecycle changes finish through direct idempotent AuthKit calls. There
 is no channel-sync worker. Incomplete channels remain unavailable for authoring.
 

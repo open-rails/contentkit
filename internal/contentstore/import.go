@@ -482,17 +482,18 @@ func (rt *Runtime) settle(ctx context.Context, tx pgx.Tx, later *Recounts, r Rec
 
 // queued is one target a bulk import left to recount.
 type queued struct {
-	Target  string `json:"target"` // counts, replies or votes
-	Kind    string `json:"kind"`
-	ID      string `json:"id"`
-	Version string `json:"version,omitempty"`
-	Mark    int64  `json:"mark,omitempty"`
+	Target   string    `json:"target"` // counts, replies or votes
+	Kind     string    `json:"kind"`
+	ID       string    `json:"id"`
+	Version  string    `json:"version,omitempty"`
+	Mark     int64     `json:"mark,omitempty"`
+	MarkedAt time.Time `json:"-"`
 }
 
 // QueueRecounts queues r's targets for RecountQueued instead of recounting
 // them, in tx after the writes that left r: queue rows lock last, in key
-// order. Queuing a queued target again bumps its mark, so a recount already
-// under way leaves it queued.
+// order. Each queuing takes a new mark from a sequence, so a recount that
+// read an older mark leaves the target queued.
 func (rt *Runtime) QueueRecounts(ctx context.Context, tx pgx.Tx, r *Recounts) error {
 	var rows []queued
 	for k := range r.keys {
@@ -514,7 +515,7 @@ func (rt *Runtime) QueueRecounts(ctx context.Context, tx pgx.Tx, r *Recounts) er
 	_, err = tx.Exec(ctx, `INSERT INTO `+rt.store.t.recounts+` AS q (tenant_id, target, content_kind, content_id, content_version_id)
  SELECT $1, r.target, r.kind, r.id, r.version FROM jsonb_to_recordset($2::jsonb) AS r(target text, kind text, id text, version text)
  ORDER BY r.target, r.kind, r.id, r.version
- ON CONFLICT (tenant_id, target, content_kind, content_id, content_version_id) DO UPDATE SET mark = q.mark + 1, marked_at = now()`, rt.tenant, string(data))
+ ON CONFLICT (tenant_id, target, content_kind, content_id, content_version_id) DO UPDATE SET mark = EXCLUDED.mark, marked_at = now()`, rt.tenant, string(data))
 	return err
 }
 
@@ -522,42 +523,51 @@ func (rt *Runtime) QueueRecounts(ctx context.Context, tx pgx.Tx, r *Recounts) er
 const recountBatch = 50
 
 // RecountQueued recounts up to limit queued targets, oldest first, a batch
-// per transaction, and returns how many it took off the queue's front.
+// per transaction, and returns how many it dequeued. A target an import
+// holds or queues again meanwhile stays queued, and the call moves on.
 func (rt *Runtime) RecountQueued(ctx context.Context, limit int) (int, error) {
-	done := 0
-	for done < limit {
-		n, err := rt.recountQueued(ctx, min(recountBatch, limit-done))
-		if err != nil || n == 0 {
+	done, read := 0, 0
+	var after *queued
+	for read < limit {
+		taken, n, err := rt.recountQueued(ctx, min(recountBatch, limit-read), after)
+		if err != nil || len(taken) == 0 {
 			return done, err
 		}
-		done += n
+		read, done, after = read+len(taken), done+n, &taken[len(taken)-1]
 	}
 	return done, nil
 }
 
-// recountQueued recounts the n oldest queued targets in one transaction.
-// It locks as an import's recount does (comments, then rollups, then poll
-// options) and then dequeues, without waiting, the targets no import has
-// queued again since it read them.
-func (rt *Runtime) recountQueued(ctx context.Context, n int) (int, error) {
+// recountQueued recounts in one transaction the n oldest queued targets
+// past after, and returns them and how many it dequeued. It locks as an
+// import's recount does (comments, then rollups, then polls), then
+// dequeues without waiting the targets whose mark it read.
+func (rt *Runtime) recountQueued(ctx context.Context, n int, after *queued) ([]queued, int, error) {
 	s := rt.store
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
-		return 0, err
+		return nil, 0, err
 	}
 	defer tx.Rollback(ctx)
-	rows, err := tx.Query(ctx, `SELECT target, content_kind, content_id, coalesce(content_version_id, ''), mark FROM `+s.t.recounts+`
- WHERE tenant_id = $1 ORDER BY marked_at, target, content_kind, content_id, content_version_id LIMIT $2`, rt.tenant, n)
+	var cursor queued
+	if after != nil {
+		cursor = *after
+	}
+	rows, err := tx.Query(ctx, `SELECT target, content_kind, content_id, coalesce(content_version_id, ''), mark, marked_at FROM `+s.t.recounts+`
+ WHERE tenant_id = $1 AND ($3::timestamptz IS NULL
+  OR (marked_at, target, content_kind, content_id, coalesce(content_version_id, '')) > ($3::timestamptz, $4::text, $5::text, $6::text, $7::text))
+ ORDER BY marked_at, target, content_kind, content_id, coalesce(content_version_id, '') LIMIT $2`,
+		rt.tenant, n, cursorTime(after), cursor.Target, cursor.Kind, cursor.ID, cursor.Version)
 	if err != nil {
-		return 0, err
+		return nil, 0, err
 	}
 	taken, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (queued, error) {
 		var q queued
-		err := row.Scan(&q.Target, &q.Kind, &q.ID, &q.Version, &q.Mark)
+		err := row.Scan(&q.Target, &q.Kind, &q.ID, &q.Version, &q.Mark, &q.MarkedAt)
 		return q, err
 	})
 	if err != nil || len(taken) == 0 {
-		return 0, err
+		return nil, 0, err
 	}
 	r := Recounts{keys: map[keyRow]bool{}, threads: map[string]bool{}, polls: map[string]bool{}}
 	var comments []keyRow
@@ -575,23 +585,31 @@ func (rt *Runtime) recountQueued(ctx context.Context, n int) (int, error) {
 	}
 	// The threads lock with the recounted comments, before rollups.
 	if _, err := rt.lockComments(ctx, tx, comments); err != nil {
-		return 0, err
+		return nil, 0, err
 	}
 	if err := rt.Recount(ctx, tx, &r); err != nil {
-		return 0, err
+		return nil, 0, err
 	}
 	data, err := json.Marshal(taken)
 	if err != nil {
-		return 0, err
+		return nil, 0, err
 	}
-	if _, err := tx.Exec(ctx, `WITH done AS (SELECT q.ctid FROM `+s.t.recounts+` q
+	tag, err := tx.Exec(ctx, `WITH done AS (SELECT q.ctid FROM `+s.t.recounts+` q
  JOIN jsonb_to_recordset($2::jsonb) AS d(target text, kind text, id text, version text, mark bigint)
   ON q.target = d.target AND q.content_kind = d.kind AND q.content_id = d.id AND q.content_version_id IS NOT DISTINCT FROM d.version AND q.mark = d.mark
  WHERE q.tenant_id = $1 FOR UPDATE OF q SKIP LOCKED)
-DELETE FROM `+s.t.recounts+` q USING done WHERE q.ctid = done.ctid`, rt.tenant, string(data)); err != nil {
-		return 0, err
+DELETE FROM `+s.t.recounts+` q USING done WHERE q.ctid = done.ctid`, rt.tenant, string(data))
+	if err != nil {
+		return nil, 0, err
 	}
-	return len(taken), tx.Commit(ctx)
+	return taken, int(tag.RowsAffected()), tx.Commit(ctx)
+}
+
+func cursorTime(q *queued) *time.Time {
+	if q == nil {
+		return nil
+	}
+	return &q.MarkedAt
 }
 
 // QueuedRecounts is how many targets wait for RecountQueued.
@@ -923,8 +941,12 @@ func (rt *Runtime) recountVotes(ctx context.Context, tx pgx.Tx, polls map[string
 	}
 	s := rt.store
 	ids := slices.Sorted(maps.Keys(polls))
-	// Lock the options in their own statement, so the recount's snapshot
-	// includes the live votes it waited for.
+	// Questions lock before their options, as votes and poll imports lock
+	// them. The options lock in their own statement, so the recount's
+	// snapshot includes the live votes it waited for.
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM `+s.t.pollQuestions+` WHERE tenant_id = $2 AND id = ANY($1::uuid[]) ORDER BY id FOR SHARE`, ids, rt.tenant); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(ctx, `SELECT 1 FROM `+s.t.pollOptions+` WHERE tenant_id = $2 AND question_id = ANY($1::uuid[]) ORDER BY id FOR NO KEY UPDATE`, ids, rt.tenant); err != nil {
 		return err
 	}

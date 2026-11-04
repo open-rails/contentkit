@@ -106,16 +106,21 @@ CREATE TRIGGER critical_recount BEFORE UPDATE ON %[1]s.content_interaction_count
 	_, err = live.PostPollVote(ctx, pollID, content.PollVote{OptionID: options["second"]})
 	must(t, err)
 
-	// A later batch touches the same targets: they stay queued once.
+	// A later batch touches the same targets, deleting a comment too: they
+	// stay queued once and the counts hold only the live writes.
 	second := importer.Batch{Source: first.Source, DeferRecounts: true,
 		Comments:  []importer.CommentRecord{comment("four", "Four", nil)},
 		Reactions: []importer.ReactionRecord{like("203.0.113.4", 1)},
 		Favorites: []importer.FavoriteRecord{{Target: on, UserID: "legacy-fan-2"}},
-		Votes:     []importer.VoteRecord{vote("second", "203.0.113.4")}}
+		Votes:     []importer.VoteRecord{vote("second", "203.0.113.4")},
+		Deletes:   []importer.DeleteRecord{{Entity: importer.RecordComment, ExternalID: "two"}}}
 	result, err = a.engine.Client().PostImport(ctx, second)
 	must(t, err)
 	if len(result.Failed) != 0 || queued(result) != 4 {
 		t.Fatalf("second bulk batch failed %+v or queued %v; want 4 targets", result.Failed, result.RecountsQueued)
+	}
+	if got, want := counts(), (recount{before.comments + 1, 1, 1}); got != want {
+		t.Fatalf("second bulk batch recounted to %+v; want only the live writes %+v", got, want)
 	}
 	drained := rewrites()
 
@@ -129,9 +134,9 @@ CREATE TRIGGER critical_recount BEFORE UPDATE ON %[1]s.content_interaction_count
 	if result.Recounted != 1 || queued(result) != 0 {
 		t.Fatalf("recounted %d with %v left; want 1 and 0", result.Recounted, result.RecountsQueued)
 	}
-	// Imported: four top-level comments, three likes, two favorites. Live:
-	// one more comment, like and favorite.
-	if got, want := counts(), (recount{before.comments + 5, 4, 3}); got != want {
+	// Imported: four top-level comments, one deleted, three likes, two
+	// favorites. Live: one more comment, like and favorite.
+	if got, want := counts(), (recount{before.comments + 4, 4, 3}); got != want {
 		t.Fatalf("drained counts %+v; want %+v", got, want)
 	}
 	if n := rewrites() - drained; n != 1 {
@@ -151,6 +156,11 @@ CREATE TRIGGER critical_recount BEFORE UPDATE ON %[1]s.content_interaction_count
 	}
 	if _, err := a.engine.Client().PostImport(ctx, importer.Batch{Source: first.Source, Recount: importer.MaxRecount + 1}); err == nil {
 		t.Fatal("a recount above the limit was accepted")
+	}
+	result, err = a.engine.Client().PostImport(ctx, importer.Batch{Source: first.Source})
+	must(t, err)
+	if result.RecountsQueued != nil {
+		t.Fatalf("an import that neither defers nor recounts reported the queue: %d", *result.RecountsQueued)
 	}
 }
 
@@ -178,6 +188,13 @@ func TestDeferredRecountKeepsRequeuedTarget(t *testing.T) {
 		must(t, w.pool.QueryRow(ctx, `SELECT favorites FROM `+qs+`.content_interaction_counts WHERE content_id=$1 AND content_version_id IS NULL`, item.ID).Scan(&n))
 		return n
 	}
+	mark := func() int64 {
+		t.Helper()
+		var m int64
+		must(t, w.pool.QueryRow(ctx, `SELECT mark FROM `+qs+`.content_import_recounts WHERE content_id=$1`, item.ID).Scan(&m))
+		return m
+	}
+	firstMark := mark()
 	gate := w.schema + ":requeued-recount"
 	holder, err := w.pool.Acquire(ctx)
 	must(t, err)
@@ -219,13 +236,20 @@ CREATE TRIGGER critical_recount_gate BEFORE UPDATE ON %[1]s.content_interaction_
 	locked = false
 	must(t, <-drainErr)
 	// The first pass counted one favorite and left the target queued; the
-	// same drain then took it again.
+	// same drain then recounted it again and dequeued it.
 	result = <-drained
 	left := -1
 	if result.RecountsQueued != nil {
 		left = *result.RecountsQueued
 	}
-	if result.Recounted != 2 || left != 0 || favorites() != 2 {
-		t.Fatalf("drain recounted %d times to %d favorites with %d queued; want twice, 2 favorites and none queued", result.Recounted, favorites(), left)
+	if result.Recounted != 1 || left != 0 || favorites() != 2 {
+		t.Fatalf("drain dequeued %d at %d favorites with %d queued; want 1, 2 favorites and none queued", result.Recounted, favorites(), left)
+	}
+	// Queued again after the drain, the target takes a mark it never had, so
+	// a drain that read an old mark cannot dequeue it.
+	result, err = a.engine.Client().PostImport(ctx, favorite("legacy-fan-3"))
+	must(t, err)
+	if again := mark(); len(result.Failed) != 0 || again <= firstMark {
+		t.Fatalf("queued again with mark %d after %d; marks must not repeat", again, firstMark)
 	}
 }

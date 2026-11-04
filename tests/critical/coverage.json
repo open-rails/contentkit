@@ -7002,7 +7002,7 @@
       "id": "CK-API-166",
       "method": "POST",
       "path": "/v1/import",
-      "selection": "partial-security-reply-counts-and-fallback-recounts; other functionality deferred P1",
+      "selection": "partial-security-reply-counts-and-import-recounts; other functionality deferred P1",
       "status": "verified",
       "cases": [
         "TestHTTPAuthenticationMatrix/CK-API-166_POST_/v1/import/malformed_credential",
