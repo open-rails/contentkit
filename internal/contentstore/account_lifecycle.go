@@ -69,9 +69,12 @@ VALUES ($1,$2) ON CONFLICT (tenant_id,actor_id) DO NOTHING`, rt.tenant, actorID)
 		// Lock every affected comment, its parent and the comments the account
 		// reacted to at once, in id order, the order lockThread takes two in. Content rollups follow, once
 		// each in key order, as recount and erasure lock them.
-		if _, err := tx.Exec(ctx, `SELECT 1 FROM `+c.s.t.comments+` WHERE tenant_id=$1 AND (user_id=$2 OR id IN
-(SELECT reply_to_id FROM `+c.s.t.comments+` WHERE tenant_id=$1 AND user_id=$2) OR id::text IN
-(SELECT content_id FROM `+c.s.t.reactions+` WHERE tenant_id=$1 AND user_id=$2 AND content_kind='comment')) ORDER BY id FOR UPDATE`, rt.tenant, actorID); err != nil {
+		// Only canonical UUID text matched id::text; guard the cast for other content IDs.
+		if _, err := tx.Exec(ctx, `SELECT 1 FROM `+c.s.t.comments+` WHERE tenant_id=$1 AND id = ANY(ARRAY(
+SELECT id FROM `+c.s.t.comments+` WHERE tenant_id=$1 AND user_id=$2
+UNION SELECT reply_to_id FROM `+c.s.t.comments+` WHERE tenant_id=$1 AND user_id=$2
+UNION SELECT CASE WHEN content_id ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN content_id::uuid END
+FROM `+c.s.t.reactions+` WHERE tenant_id=$1 AND user_id=$2 AND content_kind='comment')) ORDER BY id FOR UPDATE`, rt.tenant, actorID); err != nil {
 			return err
 		}
 		rows, err := tx.Query(ctx, `SELECT id::text FROM `+c.s.t.comments+` WHERE tenant_id=$1 AND user_id=$2 AND author_hidden<>$3 ORDER BY id`, rt.tenant, actorID, hidden)
