@@ -3,6 +3,7 @@ package critical_test
 import (
 	"bytes"
 	"crypto/sha256"
+	"fmt"
 	"io"
 	"mime"
 	"net/http"
@@ -236,6 +237,48 @@ func TestGatewayCapabilities(t *testing.T) {
 		res, _ = request(t, m.gateway.URL, "GET", public, "", "", map[string]string{"Origin": "https://evil.invalid"})
 		if res.StatusCode != 200 || res.Header.Get("Access-Control-Allow-Origin") != "" || !strings.HasPrefix(res.Header.Get("Cache-Control"), "public,") {
 			t.Fatalf("public policy: %v", res.Header)
+		}
+		const (
+			immutablePublic  = "public, max-age=31536000, immutable"
+			immutablePrivate = "private, max-age=31536000, immutable"
+			shortPublic      = "public, max-age=300, stale-while-revalidate=86400"
+		)
+		generated := folder + "public/cover-460-" + uuid.NewString() + ".webp"
+		seed(t, generated)
+		defaultName := fmt.Sprintf("sha256-%x.webp", sha256.Sum256([]byte("default image")))
+		seed(t, scope.Prefix("gallery", layout.DefaultID, "")+"public/"+defaultName)
+		withDefaults := m.gatewayConfig
+		withDefaults.Defaults = []layout.Default{{Namespace: scope.Partition(), Kind: "gallery", Files: map[string]string{"cover-460.webp": defaultName}}}
+		defaultsHandler, err := gateway.New(withDefaults)
+		must(t, err)
+		defaults := httptest.NewServer(defaultsHandler)
+		defer defaults.Close()
+		retired := folder + "public/cover-460-" + uuid.NewString() + ".webp"
+		for _, c := range []struct {
+			name, base, method, key, tok string
+			headers                      map[string]string
+			status                       int
+			want                         string
+		}{
+			{"generation-named public", m.gateway.URL, "GET", generated, "", nil, 200, immutablePublic},
+			{"generation-named public HEAD", m.gateway.URL, "HEAD", generated, "", nil, 200, immutablePublic},
+			{"generation-named public range", m.gateway.URL, "GET", generated, "", map[string]string{"Range": "bytes=0-3"}, 206, immutablePublic},
+			{"logical public name", m.gateway.URL, "GET", public, "", nil, 200, shortPublic},
+			{"default for a retired generation", defaults.URL, "GET", retired, "", nil, 200, shortPublic},
+			{"private blob", m.gateway.URL, "GET", first, grant(first), nil, 200, immutablePrivate},
+			{"private blob range", m.gateway.URL, "GET", first, grant(first), map[string]string{"Range": "bytes=0-3"}, 206, immutablePrivate},
+			{"unsatisfiable range", m.gateway.URL, "GET", generated, "", map[string]string{"Range": "bytes=999999-"}, 416, "no-store"},
+			{"private denial", m.gateway.URL, "GET", first, "", nil, 404, "no-store"},
+		} {
+			res, _ := request(t, c.base, c.method, c.key, c.tok, "", c.headers)
+			if res.StatusCode != c.status || res.Header.Get("Cache-Control") != c.want {
+				t.Fatalf("%s: status=%d Cache-Control=%q, want %d %q", c.name, res.StatusCode, res.Header.Get("Cache-Control"), c.status, c.want)
+			}
+		}
+		fresh, _ := request(t, m.gateway.URL, "GET", generated, "", "", nil)
+		notModified, _ := request(t, m.gateway.URL, "GET", generated, "", "", map[string]string{"If-None-Match": fresh.Header.Get("ETag")})
+		if notModified.StatusCode != 304 || notModified.Header.Get("Cache-Control") != immutablePublic {
+			t.Fatalf("revalidation: status=%d Cache-Control=%q", notModified.StatusCode, notModified.Header.Get("Cache-Control"))
 		}
 		res, _ = request(t, m.gateway.URL, "OPTIONS", first, "", "", map[string]string{"Origin": "https://critical.invalid", "Access-Control-Request-Method": "GET"})
 		if res.StatusCode != 204 || res.Header.Get("Access-Control-Allow-Origin") != "https://critical.invalid" {

@@ -11,6 +11,17 @@ export const ja: ContentKitUiMessageBundle = {
   ...entities,
   ...discovery,
   ...content,
+  channels: {
+    repost: "リポスト",
+    removeRepost: "リポストを取り消す",
+    repostHint: "この投稿を、あなたが投稿できるチャンネルで共有します。元の投稿の作成者、コメント、アクセス設定はそのまま保たれます。",
+    removeHint: "この参照をあなたのチャンネルから削除します。元の投稿は変更されません。",
+    destination: "共有先のチャンネル",
+    loading: "チャンネルを読み込んでいます…",
+    noDestination: "投稿できる他のチャンネルがありません。",
+    repostedBy: "{name}さんがリポスト",
+    channel: "チャンネル",
+  },
   common: {
     cancel: "キャンセル",
     close: "閉じる",

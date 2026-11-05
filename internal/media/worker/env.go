@@ -70,7 +70,9 @@ func StoreFromEnv() (*mediaS3.Store, error) {
 //	MEDIA_WORKER_ENCODER         auto (default: per codec NVENC if a probe encode works, else CPU), cpu or nvenc
 //	MEDIA_WORKER_CONCURRENCY     image/video derivative jobs per process (default 1)
 //	MEDIA_WORKER_INGEST_CONCURRENCY  ingest jobs per process (default 2)
+//	MEDIA_WORKER_PAGE_GROUP      rendered images per manifest edit and progress report (default 1; e.g. 32 for bulk imports; retries use 1)
 //	MEDIA_WORKER_SHUTDOWN_GRACE  time running jobs get on SIGTERM before cancel (default 30s)
+//	MEDIA_WORKER_VIDEO_SLICE     time a derivative job keeps encoding its own video before yielding, e.g. 20m; ends when its video becomes playable (default 0: after every chunk; at most half the job timeout)
 func (c *Config) TuningFromEnv() error {
 	for k, p := range map[string]*string{"MEDIA_ACCOUNT_SCHEMA": &c.AccountSchema, "MEDIA_ACCOUNT_WORKER_SCHEMA": &c.AccountWorkerSchema, "MEDIA_WORKER_SCHEMA": &c.Schema, "MEDIA_CONTENT_SCHEMA": &c.ContentSchema, "MEDIA_HOST_RIVER_SCHEMA": &c.HostSchema, "MEDIA_WORKER_TMP": &c.TempDir,
 		"MEDIA_WORKER_PRESET": &c.Preset, "MEDIA_WORKER_TOP_PRESET": &c.TopPreset, "MEDIA_WORKER_ENCODER": &c.VideoEncoder} {
@@ -85,7 +87,7 @@ func (c *Config) TuningFromEnv() error {
 		}
 	}
 	for k, p := range map[string]*int{"MEDIA_WORKER_THREADS": &c.Threads, "MEDIA_WORKER_CONCURRENCY": &c.DerivativeWorkers,
-		"MEDIA_WORKER_INGEST_CONCURRENCY": &c.IngestWorkers} {
+		"MEDIA_WORKER_INGEST_CONCURRENCY": &c.IngestWorkers, "MEDIA_WORKER_PAGE_GROUP": &c.PageGroup} {
 		n, err := intEnv(k, *p)
 		if err != nil {
 			return err
@@ -99,6 +101,13 @@ func (c *Config) TuningFromEnv() error {
 			return err
 		}
 		*p = d
+	}
+	if v := os.Getenv("MEDIA_WORKER_VIDEO_SLICE"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil || d < 0 {
+			return fmt.Errorf("MEDIA_WORKER_VIDEO_SLICE: invalid %q", v)
+		}
+		c.VideoSlice = d
 	}
 	return nil
 }

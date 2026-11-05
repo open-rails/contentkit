@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	mediastore "github.com/open-rails/contentkit/internal/mediastore"
@@ -73,6 +74,9 @@ type Config struct {
 	DerivativeWorkers int
 	// ImageSources bounds sources decoded at once within one derivative job.
 	ImageSources int
+	// PageGroup is image.Config's GroupSize: rendered images recorded and
+	// reported per manifest edit (default 1, each on its own).
+	PageGroup int
 	// MaxPixels, MaxFrames and MaxAnimationSeconds bound decoded images
 	// (image.Config's defaults when zero).
 	MaxPixels           int
@@ -80,6 +84,12 @@ type Config struct {
 	MaxAnimationSeconds float64
 	// JobTimeout bounds one ingest or derivative attempt (default 1 h).
 	JobTimeout time.Duration
+	// VideoSlice is how long a derivative attempt keeps encoding its own
+	// video's chunks before yielding to the other queued jobs; 0 (the
+	// default) yields after every chunk. A slice ends early when its video
+	// becomes playable or a job of higher priority waits. At most half of
+	// JobTimeout, so the last chunk a slice starts still has the other half.
+	VideoSlice time.Duration
 	// ShutdownGrace is how long running jobs get to finish on shutdown
 	// before they are cancelled and retried elsewhere; default 30 s.
 	ShutdownGrace time.Duration
@@ -110,6 +120,7 @@ func (c *Config) defaults() error {
 	if c.JobTimeout <= 0 {
 		c.JobTimeout = time.Hour
 	}
+	c.VideoSlice = min(c.VideoSlice, c.JobTimeout/2)
 	if c.ShutdownGrace <= 0 {
 		c.ShutdownGrace = 30 * time.Second
 	}
@@ -121,9 +132,10 @@ func (c *Config) defaults() error {
 
 // Worker is a configured worker; Run drains jobs until shutdown.
 type Worker struct {
-	c       Config
-	account *Worker
-	client  *river.Client[pgx.Tx]
+	c          Config
+	account    *Worker
+	client     *river.Client[pgx.Tx]
+	stopSlices func()
 }
 
 // New builds the River client with the image and video workers. It needs no
@@ -221,10 +233,11 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 			hooks = append(hooks, leader)
 		}
 	}
-	images, err := image.New(image.Config{Store: c.Store, Manifests: manifests, Workers: c.ImageSources, MaxPixels: c.MaxPixels, MaxFrames: c.MaxFrames, MaxAnimationSeconds: c.MaxAnimationSeconds})
+	images, err := image.New(image.Config{Store: c.Store, Manifests: manifests, Workers: c.ImageSources, MaxPixels: c.MaxPixels, MaxFrames: c.MaxFrames, MaxAnimationSeconds: c.MaxAnimationSeconds, GroupSize: c.PageGroup})
 	if err != nil {
 		return nil, err
 	}
+	stopping := make(chan struct{})
 	processing := riverhelpers.NewContribution("contentkit-media-processing", func(_ context.Context, cfg *river.Config) error {
 		for _, q := range []string{workqueue.IngestQueue, workqueue.DerivativeQueue} {
 			if _, exists := cfg.Queues[q]; exists {
@@ -236,7 +249,7 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 		if err := river.AddWorkerSafely(cfg.Workers, &ingestWorker{c: c, manifests: manifests, queue: queue}); err != nil {
 			return err
 		}
-		return river.AddWorkerSafely(cfg.Workers, &derivativeWorker{c: c, images: images, manifests: manifests, prepare: prepare, video: video.WorkerConfig{Encoder: enc, Pool: c.Pool, Schema: c.Schema, Logger: c.Logger}})
+		return river.AddWorkerSafely(cfg.Workers, &derivativeWorker{c: c, images: images, manifests: manifests, prepare: prepare, video: video.WorkerConfig{Encoder: enc, Pool: c.Pool, Schema: c.Schema, Slice: c.VideoSlice, Stopping: stopping, Logger: c.Logger}})
 	}, nil, nil)
 	client, err := riverhelpers.New(ctx, c.Pool, &river.Config{Schema: c.Schema,
 		JobTimeout: time.Hour, RescueStuckJobsAfter: 2 * time.Hour,
@@ -244,7 +257,7 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 	if err != nil {
 		return nil, err
 	}
-	out := &Worker{c: c, client: client}
+	out := &Worker{c: c, client: client, stopSlices: sync.OnceFunc(func() { close(stopping) })}
 	if c.AccountSchema != "" {
 		child := c
 		child.ContentSchema = c.AccountSchema
@@ -306,8 +319,9 @@ func (w *Worker) Run(ctx context.Context) error {
 	if err := w.client.Start(runCtx); err != nil {
 		return err
 	}
-	w.c.Logger.Info("media-worker: started", "schema", w.c.Schema, "derivative_workers", w.c.DerivativeWorkers, "ingest_workers", w.c.IngestWorkers)
+	w.c.Logger.Info("media-worker: started", "schema", w.c.Schema, "derivative_workers", w.c.DerivativeWorkers, "ingest_workers", w.c.IngestWorkers, "video_slice", w.c.VideoSlice)
 	<-ctx.Done()
+	w.stopSlices()
 	return stopJobs(w.client, w.c.ShutdownGrace, 30*time.Second)
 }
 
@@ -419,7 +433,8 @@ func (w *derivativeWorker) Work(ctx context.Context, job *river.Job[workqueue.De
 	}
 	defer func() { err = w.c.finishAttempt(ctx, job.JobRow, err, fail) }()
 	a := job.Args
-	pj := mediastore.ProcessJob{Ref: a.Ref, Preset: a.Preset, Force: a.Force, Editor: a.Editor}
+	// A rescued attempt (process death) keeps its number but leaves an error.
+	pj := mediastore.ProcessJob{Ref: a.Ref, Preset: a.Preset, Force: a.Force, Editor: a.Editor, Retry: len(job.Errors) > 0}
 	if _, err := w.c.Kinds.Item(pj.Ref); err != nil {
 		return river.JobCancel(err)
 	}

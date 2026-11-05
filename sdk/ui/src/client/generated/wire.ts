@@ -197,6 +197,8 @@ export interface Batch {
   legacy_reading?: LegacyReadingRecord[];
   signals?: SignalRecord[];
   deletes?: DeleteRecord[];
+  defer_recounts?: boolean;
+  recount?: number;
 }
 
 export interface BodyImageInput {
@@ -1793,6 +1795,8 @@ export interface Result {
   skipped?: Record<string, number>;
   failed: RecordFailure[];
   ids: Record<string, Record<string, string>>;
+  recounted?: number;
+  recounts_queued?: number;
 }
 
 export interface ReviewOutcome {

@@ -10,6 +10,7 @@ import { ContentKitUiRoot } from "../../scope.js";
 import { Button } from "#ckui/ui/button";
 import { Skeleton } from "#ckui/ui/skeleton";
 import { contentError } from "../social/parts.js";
+import { cardGridLayout, type CardGridLayout } from "../content/grid.js";
 import { SortMenu } from "../content/listing.js";
 import { Pagination } from "../content/pagination.js";
 import { EntityCover, EntityLink, type EntityLike } from "./parts.js";
@@ -37,6 +38,10 @@ export interface EntityDirectoryProps {
   letters?: boolean;
   /** "list" (names with counts, default) or "grid" (covers). */
   layout?: "list" | "grid";
+  /** The cover grid's columns, as on CardGrid, so covers can match the host's content cards. Default about 9rem per cover. */
+  grid?: CardGridLayout;
+  /** The cover's CSS aspect ratio, as on CardGrid. Default 3/4. */
+  aspectRatio?: string | number;
   /** A entity's link; default its canonical path. */
   href?: (entity: EntityLike) => string | undefined;
   /** A entity's entry instead of the default one. */
@@ -90,7 +95,7 @@ export function EntityDirectory(p: EntityDirectoryProps) {
                   variant={letter === l ? "default" : "ghost"}
                   aria-pressed={letter === l}
                   aria-label={l === null ? undefined : l === "#" ? t("entities.otherLetters") : l.toUpperCase()}
-                  className="min-w-7 max-sm:h-10 max-sm:min-w-10"
+                  className="min-w-7 max-sm:h-10 max-sm:min-w-10 comfortable:h-10 comfortable:min-w-10"
                   onClick={() => choose(l)}
                 >
                   {l === null ? t("entities.all") : l.toUpperCase()}
@@ -106,7 +111,7 @@ export function EntityDirectory(p: EntityDirectoryProps) {
   );
 }
 
-type Shown = Pick<EntityDirectoryProps, "layout" | "href" | "renderEntity">;
+type Shown = Pick<EntityDirectoryProps, "layout" | "href" | "renderEntity" | "grid" | "aspectRatio">;
 
 function CursorEntities({ filter, client, ...p }: EntityDirectoryProps & { filter: EntityFilter }) {
   const m = useMessages();
@@ -164,12 +169,15 @@ function Entities({ items, loading, error, reload, ...p }: Shown & { items: Enti
   const m = useMessages();
   const { t } = m;
   const grid = p.layout === "grid";
+  const covers = p.grid ? cardGridLayout(p.grid) : { className: GRID };
+  const list = grid ? covers.className : CHIPS;
+  const cover = p.aspectRatio === undefined ? { className: "aspect-[3/4] w-full" } : { className: "w-full", style: { aspectRatio: p.aspectRatio } };
   const count = (n: number) => new Intl.NumberFormat(m.language).format(n);
   if (loading && !items.length)
     return (
-      <div className={grid ? GRID : CHIPS} aria-busy>
+      <div className={list} style={grid ? covers.style : undefined} aria-busy>
         {Array.from({ length: grid ? 6 : 12 }, (_, i) => (
-          <Skeleton key={i} className={grid ? "aspect-[3/4] w-full" : "h-8 w-full"} />
+          <Skeleton key={i} className={grid ? cover.className : "h-8 w-full comfortable:h-10"} style={grid ? cover.style : undefined} />
         ))}
       </div>
     );
@@ -189,20 +197,26 @@ function Entities({ items, loading, error, reload, ...p }: Shown & { items: Enti
       </p>
     );
   return (
-    <ul className={grid ? GRID : CHIPS} data-ckui="entitys">
+    <ul className={list} style={grid ? covers.style : undefined} data-ckui="entitys">
       {items.map((g) => (
         <li key={g.id} data-ckui="entity" data-slug={g.slug}>
           {p.renderEntity ? (
             p.renderEntity(g)
           ) : grid ? (
             <EntityLink entity={g} href={p.href} className="group grid gap-1.5">
-              <EntityCover entity={g} className="aspect-[3/4] w-full" />
+              {p.aspectRatio === undefined ? (
+                <EntityCover entity={g} className="aspect-[3/4] w-full" />
+              ) : (
+                <div className="w-full" style={{ aspectRatio: p.aspectRatio }}>
+                  <EntityCover entity={g} className="size-full" />
+                </div>
+              )}
               <span className="font-medium break-words group-hover:underline">{g.name || g.slug}</span>
               <span className="text-xs text-muted-foreground tabular-nums">{m.plural("entities.items", g.count)}</span>
             </EntityLink>
           ) : (
             // A 32px chip taking taps over 40px; a zero count is left out rather than shown as "0".
-            <EntityLink entity={g} href={p.href} className="relative flex h-8 w-full items-center gap-1.5 rounded-md border border-border px-2.5 transition-colors after:absolute after:inset-x-0 after:-inset-y-1 hover:bg-muted">
+            <EntityLink entity={g} href={p.href} className="relative flex h-8 w-full items-center comfortable:h-10 gap-1.5 rounded-md border border-border px-2.5 transition-colors after:absolute after:inset-x-0 after:-inset-y-1 hover:bg-muted">
               <span className="truncate" title={g.name || g.slug}>{g.name || g.slug}</span>
               {g.count > 0 && (
                 <span className="ms-auto shrink-0 text-xs text-muted-foreground tabular-nums" aria-label={m.plural("entities.items", g.count)}>

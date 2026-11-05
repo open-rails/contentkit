@@ -44,6 +44,13 @@ facts. Admin JSON, Go and SSE observers can show partial progress without exposi
 partially complete releases. Normal processing completion wakes an accepted release
 request directly; no readiness relay or additional preparation job is necessary.
 
+Rendered images are recorded and reported one at a time. `PageGroup` (stock
+workers: `MEDIA_WORKER_PAGE_GROUP`) above 1 records up to that many in one
+manifest edit, or those finished within 5 s of the group's first, which bulk
+imports use to cut manifest edits. An attempt after one that failed, timed out
+or died records one at a time again, so a page that kills the worker cannot keep
+the rest of its group unrecorded.
+
 A failed ingest or derivative attempt retries through that same durable job.
 Video attempts checkpoint bounded work so successful chunks/renditions are not
 encoded again. After five failed attempts, the shared worker records remaining
@@ -56,6 +63,19 @@ regenerate affected items to retry their remaining outputs. Storage mutation and
 source identity rules remain authoritative.
 Content/media retention deletion belongs to the existing content-purge sweep;
 there is no separate media reaper or bucket-discovery scanner.
+
+A video attempt encodes one chunk, assembling the rung that chunk completes,
+then yields its job behind the other queued videos. Every queued video so
+advances one chunk per pass, and a large backlog finishes its videos only near
+its end. `VideoSlice` (stock workers: `MEDIA_WORKER_VIDEO_SLICE`, a duration
+such as `20m`) lets an attempt keep taking its own video's next chunks until
+that long after it started, so videos finish one after another. A slice ends
+when its own video becomes playable, and after any chunk while a job of higher
+priority waits, so a playable video's ladder or a backfill never runs ahead of
+a video still waiting to play. Another video waiting for its first playback
+can wait up to one slice behind a video still encoding its own. It is capped at half of `JobTimeout`, leaving the other half
+for the last chunk it starts. Shutdown ends a slice after its current chunk.
+The default, 0, yields after every chunk.
 
 ## Adoption
 

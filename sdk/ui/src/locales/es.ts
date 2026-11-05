@@ -11,6 +11,17 @@ export const es: ContentKitUiMessageBundle = {
   ...entities,
   ...discovery,
   ...content,
+  channels: {
+    repost: "Compartir",
+    removeRepost: "Dejar de compartir",
+    repostHint: "Comparte esta publicación en un canal en el que publicas. La original conserva su autor, sus comentarios y su configuración de acceso.",
+    removeHint: "Quita esta referencia de tu canal. La publicación original no cambia.",
+    destination: "Canal de destino",
+    loading: "Cargando tus canales…",
+    noDestination: "No tienes otro canal en el que puedas publicar.",
+    repostedBy: "Compartido por {name}",
+    channel: "Canal",
+  },
   common: {
     cancel: "Cancelar",
     close: "Cerrar",
