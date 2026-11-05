@@ -217,6 +217,38 @@ func TestAccountNotificationChannel(t *testing.T) {
 			t.Fatalf("like identities=%d; want 1", identities)
 		}
 	})
+	t.Run("CK-J25-S10_erased_liker_leaves_no_notice_identity", func(t *testing.T) {
+		owner, ownerToken := n.w.person(t, 0)
+		liker, likerToken := n.w.person(t, 0)
+		other, otherToken := n.w.person(t, 0)
+		gone, goneToken := n.w.person(t, 0)
+		item := publishedArticle(t, n.a, "Erased liker")
+		liked := postComment(t, n.a.client(ownerToken), item.ID, "Liked")
+		unliked := postComment(t, n.a.client(ownerToken), item.ID, "Unliked")
+		orphaned := postComment(t, n.a.client(goneToken), item.ID, "Inbox already erased")
+		for _, id := range []string{liked.ID, unliked.ID, orphaned.ID} {
+			_, err := n.a.client(likerToken).PostCommentLike(t.Context(), id)
+			must(t, err)
+		}
+		_, err := n.a.client(likerToken).DeleteCommentReaction(t.Context(), unliked.ID)
+		must(t, err)
+		_, err = n.a.client(otherToken).PostCommentLike(t.Context(), liked.ID)
+		must(t, err)
+		must(t, n.store.EraseRecipient(t.Context(), notify.Recipient{Audience: notify.AudienceUser, ID: gone.ID}))
+
+		must(t, n.a.engine.AnonymizeAccount(t.Context(), liker.ID))
+
+		var identities int
+		must(t, n.w.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+pgx.Identifier{n.w.schema, "content_comment_notifications"}.Sanitize()+`
+WHERE right(source_id, length($1))=$1`, liker.ID).Scan(&identities))
+		if identities != 0 {
+			t.Fatalf("erased liker's identity survives in %d notices", identities)
+		}
+		items := n.items(t, owner.ID)
+		if len(items) != 1 || items[0].Origin.ID != "comment.liked:"+liked.ID+":"+other.ID {
+			t.Fatalf("inbox after erasure: %+v", items)
+		}
+	})
 	t.Run("CK-J25-S11_exact_delete_hold_restore_and_stale_delivery", func(t *testing.T) {
 		owner, ownerToken := n.w.person(t, 0)
 		_, writerToken := n.w.person(t, 0)
