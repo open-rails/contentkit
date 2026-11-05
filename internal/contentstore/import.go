@@ -246,13 +246,13 @@ func checkVote(v content.ImportVote) error {
 	return nil
 }
 
+// replyHops bounds the walk from a reply up to its thread root.
+const replyHops = 16
+
 // ImportComments writes comments in tx, inserting new ones and updating
 // stored ones whose import changed (a moderator's decision stays), then
 // recounts their references' comment counts and their threads' replies, or
 // leaves that to later.
-// replyHops bounds the walk from a reply up to its thread root.
-const replyHops = 16
-
 func (rt *Runtime) ImportComments(ctx context.Context, tx pgx.Tx, in []content.ImportComment, later *Recounts) error {
 	if len(in) == 0 {
 		return nil
