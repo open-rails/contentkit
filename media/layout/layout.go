@@ -169,15 +169,22 @@ func ValidPublicName(name string) bool {
 	if ValidSegment(name) {
 		return true
 	}
+	logical, ok := SplitGeneration(name)
+	return ok && ValidSegment(logical)
+}
+
+// SplitGeneration returns the logical name of a public filename that carries
+// a publication's generation. Such a file is written once and never replaced.
+func SplitGeneration(name string) (logical string, ok bool) {
 	stem, ext := name, ""
 	// The extension follows the last dot, including dotted logical stems.
 	if i := strings.LastIndexByte(name, '.'); i >= 0 {
 		stem, ext = name[:i], name[i:]
 	}
-	if len(stem) < 38 || stem[len(stem)-37] != '-' {
-		return false
+	if len(stem) < 38 || stem[len(stem)-37] != '-' || !ValidStagedName(StagedPrefix+stem[len(stem)-36:]) {
+		return "", false
 	}
-	return ValidStagedName(StagedPrefix+stem[len(stem)-36:]) && ValidSegment(stem[:len(stem)-37]+ext)
+	return stem[:len(stem)-37] + ext, true
 }
 
 // ValidHashName accepts "sha256-{64 lowercase hex}".
