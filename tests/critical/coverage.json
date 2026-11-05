@@ -2569,11 +2569,15 @@
       "status": "verified",
       "cases": [
         "TestRequiredMixedDerivativesBeforeRelease",
-        "TestReleaseWakesWhenProcessingSettles"
+        "TestReleaseWakesWhenProcessingSettles",
+        "TestMediaVideoSlice/with_a_slice_first_playback_comes_before_each_whole_ladder",
+        "TestMediaVideoSlice/without_a_slice_chunks_interleave",
+        "TestMediaVideoSlice/a_video_queued_during_a_ladder_slice_plays_first"
       ],
       "evidence": [
         "Reviewed actual PNG/FFmpeg audiovisual source and S3 write barrier test: image completion alone does not activate release, completed mixed outputs do, and pending replacement retains the prior reader snapshot. Final runtime execution remains required.",
-        "Processing wakes a release only once the item settles: while a four page gallery and a video in several chunk checkpoints process, no release plan parks as waiting; both release promptly afterwards, and a rotated page of a released edition re-releases at once while its later chapter keeps its date."
+        "Processing wakes a release only once the item settles: while a four page gallery and a video in several chunk checkpoints process, no release plan parks as waiting; both release promptly afterwards, and a rotated page of a released edition re-releases at once while its later chapter keeps its date.",
+        "Two real videos of three single-chunk rungs are queued behind a paused derivative queue. Without a worker video slice their chunks interleave exactly as before. With one, both first playable rungs finish before any ladder rung, then each video runs its whole ladder in one slice; a video queued while a ladder slice encodes plays first, and the ladder then resumes. Focused real PostgreSQL/S3/FFmpeg execution passed; the strict gate must execute the exact cases again."
       ]
     },
     {

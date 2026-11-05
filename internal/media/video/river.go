@@ -22,7 +22,12 @@ type WorkerConfig struct {
 	Pool        *pgxpool.Pool
 	Schema      string        // the host's worker schema (workqueue.ValidSchema)
 	ChunkTarget time.Duration // estimated CPU work per chunk; default 5 minutes
-	Logger      *slog.Logger
+	// Slice is how long after its attempt started a job keeps taking its own
+	// next step instead of yielding; 0 yields after every step. Closing
+	// Stopping ends every slice at its current step.
+	Slice    time.Duration
+	Stopping <-chan struct{}
+	Logger   *slog.Logger
 }
 
 func (c WorkerConfig) defaults() WorkerConfig {
@@ -39,19 +44,21 @@ func (c WorkerConfig) defaults() WorkerConfig {
 // The media worker also runs image producers; no video River handler is registered.
 func (c WorkerConfig) Run(ctx context.Context, job *river.Job[workqueue.DerivativeArgs]) error {
 	c = c.defaults()
+	start := time.Now()
 	defer c.clearProgress(ctx, job.ID)
 	if err := c.Encoder.ms.Recover(ctx, job.Args.Ref); err != nil {
 		return err
 	}
 	// The shared derivative worker owns retry exhaustion, outage snoozes, and
 	// crash recovery for both image and video work.
-	return c.convert(ctx, job)
+	return c.convert(ctx, job, start)
 }
 
-// convert owns the whole conversion. Each attempt checkpoints at most one
-// bounded chunk and publishes a finished rung before yielding the same job.
+// convert owns the whole conversion. Each step checkpoints at most one
+// bounded chunk and publishes a finished rung; an attempt takes one step, or
+// as many as its Slice allows, before yielding the same job.
 // The item lock prevents duplicate requests from encoding the same chunk.
-func (c WorkerConfig) convert(ctx context.Context, job *river.Job[workqueue.DerivativeArgs]) error {
+func (c WorkerConfig) convert(ctx context.Context, job *river.Job[workqueue.DerivativeArgs], start time.Time) error {
 	release, ok, err := pglock.Acquire(ctx, c.Pool, "contentkit:media:video:"+job.Args.Ref.String(), false)
 	if err != nil {
 		return err
@@ -83,83 +90,112 @@ func (c WorkerConfig) convert(ctx context.Context, job *river.Job[workqueue.Deri
 			return err
 		}
 	}
-	if err := c.planVideo(ctx, job.Args); err != nil {
-		return err
-	}
-	if fair, err := c.overTenantShare(ctx, job.Args.Ref.TenantID); err != nil {
-		return err
-	} else if fair {
-		return river.JobSnooze(lockedSnooze)
-	}
-	ref, err := json.Marshal(job.Args.Ref)
-	if err != nil {
-		return err
-	}
-	rows, err := c.Pool.Query(ctx, `SELECT id::text FROM `+c.runTable()+`
+next:
+	for {
+		if err := c.planVideo(ctx, job.Args); err != nil {
+			return err
+		}
+		if fair, err := c.overTenantShare(ctx, job.Args.Ref.TenantID); err != nil {
+			return err
+		} else if fair {
+			return river.JobSnooze(lockedSnooze)
+		}
+		ref, err := json.Marshal(job.Args.Ref)
+		if err != nil {
+			return err
+		}
+		rows, err := c.Pool.Query(ctx, `SELECT id::text FROM `+c.runTable()+`
  WHERE ref = $1 AND state IN ('planned', 'encoding', 'assembling') ORDER BY created_at, file_name, rung`, ref)
-	if err != nil {
-		return err
-	}
-	ids, err := pgx.CollectRows(rows, pgx.RowTo[string])
-	if err != nil {
-		return err
-	}
-	for _, id := range ids {
-		run, err := c.loadRun(ctx, id)
 		if err != nil {
 			return err
 		}
-		if job.Args.Preset != "" && !strings.HasPrefix(run.Spec, job.Args.Preset+"@") {
-			continue
-		}
-		if _, ok, err := c.current(ctx, run); err != nil {
-			return err
-		} else if !ok {
-			if err := c.cancelRun(ctx, id); err != nil {
-				return err
-			}
-			continue
-		}
-		chunk, pending, err := c.nextChunk(ctx, id)
+		ids, err := pgx.CollectRows(rows, pgx.RowTo[string])
 		if err != nil {
 			return err
 		}
-		if pending {
-			if _, err := c.Pool.Exec(ctx, `UPDATE `+c.runTable()+` SET state = 'encoding', updated_at = now() WHERE id = $1 AND state != 'cancelled'`, id); err != nil {
+		for _, id := range ids {
+			run, err := c.loadRun(ctx, id)
+			if err != nil {
 				return err
 			}
-			if err := c.encodeChunk(ctx, run, chunk, job.ID); err != nil {
-				return err
+			if job.Args.Preset != "" && !strings.HasPrefix(run.Spec, job.Args.Preset+"@") {
+				continue
 			}
-			if err := c.Pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM `+c.chunkTable()+` WHERE run_id = $1 AND state = 'planned')`, id).Scan(&pending); err != nil {
+			if _, ok, err := c.current(ctx, run); err != nil {
 				return err
-			}
-		}
-		if !pending {
-			if _, err := c.Pool.Exec(ctx, `UPDATE `+c.runTable()+` SET state = 'assembling', updated_at = now() WHERE id = $1 AND state != 'cancelled'`, id); err != nil {
-				return err
-			}
-			if err := c.assemble(ctx, run, job.ID); err != nil {
-				return err
-			}
-			// Initial playback has priority over improving a playable video's ladder.
-			if job.Priority == 1 {
-				finished, err := c.loadRun(ctx, id)
-				if err != nil {
+			} else if !ok {
+				if err := c.cancelRun(ctx, id); err != nil {
 					return err
 				}
-				if finished.State == "complete" {
-					if _, err := c.Pool.Exec(ctx, `UPDATE `+c.jobTable()+` SET priority = 2 WHERE id = $1`, job.ID); err != nil {
+				continue
+			}
+			chunk, pending, err := c.nextChunk(ctx, id)
+			if err != nil {
+				return err
+			}
+			if pending {
+				if _, err := c.Pool.Exec(ctx, `UPDATE `+c.runTable()+` SET state = 'encoding', updated_at = now() WHERE id = $1 AND state != 'cancelled'`, id); err != nil {
+					return err
+				}
+				if err := c.encodeChunk(ctx, run, chunk, job.ID); err != nil {
+					return err
+				}
+				if err := c.Pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM `+c.chunkTable()+` WHERE run_id = $1 AND state = 'planned')`, id).Scan(&pending); err != nil {
+					return err
+				}
+			}
+			if !pending {
+				if _, err := c.Pool.Exec(ctx, `UPDATE `+c.runTable()+` SET state = 'assembling', updated_at = now() WHERE id = $1 AND state != 'cancelled'`, id); err != nil {
+					return err
+				}
+				if err := c.assemble(ctx, run, job.ID); err != nil {
+					return err
+				}
+				// Initial playback has priority over improving a playable video's ladder.
+				if job.Priority == 1 {
+					finished, err := c.loadRun(ctx, id)
+					if err != nil {
 						return err
+					}
+					if finished.State == "complete" {
+						if _, err := c.Pool.Exec(ctx, `UPDATE `+c.jobTable()+` SET priority = 2 WHERE id = $1`, job.ID); err != nil {
+							return err
+						}
+						return river.JobSnooze(0) // ends a slice too
 					}
 				}
 			}
+			// Yield even when this was the last rung: the next attempt (or the next
+			// step of a slice) confirms no work remains, and a newly queued short
+			// video can run between chunks.
+			if more, err := c.inSlice(ctx, job, start); err != nil {
+				return err
+			} else if more {
+				continue next
+			}
+			return river.JobSnooze(0)
 		}
-		// Yield even when this was the last rung: the next attempt confirms no
-		// work remains, and a newly queued short video can run between chunks.
-		return river.JobSnooze(0)
+		return nil
 	}
-	return nil
+}
+
+// inSlice reports whether an attempt that started at start takes its next
+// step itself rather than yielding: within its Slice, while no derivative job
+// of higher priority (a video's first playback, ahead of ladders and
+// backfills) waits.
+func (c WorkerConfig) inSlice(ctx context.Context, job *river.Job[workqueue.DerivativeArgs], start time.Time) (bool, error) {
+	select {
+	case <-c.Stopping:
+		return false, nil
+	default:
+	}
+	if c.Slice <= 0 || ctx.Err() != nil || time.Since(start) >= c.Slice {
+		return false, nil
+	}
+	var waiting bool
+	err := c.Pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM `+c.jobTable()+` WHERE queue = $1 AND priority < $2
+   AND (state = 'available' OR state IN ('retryable', 'scheduled') AND scheduled_at <= now()))`, job.Queue, job.Priority).Scan(&waiting)
+	return !waiting, err
 }
 
 func (c WorkerConfig) clearProgress(ctx context.Context, id int64) {
