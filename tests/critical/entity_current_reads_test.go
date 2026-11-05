@@ -29,18 +29,20 @@ func TestEntityListContentKindEligibility(t *testing.T) {
 	// only through owner_entity_id exercise the exact facet membership contract.
 	seed := func(kind, language string, members []string, owner entities.EntityID) {
 		t.Helper()
-		item, err := admin.PostContents(t.Context(), catalog.ContentInput{Kind: kind, Versions: []catalog.VersionInput{
-			{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: "English"}}},
-			{Languages: []string{"de"}, Text: map[string]catalog.VersionText{"de": {Title: "German"}}},
-		}})
+		versions := []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: "English"}}}}
+		// Articles hold one version; galleries carry a second edition.
+		if kind == "gallery" {
+			versions = append(versions, catalog.VersionInput{Languages: []string{"de"}, Text: map[string]catalog.VersionText{"de": {Title: "German"}}})
+		}
+		item, err := admin.PostContents(t.Context(), catalog.ContentInput{Kind: kind, Versions: versions})
 		must(t, err)
 		result, err := w.pool.Exec(t.Context(), `UPDATE `+pgx.Identifier{w.schema, "content_facets"}.Sanitize()+`
  SET live_from=now()-interval '1 hour', published_at=now()-interval '1 hour', access_level='public',
  languages=ARRAY[$3]::text[], entity_ids=$4::text[], owner_entity_id=nullif($5, '')
  WHERE tenant_id=$1 AND content_id=$2`, a.cfg.Scope.AppID.String(), item.ID, language, members, string(owner))
 		must(t, err)
-		if result.RowsAffected() != 2 {
-			t.Fatalf("seeded %d facets, want two editions", result.RowsAffected())
+		if result.RowsAffected() != int64(len(versions)) {
+			t.Fatalf("seeded %d facets, want %d editions", result.RowsAffected(), len(versions))
 		}
 	}
 	seed("gallery", "en", []string{string(member), string(member)}, owner)
