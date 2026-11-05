@@ -2519,7 +2519,7 @@
       "behavior": "Only predefined-choice polls accept creation, import and votes; choices lock after voting while scope, closure, final-vote and erasure counts remain correct",
       "status": "verified",
       "evidence": [
-        "Real public Go/HTTP poll operations exercise unsupported-kind rejection, duplicate concurrent final voting, anonymous policy, mismatched options, cross-app IDs, future/closed polls and repeated account erasure. PostgreSQL tests cover staff/import choice locking, replay, concurrent voting and a live vote cast just before or during an import's recount of the same option; the shipped-editor browser test covers editing before voting and refreshing a stale editor after conflict."
+        "Real public Go/HTTP poll operations exercise unsupported-kind rejection, duplicate concurrent final voting, anonymous policy, mismatched options, cross-app IDs, future/closed polls and repeated account erasure. PostgreSQL tests cover staff/import choice locking, replay, concurrent voting and a live vote cast just before or during an import's recount of the same option, or a live vote or poll import run between the parts of a vote import retried after a failed record; the shipped-editor browser test covers editing before voting and refreshing a stale editor after conflict."
       ],
       "cases": [
         "TestChoicePolls/CK-J30-S01_predefined_choices_validate_requests",
@@ -2531,6 +2531,7 @@
         "TestImportedPollChoices",
         "TestImportedPollChoiceRaces",
         "TestImportedVoteRecountKeepsLiveVote",
+        "TestImportedVoteFallbackDoesNotDeadlock",
         "TestPollChoicesBrowser"
       ]
     },

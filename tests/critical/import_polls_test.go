@@ -361,3 +361,139 @@ func TestImportedVoteRecountKeepsLiveVote(t *testing.T) {
 		})
 	}
 }
+
+// A vote chunk with a failing record is retried in parts, and other work runs
+// between them. A live vote from an address a later part imports, or an import
+// of the chunk's polls, must not deadlock with the retry.
+func TestImportedVoteFallbackDoesNotDeadlock(t *testing.T) {
+	w := newWorld(t, func(c *ck.Config) { c.Interactions.Anonymous.Votes = true; c.Interactions.Limits.Disabled = true })
+	a := w.apps[0]
+	admin := a.engine.Client()
+	qs := pgx.Identifier{w.schema}.Sanitize()
+	gate := w.schema + ":vote-fallback"
+	const poison = "198.51.100.99"
+	var timeout int
+	must(t, w.pool.QueryRow(t.Context(), `SELECT setting::int FROM pg_settings WHERE name = 'deadlock_timeout'`).Scan(&timeout))
+	// The poisoned vote fails every write it is in. Retried alone, after the
+	// records before it, it first waits at the gate.
+	_, err := w.pool.Exec(t.Context(), fmt.Sprintf(`CREATE FUNCTION %[1]s.critical_vote_poison() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN
+ IF EXISTS (SELECT 1 FROM n WHERE ip = '%[3]s') THEN
+  IF (SELECT count(*) FROM n) = 1 THEN PERFORM pg_advisory_xact_lock(hashtextextended(TG_ARGV[0],0)); END IF;
+  RAISE EXCEPTION 'poisoned vote';
+ END IF;
+ RETURN NULL; END$$;
+CREATE TRIGGER critical_vote_poison AFTER INSERT ON %[1]s.content_poll_votes REFERENCING NEW TABLE AS n
+ FOR EACH STATEMENT EXECUTE FUNCTION %[1]s.critical_vote_poison('%[2]s')`, qs, gate, poison))
+	must(t, err)
+	defer func() {
+		_, err := w.pool.Exec(context.Background(), `DROP TRIGGER critical_vote_poison ON `+qs+`.content_poll_votes; DROP FUNCTION `+qs+`.critical_vote_poison()`)
+		must(t, err)
+	}()
+	blockedBy := func(t *testing.T, pid uint32) uint32 {
+		t.Helper()
+		var waiter uint32
+		waitForWithin(t, 10*time.Second, func() bool {
+			must(t, w.pool.QueryRow(t.Context(), `SELECT coalesce(min(pid),0) FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid))`, pid).Scan(&waiter))
+			return waiter != 0
+		})
+		return waiter
+	}
+	for _, mode := range []string{"live_vote", "poll_import"} {
+		t.Run(mode, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+			defer cancel()
+			ids := []string{contentref.NewID(), contentref.NewID()}
+			slices.Sort(ids)
+			created := time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
+			var records []importer.PollRecord
+			for i, id := range ids {
+				ext := fmt.Sprintf("%s-%d", mode, i)
+				records = append(records, importer.PollRecord{ExternalID: ext, ID: id, Question: "Choose", Language: "en", CreatedAt: &created,
+					Options: []importer.PollOptionRecord{{ExternalID: ext + "-one", Label: "One"}, {ExternalID: ext + "-two", Label: "Two", Position: 1}}})
+			}
+			source := "vote-fallback-" + mode
+			initial, err := admin.PostImport(ctx, importer.Batch{Source: source, Polls: records})
+			must(t, err)
+			if len(initial.Failed) != 0 {
+				t.Fatalf("poll import fixture failed: %+v", initial)
+			}
+			first, err := admin.GetPoll(ctx, ids[0])
+			must(t, err)
+			second, err := admin.GetPoll(ctx, ids[1])
+			must(t, err)
+			vote := func(p content.Poll, ip string) importer.VoteRecord {
+				return importer.VoteRecord{Poll: importer.Ref{ID: p.ID}, Option: importer.Ref{ID: p.Options[0].ID}, IP: ip}
+			}
+			// The live vote comes from the test client's address and shares the
+			// first part's poll. The poll import locks the earlier poll first,
+			// which the last part needs after the first part took the later one.
+			votes := []importer.VoteRecord{vote(first, "198.51.100.71"), vote(first, poison), vote(first, "127.0.0.1")}
+			if mode == "poll_import" {
+				votes = []importer.VoteRecord{vote(second, "198.51.100.71"), vote(second, poison), vote(first, "198.51.100.72")}
+			}
+			holder, err := w.pool.Acquire(ctx)
+			must(t, err)
+			defer holder.Release()
+			_, err = holder.Exec(ctx, "SELECT pg_advisory_lock(hashtextextended($1,0))", gate)
+			must(t, err)
+			locked := true
+			defer func() {
+				if locked {
+					_, _ = holder.Exec(context.Background(), "SELECT pg_advisory_unlock(hashtextextended($1,0))", gate)
+				}
+			}()
+			imported, other := make(chan error, 1), make(chan error, 1)
+			go func() {
+				result, err := admin.PostImport(ctx, importer.Batch{Source: source, Votes: votes})
+				if err == nil && (len(result.Failed) != 1 || result.Failed[0].Index != 1 || result.Written[importer.SectionVotes] != 2) {
+					err = fmt.Errorf("vote import wrote %v and failed %+v; want two written and only the poisoned vote failed", result.Written, result.Failed)
+				}
+				imported <- err
+			}()
+			importPID := blockedBy(t, holder.Conn().PgConn().PID())
+			var query string
+			must(t, w.pool.QueryRow(ctx, "SELECT query FROM pg_stat_activity WHERE pid=$1", importPID).Scan(&query))
+			if !strings.Contains(query, "content_poll_votes") {
+				t.Fatalf("import paused outside its vote writes: %s", query)
+			}
+			if mode == "live_vote" {
+				go func() {
+					_, err := a.client("").PostPollVote(ctx, first.ID, content.PollVote{OptionID: first.Options[0].ID})
+					other <- err
+				}()
+				// The live vote either commits now or waits for the import.
+				waitForWithin(t, 10*time.Second, func() bool {
+					var waiting bool
+					must(t, w.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid)))`, importPID).Scan(&waiting))
+					return waiting || len(other) > 0
+				})
+			} else {
+				go func() {
+					result, err := admin.PostImport(ctx, importer.Batch{Source: source, Polls: records})
+					if err == nil && len(result.Failed) != 0 {
+						err = fmt.Errorf("poll import failed: %+v", result.Failed)
+					}
+					other <- err
+				}()
+				blockedBy(t, importPID)
+				// Postgres checks a wait for a deadlock once. Let the poll import's
+				// check pass first, so a cycle falls on the vote import and shows.
+				time.Sleep(time.Duration(timeout)*time.Millisecond + 500*time.Millisecond)
+			}
+			_, err = holder.Exec(ctx, "SELECT pg_advisory_unlock(hashtextextended($1,0))", gate)
+			must(t, err)
+			locked = false
+			if err := <-other; err != nil {
+				t.Fatalf("%s during the vote import's retry failed: %v", mode, err)
+			}
+			must(t, <-imported)
+			var stored, wrong int
+			must(t, w.pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM `+qs+`.content_poll_votes WHERE question_id = ANY($1::uuid[])),
+ (SELECT count(*) FROM `+qs+`.content_poll_options o WHERE o.question_id = ANY($1::uuid[])
+  AND o.vote_count <> (SELECT count(*) FROM `+qs+`.content_poll_votes v WHERE v.option_id = o.id))`, ids).Scan(&stored, &wrong))
+			if stored != 2 || wrong != 0 {
+				t.Fatalf("after the retried import %d votes are stored and %d option counts are wrong; want 2 and 0", stored, wrong)
+			}
+		})
+	}
+}
