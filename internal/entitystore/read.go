@@ -187,11 +187,6 @@ func (s *Store) compile(opts ListOptions, ids []string) (cardQuery, error) {
 	countKind := ""
 	if ck := strings.TrimSpace(opts.ContentKind); ck != "" {
 		countKind, c.args["content_kind"] = " AND f.kind = @content_kind", ck
-		if !opts.IncludeInternal {
-			where = append(where, fmt.Sprintf(`EXISTS (SELECT 1 FROM %s f WHERE f.tenant_id=g.tenant_id
- AND (f.entity_ids @> ARRAY[g.id] OR f.owner_entity_id=g.id) AND %s
- AND (@count_language='' OR @count_language::text=ANY(f.languages))%s)`, s.table("content_facets"), liveListed, countKind))
-		}
 	}
 	if opts.Cursor != "" {
 		var cur listCursor
@@ -225,7 +220,19 @@ func (s *Store) compile(opts ListOptions, ids []string) (cardQuery, error) {
  WHERE f.tenant_id=g.tenant_id AND (f.entity_ids @> ARRAY[g.id] OR f.owner_entity_id=g.id)
  AND g.state='active' AND %s AND (@count_language='' OR @count_language::text=ANY(f.languages))%s) cc ON true`,
 		s.table("content_facets"), liveListed, countKind)
-	if c.sort == entities.SortCount {
+	eligible, eligibilityJoin := "", ""
+	if countKind != "" && !opts.IncludeInternal {
+		// Eligibility and counts share one facet scan, including owner-only links.
+		eligible = fmt.Sprintf(`WITH eligible AS MATERIALIZED (
+ SELECT membership.entity_id, count(DISTINCT f.content_id)::int AS n
+ FROM %s f CROSS JOIN LATERAL unnest(array_append(f.entity_ids,f.owner_entity_id)) membership(entity_id)
+ WHERE f.tenant_id=@tenant AND membership.entity_id IS NOT NULL AND %s
+ AND (@count_language='' OR @count_language::text=ANY(f.languages))%s
+ GROUP BY membership.entity_id)
+`, s.table("content_facets"), liveListed, countKind)
+		eligibilityJoin = " JOIN eligible cc ON cc.entity_id=g.id"
+		counts = ""
+	} else if c.sort == entities.SortCount {
 		// Ranking needs counts for every candidate entity. Aggregate the eligible
 		// facets once instead of repeating an indexed lookup per entity.
 		counts = fmt.Sprintf(`LEFT JOIN (SELECT members.entity_id, count(*)::int AS n FROM (
@@ -253,25 +260,27 @@ func (s *Store) compile(opts ListOptions, ids []string) (cardQuery, error) {
  WHERE nn.tenant_id=g.tenant_id AND nn.entity_id=g.id AND nn.kind='name'
  ORDER BY CASE WHEN nn.language=@language THEN 0 WHEN nn.language='en' THEN 1 ELSE 2+coalesce(array_position(@fallback::text[],nn.language),1000) END,nn.language LIMIT 1) nm ON true
  LEFT JOIN %s t ON t.tenant_id=g.tenant_id AND t.entity_id=g.id AND t.language=@language`, s.table("content_entity_names"), s.table("content_entity_text"))
-	from := s.table("content_entities") + " g"
+	from := s.table("content_entities") + " g" + eligibilityJoin
 	predicate := "WHERE " + strings.Join(where, " AND ")
 	paging := " LIMIT @limit OFFSET @offset"
-	// Select the page first, then derive covers (and counts unless they rank)
+	// Select the page first, then derive covers and any remaining counts
 	// only for its rows. Display names join the selection only when the sort
 	// or a letter reads them.
 	selectJoins := ""
 	if c.sort == entities.SortName || strings.TrimSpace(opts.Letter) != "" {
 		selectJoins = displayJoins
 	}
-	countFrom := s.table("content_entities") + " g"
+	countFrom := s.table("content_entities") + " g" + eligibilityJoin
 	if strings.TrimSpace(opts.Letter) != "" {
 		countFrom += " " + displayJoins
 	}
-	if c.sort == entities.SortCount {
-		// Carry the ranking counts outward instead of aggregating them twice.
+	if c.sort == entities.SortCount || eligible != "" {
+		// Carry precomputed counts outward instead of aggregating them twice.
 		from = "(SELECT g.*, " + count + " AS content_count FROM " + from + " " + counts + " " + selectJoins + " " + predicate + " ORDER BY " + order + paging + ") g"
 		count, counts = "g.content_count", ""
-		order = count + " DESC, g.id"
+		if c.sort == entities.SortCount {
+			order = count + " DESC, g.id"
+		}
 	} else {
 		from = "(SELECT g.* FROM " + from + " " + selectJoins + " " + predicate + " ORDER BY " + order + paging + ") g"
 	}
@@ -286,9 +295,9 @@ LEFT JOIN %[4]s cd ON cd.tenant_id = g.tenant_id AND cd.content_kind = g.kind AN
 %[8]s`,
 		from, s.table("content_entity_names"), s.table("content_entity_text"), s.table("content_codes"),
 		count, key, counts, predicate, scope, parent, displayJoins, covers, autoCover)
-	c.sql = base + " ORDER BY " + order + paging
+	c.sql = eligible + base + " ORDER BY " + order + paging
 	if opts.Page > 0 {
-		c.count = "SELECT count(*) FROM " + countFrom + " WHERE " + strings.Join(where, " AND ")
+		c.count = eligible + "SELECT count(*) FROM " + countFrom + " WHERE " + strings.Join(where, " AND ")
 	}
 	return c, nil
 }
