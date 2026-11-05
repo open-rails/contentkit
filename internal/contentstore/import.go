@@ -246,6 +246,9 @@ func checkVote(v content.ImportVote) error {
 	return nil
 }
 
+// replyHops bounds the walk from a reply up to its thread root.
+const replyHops = 16
+
 // ImportComments writes comments in tx, inserting new ones and updating
 // stored ones whose import changed (a moderator's decision stays), then
 // recounts their references' comment counts and their threads' replies, or
@@ -317,31 +320,63 @@ func (rt *Runtime) ImportComments(ctx context.Context, tx pgx.Tx, in []content.I
 		ids[i] = r.ID
 	}
 	s := rt.store
-	// Stored parents and the stored comments themselves (another tenant's id
-	// is a conflict; a moved comment recounts its old reference too).
+	// The stored comments themselves, their parents and the parents' ancestors
+	// up to the thread root (another tenant's id is a conflict; a moved
+	// comment recounts its old reference too).
 	type stored struct {
 		tenant, replyTo string
 		key             keyRow
 	}
 	known := map[string]stored{}
-	observedIDs := append(slices.Clone(ids), parents...)
-	res, err := tx.Query(ctx, `SELECT id::text, tenant_id, coalesce(reply_to_id::text, ''), content_kind, content_id, content_version_id FROM `+s.t.comments+`
- WHERE id = ANY($1::uuid[])`, observedIDs)
-	if err != nil {
-		return err
-	}
-	for res.Next() {
-		var id string
-		var c stored
-		if err := res.Scan(&id, &c.tenant, &c.replyTo, &c.key.Kind, &c.key.ID, versionid.Into(&c.key.Version)); err != nil {
-			res.Close()
+	var observedIDs []string
+	selectStored := `SELECT id::text, tenant_id, coalesce(reply_to_id::text, ''), content_kind, content_id, content_version_id FROM ` + s.t.comments + `
+ WHERE id = ANY($1::uuid[])`
+	load := func(want []string) error {
+		observedIDs = append(observedIDs, want...)
+		res, err := tx.Query(ctx, selectStored, want)
+		if err != nil {
 			return err
 		}
-		known[id] = c
+		defer res.Close()
+		for res.Next() {
+			var id string
+			var c stored
+			if err := res.Scan(&id, &c.tenant, &c.replyTo, &c.key.Kind, &c.key.ID, versionid.Into(&c.key.Version)); err != nil {
+				return err
+			}
+			known[id] = c
+		}
+		return res.Err()
 	}
-	res.Close()
-	if err := res.Err(); err != nil {
+	if err := load(append(slices.Clone(ids), parents...)); err != nil {
 		return err
+	}
+	// An earlier write may have stored a parent whose thread root is in
+	// neither this write nor the rows loaded so far.
+	visited := map[string]bool{}
+	next := parents
+	for depth := 0; depth <= replyHops && len(next) > 0; depth++ {
+		var up, want []string
+		for _, id := range next {
+			if _, ok := byID[id]; ok {
+				continue
+			}
+			c, ok := known[id]
+			if !ok || c.replyTo == "" || visited[c.replyTo] {
+				continue
+			}
+			visited[c.replyTo] = true
+			up = append(up, c.replyTo)
+			if _, ok := known[c.replyTo]; !ok {
+				want = append(want, c.replyTo)
+			}
+		}
+		if len(want) > 0 {
+			if err := load(want); err != nil {
+				return err
+			}
+		}
+		next = up
 	}
 	keys := map[keyRow]bool{}
 	threads := map[string]bool{}
@@ -378,7 +413,7 @@ func (rt *Runtime) ImportComments(ctx context.Context, tx pgx.Tx, in []content.I
 			if up == "" {
 				break
 			}
-			if hops > 16 || up == r.ID {
+			if hops > replyHops || up == r.ID {
 				return invalidImport("comment %s replies in a loop", r.ID)
 			}
 			root = up
@@ -402,8 +437,7 @@ func (rt *Runtime) ImportComments(ctx context.Context, tx pgx.Tx, in []content.I
 	// A concurrent import may have moved a reply while these locks waited.
 	// Retry through the importer's savepoint fallback instead of locking its
 	// newly discovered parent out of order or missing that parent's recount.
-	res, err = tx.Query(ctx, `SELECT id::text, tenant_id, coalesce(reply_to_id::text, ''), content_kind, content_id, content_version_id FROM `+s.t.comments+`
- WHERE id = ANY($1::uuid[])`, observedIDs)
+	res, err := tx.Query(ctx, selectStored, observedIDs)
 	if err != nil {
 		return err
 	}

@@ -66,6 +66,9 @@ The host's AuthKit inbox scope for ContentKit must be `contentkit:` followed by
 ContentKit's account key (`tenant_<tenant ID>`); account
 cleanup reads erasures under exactly that scope.
 
+Erasing an account withdraws the notices for its likes and deletes their
+identities, which name the liker.
+
 Account lifecycle cleanup retains its established canonical account/app erasure
 fences and content-only restore checks. The narrow cleanup adapter calls
 AuthKit's canonical erasure implementation; it creates no inbox tables and

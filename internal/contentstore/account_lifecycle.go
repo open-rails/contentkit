@@ -209,6 +209,9 @@ VALUES ($1,$2,false) ON CONFLICT (tenant_id,actor_id) DO NOTHING`, rt.tenant, ac
 				return err
 			}
 		}
+		if err := rt.comments.eraseLikeNotices(ctx, tx, actorID); err != nil {
+			return err
+		}
 		for _, q := range []string{
 			`DELETE FROM ` + pgx.Identifier{rt.schema, "content_comment_notifications"}.Sanitize() + ` WHERE tenant_id=$1 AND recipient=$2`,
 			`UPDATE ` + s.t.comments + ` SET user_id=NULL,anon_name='<Deleted>' WHERE tenant_id=$1 AND user_id=$2`,

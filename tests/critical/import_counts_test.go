@@ -571,3 +571,39 @@ CREATE TRIGGER critical_moved_reply_delete BEFORE UPDATE ON %s.content_comments 
 		}
 	}
 }
+
+func TestImportReplyToStoredReply(t *testing.T) {
+	w := newWorld(t)
+	a := w.apps[0]
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	item := publishedArticle(t, a, "Nested replies split apart")
+	comment := func(external, parent, body string) importer.CommentRecord {
+		r := importer.CommentRecord{ExternalID: external, Target: importer.TargetRef{Content: &importer.Ref{ID: item.ID}}, AnonName: "Legacy guest", Body: body}
+		if parent != "" {
+			r.ReplyTo = &importer.Ref{ExternalID: parent}
+		}
+		return r
+	}
+	// The orphan fails only when written, so the batch is split and the leaf
+	// is written apart from the root its stored parent replies to.
+	orphan := comment("orphan", "", "Orphan")
+	orphan.ReplyTo = &importer.Ref{ID: "0196f2a0-0000-7000-8000-000000000001"}
+	first, err := a.engine.Client().PostImport(ctx, importer.Batch{Source: "nested-replies", Comments: []importer.CommentRecord{
+		comment("root", "", "Root"), comment("mid", "root", "Middle"), orphan, comment("leaf", "mid", "Leaf")}})
+	must(t, err)
+	if len(first.Failed) != 1 || first.Failed[0].ExternalID != "orphan" || first.Written[importer.SectionComments] != 3 {
+		t.Fatalf("split import refused more than the orphan: %+v", first)
+	}
+	later, err := a.engine.Client().PostImport(ctx, importer.Batch{Source: "nested-replies", Comments: []importer.CommentRecord{comment("late", "mid", "Late")}})
+	must(t, err)
+	if len(later.Failed) != 0 || later.Written[importer.SectionComments] != 1 {
+		t.Fatalf("a reply to a stored reply was refused: %+v", later)
+	}
+	root := first.IDs[importer.RecordComment]["root"]
+	replies, err := a.client("").GetCommentReplies(ctx, root, ck.GetCommentRepliesQuery{})
+	must(t, err)
+	if got := readComment(t, a, item.ID, root); got.ReplyCount != 3 || len(replies) != 3 {
+		t.Fatalf("nested replies are not in the root's thread: count=%d replies=%d", got.ReplyCount, len(replies))
+	}
+}
