@@ -170,6 +170,18 @@ func (rt *Runtime) ScreenVotes(ctx context.Context, tx pgx.Tx, in []content.Impo
 	for _, i := range stray {
 		errs[i] = fmt.Errorf("%w: option %s of a multiple-choice poll", ErrNotFound, in[i].OptionID)
 	}
+	// Hold the polls in id order for the whole chunk, so a retry in parts
+	// does not lock them in record order.
+	polls := map[string]bool{}
+	for _, a := range asks {
+		if errs[a.I] == nil {
+			polls[a.PollID] = true
+		}
+	}
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM `+rt.store.t.pollQuestions+`
+ WHERE tenant_id = $1 AND id = ANY($2::uuid[]) ORDER BY id FOR SHARE`, rt.tenant, slices.Collect(maps.Keys(polls))); err != nil {
+		return nil, err
+	}
 	return errs, nil
 }
 
