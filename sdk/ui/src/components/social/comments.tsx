@@ -589,11 +589,11 @@ function Composer(p: ComposerProps) {
           )}
         </span>
         {p.onCancel && (
-          <Button type="button" size="sm" variant="ghost" onClick={p.onCancel} disabled={pending}>
+          <Button type="button" size="sm" variant="ghost" className="comfortable:h-10" onClick={p.onCancel} disabled={pending}>
             {t("common.cancel")}
           </Button>
         )}
-        <Button type="submit" size="sm" disabled={pending}>
+        <Button type="submit" size="sm" className="comfortable:h-10" disabled={pending}>
           {pending ? t(editing ? "comments.saving" : "comments.posting") : p.submit}
         </Button>
       </div>

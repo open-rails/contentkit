@@ -47,7 +47,7 @@ export function ContentSummaryTile({
         aria-label={label}
         aria-expanded={kind === "premium" ? false : undefined}
         aria-haspopup={kind === "filtered" ? "dialog" : undefined}
-        className={cn("relative flex h-auto w-full flex-col justify-center overflow-hidden rounded-lg p-0 text-center whitespace-normal", kind === "premium" && "bg-black text-white hover:bg-black hover:text-white")}
+        className={cn("relative flex h-auto w-full flex-col justify-center overflow-hidden rounded-lg p-0 text-center whitespace-normal", kind === "premium" && "border-transparent bg-black text-white shadow-none hover:bg-black hover:text-white dark:border-transparent")}
         style={{ aspectRatio: aspect }}
         onClick={onClick}
       >

@@ -44,6 +44,13 @@ facts. Admin JSON, Go and SSE observers can show partial progress without exposi
 partially complete releases. Normal processing completion wakes an accepted release
 request directly; no readiness relay or additional preparation job is necessary.
 
+Rendered images are recorded and reported one at a time. `PageGroup` (stock
+workers: `MEDIA_WORKER_PAGE_GROUP`) above 1 records up to that many in one
+manifest edit, or those finished within 5 s of the group's first, which bulk
+imports use to cut manifest edits. An attempt after one that failed, timed out
+or died records one at a time again, so a page that kills the worker cannot keep
+the rest of its group unrecorded.
+
 A failed ingest or derivative attempt retries through that same durable job.
 Video attempts checkpoint bounded work so successful chunks/renditions are not
 encoded again. After five failed attempts, the shared worker records remaining

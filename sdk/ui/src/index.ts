@@ -5,7 +5,7 @@ import "./styles.css";
 
 export { ContentKitUiProvider, type ContentKitUiProviderProps } from "./provider.js";
 export { ContentKitUiRoot } from "./scope.js";
-export type { ContentKitUiAppearance, ContentKitUiTheme, ContentKitUiVariables } from "./appearance.js";
+export type { ContentKitUiAppearance, ContentKitUiDensity, ContentKitUiTheme, ContentKitUiVariables } from "./appearance.js";
 export { EncodeProgress, encodeLabel, formatRemaining, type EncodeProgressProps } from "./components/encode-progress.js";
 export { ImageCropDialog, type ImageCropDialogProps } from "./components/image-crop-dialog.js";
 export { SlotImage, type SlotImageProps } from "./components/slot-image.js";

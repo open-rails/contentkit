@@ -569,7 +569,8 @@ refuses the text) and `GET|POST|DELETE /v1/moderation/ip-bans`
 every comment body and anonymous name before the moderator; an IP-banned write
 answers `403 comment_banned` with ban scope `ip`, and moderators are exempt.
 Imported comments get the mask words too, but a reject word never refuses
-imported history.
+imported history. A banned-word change applies at once on the replica that made
+it and within 30 seconds on the others.
 
 Doujins adapter (`moderator{svc}` on the old `Moderation` port): implement
 `Screen` instead of `Check`; return `Verdict{Decision: DecisionReject, Reason}`
@@ -1206,7 +1207,7 @@ The media route group serves the read API at `/v1/media`
   below).
 - `GET /{kind}/{id}/hls/{dir}master.m3u8` (a ladder in `hls`), `{path}.m3u8`
   (a track) and `{dir}sprite.vtt` are built per request from the manifest's
-  tracks and their index blobs (cached by hash).
+  tracks and their index blobs (cached per item and hash, 16 MiB per process).
 
 ### Public image URLs
 
@@ -1260,11 +1261,10 @@ next one. Browsers keep using a read's `public` or `usePublicImage`.
   added); a smaller shrink or removal re-runs nothing.
   The SDK's `waitFor` rejects with `too_large` while an item is full.
   Failure messages are capped at 300 bytes.
-- `ManifestOptions.CacheBytes` (default 128 MiB) holds decoded manifests,
-  each about three times its JSON: the largest costs 24 MiB, and a read
-  that misses decodes it again (about 0.25 s and 60 MiB at 8 MiB, anonymous
-  reads included). Size it for the hot set of large items; it never drops
-  below two of the largest.
+- Each process keeps a fixed 128 MiB cache of decoded manifests, each about
+  three times its JSON: the largest costs 24 MiB, and a read that misses
+  decodes it again (about 0.25 s and 60 MiB at 8 MiB, anonymous reads
+  included).
 - Refused images record `failed` (`message`, `code`, `details`):
   `image_unreadable`, `image_too_large`, `image_too_small`,
   `animation_not_allowed`, `animation_too_long`, `animation_unsupported`,
@@ -1417,18 +1417,17 @@ the host's periodic jobs. The worker migrates its schema itself.
   `_default` item. `Cross-Origin-Resource-Policy` is always `same-site`.
 - **Bucket**: one per app, private (no public ACL or policy); the gateway's
   key reads only `*/private/*` and `*/public/*` of each; only the hosts write.
-- **CDN**: may cache `public/` in a shared cache. Current publication URLs
-  contain a generation; optional stable aliases follow the gateway's
-  `public, max-age=300, stale-while-revalidate=86400` policy and ETag
-  revalidation. ContentKit does not enqueue CDN invalidation jobs. Never
-  cache `private/` in a shared cache: the token is not part of a cache key
-  the CDN checks, so a cached object would be served without one. Private
-  blobs are hash-named, so their bytes never change, but a browser may reuse
-  one only while the token that authorized it is valid: the gateway answers
-  `private, max-age={seconds until that token expires}, immutable`. After
-  that the browser asks again, so expiry, key rotation and deletion take
-  effect there (a cached copy can still outlive its entitlement by the
-  token's remaining life).
+- **CDN**: may cache `public/` in a shared cache. Generation-named URLs answer
+  `public, max-age=31536000, immutable`; stable names and default images answer
+  `public, max-age=300, stale-while-revalidate=86400` with ETag revalidation.
+  ContentKit does not enqueue CDN invalidation jobs. Never cache `private/` in
+  a shared cache: the token is not part of a cache key the CDN checks, so a
+  cached object would be served without one. Private blobs are hash-named and
+  answer `private, max-age=31536000, immutable`: tokens guard new reads, not
+  copies a browser already holds, so expiry, key rotation and deletion don't
+  reach those. The gateway sets these headers itself and ignores any
+  `Cache-Control` stored on the object. A CDN hit skips the deletion fence, so
+  a deleted `public/` file can stay served until that copy expires.
 - **Denials are 404 by design**: a missing, malformed, expired, wrong-scope
   or unknown-key token on `private/` gets the same response as a
   missing object (status, headers, body; `Cache-Control: no-store`), decided

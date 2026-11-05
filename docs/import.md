@@ -60,8 +60,11 @@ Sections are written in order: entities, channels, contents, memberships,
 aliases, comments, reactions, favorites, polls, votes, signals,
 deletes; a
 record may name what an earlier section or call wrote. Each section runs in
-transactions of up to 1000 records: all at once, else each in its own
-savepoint, so the result lists only the records that failed
+transactions of up to 1000 records. Comments, reactions, favorites and votes
+that fail on their own (an invalid value, no user, an erased person, an
+option of another poll) are refused first. The rest are written all at once,
+else in halves, each in its own savepoint and halved again until a record
+that fails is alone, so the result lists only the records that failed
 (`section`, `index`, `external_id`, `code`, `error`) and the rest commit.
 Fix the cause and send them, or the whole batch, again. A batch holds at
 most 20,000 records.
@@ -74,6 +77,20 @@ and prices are managed through OpenRails, not the ContentKit import.
 Imports update content facets and interaction counts in their writing
 transactions, and queue search-document updates. Entity counts and automatic
 covers derive from current facets on reads; there is no periodic recount.
+
+A recount reads every row of each target a chunk touched, so a long import
+that touches the same popular targets in batch after batch can set
+`defer_recounts`. Its comments, reactions, favorites, votes and comment
+deletes then queue their targets (counts, reply counts, poll option counts)
+instead of recounting them, and those counts lag until the importer drains the
+queue: nothing drains it on its own. At the end, send batches with `recount`
+(up to 1000 each, records optional) until `recounts_queued` is 0. Each
+recounts the oldest queued targets and takes them off the queue (`recounted`),
+and the counts then include every row, live writes made meanwhile among them.
+A target an import holds or queues again during a recount stays queued for
+the next one, as does the rest of a recount that fails; the batch's records
+are unaffected. One drain at a time is enough: drains in parallel take the
+same oldest targets.
 Channel lifecycle changes finish through direct idempotent AuthKit calls. There
 is no channel-sync worker. Incomplete channels remain unavailable for authoring.
 

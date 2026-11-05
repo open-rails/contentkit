@@ -103,9 +103,9 @@ type Store struct {
 }
 
 type tables struct {
-	items, creators, versions, versionText, segments, facets string
-	entities, entityNames, memberships, prefs, counts, docs  string
-	reactions, favorites, comments, accessHistory, renamed   string
+	items, creators, versions, versionText, segments, facets          string
+	entities, entityNames, memberships, prefs, counts, recounts, docs string
+	reactions, favorites, comments, accessHistory, renamed            string
 }
 
 func catalogTables(schema string) tables {
@@ -113,7 +113,7 @@ func catalogTables(schema string) tables {
 	return tables{items: q("content_items"), creators: q("content_creators"), versions: q("content_versions"),
 		versionText: q("content_version_text"), segments: q("content_segments"), facets: q("content_facets"),
 		entities: q("content_entities"), entityNames: q("content_entity_names"), memberships: q("content_memberships"),
-		prefs: q("content_filter_prefs"), counts: q("content_interaction_counts"), docs: q("content_search_documents"),
+		prefs: q("content_filter_prefs"), counts: q("content_interaction_counts"), recounts: q("content_import_recounts"), docs: q("content_search_documents"),
 		reactions: q("content_reactions"), favorites: q("content_favorites"), comments: q("content_comments"), accessHistory: q("content_access_history"),
 		renamed: q("content_search_entity_dirty")}
 }

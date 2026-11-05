@@ -131,43 +131,29 @@ func PrivateFileScope(key string) string { return "private-file|" + key }
 
 // VerifyPrivate checks an exact-file or whole-item token for a private key.
 func (r Ring) VerifyPrivate(tok, key string, now time.Time) error {
-	_, err := r.VerifyPrivateUntil(tok, key, now)
-	return err
-}
-
-// VerifyPrivateUntil is VerifyPrivate that also returns when the accepted
-// token expires, so a response can be cached no longer than its authority.
-func (r Ring) VerifyPrivateUntil(tok, key string, now time.Time) (time.Time, error) {
 	k, area, ok := keyFolder(key)
 	if !ok || area != layout.AreaPrivate {
-		return time.Time{}, ErrInvalid
+		return ErrInvalid
 	}
-	exp, err := r.VerifyScopeUntil(tok, PrivateFileScope(key), now)
-	if !errors.Is(err, ErrInvalid) {
-		return exp, err
+	if err := r.VerifyScope(tok, PrivateFileScope(key), now); !errors.Is(err, ErrInvalid) {
+		return err
 	}
-	return r.VerifyScopeUntil(tok, strings.TrimSuffix(k.Folder(), "/"), now)
+	return r.VerifyScope(tok, strings.TrimSuffix(k.Folder(), "/"), now)
 }
 
 // VerifyScope checks tok for exactly scope at now.
 func (r Ring) VerifyScope(tok, scope string, now time.Time) error {
-	_, err := r.VerifyScopeUntil(tok, scope, now)
-	return err
-}
-
-// VerifyScopeUntil is VerifyScope that also returns the token's expiry.
-func (r Ring) VerifyScopeUntil(tok, scope string, now time.Time) (time.Time, error) {
 	kid, rest, ok := strings.Cut(tok, ".")
 	if !ok || kid == "" { // a zero Ring's empty key id would verify an empty secret
-		return time.Time{}, ErrMalformed
+		return ErrMalformed
 	}
 	e, sig, ok := strings.Cut(rest, ".")
 	if !ok || e == "" || sig == "" {
-		return time.Time{}, ErrMalformed
+		return ErrMalformed
 	}
 	exp, err := strconv.ParseInt(e, 10, 64)
 	if err != nil || strconv.FormatInt(exp, 10) != e {
-		return time.Time{}, ErrMalformed
+		return ErrMalformed
 	}
 	var secret []byte
 	switch {
@@ -176,19 +162,19 @@ func (r Ring) VerifyScopeUntil(tok, scope string, now time.Time) (time.Time, err
 	case r.previous != nil && kid == r.previous.ID:
 		secret = r.previous.Secret
 	default:
-		return time.Time{}, ErrUnknownKey
+		return ErrUnknownKey
 	}
 	if now.Unix() >= exp {
-		return time.Time{}, ErrExpired
+		return ErrExpired
 	}
 	got, err := base64.RawURLEncoding.DecodeString(sig)
 	if err != nil {
-		return time.Time{}, ErrMalformed
+		return ErrMalformed
 	}
 	if want, _ := base64.RawURLEncoding.DecodeString(mac(secret, scope, e)); !hmac.Equal(got, want) {
-		return time.Time{}, ErrInvalid
+		return ErrInvalid
 	}
-	return time.Unix(exp, 0).UTC(), nil
+	return nil
 }
 
 func mac(secret []byte, scope, exp string) string {

@@ -73,7 +73,9 @@ require (
 	github.com/ryanuber/go-glob v1.0.0 // indirect
 	github.com/sirupsen/logrus v1.9.4 // indirect
 	github.com/streamingfast/logging v0.0.0-20250729153644-6ddeb9abb112 // indirect
+	github.com/stretchr/testify v1.12.1 // indirect
 	go.mongodb.org/mongo-driver/v2 v2.5.0 // indirect
+	go.uber.org/goleak v1.3.0 // indirect
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/ratelimit v0.3.1 // indirect
 	go.uber.org/zap v1.27.1 // indirect

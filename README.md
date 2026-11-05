@@ -364,7 +364,7 @@ written. Reads go through an in-process cache bounded by bytes and
 revalidated by ETag, so a read is never stale. A 2,000-page gallery is about
 1.5 MB of JSON and 400 KB stored; a 2-hour video about 5 KB, its segment
 tables living in index blobs. Every read and write stops at
-`MaxManifestBytes` (8 MiB of JSON; the default 128 MiB cache holds five).
+`MaxManifestBytes` (8 MiB of JSON; the 128 MiB cache holds five).
 Edits stop 4 KiB short of it and only when they grow the manifest, so a
 full item can still shrink and the `hidden` and `full` flags always fit. A
 commit is refused (413 `too_large`) when the item, once processed, would
@@ -403,11 +403,13 @@ and charges each upload's size (at least 64 KiB) to the grant's `Owner`; growth 
 `quota_exceeded`, and deleting an item releases it.
 
 **Media gateway** (`cmd/media-gateway`, `media/gateway`, image
-`ghcr.io/open-rails/contentkit-media-gateway:{tag}`): `public/` to anyone
-(`public, max-age=300, stale-while-revalidate=86400`, falling back to the
-kind's `_default` for declared names) and `private/sha256-{hex}` with an
-authorized item token or exact-file token (`private, max-age` set to the
-token's remaining life, `immutable`). An item token
+`ghcr.io/open-rails/contentkit-media-gateway:{tag}`): `public/` to anyone,
+falling back to the kind's `_default` for declared names, and
+`private/sha256-{hex}` with an authorized item token or exact-file token.
+Private blobs and generation-named public files are cached for a year
+(`max-age=31536000, immutable`); other public responses, such as `Stable`
+presets and defaults, use `public, max-age=300, stale-while-revalidate=86400`.
+An item token
 opens every private file of its item or none. Versioned reader grants use exact-file
 tokens in `?t=` so an older grant cannot open newly uploaded or unreleased
 pages; ordinary whole-item grants may use the `mt` cookie. `?dl={name}` serves the file as a download
@@ -728,6 +730,9 @@ shared review queue, screened by `Deps.Moderator`. `GET /v1/catalog/totals`
 (`kinds`, `languages`) counts what anyone and each tier opens, per kind and
 language; a sibling deployment reads it with
 `contentkit.NewClient(baseURL, nil).GetCatalogTotals(ctx, contentkit.GetCatalogTotalsQuery{Kinds, Languages})`.
+Each process caches a count per site and kind: it reloads in the background
+after ten minutes, and the last good count serves for up to a day while reloads
+fail.
 
 Content jobs use `contentkit_content_*` River kinds. Their previous
 `contentkit_catalog_*` kinds remain dispatch aliases, and the queue route stays
