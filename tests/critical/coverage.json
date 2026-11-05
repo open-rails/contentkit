@@ -2061,7 +2061,8 @@
         "Executable mapping prepared for independent review; qualification requires this exact case to execute and pass in the strict runner on the final integrated candidate."
       ],
       "cases": [
-        "TestAccountNotificationChannel/CK-J25-S10_injected_inbox_reply_like_and_concurrent_dedupe"
+        "TestAccountNotificationChannel/CK-J25-S10_injected_inbox_reply_like_and_concurrent_dedupe",
+        "TestAccountNotificationChannel/CK-J25-S10_erased_liker_leaves_no_notice_identity"
       ]
     },
     {
@@ -7024,6 +7025,7 @@
         "TestImportReplyCountsWithModeration",
         "TestConcurrentImportedReplyMoves",
         "TestMovedImportedReplyDeletionWithModeration",
+        "TestImportReplyToStoredReply",
         "TestImportFallbackRecountsOnce",
         "TestImportedCommentLikeLockOrder",
         "TestImportDeferredRecounts",

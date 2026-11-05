@@ -208,8 +208,8 @@ func (c *comments) withdrawLikeNotice(ctx context.Context, tx pgx.Tx, actorID, c
 	}
 	var m notify.Withdrawal
 	err := tx.QueryRow(ctx, `UPDATE `+c.noticeTable()+` SET withdrawn=true,revision=revision+1
-WHERE tenant_id=$1 AND source_id=$2 AND NOT withdrawn RETURNING recipient,source_id,revision`,
-		c.s.tenant, "comment.liked:"+cid+":"+actorID).Scan(&m.RecipientID, &m.ID, &m.Revision)
+WHERE tenant_id=$1 AND comment_id=$2 AND source_id=$3 AND NOT withdrawn RETURNING recipient,source_id,revision`,
+		c.s.tenant, cid, "comment.liked:"+cid+":"+actorID).Scan(&m.RecipientID, &m.ID, &m.Revision)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
@@ -217,4 +217,38 @@ WHERE tenant_id=$1 AND source_id=$2 AND NOT withdrawn RETURNING recipient,source
 		return err
 	}
 	return c.rt.notifier.Withdraw(ctx, []notify.Withdrawal{m}, tx)
+}
+
+// eraseLikeNotices removes the notices whose identity names an erased liker:
+// they leave each recipient's inbox, then this table. A recipient already
+// erased from the inbox has nothing to withdraw, and must not block this one.
+func (c *comments) eraseLikeNotices(ctx context.Context, tx pgx.Tx, actorID string) error {
+	rows, err := tx.Query(ctx, `DELETE FROM `+c.noticeTable()+`
+WHERE tenant_id=$1 AND source_id='comment.liked:'||comment_id::text||':'||$2
+RETURNING recipient,source_id,revision+1,withdrawn`, c.s.tenant, actorID)
+	if err != nil {
+		return err
+	}
+	type notice struct {
+		notify.Withdrawal
+		withdrawn bool
+	}
+	notices, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (notice, error) {
+		var n notice
+		err := row.Scan(&n.RecipientID, &n.ID, &n.Revision, &n.withdrawn)
+		return n, err
+	})
+	if err != nil || c.rt.notifier == nil {
+		return err
+	}
+	for _, n := range notices {
+		if n.withdrawn {
+			continue
+		}
+		err := c.rt.notifier.Withdraw(ctx, []notify.Withdrawal{n.Withdrawal}, tx)
+		if err != nil && !errors.Is(err, notify.ErrRecipientErased) {
+			return fmt.Errorf("content: withdraw erased liker's notices: %w", err)
+		}
+	}
+	return nil
 }

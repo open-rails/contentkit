@@ -273,7 +273,7 @@ func (c *comments) resolve(ctx context.Context, cid, state string, d content.Rev
 // lockThread locks comments and their parents in id order before changing
 // thread state or counts. Imports take these locks before writing replies too.
 func (c *comments) lockThread(ctx context.Context, tx pgx.Tx, ids ...string) error {
-	_, err := tx.Exec(ctx, `SELECT 1 FROM `+c.s.t.comments+` WHERE tenant_id = $2 AND (id = ANY($1::uuid[]) OR id IN (SELECT reply_to_id FROM `+c.s.t.comments+` WHERE tenant_id = $2 AND id = ANY($1::uuid[])))
+	_, err := tx.Exec(ctx, `SELECT 1 FROM `+c.s.t.comments+` WHERE tenant_id = $2 AND id = ANY(ARRAY(SELECT unnest($1::uuid[]) UNION SELECT p.reply_to_id FROM `+c.s.t.comments+` p WHERE p.tenant_id = $2 AND p.id = ANY($1::uuid[]) AND p.reply_to_id IS NOT NULL))
 		ORDER BY id FOR UPDATE`, ids, c.s.tenant)
 	return err
 }
