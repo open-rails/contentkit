@@ -750,10 +750,13 @@ func (s *Store) checkOwners(ctx context.Context, q Querier, ids []string) error 
 // follows version deletion, including hidden versions, with automatic
 // empty-parent deletion. All soft-deleted content follows the deletion retention.
 func (s *Store) ImportDeletes(ctx context.Context, tx pgx.Tx, contents, versions []string) error {
+	if len(contents) == 0 && len(versions) == 0 {
+		return nil
+	}
 	var events []catalog.Event
 	touched := map[string]bool{}
 	locked, err := tx.Query(ctx, `SELECT c.id FROM `+s.t.items+` c WHERE c.tenant_id=$1 AND
- (c.id=ANY($2) OR c.id IN (SELECT v.content_id FROM `+s.t.versions+` v WHERE v.tenant_id=$1 AND v.id=ANY($3))) ORDER BY c.id FOR UPDATE`, s.tenant, contents, versions)
+ c.id = ANY(ARRAY(SELECT unnest($2::text[]) UNION SELECT v.content_id FROM `+s.t.versions+` v WHERE v.tenant_id=$1 AND v.id=ANY($3))) ORDER BY c.id FOR UPDATE`, s.tenant, contents, versions)
 	if err != nil {
 		return err
 	}
