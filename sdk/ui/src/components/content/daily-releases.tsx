@@ -129,7 +129,7 @@ function ReleaseDaySection({ day, initial, step, pending, cardProps: p, collapse
               <ReleaseCard key={entry.key} card={entry.card} open={open && !pending} position={entry.position} exposure={exposure} cardProps={p} />)}
             {day.filtered_count > 0 && <ContentSummaryTile tileKey="filtered-summary" contentKind={summaryContentKind} open={open && !pending} cardProps={p} kind="filtered" label={summaryLabels?.filtered?.(day.filtered_count) ?? m.plural("releases.filteredMore", day.filtered_count)} onClick={(event) => { filterTrigger.current = event.currentTarget; setFiltersOpen(true); }} />}
           </ol>
-          {visible < day.contents.length && <div className="flex justify-center pt-5 pb-1"><Button type="button" variant="outline" onClick={(event) => { reveal.prepare(event.detail === 0); setVisible((n) => Math.min(n + step, day.contents.length)); }}>{m.t("contents.showMore")}</Button></div>}
+          {visible < day.contents.length && <div className="flex justify-center pt-5 pb-1"><Button type="button" variant="secondary" onClick={(event) => { reveal.prepare(event.detail === 0); setVisible((n) => Math.min(n + step, day.contents.length)); }}>{m.t("contents.showMore")}</Button></div>}
         </div>
       </div>
       <ContentFilterDialog returnFocus={() => !pending && filterTrigger.current?.isConnected ? filterTrigger.current : dayHeading.current} open={filtersOpen} onOpenChange={setFiltersOpen} client={p.client} kinds={kinds} language={language} counts={day.filtered_entities ?? []} description={m.t("releases.filterContext", { date: label })} appearance={p.appearance} />
