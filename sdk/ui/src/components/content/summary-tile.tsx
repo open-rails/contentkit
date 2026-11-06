@@ -42,7 +42,7 @@ export function ContentSummaryTile({
     <li ref={ref} data-release-key={tileKey}>
       <Button
         type="button"
-        variant="outline"
+        variant="secondary"
         data-ckui={`${kind}-release-tile`}
         aria-label={label}
         aria-expanded={kind === "premium" ? false : undefined}
