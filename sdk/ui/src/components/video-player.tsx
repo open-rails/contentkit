@@ -123,6 +123,13 @@ export interface VideoPlayerProps extends Omit<HlsPlayerOptions, "src"> {
    */
   layout?: "frame" | "fill";
   maxHeight?: string;
+  /**
+   * `overlay` (default) shows the control bar over the picture's bottom edge
+   * and hides it while playing; `below` keeps it in its own strip under a
+   * `frame` picture, always shown, so it never covers the video. Fullscreen
+   * overlays either way.
+   */
+  controls?: "overlay" | "below";
   /** Preview muted inline before play (hover, or in view on touch); default the provider's. */
   inlinePreview?: boolean;
   /** Where the preview starts, seconds; default 10% in. */
@@ -202,6 +209,7 @@ export function VideoPlayer({
   failed,
   layout = "frame",
   maxHeight = "80svh",
+  controls = "overlay",
   inlinePreview,
   previewStart,
   keyboard = "focus",
@@ -514,10 +522,14 @@ export function VideoPlayer({
   };
 
   const aspect = width && height ? width / height : (media.aspect ?? 16 / 9);
+  // A stacked player keeps its picture in a stage of its own, also in
+  // fullscreen, so entering it never remounts the video; only the bar moves.
+  const stacked = controls === "below" && layout === "frame";
+  const below = stacked && !fs.active;
   const frame: CSSProperties = fs.active
     ? { width: "100%", height: "100%", borderRadius: 0 }
     : layout === "frame"
-      ? { aspectRatio: String(aspect), width: `min(100%, calc(${maxHeight} * ${aspect}))`, marginInline: "auto" }
+      ? { ...(below ? {} : { aspectRatio: String(aspect) }), width: `min(100%, calc(${maxHeight} * ${aspect}))`, marginInline: "auto" }
       : {};
   const posterOutputs = typeof poster === "string" ? [] : publicRenditions(poster);
   const busy = !error && !previewing && (status === "loading" || status === "buffering");
@@ -572,12 +584,133 @@ export function VideoPlayer({
   }
   const actions = menuItems?.filter((m): m is Extract<PlayerMenuItem, { onSelect: () => void }> => "onSelect" in m);
 
+  // The control bar: over the picture's bottom edge, or in its own strip under it.
+  const bar = (
+    <div
+      data-ckui="controls"
+      data-ckui-noswipe=""
+      className={
+        below
+          ? "z-10 flex flex-col bg-black px-2 pt-1 pb-1"
+          : cn(
+              "pointer-events-none absolute inset-x-0 bottom-0 z-10 flex flex-col bg-linear-to-t from-black/75 via-black/35 to-transparent px-2 pt-12 pb-1 transition-opacity duration-200 motion-reduce:transition-none",
+              controlsShown ? "opacity-100 *:pointer-events-auto" : "opacity-0",
+            )
+      }
+    >
+      <SeekBar time={media.time} duration={dur} buffered={media.buffered} onSeek={seek} onScrub={(v) => setScrubbing(v !== null)} sprite={sprite} />
+      <div className="flex items-center gap-0.5">
+        <ControlButton
+          label={media.ended ? t("player.replay") : media.paused ? t("player.resume") : t("player.pause")}
+          shortcut="k"
+          icon={media.ended ? Refresh01Icon : media.paused ? PlayIcon : PauseIcon}
+          onClick={toggle}
+          data-ckui="play"
+        />
+        <VolumeControl volume={media.volume} muted={media.muted} onVolume={setVolume} onMute={toggleMute} />
+        <span className="ml-1 shrink-0 text-xs font-medium whitespace-nowrap text-white/90 tabular-nums" data-ckui="time">
+          {clock(media.time)} / {clock(dur)}
+        </span>
+        <div className="min-w-0 flex-1" />
+        {subtitles.list.length > 0 && (
+          <ControlButton label={t("player.subtitles")} shortcut="c" icon={ClosedCaptionIcon} aria-pressed={subtitles.selected >= 0} onClick={toggleCaptions} data-ckui="captions-toggle" />
+        )}
+        {renderDownloads?.({ container: portal, className: playerButtonClass })}
+        <SettingsMenu icon={Settings01Icon} label={t("player.settings")} sections={sections} actions={actions} container={portal} onOpenChange={setMenuOpen} />
+        {onMiniPlayer && <ControlButton className="@max-sm:hidden" label={t("player.miniPlayer")} shortcut="i" icon={PictureInPictureOnIcon} onClick={openMini} data-ckui="mini-player-open" />}
+        {pip.supported && (
+          <ControlButton
+            className="@max-md:hidden"
+            label={pip.active ? t("player.exitPip") : t("player.pip")}
+            icon={pip.active ? PictureInPictureExitIcon : PictureInPicture01Icon}
+            onClick={pip.toggle}
+            data-ckui="pip"
+          />
+        )}
+        {onTheaterChange && (
+          <ControlButton
+            className="max-lg:hidden"
+            label={t("player.theater")}
+            shortcut="t"
+            icon={RectangularIcon}
+            aria-pressed={!!theater}
+            onClick={toggleTheater}
+            data-ckui="theater"
+          />
+        )}
+        {fs.supported && (
+          <ControlButton
+            label={fs.active ? t("player.exitFullscreen") : t("player.fullscreen")}
+            shortcut="f"
+            icon={fs.active ? ArrowShrink02Icon : FullScreenIcon}
+            onClick={fs.toggle}
+            data-ckui="fullscreen"
+          />
+        )}
+      </div>
+    </div>
+  );
+
+  const screen = failed ? (
+    <Panel icon>{t("player.failed")}</Panel>
+  ) : pending || !base ? (
+    <div className="absolute inset-0 flex items-center justify-center bg-muted p-6 text-foreground">
+      <EncodeProgress progress={progress} className="max-w-xs text-center" />
+    </div>
+  ) : (
+    <>
+      <video ref={videoRef} className="absolute inset-0 size-full object-contain" playsInline preload="none" crossOrigin={crossOrigin} aria-label={label} />
+      {started && !error && <div data-ckui="surface" className="absolute inset-0" onClick={onSurfaceClick} onDoubleClick={onSurfaceDoubleClick} />}
+      {!started && !error && (
+        <>
+          {typeof poster === "string" ? (
+            <img alt="" src={poster} decoding="async" className={cn("pointer-events-none absolute inset-0 size-full object-contain", fade)} />
+          ) : posterOutputs.length ? (
+            <RenditionImg outputs={posterOutputs} className={cn("pointer-events-none absolute inset-0 size-full object-contain", fade)} />
+          ) : (
+            <SpriteFrame vtt={`${base}sprite.vtt`} loader={options.loader} className={fade} />
+          )}
+          <BigButton label={t("player.play")} onClick={player.play} disabled={busy} className={fade}>
+            {busy ? <Spinner /> : <HugeiconsIcon icon={PlayIcon} className="ml-1 size-7 fill-current" strokeWidth={1.5} />}
+          </BigButton>
+          {duration ? (
+            <span className="pointer-events-none absolute right-2 bottom-2 rounded bg-black/65 px-1.5 py-0.5 text-xs font-medium tabular-nums">{formatDuration(duration)}</span>
+          ) : null}
+        </>
+      )}
+      {started && !error && media.ended && (
+        <BigButton label={t("player.replay")} onClick={toggle}>
+          <HugeiconsIcon icon={Refresh01Icon} className="size-7" strokeWidth={1.75} />
+        </BigButton>
+      )}
+      <Captions cues={live ? cues : []} bottom={controlsShown && !below ? "4.75rem" : "1.25rem"} />
+      {started && busy && (
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
+          <span className="flex size-14 items-center justify-center rounded-full bg-black/45">
+            <Spinner />
+          </span>
+        </div>
+      )}
+      <SeekFlash flash={flash} />
+      {started && !error && !below && bar}
+      <span className="sr-only" aria-live="polite">
+        {busy ? t("player.loading") : ""}
+      </span>
+      {error && (
+        <Panel icon code={error.code} onRetry={player.retry}>
+          {t(`player.errors.${error.kind}`)}
+        </Panel>
+      )}
+    </>
+  );
+
   return (
     <ContentKitUiRoot
       appearance={appearance}
       className={cn(
         "@container relative w-full touch-manipulation overflow-hidden bg-black text-white outline-none",
         layout === "fill" ? "size-full" : !fs.active && "rounded-lg",
+        stacked && "flex flex-col",
         started && !controlsShown && "cursor-none",
         className,
       )}
@@ -597,117 +730,15 @@ export function VideoPlayer({
       onFocus={(e) => setKeyFocus(focusVisible(e.target))}
       onBlur={() => setKeyFocus(false)}
     >
-      {failed ? (
-        <Panel icon>{t("player.failed")}</Panel>
-      ) : pending || !base ? (
-        <div className="absolute inset-0 flex items-center justify-center bg-muted p-6 text-foreground">
-          <EncodeProgress progress={progress} className="max-w-xs text-center" />
-        </div>
-      ) : (
+      {stacked ? (
         <>
-          <video ref={videoRef} className="absolute inset-0 size-full object-contain" playsInline preload="none" crossOrigin={crossOrigin} aria-label={label} />
-          {started && !error && <div data-ckui="surface" className="absolute inset-0" onClick={onSurfaceClick} onDoubleClick={onSurfaceDoubleClick} />}
-          {!started && !error && (
-            <>
-              {typeof poster === "string" ? (
-                <img alt="" src={poster} decoding="async" className={cn("pointer-events-none absolute inset-0 size-full object-contain", fade)} />
-              ) : posterOutputs.length ? (
-                <RenditionImg outputs={posterOutputs} className={cn("pointer-events-none absolute inset-0 size-full object-contain", fade)} />
-              ) : (
-                <SpriteFrame vtt={`${base}sprite.vtt`} loader={options.loader} className={fade} />
-              )}
-              <BigButton label={t("player.play")} onClick={player.play} disabled={busy} className={fade}>
-                {busy ? <Spinner /> : <HugeiconsIcon icon={PlayIcon} className="ml-1 size-7 fill-current" strokeWidth={1.5} />}
-              </BigButton>
-              {duration ? (
-                <span className="pointer-events-none absolute right-2 bottom-2 rounded bg-black/65 px-1.5 py-0.5 text-xs font-medium tabular-nums">{formatDuration(duration)}</span>
-              ) : null}
-            </>
-          )}
-          {started && !error && media.ended && (
-            <BigButton label={t("player.replay")} onClick={toggle}>
-              <HugeiconsIcon icon={Refresh01Icon} className="size-7" strokeWidth={1.75} />
-            </BigButton>
-          )}
-          <Captions cues={live ? cues : []} bottom={controlsShown ? "4.75rem" : "1.25rem"} />
-          {started && busy && (
-            <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
-              <span className="flex size-14 items-center justify-center rounded-full bg-black/45">
-                <Spinner />
-              </span>
-            </div>
-          )}
-          <SeekFlash flash={flash} />
-          {started && !error && (
-            <div
-              data-ckui="controls"
-              data-ckui-noswipe=""
-              className={cn(
-                "pointer-events-none absolute inset-x-0 bottom-0 z-10 flex flex-col bg-linear-to-t from-black/75 via-black/35 to-transparent px-2 pt-12 pb-1 transition-opacity duration-200 motion-reduce:transition-none",
-                controlsShown ? "opacity-100 *:pointer-events-auto" : "opacity-0",
-              )}
-            >
-              <SeekBar time={media.time} duration={dur} buffered={media.buffered} onSeek={seek} onScrub={(v) => setScrubbing(v !== null)} sprite={sprite} />
-              <div className="flex items-center gap-0.5">
-                <ControlButton
-                  label={media.ended ? t("player.replay") : media.paused ? t("player.resume") : t("player.pause")}
-                  shortcut="k"
-                  icon={media.ended ? Refresh01Icon : media.paused ? PlayIcon : PauseIcon}
-                  onClick={toggle}
-                  data-ckui="play"
-                />
-                <VolumeControl volume={media.volume} muted={media.muted} onVolume={setVolume} onMute={toggleMute} />
-                <span className="ml-1 shrink-0 text-xs font-medium whitespace-nowrap text-white/90 tabular-nums" data-ckui="time">
-                  {clock(media.time)} / {clock(dur)}
-                </span>
-                <div className="min-w-0 flex-1" />
-                {subtitles.list.length > 0 && (
-                  <ControlButton label={t("player.subtitles")} shortcut="c" icon={ClosedCaptionIcon} aria-pressed={subtitles.selected >= 0} onClick={toggleCaptions} data-ckui="captions-toggle" />
-                )}
-                {renderDownloads?.({ container: portal, className: playerButtonClass })}
-                <SettingsMenu icon={Settings01Icon} label={t("player.settings")} sections={sections} actions={actions} container={portal} onOpenChange={setMenuOpen} />
-                {onMiniPlayer && <ControlButton className="@max-sm:hidden" label={t("player.miniPlayer")} shortcut="i" icon={PictureInPictureOnIcon} onClick={openMini} data-ckui="mini-player-open" />}
-                {pip.supported && (
-                  <ControlButton
-                    className="@max-md:hidden"
-                    label={pip.active ? t("player.exitPip") : t("player.pip")}
-                    icon={pip.active ? PictureInPictureExitIcon : PictureInPicture01Icon}
-                    onClick={pip.toggle}
-                    data-ckui="pip"
-                  />
-                )}
-                {onTheaterChange && (
-                  <ControlButton
-                    className="max-lg:hidden"
-                    label={t("player.theater")}
-                    shortcut="t"
-                    icon={RectangularIcon}
-                    aria-pressed={!!theater}
-                    onClick={toggleTheater}
-                    data-ckui="theater"
-                  />
-                )}
-                {fs.supported && (
-                  <ControlButton
-                    label={fs.active ? t("player.exitFullscreen") : t("player.fullscreen")}
-                    shortcut="f"
-                    icon={fs.active ? ArrowShrink02Icon : FullScreenIcon}
-                    onClick={fs.toggle}
-                    data-ckui="fullscreen"
-                  />
-                )}
-              </div>
-            </div>
-          )}
-          <span className="sr-only" aria-live="polite">
-            {busy ? t("player.loading") : ""}
-          </span>
-          {error && (
-            <Panel icon code={error.code} onRetry={player.retry}>
-              {t(`player.errors.${error.kind}`)}
-            </Panel>
-          )}
+          <div data-ckui="stage" className={cn("relative overflow-hidden", fs.active && "min-h-0 flex-1")} style={below ? { aspectRatio: String(aspect) } : undefined}>
+            {screen}
+          </div>
+          {below && playable && !error && bar}
         </>
+      ) : (
+        screen
       )}
     </ContentKitUiRoot>
   );
