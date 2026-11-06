@@ -25,9 +25,11 @@ import (
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/media/workqueue"
 	"github.com/open-rails/contentkit/media"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertest"
+	"github.com/riverqueue/river/rivertype"
 )
 
 // The image processor records a gallery's rendered pages one at a time, or in
@@ -278,6 +280,89 @@ WHERE tenant_id=$1 AND folder_prefix=$2 AND object_key=ANY($3) AND retired_at IS
 			}
 		}
 	})
+}
+
+func TestMediaPageTransientDatabaseError(t *testing.T) {
+	for _, rescued := range []bool{false, true} {
+		t.Run(fmt.Sprintf("rescued=%t", rescued), func(t *testing.T) {
+			m := newResilientMedia(t)
+			g := newPageGroups(t, m, "Transient database failure", landscapePages(t, 1, 0))
+			// Fail the actual database call that reserves a rendered image's blob.
+			// Manifest reads and edits still work, including a permanent failure edit.
+			function := pgx.Identifier{m.schema, "critical_image_db_refusal"}.Sanitize()
+			table := pgx.Identifier{m.schema, "content_media_allocations"}.Sanitize()
+			_, err := m.pool.Exec(t.Context(), "CREATE FUNCTION "+function+"() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'too many connections for role' USING ERRCODE = '53300'; END $$; CREATE TRIGGER critical_image_db_refusal BEFORE INSERT ON "+table+" FOR EACH ROW EXECUTE FUNCTION "+function+"()")
+			must(t, err)
+			restore := func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+				_, err := m.pool.Exec(ctx, "DROP TRIGGER IF EXISTS critical_image_db_refusal ON "+table+"; DROP FUNCTION IF EXISTS "+function+"()")
+				must(t, err)
+			}
+			t.Cleanup(restore)
+			stop := startVideoFailureWorker(t, m)
+			defer stop()
+			var retry *rivertype.JobRow
+			waitForWithin(t, 60*time.Second, func() bool {
+				jobs, err := g.jobs.JobList(t.Context(), river.NewJobListParams().Kinds((workqueue.DerivativeArgs{}).Kind()))
+				must(t, err)
+				for _, job := range jobs.Jobs {
+					if job.State == rivertype.JobStateCompleted || job.State == rivertype.JobStateCancelled || job.State == rivertype.JobStateDiscarded {
+						t.Fatalf("transient database error settled the job: state=%s attempt=%d errors=%+v", job.State, job.Attempt, job.Errors)
+					}
+					if job.State != rivertype.JobStateRetryable {
+						continue
+					}
+					if len(job.Errors) == 0 || !strings.Contains(job.Errors[len(job.Errors)-1].Error, "SQLSTATE 53300") {
+						t.Fatalf("job lost the transient database error: %+v", job.Errors)
+					}
+					snapshot, readers := g.readers(t)
+					file, ok := snapshot.Get("pages/p00.png")
+					if !ok || file.Fail() != nil || !slices.Contains(file.Pending, "reader") || len(readers) != 0 {
+						t.Fatalf("transient failure did not leave the page pending: file=%+v readers=%v", file, readers)
+					}
+					var meta struct {
+						TransientAttempts int `json:"contentkit_transient_attempts"`
+					}
+					must(t, json.Unmarshal(job.Metadata, &meta))
+					if meta.TransientAttempts != job.Attempt {
+						t.Fatalf("transient attempts not recorded: attempt=%d metadata=%s", job.Attempt, job.Metadata)
+					}
+					if job.Attempt > workqueue.MaxAttempts {
+						retry = job
+						return true
+					}
+					_, err = g.jobs.JobRetry(t.Context(), job.ID)
+					must(t, err)
+				}
+				return false
+			})
+			restore()
+			if rescued {
+				stop()
+				// Attempts interrupted by a worker restart do not spend the content budget.
+				_, err = m.pool.Exec(t.Context(), "UPDATE "+pgx.Identifier{m.config.Schema, "river_job"}.Sanitize()+`
+SET attempt = attempt + $2, errors = errors || ARRAY(
+ SELECT jsonb_build_object('at', now(), 'attempt', attempt + n, 'error', 'Stuck job rescued by JobRescuer')
+ FROM generate_series(1, $2::int) AS n
+) WHERE id = $1 AND state = 'retryable'`, retry.ID, workqueue.MaxAttempts)
+				must(t, err)
+				startVideoFailureWorker(t, m)
+			}
+			_, err = g.jobs.JobRetry(t.Context(), retry.ID)
+			must(t, err)
+			waitForWithin(t, 30*time.Second, func() bool {
+				job, err := g.jobs.JobGet(t.Context(), retry.ID)
+				must(t, err)
+				return job.State == rivertype.JobStateCompleted
+			})
+			snapshot, readers := g.readers(t)
+			file, _ := snapshot.Get("pages/p00.png")
+			if file.Fail() != nil || len(file.Pending) != 0 || len(readers) != 1 {
+				t.Fatalf("retry did not finish the page without regeneration: file=%+v readers=%v", file, readers)
+			}
+		})
+	}
 }
 
 type pageSource struct {
