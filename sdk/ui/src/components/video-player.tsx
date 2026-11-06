@@ -585,13 +585,16 @@ export function VideoPlayer({
   const actions = menuItems?.filter((m): m is Extract<PlayerMenuItem, { onSelect: () => void }> => "onSelect" in m);
 
   // The control bar: over the picture's bottom edge, or in its own strip under it.
+  // The strip is visible before playback but inert until it starts, as the
+  // keyboard is: a muted preview must not be seeked, unmuted or popped out.
   const bar = (
     <div
       data-ckui="controls"
       data-ckui-noswipe=""
+      inert={below && !started ? true : undefined}
       className={
         below
-          ? "z-10 flex flex-col bg-black px-2 pt-1 pb-1"
+          ? cn("z-10 flex cursor-auto flex-col bg-black px-2 pt-1 pb-1", !started && "opacity-60")
           : cn(
               "pointer-events-none absolute inset-x-0 bottom-0 z-10 flex flex-col bg-linear-to-t from-black/75 via-black/35 to-transparent px-2 pt-12 pb-1 transition-opacity duration-200 motion-reduce:transition-none",
               controlsShown ? "opacity-100 *:pointer-events-auto" : "opacity-0",
@@ -692,7 +695,7 @@ export function VideoPlayer({
         </div>
       )}
       <SeekFlash flash={flash} />
-      {started && !error && !below && bar}
+      {started && !error && !stacked && bar}
       <span className="sr-only" aria-live="polite">
         {busy ? t("player.loading") : ""}
       </span>
@@ -735,7 +738,9 @@ export function VideoPlayer({
           <div data-ckui="stage" className={cn("relative overflow-hidden", fs.active && "min-h-0 flex-1")} style={below ? { aspectRatio: String(aspect) } : undefined}>
             {screen}
           </div>
-          {below && playable && !error && bar}
+          {/* One bar in one place, under the picture or over it in fullscreen,
+              so switching keeps it mounted and keeps keyboard focus. */}
+          {playable && !error && (below || started) && bar}
         </>
       ) : (
         screen
