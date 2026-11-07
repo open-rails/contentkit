@@ -24,6 +24,7 @@ type ImportComment struct {
 
 // ImportReaction is a person's (or an IP's) reaction: -1, 0 or 1.
 type ImportReaction struct {
+	Source    string
 	Ref       contentref.ContentRef
 	UserID    string
 	IP        string
@@ -34,17 +35,20 @@ type ImportReaction struct {
 
 // ImportFavorite is a person's bookmark.
 type ImportFavorite struct {
+	Source    string
+	Removed   bool
 	Ref       contentref.ContentRef
 	UserID    string
 	CreatedAt *time.Time
 }
 
 // ImportPoll is a poll with its options. Options replace the stored choices
-// before voting starts; once votes exist, their IDs, labels and positions must match.
+// even after voting starts, retaining votes only for kept IDs.
 type ImportPoll struct {
 	ID        string
 	Kind      string
 	Question  string
+	Image     *string
 	Language  string
 	Active    bool
 	LiveAt    *time.Time
@@ -57,9 +61,10 @@ type ImportPoll struct {
 
 // ImportPollOption is one option of an ImportPoll.
 type ImportPollOption struct {
-	ID       string `json:"id"`
-	Label    string `json:"label"`
-	Position int    `json:"position"`
+	ID       string  `json:"id"`
+	Label    string  `json:"label"`
+	Position int     `json:"position"`
+	Image    *string `json:"image"`
 }
 
 // ImportVote is one person's (or IP's) choice in a multiple-choice poll.

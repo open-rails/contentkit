@@ -12363,7 +12363,7 @@
         "tags": [
           "import"
         ],
-        "summary": "Imports a batch of groups, content items, memberships, aliases, comments, reactions, favorites, polls and signals, idempotently by external id: re-sending converges. Records that fail are reported and the rest written; their rebuild jobs are queued.",
+        "summary": "Imports a batch of groups, content items, memberships, aliases, comments, reactions, favorites, polls and signals, idempotently by external id: re-sending converges. Imported poll choices and images can change after voting; kept choice IDs retain votes. Favorites and legacy reading accept removed tombstones; reaction value 0 clears an imported reaction. Favorite/reaction writes preserve native, unknown-origin and other-source rows. Records that fail are reported and the rest written; their rebuild jobs are queued.",
         "requestBody": {
           "required": true,
           "content": {
@@ -15719,6 +15719,9 @@
           "user_id": {
             "type": "string"
           },
+          "removed": {
+            "type": "boolean"
+          },
           "created_at": {
             "type": "string",
             "format": "date-time"
@@ -16282,6 +16285,9 @@
         "properties": {
           "target": {
             "$ref": "#/components/schemas/TargetRef"
+          },
+          "removed": {
+            "type": "boolean"
           },
           "user_id": {
             "type": "string"
@@ -17401,6 +17407,9 @@
           },
           "position": {
             "type": "integer"
+          },
+          "image": {
+            "type": "string"
           }
         }
       },
@@ -17420,6 +17429,9 @@
             "type": "string"
           },
           "language": {
+            "type": "string"
+          },
+          "image": {
             "type": "string"
           },
           "active": {

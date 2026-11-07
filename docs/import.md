@@ -154,12 +154,51 @@ Each edition's body resolves inline images only from that edition's uploads.
 | `aliases` | `AliasRecord` | `kind`, `key`, `locator`, `target` (content, group) |
 | `comments` | `CommentRecord` | `external_id`, `target` (content, version), `language`, `reply_to`, `user_id` / `anon_name`, `body`, `deleted_at`, times |
 | `reactions` | `ReactionRecord` | `target` (content, version, comment, group), `user_id` / `ip`, `value` |
-| `favorites` | `FavoriteRecord` | `target` (content, version), `user_id` |
-| `polls` | `PollRecord` | `external_id`, `kind`, `question`, `language`, `active`, `live_at`, `closes_at`, `deleted_at`, `options` |
+| `favorites` | `FavoriteRecord` | `target` (content, version), `user_id`, `removed` |
+| `polls` | `PollRecord` | `external_id`, `kind`, `question`, `language`, `image`, `active`, `live_at`, `closes_at`, `deleted_at`, `options` |
 | `votes` | `VoteRecord` | `poll`, `option`, `user_id` / `ip` |
 | `signals` | `SignalRecord` | `target` (content, version), `user_id` / `anon_key`, `type` (click), `event_id`, `revision`, `occurred_at` |
-| `legacy_reading` | `LegacyReadingRecord` | `target` (content, version), `user_id` / `anon_key`, `first_read_at`, `last_read_at`, `progress`, `progress_max`, `completed`, `resume`, `revision` |
+| `legacy_reading` | `LegacyReadingRecord` | `target` (content, version), `user_id` / `anon_key`, `first_read_at`, `last_read_at`, `progress`, `progress_max`, `completed`, `resume`, `revision`, `removed` |
 | `deletes` | `DeleteRecord` | `entity` (content, version, group, comment, poll), `external_id` |
 
 Poll imports support `multiple_choice` only. Import options with the poll,
-and import votes through the `votes` section.
+and import votes through the `votes` section. Options replace the stored set,
+even after voting: a kept option ID retains its votes when its label, position
+or image changes; removing an option deletes its votes; new IDs start at zero.
+Counts are recomputed in the same transaction, even with `defer_recounts`.
+Staff choice mutations remain refused after voting starts.
+
+`PollRecord.image` and each `PollOptionRecord.image` accept the inline image
+name (`i-{uuid}`) returned by media ingestion in that poll's folder. Omit to
+preserve, send `""` to clear. Upload through `Client.IngestMedia` first, then
+send the full poll/options record with the selected image names through
+`PostImport`. The staff `PutPollOptionImage` route still refuses voted choices;
+removing a host-side vote-count check alone does not change that route.
+
+To withdraw a named user's imported favorite, send its target and `user_id`
+with `removed: true`; to neutralize an imported reaction, send `value: 0`.
+Both keep a zero-valued preference row and take a new revision only on a value
+change. They use the existing immediate/deferred count recount paths.
+Hosts must clear only preferences they imported, using the named user, target
+and original `Batch.Source`. Favorite/reaction provenance has three states:
+`NULL` means unknown (written before provenance existed), an empty string is the
+native marker, and a nonempty string is the owning import source. Native writes,
+including repeating the same value after an import, set the native marker.
+A named-user import clear under a source can clear a row owned by that source
+or a pre-provenance `NULL` row; a cleared row records that source. Native-marked
+and other-source rows stay protected. Non-clear imports update only rows already
+owned by their source. Hosts are responsible for selecting their own historical
+imports when clearing unknown rows; no timestamp or user-ID heuristic infers
+ownership. Migration 0067 leaves existing rows at default `NULL`, with no backfill;
+native writes record their marker going forward.
+
+For legacy reading, send the same target and subject with `removed: true` and
+`last_read_at` set to the source removal time. A higher `revision` orders changes
+at the same time; a removal wins over progress at an identical time/revision.
+Older snapshots cannot restore a newer removal. A later timestamp/revision can
+intentionally restore progress. Legacy reading is already an import-only
+relation: removal hides only that relation's row (including the work-level copy
+of a version import). Reader state is recomputed on read from remaining legacy
+and native measured state; measured engagement, readership and completion
+statistics are untouched. ClickHouse migration 0002 adds the removal marker;
+PostgreSQL migration 0067 adds favorite/reaction source ownership.
