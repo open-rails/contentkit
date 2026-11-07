@@ -9,6 +9,7 @@ import (
 type ImportLegacyReading struct {
 	ContentID   string
 	VersionID   string
+	Removed     bool
 	Subject     signal.Subject
 	FirstReadAt *time.Time
 	LastReadAt  time.Time

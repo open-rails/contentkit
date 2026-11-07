@@ -10,7 +10,10 @@ import (
 	"github.com/jackc/pgx/v5"
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/content"
+	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/importer"
+	"github.com/open-rails/contentkit/internal/signalstore"
+	"github.com/open-rails/contentkit/signal"
 )
 
 // A bulk import defers its recounts: its chunks leave the counts alone and
@@ -251,5 +254,213 @@ CREATE TRIGGER critical_recount_gate BEFORE UPDATE ON %[1]s.content_interaction_
 	must(t, err)
 	if again := mark(); len(result.Failed) != 0 || again <= firstMark {
 		t.Fatalf("queued again with mark %d after %d; marks must not repeat", again, firstMark)
+	}
+}
+
+func TestImportEngagementRemovals(t *testing.T) {
+	w := newWorld(t, func(c *ck.Config) { c.Interactions.Limits.Disabled = true })
+	a := w.apps[0]
+	item := publishedArticle(t, a, "Imported engagement removals")
+	on := importer.TargetRef{Content: &importer.Ref{ID: item.ID}}
+	version := importer.TargetRef{Version: &importer.Ref{ID: item.Versions[0].ID}}
+	imported, _ := w.person(t, 0)
+	native, nativeToken := w.person(t, 0)
+	adopted, adoptedToken := w.person(t, 0)
+	changed, changedToken := w.person(t, 0)
+	unknown, _ := w.person(t, 0)
+	other, _ := w.person(t, 0)
+	admin := a.engine.Client()
+	write := func(source string, users []string, removed, deferCounts bool) importer.Result {
+		t.Helper()
+		batch := importer.Batch{Source: source, DeferRecounts: deferCounts}
+		value := int16(1)
+		if removed {
+			value = 0
+		}
+		for _, target := range []importer.TargetRef{on, version} {
+			for _, user := range users {
+				batch.Favorites = append(batch.Favorites, importer.FavoriteRecord{Target: target, UserID: user, Removed: removed})
+				batch.Reactions = append(batch.Reactions, importer.ReactionRecord{Target: target, UserID: user, Value: value})
+			}
+		}
+		result, err := admin.PostImport(t.Context(), batch)
+		must(t, err)
+		if len(result.Failed) != 0 {
+			t.Fatalf("engagement import: %+v", result)
+		}
+		return result
+	}
+	write("legacy-a", []string{imported.ID, adopted.ID, changed.ID, unknown.ID}, false, false)
+	write("legacy-b", []string{other.ID}, false, false)
+	for _, token := range []string{nativeToken, adoptedToken} {
+		client := a.client(token)
+		_, err := client.PostContentFavorite(t.Context(), item.ID, ck.PostContentFavoriteQuery{})
+		must(t, err)
+		_, err = client.PostContentLike(t.Context(), item.ID, ck.PostContentLikeQuery{})
+		must(t, err)
+		_, err = client.PostContentFavorite(t.Context(), item.ID, ck.PostContentFavoriteQuery{Version: item.Versions[0].ID})
+		must(t, err)
+		_, err = client.PostContentLike(t.Context(), item.ID, ck.PostContentLikeQuery{Version: item.Versions[0].ID})
+		must(t, err)
+	}
+	// A value-changing native write also takes over an imported row.
+	client := a.client(changedToken)
+	for _, id := range []string{"", item.Versions[0].ID} {
+		_, err := client.DeleteContentFavorite(t.Context(), item.ID, ck.DeleteContentFavoriteQuery{Version: id})
+		must(t, err)
+		_, err = client.PostContentDislike(t.Context(), item.ID, ck.PostContentDislikeQuery{Version: id})
+		must(t, err)
+		_, err = client.PostContentFavorite(t.Context(), item.ID, ck.PostContentFavoriteQuery{Version: id})
+		must(t, err)
+		_, err = client.PostContentLike(t.Context(), item.ID, ck.PostContentLikeQuery{Version: id})
+		must(t, err)
+	}
+	// Simulate imported rows written before provenance existed.
+	for _, table := range []string{"content_favorites", "content_reactions"} {
+		_, err := w.pool.Exec(t.Context(), `UPDATE `+w.schema+`.`+table+` SET import_source=NULL WHERE tenant_id=$1 AND user_id=$2`, a.cfg.Scope.AppID.String(), unknown.ID)
+		must(t, err)
+	}
+	users := []string{imported.ID, native.ID, adopted.ID, changed.ID, unknown.ID, other.ID}
+	// Non-clear imports cannot claim unknown rows.
+	write("legacy-a", []string{unknown.ID}, false, false)
+	for _, table := range []string{"content_favorites", "content_reactions"} {
+		for _, id := range []string{"", item.Versions[0].ID} {
+			for _, user := range users {
+				var source *string
+				must(t, w.pool.QueryRow(t.Context(), `SELECT import_source FROM `+w.schema+`.`+table+` WHERE tenant_id=$1 AND user_id=$2 AND content_id=$3 AND content_version_id IS NOT DISTINCT FROM NULLIF($4,'')`, a.cfg.Scope.AppID.String(), user, item.ID, id).Scan(&source))
+				want := ""
+				switch user {
+				case unknown.ID:
+					if source != nil {
+						t.Fatalf("%s unknown row claimed by non-clear import: %q", table, *source)
+					}
+					continue
+				case imported.ID:
+					want = "legacy-a"
+				case other.ID:
+					want = "legacy-b"
+				}
+				if source == nil || *source != want {
+					t.Fatalf("%s user %s: source=%v want=%q", table, user, source, want)
+				}
+			}
+		}
+	}
+	write("legacy-c", []string{imported.ID, native.ID, adopted.ID, changed.ID, other.ID}, true, false)
+	checkCounts := func(want int) {
+		t.Helper()
+		for _, id := range []string{"", item.Versions[0].ID} {
+			var favorites, likes int
+			must(t, w.pool.QueryRow(t.Context(), `SELECT favorites,likes FROM `+w.schema+`.content_interaction_counts WHERE tenant_id=$1 AND content_id=$2 AND content_version_id IS NOT DISTINCT FROM NULLIF($3,'')`, a.cfg.Scope.AppID.String(), item.ID, id).Scan(&favorites, &likes))
+			if favorites != want || likes != want {
+				t.Fatalf("counts for %q: favorites=%d likes=%d want=%d", id, favorites, likes, want)
+			}
+		}
+	}
+	checkCounts(6)
+	write("legacy-a", users, true, true)
+	checkCounts(6) // queued, not prematurely decremented
+	result, err := admin.PostImport(t.Context(), importer.Batch{Source: "legacy-a", Recount: importer.MaxRecount})
+	must(t, err)
+	if len(result.Failed) != 0 {
+		t.Fatalf("drain: %+v", result)
+	}
+	checkCounts(4)
+	for _, table := range []string{"content_favorites", "content_reactions"} {
+		for _, id := range []string{"", item.Versions[0].ID} {
+			for _, user := range users {
+				var value int16
+				var source string
+				must(t, w.pool.QueryRow(t.Context(), `SELECT value, import_source FROM `+w.schema+`.`+table+` WHERE tenant_id=$1 AND user_id=$2 AND content_id=$3 AND content_version_id IS NOT DISTINCT FROM NULLIF($4,'')`, a.cfg.Scope.AppID.String(), user, item.ID, id).Scan(&value, &source))
+				want, wantSource := int16(1), ""
+				switch user {
+				case imported.ID, unknown.ID:
+					want, wantSource = 0, "legacy-a"
+				case other.ID:
+					wantSource = "legacy-b"
+				}
+				if value != want || source != wantSource {
+					t.Fatalf("%s version %q user %s: value=%d source=%q want value=%d source=%q", table, id, user, value, source, want, wantSource)
+				}
+			}
+		}
+	}
+	for _, table := range []string{"content_favorites", "content_reactions"} {
+		var before, after int64
+		must(t, w.pool.QueryRow(t.Context(), `SELECT max(revision) FROM `+w.schema+`.`+table+` WHERE tenant_id=$1`, a.cfg.Scope.AppID.String()).Scan(&before))
+		write("legacy-a", users, true, false)
+		must(t, w.pool.QueryRow(t.Context(), `SELECT max(revision) FROM `+w.schema+`.`+table+` WHERE tenant_id=$1`, a.cfg.Scope.AppID.String()).Scan(&after))
+		if before != after {
+			t.Fatalf("%s tombstone replay changed revisions: %d -> %d", table, before, after)
+		}
+	}
+	checkCounts(4)
+	// A later source addition restores the two cleared rows now owned by that source.
+	write("legacy-a", users, false, false)
+	checkCounts(6)
+}
+
+func TestImportLegacyReadingRemoval(t *testing.T) {
+	w := newWorld(t)
+	a := w.apps[0]
+	a.server.Close()
+	must(t, a.engine.Close(t.Context()))
+	configureDiscoverySignals(t, w, a)
+	var err error
+	a.engine, err = ck.New(t.Context(), a.cfg, a.deps)
+	must(t, err)
+	a.server = mountEngine(t, a.engine)
+	item := publishedArticle(t, a, "Legacy reading removal")
+	store, err := signalstore.NewStore(a.deps.ClickHouse, a.cfg.ClickHouse.Database)
+	must(t, err)
+	at := time.Now().UTC().Truncate(time.Second).Add(-time.Minute)
+	ref := contentref.NewVersion(a.cfg.Scope.AppID.String(), "article", item.ID, item.Versions[0].ID)
+	subject, legacyOnly := signal.Subject{UserID: "measured-reader"}, signal.Subject{UserID: "legacy-only-reader"}
+	measured := measuredReceipt(t, ref, subject, at, 0, 1000)
+	must(t, store.RecordSignals(t.Context(), ref.TenantID, []signal.Signal{measured}))
+	row := importer.LegacyReadingRecord{Target: importer.TargetRef{Version: &importer.Ref{ID: ref.Version()}}, LastReadAt: at.Add(time.Second), Progress: 8, ProgressMax: 10, Completed: true, Resume: "legacy"}
+	write := func(row importer.LegacyReadingRecord) {
+		t.Helper()
+		batch := importer.Batch{Source: "legacy-reading"}
+		for _, user := range []string{subject.UserID, legacyOnly.UserID} {
+			row.UserID = user
+			batch.LegacyReading = append(batch.LegacyReading, row)
+		}
+		result, err := a.engine.Client().PostImport(t.Context(), batch)
+		must(t, err)
+		if len(result.Failed) != 0 || result.Written[importer.SectionLegacyReading] != 2 {
+			t.Fatalf("legacy import: %+v", result)
+		}
+	}
+	state := func(user signal.Subject) map[signal.ContentKey]signal.State {
+		t.Helper()
+		states, err := store.States(t.Context(), ref.TenantID, user, []signal.ContentRef{ref, ref.Content()})
+		must(t, err)
+		return states
+	}
+	write(row)
+	if got := state(subject)[ref.Key()]; got.MaxProgress != 8 || got.Resume != "legacy" {
+		t.Fatalf("legacy positive control: %+v", got)
+	}
+	tombstone := row
+	tombstone.Removed, tombstone.LastReadAt = true, at.Add(2*time.Second)
+	tombstone.Progress, tombstone.ProgressMax, tombstone.Completed, tombstone.Resume = 0, 0, false, ""
+	for range 2 {
+		write(tombstone)
+	}
+	write(row)
+	for _, key := range []signal.ContentKey{ref.Key(), ref.Content().Key()} {
+		got := state(subject)[key]
+		if got.ActiveMS != 1000 || got.MaxProgress != 1 || got.ProgressMax != 2 || got.Completed || got.Resume != measured.Resume {
+			t.Fatalf("clear damaged native measured state: %+v", got)
+		}
+	}
+	if got := state(legacyOnly); len(got) != 0 {
+		t.Fatalf("removed legacy-only state remains: %+v", got)
+	}
+	row.LastReadAt = at.Add(3 * time.Second)
+	write(row)
+	if got := state(legacyOnly)[ref.Key()]; got.MaxProgress != 8 {
+		t.Fatalf("new legacy fact did not restore progress: %+v", got)
 	}
 }

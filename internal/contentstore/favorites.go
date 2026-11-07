@@ -81,7 +81,7 @@ func (f *favorites) setTx(ctx context.Context, tx pgx.Tx, userID string, key con
 		if value == 0 {
 			return false, nil
 		}
-		tag, err := tx.Exec(ctx, `INSERT INTO `+f.s.t.favorites+` (`+keyCols+`, user_id, value, revision) VALUES ($1, $2, $3, $4, $5, 1, `+f.s.nextRevision()+`)
+		tag, err := tx.Exec(ctx, `INSERT INTO `+f.s.t.favorites+` (`+keyCols+`, user_id, value, revision, import_source) VALUES ($1, $2, $3, $4, $5, 1, `+f.s.nextRevision()+`, '')
 			ON CONFLICT (tenant_id, user_id, content_kind, content_id, content_version_id) WHERE user_id IS NOT NULL DO NOTHING`, args...)
 		if err != nil || tag.RowsAffected() == 1 || !retry {
 			return err == nil && tag.RowsAffected() == 1, err
@@ -90,10 +90,11 @@ func (f *favorites) setTx(ctx context.Context, tx pgx.Tx, userID string, key con
 	case err != nil:
 		return false, err
 	case prev == value:
-		return false, nil
+		_, err = tx.Exec(ctx, `UPDATE `+f.s.t.favorites+` SET import_source = '' WHERE `+keyPred(1)+` AND user_id = $5 AND import_source IS DISTINCT FROM ''`, args...)
+		return false, err
 	}
 	// Re-favoriting restarts the bookmark's age, which orders the wishlist.
-	_, err = tx.Exec(ctx, `UPDATE `+f.s.t.favorites+` SET value = $6::smallint, revision = `+f.s.nextRevision()+`, updated_at = now(),
+	_, err = tx.Exec(ctx, `UPDATE `+f.s.t.favorites+` SET import_source = '', value = $6::smallint, revision = `+f.s.nextRevision()+`, updated_at = now(),
 		created_at = CASE WHEN $6::smallint = 1 THEN now() ELSE created_at END WHERE `+keyPred(1)+` AND user_id = $5`, append(args, value)...)
 	return err == nil, err
 }

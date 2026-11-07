@@ -7031,6 +7031,8 @@
         "TestImportFallbackRecountsOnce",
         "TestImportedCommentLikeLockOrder",
         "TestImportDeferredRecounts",
+        "TestImportEngagementRemovals",
+        "TestImportLegacyReadingRemoval",
         "TestDeferredRecountKeepsRequeuedTarget",
         "TestImportIsolatesBadRecords",
         "TestImportSingleRecordRetry"
