@@ -29,6 +29,8 @@ import (
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
+	"github.com/open-rails/contentkit/internal/jobhook"
+	"github.com/open-rails/contentkit/internal/jobqueue"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/layout"
 	medias3 "github.com/open-rails/contentkit/media/s3"
@@ -345,4 +347,116 @@ CREATE TRIGGER critical_pause_restore BEFORE UPDATE ON %s.content_versions FOR E
 		_, err = admin.GetContent(t.Context(), restored.ID, ck.GetContentQuery{})
 		must(t, err)
 	})
+}
+
+func TestMediaCleanupDrainsDueFolders(t *testing.T) {
+	w := newWorld(t)
+	a := w.apps[0]
+	m := attachMedia(t, w, a)
+	a.server.Close()
+	must(t, a.engine.Close(t.Context()))
+
+	endpoint, err := url.Parse(os.Getenv("CONTENTKIT_CRITICAL_S3_ENDPOINT"))
+	must(t, err)
+	proxy := httputil.NewSingleHostReverseProxy(endpoint)
+	var requests atomic.Int64
+	var pause atomic.Bool
+	entered, release := make(chan struct{}), make(chan struct{})
+	var releaseOnce sync.Once
+	wire := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		if pause.CompareAndSwap(true, false) {
+			close(entered)
+			select {
+			case <-release:
+			case <-r.Context().Done():
+				return
+			}
+		}
+		proxy.ServeHTTP(w, r)
+	}))
+	defer func() {
+		releaseOnce.Do(func() { close(release) })
+		wire.Close()
+	}()
+	a.deps.Store, err = medias3.New(medias3.Config{Bucket: m.bucket, Endpoint: wire.URL, PublicEndpoint: endpoint.String(), AccessKeyID: os.Getenv("CONTENTKIT_CRITICAL_S3_USER"), SecretAccessKey: os.Getenv("CONTENTKIT_CRITICAL_S3_PASSWORD"), UsePathStyle: true})
+	must(t, err)
+	a.engine, err = ck.New(t.Context(), a.cfg, a.deps)
+	must(t, err)
+	queue := catalogstore.QueueFor(a.cfg.Scope.AppID.String())
+	fleet, err := jobhook.Fleet(t.Context(), a.engine, &river.Config{Schema: w.schema + "_river", Queues: map[string]river.QueueConfig{queue: {MaxWorkers: 1}}})
+	must(t, err)
+	scope := layout.Scope{TenantID: a.cfg.Scope.TenantID.String(), AppID: a.cfg.Scope.AppID.String()}
+	qs := pgx.Identifier{w.schema}.Sanitize()
+	// Completed journal owners outlive their catalog rows. Empty folders still
+	// require their durable cleanup obligation to be completed against storage.
+	_, err = w.pool.Exec(t.Context(), `WITH owners AS (
+ SELECT uuidv7()::text AS version FROM generate_series(1,401)
+), recorded AS (
+ INSERT INTO `+qs+`.content_media_commits
+ (tenant_id,operation_id,content_kind,content_id,content_version_id,folder_prefix,actor_id,fingerprint,lease_id,state)
+ SELECT $1,gen_random_uuid(),'gallery',$2,version,$3 || 'gallery/' || version || '/',
+ '',decode(repeat('00',32),'hex'),gen_random_uuid(),'absent' FROM owners
+ RETURNING tenant_id,folder_prefix,content_kind
+)
+INSERT INTO `+qs+`.content_media_cleanup (tenant_id,folder_prefix,content_kind,due_at)
+SELECT tenant_id,folder_prefix,content_kind,$4 FROM recorded`, scope.Partition(), uuid.Must(uuid.NewV7()).String(), scope.Root(), w.clock.now().Add(-time.Hour))
+	must(t, err)
+	producer, err := river.NewClient(riverpgxv5.New(w.pool), &river.Config{Schema: w.schema + "_river"})
+	must(t, err)
+	jobs := pgx.Identifier{w.schema + "_river", "river_job"}.Sanitize()
+	kind := "contentkit_content_purge_deleted"
+	// A 16-minute-old checkpoint must catch up on startup; the former four-hour
+	// cadence would suppress the run and leave all the due folders untouched.
+	_, err = w.pool.Exec(t.Context(), `DELETE FROM `+jobs+` WHERE kind=$1 AND queue=$2`, kind, queue)
+	must(t, err)
+	metadata, err := json.Marshal(map[string]string{"river:periodic_job_id": jobqueue.For(kind, a.cfg.Scope.AppID.String())})
+	must(t, err)
+	previous, err := producer.Insert(t.Context(), scheduledContentJob{kind: kind}, &river.InsertOpts{Queue: queue, Metadata: metadata})
+	must(t, err)
+	_, err = w.pool.Exec(t.Context(), `UPDATE `+jobs+` SET state='completed',created_at=$2,scheduled_at=$2,attempted_at=$2,finalized_at=$2 WHERE id=$1`, previous.Job.ID, time.Now().Add(-16*time.Minute))
+	must(t, err)
+	pause.Store(true)
+	must(t, fleet.Start(t.Context()))
+	t.Cleanup(func() { must(t, fleet.Stop(context.Background())) })
+	select {
+	case <-entered:
+	case <-time.After(30 * time.Second):
+		t.Fatal("15-minute purge did not catch up from its 16-minute-old checkpoint")
+	}
+	var running int64
+	must(t, w.pool.QueryRow(t.Context(), `SELECT id FROM `+jobs+` WHERE kind=$1 AND queue=$2 AND state='running'`, kind, queue).Scan(&running))
+	unique := mediastore.PendingOnce
+	unique.ByQueue = true
+	duplicate, err := producer.Insert(t.Context(), scheduledContentJob{kind: kind}, &river.InsertOpts{Queue: queue, UniqueOpts: unique})
+	must(t, err)
+	if !duplicate.UniqueSkippedAsDuplicate || duplicate.Job.ID != running {
+		t.Fatal("periodic purge did not deduplicate against its running job")
+	}
+	releaseOnce.Do(func() { close(release) })
+	finish := func(id int64) {
+		t.Helper()
+		waitForWithin(t, 90*time.Second, func() bool {
+			current, err := producer.JobGet(t.Context(), id)
+			must(t, err)
+			if current.State == rivertype.JobStateDiscarded {
+				t.Fatalf("cleanup failed: %+v", current.Errors)
+			}
+			return current.State == rivertype.JobStateCompleted
+		})
+	}
+	finish(running)
+	var remaining int
+	must(t, w.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+qs+`.content_media_cleanup WHERE tenant_id=$1 AND due_at<=$2`, scope.Partition(), w.clock.now()).Scan(&remaining))
+	if remaining != 0 {
+		t.Fatalf("one purge left %d of 401 due folders", remaining)
+	}
+	before, started := requests.Load(), time.Now()
+	idle, err := producer.Insert(t.Context(), scheduledContentJob{kind: kind}, &river.InsertOpts{Queue: queue, UniqueOpts: unique})
+	must(t, err)
+	finish(idle.Job.ID)
+	if n := requests.Load() - before; n != 0 {
+		t.Fatalf("idle purge made %d object-storage requests", n)
+	}
+	t.Logf("idle purge: enqueue-to-observation=%s, object-storage requests=0", time.Since(started))
 }

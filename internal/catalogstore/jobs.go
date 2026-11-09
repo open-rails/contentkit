@@ -508,11 +508,11 @@ func (s *Store) RiverJobs() riverhelpers.Contribution {
 				return args, &river.InsertOpts{Queue: queue, MaxAttempts: 3, UniqueOpts: unique}
 			}, &river.PeriodicJobOpts{ID: jobqueue.For(id, s.tenant), RunOnStart: true})
 		}
-		if err := river.AddWorkerSafely(cfg.Workers, &jobWorker[purgeDeletedArgs]{run: s.PurgeDeleted, timeout: 15 * time.Minute}); err != nil {
+		if err := river.AddWorkerSafely(cfg.Workers, &jobWorker[purgeDeletedArgs]{run: s.PurgeDeleted, timeout: jobqueue.ContentPurgeTimeout}); err != nil {
 			return err
 		}
 		cfg.PeriodicJobs = append(cfg.PeriodicJobs,
-			periodic("contentkit_content_purge_deleted", 4*time.Hour, purgeDeletedArgs{}))
+			periodic("contentkit_content_purge_deleted", 15*time.Minute, purgeDeletedArgs{}))
 		return nil
 	}, func(_ context.Context, binding riverhelpers.Binding) error {
 		if binding.Pool != s.pool {
