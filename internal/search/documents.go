@@ -116,10 +116,11 @@ func UpsertKeywordDocuments(ctx context.Context, db Executor, schema string, doc
 		if err != nil {
 			return err
 		}
-		query := fmt.Sprintf(`INSERT INTO %s.content_search_documents(tenant_id,content_kind,content_id,content_version_id,language,title,aliases,keywords,created_at,updated_at)
+		query := fmt.Sprintf(`INSERT INTO %s.content_search_documents AS d(tenant_id,content_kind,content_id,content_version_id,language,title,aliases,keywords,created_at,updated_at)
    SELECT r.tenant_id,r.content_kind,r.content_id,r.content_version_id,r.language,r.title,r.aliases,r.keywords,now(),now()
    FROM jsonb_to_recordset($1::jsonb) AS r%s
-   ON CONFLICT(tenant_id,content_kind,content_id,content_version_id,language) DO UPDATE SET title=EXCLUDED.title,aliases=EXCLUDED.aliases,keywords=EXCLUDED.keywords,updated_at=now()`, qs, rowColumns)
+   ON CONFLICT(tenant_id,content_kind,content_id,content_version_id,language) DO UPDATE SET title=EXCLUDED.title,aliases=EXCLUDED.aliases,keywords=EXCLUDED.keywords,updated_at=now()
+   WHERE (d.title,d.aliases,d.keywords) IS DISTINCT FROM (EXCLUDED.title,EXCLUDED.aliases,EXCLUDED.keywords)`, qs, rowColumns)
 		if _, err := db.Exec(ctx, query, data); err != nil {
 			return err
 		}
