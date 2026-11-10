@@ -23,12 +23,14 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	ck "github.com/open-rails/contentkit"
+	"github.com/open-rails/contentkit/internal/jobhook"
 	"github.com/open-rails/contentkit/internal/media/worker"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/gateway"
 	"github.com/open-rails/contentkit/media/layout"
 	medias3 "github.com/open-rails/contentkit/media/s3"
 	"github.com/open-rails/contentkit/media/token"
+	"github.com/riverqueue/river"
 	_ "golang.org/x/image/webp"
 )
 
@@ -194,4 +196,57 @@ func imageBytes(t testing.TB) []byte {
 	var encoded bytes.Buffer
 	must(t, png.Encode(&encoded, img))
 	return encoded.Bytes()
+}
+
+func TestMediaFactsDoNotRefreshSearch(t *testing.T) {
+	m := newResilientMedia(t, func(cfg *ck.Config) {
+		cfg.Media.Kinds[0].Publish = &media.Publish{Pages: "pages/{name}", Renditions: []string{"reader"}}
+	})
+	a := m.app
+	// Keep the real job producers bound, with consumers stopped so no worker
+	// can hide a dirty mark or search job emitted by the media commit.
+	a.server.Close()
+	must(t, a.engine.Close(t.Context()))
+	var err error
+	a.engine, err = ck.New(t.Context(), a.cfg, a.deps)
+	must(t, err)
+	a.server = mountEngine(t, a.engine)
+	_, err = jobhook.Fleet(t.Context(), a.engine, &river.Config{Schema: publicationRiverSchema(a), Queues: map[string]river.QueueConfig{}})
+	must(t, err)
+	client := a.engine.Client()
+	ref := galleryRef(t, client, "Facts without search churn")
+	q := func(table string) string { return pgx.Identifier{m.schema, table}.Sanitize() }
+	jobs := pgx.Identifier{publicationRiverSchema(a), "river_job"}.Sanitize()
+	var marked, queued int
+	must(t, m.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+q("content_search_dirty")+` WHERE content_id=$1`, ref.ID).Scan(&marked))
+	must(t, m.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+jobs+` WHERE kind='contentkit_search_sync'`).Scan(&queued))
+	if marked == 0 || queued == 0 {
+		t.Fatalf("catalog creation did not exercise search producers: marked=%d queued=%d", marked, queued)
+	}
+	_, err = m.pool.Exec(t.Context(), `DELETE FROM `+q("content_search_dirty")+` WHERE content_id=$1`, ref.ID)
+	must(t, err)
+	_, err = m.pool.Exec(t.Context(), `DELETE FROM `+jobs+` WHERE kind='contentkit_search_sync'`)
+	must(t, err)
+	facet := func() searchTuple {
+		t.Helper()
+		var row searchTuple
+		must(t, m.pool.QueryRow(t.Context(), `SELECT ctid::text,xmin::text,updated_at FROM `+q("content_facets")+` WHERE version_id=$1`, ref.Version).Scan(&row.Location, &row.Revision, &row.Updated))
+		return row
+	}
+	before := facet()
+	var pagesBefore *int
+	must(t, m.pool.QueryRow(t.Context(), `SELECT pages FROM `+q("content_versions")+` WHERE id=$1`, ref.Version).Scan(&pagesBefore))
+	if pagesBefore != nil && *pagesBefore != 0 {
+		t.Fatalf("new gallery already has %d pages", *pagesBefore)
+	}
+	op := stageFile(t, client, ref, "pages/one.png", imageBytes(t))
+	_, err = client.PostMediaUploadCommit(t.Context(), media.CommitBody{Ref: ref, OperationID: uuid.NewString(), Ops: []media.Op{op}})
+	must(t, err)
+	var pages int
+	must(t, m.pool.QueryRow(t.Context(), `SELECT pages FROM `+q("content_versions")+` WHERE id=$1`, ref.Version).Scan(&pages))
+	must(t, m.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+q("content_search_dirty")+` WHERE content_id=$1`, ref.ID).Scan(&marked))
+	must(t, m.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+jobs+` WHERE kind='contentkit_search_sync'`).Scan(&queued))
+	if after := facet(); pages != 1 || after != before || marked != 0 || queued != 0 {
+		t.Fatalf("media facts: pages=%d facet before=%+v after=%+v dirty=%d search jobs=%d", pages, before, after, marked, queued)
+	}
 }
