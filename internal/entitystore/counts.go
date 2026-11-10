@@ -3,6 +3,9 @@ package entitystore
 import (
 	"context"
 	"fmt"
+	"maps"
+
+	"github.com/jackc/pgx/v5"
 
 	entities "github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/kinds"
@@ -25,13 +28,16 @@ func (s *Store) coveredKinds() []string {
 }
 
 func (s *Store) counts(ctx context.Context, q Querier, ids []string) (map[entities.EntityID][]entities.Count, error) {
+	boundary, args := s.boundary.SQL("f", "entity_domain")
+	params := pgx.NamedArgs{"tenant": s.tenant, "ids": ids}
+	maps.Copy(params, args)
 	rows, err := q.Query(ctx, fmt.Sprintf(`SELECT g.id, f.kind, l.language, count(DISTINCT f.content_id)::int
  FROM %s g JOIN %s f ON f.tenant_id=g.tenant_id
   AND (f.entity_ids @> ARRAY[g.id] OR f.owner_entity_id=g.id)
  CROSS JOIN LATERAL unnest(array_append(f.languages, '')) l(language)
- WHERE g.tenant_id=$1 AND g.id=ANY($2::text[]) AND g.state='active' AND %s
+ WHERE g.tenant_id=@tenant AND g.id=ANY(@ids::text[]) AND g.state='active' AND %s AND %s
  GROUP BY g.id,f.kind,l.language ORDER BY g.id,f.kind,l.language`,
-		s.table("content_entities"), s.table("content_facets"), liveListed), s.tenant, ids)
+		s.table("content_entities"), s.table("content_facets"), liveListed, boundary), params)
 	if err != nil {
 		return nil, err
 	}

@@ -66,7 +66,11 @@ func (e *Engine) codeVisibility(req *http.Request, links []contenturl.Link) ([]c
 	if len(ids) == 0 {
 		return visible, nil
 	}
-	cards, err := e.entities.As(e.auth, gate.Actor(req.Context())).Cards(req.Context(), ids, entitystore.CardOptions{})
+	store, err := e.entities.As(e.auth, gate.Actor(req.Context())).ForHost(req.Context(), req.Host)
+	if err != nil {
+		return nil, err
+	}
+	cards, err := store.Cards(req.Context(), ids, entitystore.CardOptions{})
 	if err != nil {
 		return nil, err
 	}
