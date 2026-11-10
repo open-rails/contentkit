@@ -16,6 +16,7 @@ import (
 	entitlement "github.com/open-rails/contentkit/internal/entitlement"
 	"github.com/open-rails/contentkit/internal/gate"
 	"github.com/open-rails/contentkit/internal/httpapi"
+	"github.com/open-rails/contentkit/internal/pglock"
 	"github.com/open-rails/contentkit/media/layout"
 	versions "github.com/open-rails/contentkit/media/versions"
 )
@@ -202,6 +203,8 @@ func (h handler) fail(w http.ResponseWriter, r *http.Request, err error) {
 	var quota *versions.QuotaError
 	var unavailable *versions.UnavailableError
 	switch {
+	case errors.Is(err, pglock.ErrContended):
+		writeJSON(w, http.StatusServiceUnavailable, errorReply{Error: "content is busy; retry", Code: httpapi.CodeUnavailable})
 	case errors.Is(err, ErrNotReady):
 		writeJSON(w, http.StatusAccepted, versions.Pending{Status: "pending"})
 	case errors.As(err, &quota):

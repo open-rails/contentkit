@@ -16,6 +16,7 @@ import (
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/gate"
 	"github.com/open-rails/contentkit/internal/httpapi"
+	"github.com/open-rails/contentkit/internal/pglock"
 	media "github.com/open-rails/contentkit/media"
 )
 
@@ -240,6 +241,8 @@ func (h uploadHandler) fail(w http.ResponseWriter, r *http.Request, err error) {
 	ue, ok := AsUploadError(err)
 	if !ok {
 		switch {
+		case errors.Is(err, pglock.ErrContended):
+			ue = &media.UploadError{Code: media.CodeUnavailable, Message: "media is busy; retry the request with the same operation_id if provided", RetryAfter: time.Second}
 		case errors.Is(err, ErrCommitPending), errors.Is(err, ErrManifestConflict):
 			ue = &media.UploadError{Code: media.CodeUnavailable, Message: "commit recovery is pending; retry the same operation_id", RetryAfter: time.Second}
 		case errors.Is(err, media.ErrUnavailable):
