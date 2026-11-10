@@ -35,6 +35,10 @@ type DeliveryFile struct {
 
 const copyReceiptMetadata = "contentkit-copy-receipt"
 
+// Bound storage work under one manifest lock so commits and derivatives can run
+// between batches, even when a delivery contains an entire gallery.
+const promotionBatchSize = 16
+
 func copyReceipt(operation string, f DeliveryFile) string {
 	body, _ := json.Marshal(struct {
 		Operation, Source, Destination, Type string
@@ -230,13 +234,13 @@ func (m *Manifests) Promote(ctx context.Context, ref contentref.ContentRef, oper
 		return nil, err
 	}
 	var prepared *PublicationDelivery
-	err = m.WithLock(ctx, ref, func() error {
-		current, _, err := m.Get(ctx, ref)
-		if err != nil {
-			return err
-		}
-		d := current.delivery(operation)
-		if d == nil {
+	var incarnation string
+	for offset := 0; ; {
+		err = m.WithLock(ctx, ref, func() error {
+			current, _, err := m.Get(ctx, ref)
+			if err != nil {
+				return err
+			}
 			if id, err := uuid.Parse(operation); err == nil {
 				if withdrawn, err := m.deliveryWithdrawn(ctx, item, id); err != nil {
 					return err
@@ -244,50 +248,74 @@ func (m *Manifests) Promote(ctx context.Context, ref contentref.ContentRef, oper
 					return ErrDeliveryWithdrawn
 				}
 			}
-			return ErrNotFound
-		}
-		if d.Withdrawn || current.Deleted {
-			return ErrDeliveryWithdrawn
-		}
-		prepared = d.clone()
-		if d.Ready || d.Adopted {
-			return nil
-		}
-		keys := make([]string, 0, 2*len(d.Files))
-		for _, f := range d.Files {
-			source, _ := item.Blob(f.Source)
-			destination, _ := item.Blob(f.Blob)
-			keys = append(keys, source, destination)
-		}
-		if err := m.checkAllocationsIn(ctx, item, keys, current.Incarnation); err != nil {
-			return err
-		}
-		for _, f := range d.Files {
-			source, _ := item.Blob(f.Source)
-			destination, _ := item.Blob(f.Blob)
-			if err := m.verifyDelivery(ctx, destination, f); err == nil {
-				continue
-			} else if !errors.Is(err, ErrNotFound) {
-				return err
+			d := current.delivery(operation)
+			if d == nil {
+				return ErrNotFound
 			}
-			object, err := m.store.Head(ctx, source)
-			if err != nil {
-				return err
+			if d.Withdrawn || current.Deleted {
+				return ErrDeliveryWithdrawn
 			}
-			if object.Size != f.Size || object.ContentType != f.Type {
+			if prepared == nil {
+				prepared, incarnation = d.clone(), current.Incarnation
+			} else if current.Incarnation != incarnation || d.Fingerprint != prepared.Fingerprint || !slices.Equal(d.Files, prepared.Files) {
 				return ErrCommitIdentity
 			}
-			if _, err := m.store.Copy(ctx, source, destination, copyOptions(object, f)); err != nil {
+			end := min(offset+promotionBatchSize, len(d.Files))
+			files := d.Files[offset:end]
+			if d.Ready || d.Adopted {
+				files = d.Files
+			}
+			keys := make([]string, 0, 2*len(files))
+			for _, f := range files {
+				source, _ := item.Blob(f.Source)
+				destination, _ := item.Blob(f.Blob)
+				if !d.Adopted && !d.Ready {
+					keys = append(keys, source)
+				}
+				keys = append(keys, destination)
+			}
+			if err := m.checkAllocationsIn(ctx, item, keys, current.Incarnation); err != nil {
 				return err
 			}
-			if err := m.verifyDelivery(ctx, destination, f); err != nil {
-				return err
+			if d.Ready || d.Adopted {
+				prepared = d.clone()
+				offset = len(d.Files)
+				return nil
 			}
+			for _, f := range files {
+				source, _ := item.Blob(f.Source)
+				destination, _ := item.Blob(f.Blob)
+				if err := m.verifyDelivery(ctx, destination, f); err == nil {
+					continue
+				} else if !errors.Is(err, ErrNotFound) {
+					return err
+				}
+				object, err := m.store.Head(ctx, source)
+				if err != nil {
+					return err
+				}
+				if object.Size != f.Size || object.ContentType != f.Type {
+					return ErrCommitIdentity
+				}
+				if _, err := m.store.Copy(ctx, source, destination, copyOptions(object, f)); err != nil {
+					return err
+				}
+				if err := m.verifyDelivery(ctx, destination, f); err != nil {
+					return err
+				}
+			}
+			offset = end
+			return nil
+		})
+		if err != nil {
+			return nil, err
 		}
-		return nil
-	})
-	if err != nil || prepared.Ready {
-		return prepared, err
+		if offset == len(prepared.Files) {
+			break
+		}
+	}
+	if prepared.Ready {
+		return prepared, nil
 	}
 	ctx = context.WithValue(ctx, synchronousMutationOwnerKey{}, true)
 	id, err := uuid.Parse(operation)
@@ -298,7 +326,7 @@ func (m *Manifests) Promote(ctx context.Context, ref contentref.ContentRef, oper
 	mutation := &manifestMutation{commit: manifestCommit{ID: adoption, Fingerprint: sha256.Sum256([]byte(prepared.Fingerprint))}}
 	_, err = m.editOperation(ctx, ref, true, bound{}, mutation, func(current *Manifest) error {
 		d := current.delivery(operation)
-		if d == nil || d.Fingerprint != prepared.Fingerprint {
+		if d == nil || current.Incarnation != incarnation || d.Fingerprint != prepared.Fingerprint || !slices.Equal(d.Files, prepared.Files) {
 			return ErrCommitIdentity
 		}
 		if d.Withdrawn {
@@ -308,12 +336,16 @@ func (m *Manifests) Promote(ctx context.Context, ref contentref.ContentRef, oper
 			return nil
 		}
 		mapping := make(map[string]string, len(d.Files))
+		// Adoption replaces the source pins. Check those here; try checks all
+		// allocations retained in the resulting manifest, including destinations.
+		keys := make([]string, 0, len(d.Files))
 		for _, f := range d.Files {
-			key, _ := item.Blob(f.Blob)
-			if err := m.verifyDelivery(ctx, key, f); err != nil {
-				return err
-			}
+			source, _ := item.Blob(f.Source)
+			keys = append(keys, source)
 			mapping[f.Source] = f.Blob
+		}
+		if err := m.checkAllocationsIn(ctx, item, keys, incarnation); err != nil {
+			return err
 		}
 		for i := range current.Files {
 			f := &current.Files[i]
@@ -346,7 +378,7 @@ func (m *Manifests) Promote(ctx context.Context, ref contentref.ContentRef, oper
 	}
 	result, err := m.EditExisting(ctx, ref, func(current *Manifest) error {
 		d := current.delivery(operation)
-		if d == nil || d.Fingerprint != prepared.Fingerprint || !d.Adopted {
+		if d == nil || current.Incarnation != incarnation || d.Fingerprint != prepared.Fingerprint || !slices.Equal(d.Files, prepared.Files) || !d.Adopted {
 			return ErrCommitIdentity
 		}
 		if d.Withdrawn {

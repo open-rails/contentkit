@@ -7,6 +7,7 @@ package pglock
 
 import (
 	"context"
+	"errors"
 	"strconv"
 	"sync"
 	"time"
@@ -30,6 +31,9 @@ const (
 )
 
 var sessions sync.Map // *pgxpool.Pool -> *session
+
+// ErrContended asks callers to retry through their existing request or job path.
+var ErrContended = errors.New("pglock: acquisition budget expired; retry")
 
 // session is the shared session of one pool's locks.
 type session struct {
@@ -177,8 +181,15 @@ func (s *session) closeLocked() {
 // waitFor waits for key on a connection of its own, which then holds it;
 // release closes the connection, which ends the lock.
 func waitFor(ctx context.Context, cfg *pgx.ConnConfig, key string) (release func(), ok bool, err error) {
-	conn, err := pgx.ConnectConfig(ctx, cfg)
+	// Reuse the 15-second connect budget for connect plus queueing, well below
+	// media's one-minute settlement and 30-minute publication deadlines.
+	waitCtx, cancel := context.WithTimeout(ctx, connectTimeout)
+	defer cancel()
+	conn, err := pgx.ConnectConfig(waitCtx, cfg)
 	if err != nil {
+		if errors.Is(waitCtx.Err(), context.DeadlineExceeded) {
+			err = errors.Join(ErrContended, err)
+		}
 		return nil, false, err
 	}
 	closeConn := func() {
@@ -186,8 +197,11 @@ func waitFor(ctx context.Context, cfg *pgx.ConnConfig, key string) (release func
 		defer cancel()
 		_ = conn.Close(ctx)
 	}
-	if _, err := conn.Exec(ctx, "SELECT pg_advisory_lock(hashtextextended($1, 0))", key); err != nil {
+	if _, err := conn.Exec(waitCtx, "SELECT pg_advisory_lock(hashtextextended($1, 0))", key); err != nil {
 		closeConn()
+		if errors.Is(waitCtx.Err(), context.DeadlineExceeded) {
+			err = errors.Join(ErrContended, err)
+		}
 		return nil, false, err
 	}
 	stop := make(chan struct{})
