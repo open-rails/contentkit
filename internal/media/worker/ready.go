@@ -17,6 +17,7 @@ import (
 
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/media/workqueue"
+	"github.com/open-rails/contentkit/internal/pglock"
 	"github.com/open-rails/contentkit/media"
 )
 
@@ -79,7 +80,7 @@ func (c Config) finishAttempt(ctx context.Context, job *rivertype.JobRow, err er
 		return river.JobSnooze(0)
 	}
 	err = mediastore.SnoozeUnavailable(ctx, c.Store, job, err)
-	if job.Kind == (workqueue.DerivativeArgs{}).Kind() && transientDerivativeError(err) {
+	if errors.Is(err, pglock.ErrContended) || job.Kind == (workqueue.DerivativeArgs{}).Kind() && transientDerivativeError(err) {
 		if setErr := river.MetadataSet(ctx, "contentkit_transient_attempts", transientAttempts(job)+1); setErr != nil {
 			return errors.Join(err, setErr)
 		}

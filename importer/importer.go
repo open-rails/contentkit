@@ -247,6 +247,8 @@ type CommentRecord struct {
 
 // ReactionRecord is a person's like (1), dislike (-1) or neutral (0) on a
 // content item, version, comment or entity; an anonymous one is keyed by IP.
+// Value 0 neutralizes a row owned by this batch source; a named user can also
+// clear a pre-provenance row. Hosts must clear only reactions they imported.
 type ReactionRecord struct {
 	Target    TargetRef  `json:"target"`
 	UserID    string     `json:"user_id,omitempty"`
@@ -257,14 +259,17 @@ type ReactionRecord struct {
 }
 
 // FavoriteRecord is a person's bookmark of a content item or version.
+// Removed clears a row owned by this batch source or a pre-provenance row.
+// Hosts must clear only favorites they imported.
 type FavoriteRecord struct {
 	Target    TargetRef  `json:"target"`
 	UserID    string     `json:"user_id"`
+	Removed   bool       `json:"removed,omitempty"`
 	CreatedAt *time.Time `json:"created_at,omitempty"`
 }
 
 // PollRecord is a site poll with its options. Options replace the stored choices
-// before voting starts; once votes exist, their IDs, labels and positions must match.
+// even after voting starts; kept IDs retain votes, removed IDs lose their votes.
 type PollRecord struct {
 	ExternalID string `json:"external_id"`
 	ID         string `json:"id,omitempty"`
@@ -272,6 +277,8 @@ type PollRecord struct {
 	Kind     string `json:"kind,omitempty"`
 	Question string `json:"question"`
 	Language string `json:"language,omitempty"`
+	// Image is an uploaded inline image name; omitted preserves it, "" clears it.
+	Image *string `json:"image,omitempty"`
 	// Active defaults to true.
 	Active    *bool              `json:"active,omitempty"`
 	LiveAt    *time.Time         `json:"live_at,omitempty"`
@@ -288,6 +295,8 @@ type PollOptionRecord struct {
 	ID         string `json:"id,omitempty"`
 	Label      string `json:"label"`
 	Position   int    `json:"position"`
+	// Image is an uploaded inline image name; omitted preserves it, "" clears it.
+	Image *string `json:"image,omitempty"`
 }
 
 // VoteRecord is one person's (or, anonymous, one IP's) choice in a poll.
@@ -300,9 +309,11 @@ type VoteRecord struct {
 }
 
 // LegacyReadingRecord preserves source bookmarks/progress as legacy state,
-// never as measured attention or popularity evidence.
+// never as measured attention or popularity evidence. Removed withdraws that
+// legacy state, ordered by LastReadAt and Revision, without erasing measured reading.
 type LegacyReadingRecord struct {
 	Target      TargetRef  `json:"target"`
+	Removed     bool       `json:"removed,omitempty"`
 	UserID      string     `json:"user_id,omitempty"`
 	AnonKey     string     `json:"anon_key,omitempty"`
 	FirstReadAt *time.Time `json:"first_read_at,omitempty"`

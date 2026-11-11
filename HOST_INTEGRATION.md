@@ -702,6 +702,29 @@ question of at most 300 characters, options of at most 200), then vote through
 vote. A signed-in vote stores no IP address. Signed-out voting follows
 `Config.anonymous.votes`.
 
+Imports through `PostImport` can replace choices after voting: kept IDs keep
+votes, removed choices lose their votes, and counts settle in the same
+transaction. Staff choice mutations remain locked after voting. Upload legacy
+poll images with `Client.IngestMedia`, then select their `i-{uuid}` names with
+`PollRecord.Image` / `PollOptionRecord.Image` (omitted preserves, empty clears).
+The staff option-image setter keeps its voted-poll refusal.
+
+Hosts must clear only preferences they imported, using the named user, target
+and original batch source. `FavoriteRecord.Removed` and `ReactionRecord.Value=0`
+can clear a row owned by that source or a pre-provenance row with `NULL`
+`import_source`; a cleared row records the source. The three provenance states
+are `NULL` for unknown history, an empty string for native writes, and a nonempty
+string for an import source. Native writes, including same-value actions after an
+import, set the native marker. Import clears protect native-marked and
+other-source rows; non-clear imports update only their own source's rows.
+Hosts must select only their own historical imports when clearing unknown rows.
+PostgreSQL migration 0067 is additive: existing rows default to `NULL`, with no
+backfill or ownership inference from timestamps or account IDs.
+`LegacyReadingRecord.Removed` clears the separate legacy progress fact with its
+source change time in `LastReadAt` and optional `Revision`; native measured reading stays. ClickHouse migration 0002
+adds that tombstone. See [import details](docs/import.md) for ordering, bulk
+recounts and host call examples.
+
 `closes_at` (optional, `PATCH`-able, `null` clears it) and `is_active = false`
 close a poll for voting; its results remain readable, on its own link too.
 `closes_at` must come after `live_at`. Scheduled questions are
@@ -1251,7 +1274,7 @@ next one. Browsers keep using a read's `public` or `usePublicImage`.
   Processor completion appends a retained processing fact and queues real
   version metadata work in one transaction; hosts follow it through the event
   log, never inside the transaction.
-- Manifests stop at `media.MaxManifestBytes` (8 MiB of JSON). A commit is
+- Manifests stop at `media.MaxManifestBytes` (16 MiB of JSON). A commit is
   refused (413 `too_large`) when the item, processed, would pass that. If
   outputs still overrun it, the worker marks the item `full` instead of
   recording them: producers write no private output for it (public files
@@ -1262,8 +1285,8 @@ next one. Browsers keep using a read's `public` or `usePublicImage`.
   The SDK's `waitFor` rejects with `too_large` while an item is full.
   Failure messages are capped at 300 bytes.
 - Each process keeps a fixed 128 MiB cache of decoded manifests, each about
-  three times its JSON: the largest costs 24 MiB, and a read that misses
-  decodes it again (about 0.25 s and 60 MiB at 8 MiB, anonymous reads
+  three times its JSON: the largest costs 48 MiB, and a read that misses
+  decodes it again (about 0.5 s and 120 MiB at 16 MiB, anonymous reads
   included).
 - Refused images record `failed` (`message`, `code`, `details`):
   `image_unreadable`, `image_too_large`, `image_too_small`,

@@ -19,6 +19,7 @@ import (
 	entitlement "github.com/open-rails/contentkit/internal/entitlement"
 	"github.com/open-rails/contentkit/internal/gate"
 	"github.com/open-rails/contentkit/internal/httpapi"
+	"github.com/open-rails/contentkit/internal/pglock"
 	urlstore "github.com/open-rails/contentkit/internal/urlstore"
 	versionstore "github.com/open-rails/contentkit/internal/versionstore"
 )
@@ -217,6 +218,8 @@ func classify(err error) (int, string, string) {
 		return http.StatusNotImplemented, "not_configured", "images need ContentKit media"
 	case errors.Is(err, errFixedOwnerUnavailable):
 		return http.StatusServiceUnavailable, httpapi.CodeUnavailable, "configured content channel is unavailable"
+	case errors.Is(err, pglock.ErrContended):
+		return http.StatusServiceUnavailable, httpapi.CodeUnavailable, "content is busy; retry"
 	case errors.Is(err, entitlement.ErrUnavailable):
 		return http.StatusServiceUnavailable, httpapi.CodeUnavailable, "entitlements are unavailable; retry"
 	}
