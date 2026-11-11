@@ -91,13 +91,14 @@ function ReleaseDaySection({ day, initial, step, pending, cardProps: p, collapse
   const premiumCount = useMemo(() => day.contents.filter(lockedPremium).length, [day.contents]);
   const summaryContentKind = kinds?.[0];
   const entries = useMemo(() => {
-    let inserted = false;
-    return cards.flatMap((card, i): { key: string; card: Card; summary: boolean; position: number }[] => {
+    let premium: { key: string; card: Card; summary: boolean; position: number } | undefined;
+    const result = cards.flatMap((card, i): { key: string; card: Card; summary: boolean; position: number }[] => {
       if (!collapsePremium || premiumExpanded || !lockedPremium(card)) return [{ key: card.id, card, summary: false, position: i + 1 }];
-      if (inserted) return [];
-      inserted = true;
-      return [{ key: "premium-summary", card, summary: true, position: i + 1 }];
+      premium ??= { key: "premium-summary", card, summary: true, position: i + 1 };
+      return [];
     });
+    if (premium) result.push(premium);
+    return result;
   }, [cards, collapsePremium, premiumExpanded]);
   const exposed = useMemo(() => open && !pending ? entries.filter((entry) => !entry.summary).map((entry) => ({ ...entry.card, position: entry.position })) : [], [open, pending, entries]);
   const exposure = useExposure(exposed, { surface: p.surface ?? "releases", render: day.date, client: p.client });
@@ -143,6 +144,6 @@ function ReleaseCard({ card, open, position, exposure, cardProps: p }: { card: C
   const tracked = useMemo(() => exposure.track(card.id, position), [exposure, card.id, position]);
   const ref = useCallback((element: HTMLLIElement | null) => { viewport(element); tracked(element); }, [viewport, tracked]);
   return <li ref={ref} data-release-key={card.id}>
-    <ContentCard card={card} client={p.client} href={() => exposure.href(card.id, position, p.href ? p.href(card) : card.path)} shape={p.shape} aspectRatio={p.aspectRatio} titlePosition={p.titlePosition} loadMedia={open && visible} entityKinds={p.entityKinds} chips={p.chips} chipOverflow={p.chipOverflow} chipFit={p.chipFit} filterEntity={p.filterEntity} entityStyle={p.entityStyle} entityLayout={p.entityLayout} metadata={p.metadata} showCounts={p.showCounts} tiers={p.tiers} labels={p.labels} showChannel={p.showChannel} channelHref={p.channelHref} decorate={p.decorate} cardTitle={p.cardTitle} status={p.status} dimDisliked={p.dimDisliked} onOpen={() => exposure.click(card.id, position, exposure.href(card.id, position, p.href ? p.href(card) : card.path))} />
+    <ContentCard card={card} client={p.client} href={() => exposure.href(card.id, position, p.href ? p.href(card) : card.path)} shape={p.shape} aspectRatio={p.aspectRatio} titlePosition={p.titlePosition} loadMedia={open && visible} entityKinds={p.entityKinds} chips={p.chips} chipOverflow={p.chipOverflow} chipFit={p.chipFit} filterEntity={p.filterEntity} entityStyle={p.entityStyle} entityLayout={p.entityLayout} metadata={p.metadata} showCounts={p.showCounts} tiers={p.tiers} labels={p.labels} showChannel={p.showChannel} channelHref={p.channelHref} decorate={p.decorate} cardTitle={p.cardTitle} showLockBadge={p.showLockBadge} status={p.status} dimDisliked={p.dimDisliked} onOpen={() => exposure.click(card.id, position, exposure.href(card.id, position, p.href ? p.href(card) : card.path))} />
   </li>;
 }

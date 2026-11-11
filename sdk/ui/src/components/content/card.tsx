@@ -66,6 +66,8 @@ export interface ContentCardProps {
   cardTitle?: (card: Card) => string;
   /** Mark updated, completed and (for staff) deleted cards over the cover. Default true; false when the host draws cardStatus itself. */
   status?: boolean;
+  /** Show the cover lock label. False lets host badges replace it; accessible lock text remains. */
+  showLockBadge?: boolean;
   /** Dim the cover of what the reader disliked. Default true. */
   dimDisliked?: boolean;
   /** Below the meta line: the host's own. */
@@ -217,7 +219,7 @@ function useChipFit(list: HTMLUListElement | null, total: number, chipsKey: stri
 }
 
 /** One content in a listing: cover (a video the reader opens previews over it on hover), title, version, groups, counts, the reader's progress and why it is locked; what its kind's locked view hides is absent. */
-export function ContentCard({ card, client, href, onOpen, shape = "portrait", aspectRatio, titlePosition = "below", loadMedia = true, entityKinds, chips = 3, chipOverflow = false, chipFit = false, filterEntity, entityStyle = "chips", entityLayout = "inline", metadata, showCounts = true, tiers, labels, showChannel = true, channelHref, decorate, cardTitle, status = true, dimDisliked = true, children, className }: ContentCardProps) {
+export function ContentCard({ card, client, href, onOpen, shape = "portrait", aspectRatio, titlePosition = "below", loadMedia = true, entityKinds, chips = 3, chipOverflow = false, chipFit = false, filterEntity, entityStyle = "chips", entityLayout = "inline", metadata, showCounts = true, tiers, labels, showChannel = true, channelHref, decorate, cardTitle, showLockBadge = true, status = true, dimDisliked = true, children, className }: ContentCardProps) {
   const m = useMessages();
   const { presets } = usePresets({ client });
   const coverAspect = aspectRatio ?? ratio(presets.find((p) => p.kind === card.kind && p.name === "cover")?.aspect);
@@ -325,7 +327,7 @@ export function ContentCard({ card, client, href, onOpen, shape = "portrait", as
             /> : <span className="block size-full bg-muted" aria-hidden />}
           </div>
           {loadMedia && v.hls && <HoverPreview item={{ kind: card.kind, id: card.id, version: v.id }} dir={v.hls} duration={v.duration_ms ? v.duration_ms / 1000 : undefined} target={article} />}
-          {lock && (
+          {showLockBadge && lock && (
             <span className="absolute top-2 left-2 inline-flex items-center gap-1 rounded-md bg-background/85 px-1.5 py-0.5 text-xs font-medium text-foreground shadow-sm" data-ckui="card-lock">
               <HugeiconsIcon icon={LockIcon} strokeWidth={2} className="size-3.5" aria-hidden />
               {lock}
