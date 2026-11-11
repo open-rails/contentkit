@@ -39,7 +39,7 @@ type ManifestOptions struct {
 	Journal *PGJournal
 	// CacheBytes bounds the decoded manifests kept in process, revalidated
 	// by ETag. A manifest costs about three times its JSON, so the largest
-	// (MaxManifestBytes) costs 24 MiB; default 128 MiB, at least two of them.
+	// (MaxManifestBytes) costs 48 MiB; default 128 MiB, at least two of them.
 	CacheBytes int64
 	MaxRetries int // conditional-write attempts per recovery fence; default 16
 	// CleanupGrace bounds unfinished private allocations; default 24 hours.

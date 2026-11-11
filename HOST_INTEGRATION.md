@@ -1274,7 +1274,7 @@ next one. Browsers keep using a read's `public` or `usePublicImage`.
   Processor completion appends a retained processing fact and queues real
   version metadata work in one transaction; hosts follow it through the event
   log, never inside the transaction.
-- Manifests stop at `media.MaxManifestBytes` (8 MiB of JSON). A commit is
+- Manifests stop at `media.MaxManifestBytes` (16 MiB of JSON). A commit is
   refused (413 `too_large`) when the item, processed, would pass that. If
   outputs still overrun it, the worker marks the item `full` instead of
   recording them: producers write no private output for it (public files
@@ -1285,8 +1285,8 @@ next one. Browsers keep using a read's `public` or `usePublicImage`.
   The SDK's `waitFor` rejects with `too_large` while an item is full.
   Failure messages are capped at 300 bytes.
 - Each process keeps a fixed 128 MiB cache of decoded manifests, each about
-  three times its JSON: the largest costs 24 MiB, and a read that misses
-  decodes it again (about 0.25 s and 60 MiB at 8 MiB, anonymous reads
+  three times its JSON: the largest costs 48 MiB, and a read that misses
+  decodes it again (about 0.5 s and 120 MiB at 16 MiB, anonymous reads
   included).
 - Refused images record `failed` (`message`, `code`, `details`):
   `image_unreadable`, `image_too_large`, `image_too_small`,
