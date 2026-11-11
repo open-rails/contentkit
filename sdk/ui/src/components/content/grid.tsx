@@ -273,6 +273,7 @@ function CardGridBody({ list, render, filterKinds, filterLanguage, horizontal, s
               open
               cardProps={p}
               label={filteredLabel}
+              filteredEntities={list.summary?.filtered_entities}
               onClick={(event) => {
                 filterTrigger.current = event.currentTarget;
                 setFiltersOpen(true);

@@ -129,7 +129,7 @@ function ReleaseDaySection({ day, initial, step, pending, cardProps: p, collapse
             {entries.map((entry) => entry.summary ?
               <ContentSummaryTile key={entry.key} tileKey={entry.key} contentKind={kinds?.[0] ?? entry.card.kind} open={open && !pending} preview={entry.card} cardProps={p} kind="premium" label={summaryLabels?.premium?.(premiumCount) ?? m.plural("releases.premiumMore", premiumCount)} onClick={expandPremium} /> :
               <ReleaseCard key={entry.key} card={entry.card} open={open && !pending} position={entry.position} exposure={exposure} cardProps={p} />)}
-            {day.filtered_count > 0 && <ContentSummaryTile tileKey="filtered-summary" contentKind={summaryContentKind} open={open && !pending} cardProps={p} kind="filtered" label={summaryLabels?.filtered?.(day.filtered_count) ?? m.plural("releases.filteredMore", day.filtered_count)} onClick={(event) => { filterTrigger.current = event.currentTarget; setFiltersOpen(true); }} />}
+            {day.filtered_count > 0 && <ContentSummaryTile tileKey="filtered-summary" contentKind={summaryContentKind} open={open && !pending} cardProps={p} kind="filtered" filteredEntities={day.filtered_entities} label={summaryLabels?.filtered?.(day.filtered_count) ?? m.plural("releases.filteredMore", day.filtered_count)} onClick={(event) => { filterTrigger.current = event.currentTarget; setFiltersOpen(true); }} />}
           </ol>
           {visible < day.contents.length && <div className="flex justify-center pt-5 pb-1"><Button type="button" variant="secondary" onClick={(event) => { reveal.prepare(event.detail === 0); setVisible((n) => Math.min(n + step, day.contents.length)); }}>{m.t("contents.showMore")}</Button></div>}
         </div>
