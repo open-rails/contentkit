@@ -984,6 +984,7 @@ export interface Failure {
 export interface FavoriteRecord {
   target: TargetRef;
   user_id: string;
+  removed?: boolean;
   created_at?: string;
 }
 
@@ -1153,6 +1154,7 @@ export interface LanguageTotal {
 
 export interface LegacyReadingRecord {
   target: TargetRef;
+  removed?: boolean;
   user_id?: string;
   anon_key?: string;
   first_read_at?: string;
@@ -1498,6 +1500,7 @@ export interface PollOptionRecord {
   id?: string;
   label: string;
   position: number;
+  image?: string;
 }
 
 export interface PollRecord {
@@ -1506,6 +1509,7 @@ export interface PollRecord {
   kind?: string;
   question: string;
   language?: string;
+  image?: string;
   active?: boolean;
   live_at?: string;
   closes_at?: string;

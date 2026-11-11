@@ -364,7 +364,7 @@ written. Reads go through an in-process cache bounded by bytes and
 revalidated by ETag, so a read is never stale. A 2,000-page gallery is about
 1.5 MB of JSON and 400 KB stored; a 2-hour video about 5 KB, its segment
 tables living in index blobs. Every read and write stops at
-`MaxManifestBytes` (8 MiB of JSON; the 128 MiB cache holds five).
+`MaxManifestBytes` (16 MiB of JSON; the 128 MiB cache holds two).
 Edits stop 4 KiB short of it and only when they grow the manifest, so a
 full item can still shrink and the `hidden` and `full` flags always fit. A
 commit is refused (413 `too_large`) when the item, once processed, would

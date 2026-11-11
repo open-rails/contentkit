@@ -14,6 +14,7 @@ import (
 	content "github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/versionid"
+	"github.com/open-rails/contentkit/media"
 )
 
 var (
@@ -491,6 +492,7 @@ func (rt *Runtime) ImportReactions(ctx context.Context, tx pgx.Tx, in []content.
 		UserID    *string   `json:"user_id"`
 		IP        *string   `json:"ip"`
 		Value     int16     `json:"value"`
+		Source    string    `json:"source"`
 		CreatedAt time.Time `json:"created_at"`
 		UpdatedAt time.Time `json:"updated_at"`
 	}
@@ -504,7 +506,7 @@ func (rt *Runtime) ImportReactions(ctx context.Context, tx pgx.Tx, in []content.
 		if err != nil {
 			return err
 		}
-		x := row{keyRow: k, Value: r.Value, CreatedAt: stamp(r.CreatedAt, now)}
+		x := row{keyRow: k, Value: r.Value, Source: r.Source, CreatedAt: stamp(r.CreatedAt, now)}
 		x.UpdatedAt = stamp(r.UpdatedAt, x.CreatedAt)
 		user, ip := strings.TrimSpace(r.UserID), strings.TrimSpace(r.IP)
 		var id string
@@ -550,12 +552,14 @@ func (rt *Runtime) ImportReactions(ctx context.Context, tx pgx.Tx, in []content.
 			return err
 		}
 		if _, err := tx.Exec(ctx, `INSERT INTO `+s.t.reactions+` AS x (tenant_id, content_kind, content_id, content_version_id, user_id, ip, value, revision,
- created_at, updated_at, author_hidden)
+ created_at, updated_at, author_hidden, import_source)
  SELECT $1, r.kind, r.id, r.version, r.user_id, r.ip, r.value, `+s.nextRevision()+`, r.created_at, r.updated_at,
- EXISTS (SELECT 1 FROM `+rt.hiddenAuthorsTable()+` h WHERE h.tenant_id=$1 AND h.actor_id=r.user_id)
- FROM jsonb_to_recordset($2::jsonb) AS r(kind text, id text, version text, user_id text, ip text, value smallint, created_at timestamptz, updated_at timestamptz)
- ON CONFLICT `+part.target+` DO UPDATE SET value = EXCLUDED.value, revision = `+s.nextRevision()+`, updated_at = EXCLUDED.updated_at
- WHERE x.value <> EXCLUDED.value`, rt.tenant, string(data)); err != nil {
+ EXISTS (SELECT 1 FROM `+rt.hiddenAuthorsTable()+` h WHERE h.tenant_id=$1 AND h.actor_id=r.user_id), NULLIF(r.source, '')
+ FROM jsonb_to_recordset($2::jsonb) AS r(kind text, id text, version text, user_id text, ip text, value smallint, created_at timestamptz, updated_at timestamptz, source text)
+ ON CONFLICT `+part.target+` DO UPDATE SET value = EXCLUDED.value, revision = `+s.nextRevision()+`, updated_at = EXCLUDED.updated_at, import_source = EXCLUDED.import_source
+ WHERE (x.import_source = EXCLUDED.import_source OR
+  (x.import_source IS NULL AND EXCLUDED.import_source IS NOT NULL AND EXCLUDED.user_id IS NOT NULL AND EXCLUDED.value = 0))
+ AND x.value <> EXCLUDED.value`, rt.tenant, string(data)); err != nil {
 			return err
 		}
 	}
@@ -571,6 +575,8 @@ func (rt *Runtime) ImportFavorites(ctx context.Context, tx pgx.Tx, in []content.
 	type row struct {
 		keyRow
 		UserID    string    `json:"user_id"`
+		Source    string    `json:"source"`
+		Value     int16     `json:"value"`
 		CreatedAt time.Time `json:"created_at"`
 	}
 	now := time.Now()
@@ -586,7 +592,10 @@ func (rt *Runtime) ImportFavorites(ctx context.Context, tx pgx.Tx, in []content.
 		user := strings.TrimSpace(f.UserID)
 		users, keys[k] = append(users, user), true
 		id := user + "\x00" + k.Kind + "\x00" + k.ID + "\x00" + k.Version
-		x := row{keyRow: k, UserID: user, CreatedAt: stamp(f.CreatedAt, now)}
+		x := row{keyRow: k, UserID: user, Source: f.Source, Value: 1, CreatedAt: stamp(f.CreatedAt, now)}
+		if f.Removed {
+			x.Value = 0
+		}
 		if i, ok := index[id]; ok {
 			rows[i] = x
 			continue
@@ -603,12 +612,14 @@ func (rt *Runtime) ImportFavorites(ctx context.Context, tx pgx.Tx, in []content.
 	}
 	s := rt.store
 	if _, err := tx.Exec(ctx, `INSERT INTO `+s.t.favorites+` AS f (tenant_id, user_id, content_kind, content_id, content_version_id, value, revision,
- created_at, updated_at)
- SELECT $1, r.user_id, r.kind, r.id, r.version, 1, `+s.nextRevision()+`, r.created_at, r.created_at
- FROM jsonb_to_recordset($2::jsonb) AS r(user_id text, kind text, id text, version text, created_at timestamptz)
- ON CONFLICT (tenant_id, user_id, content_kind, content_id, content_version_id) WHERE user_id IS NOT NULL DO UPDATE SET value = 1, revision = `+s.nextRevision()+`,
-  created_at = EXCLUDED.created_at, updated_at = clock_timestamp()
- WHERE f.value <> 1`, rt.tenant, string(data)); err != nil {
+ created_at, updated_at, import_source)
+ SELECT $1, r.user_id, r.kind, r.id, r.version, r.value, `+s.nextRevision()+`, r.created_at, r.created_at, NULLIF(r.source, '')
+ FROM jsonb_to_recordset($2::jsonb) AS r(user_id text, kind text, id text, version text, value smallint, source text, created_at timestamptz)
+ ON CONFLICT (tenant_id, user_id, content_kind, content_id, content_version_id) WHERE user_id IS NOT NULL DO UPDATE SET value = EXCLUDED.value, revision = `+s.nextRevision()+`,
+  created_at = EXCLUDED.created_at, updated_at = clock_timestamp(), import_source = EXCLUDED.import_source
+ WHERE (f.import_source = EXCLUDED.import_source OR
+  (f.import_source IS NULL AND EXCLUDED.import_source IS NOT NULL AND EXCLUDED.value = 0))
+ AND f.value <> EXCLUDED.value`, rt.tenant, string(data)); err != nil {
 		return err
 	}
 	return rt.settle(ctx, tx, later, Recounts{keys: keys})
@@ -893,8 +904,8 @@ func (rt *Runtime) recountReplies(ctx context.Context, tx pgx.Tx, threads map[st
 	return err
 }
 
-// ImportPolls writes polls and their options in tx. Choices can change only
-// before voting starts; identical choices can always be imported again.
+// ImportPolls replaces choices in tx, retaining votes for kept option IDs.
+// Removed options cascade to their votes; counts settle before commit.
 func (rt *Runtime) ImportPolls(ctx context.Context, tx pgx.Tx, in []content.ImportPoll) error {
 	if len(in) == 0 {
 		return nil
@@ -902,6 +913,7 @@ func (rt *Runtime) ImportPolls(ctx context.Context, tx pgx.Tx, in []content.Impo
 	type row struct {
 		ID        string     `json:"id"`
 		Question  string     `json:"question"`
+		Image     *string    `json:"image"`
 		Language  string     `json:"language"`
 		Active    bool       `json:"active"`
 		LiveAt    time.Time  `json:"live_at"`
@@ -926,10 +938,13 @@ func (rt *Runtime) ImportPolls(ctx context.Context, tx pgx.Tx, in []content.Impo
 			return invalidImport("poll %s is imported twice", p.ID)
 		}
 		ids = append(ids, p.ID)
-		r := row{ID: p.ID, Question: strings.TrimSpace(p.Question), Language: strings.TrimSpace(p.Language), Active: p.Active,
+		r := row{ID: p.ID, Question: strings.TrimSpace(p.Question), Language: strings.TrimSpace(p.Language), Image: p.Image, Active: p.Active,
 			ClosesAt: p.ClosesAt, DeletedAt: p.DeletedAt}
 		if p.Kind != "" && p.Kind != content.PollMultipleChoice {
 			return invalidImport("poll kind %q", p.Kind)
+		}
+		if p.Image != nil && *p.Image != "" && !media.ValidNamed(*p.Image) {
+			return invalidImport("poll %s image must be an inline image name (i-{uuid})", p.ID)
 		}
 		if r.Question == "" {
 			return invalidImport("poll %s has no question", p.ID)
@@ -948,6 +963,9 @@ func (rt *Runtime) ImportPolls(ctx context.Context, tx pgx.Tx, in []content.Impo
 			if o.Label = strings.TrimSpace(o.Label); o.Label == "" {
 				return invalidImport("poll %s has an option without a label", p.ID)
 			}
+			if o.Image != nil && *o.Image != "" && !media.ValidNamed(*o.Image) {
+				return invalidImport("poll option %s image must be an inline image name (i-{uuid})", o.ID)
+			}
 			options = append(options, optionRow{ImportPollOption: o, PollID: p.ID})
 		}
 	}
@@ -964,10 +982,10 @@ func (rt *Runtime) ImportPolls(ctx context.Context, tx pgx.Tx, in []content.Impo
 		return err
 	}
 	if _, err := tx.Exec(ctx, `INSERT INTO `+s.t.pollQuestions+` AS q (id, tenant_id, question, language, is_active, live_at, closes_at, deleted_at,
- created_at, updated_at)
- SELECT r.id::uuid, $1, r.question, r.language, r.active, r.live_at, r.closes_at, r.deleted_at, r.created_at, r.updated_at
+ created_at, updated_at, image_name)
+ SELECT r.id::uuid, $1, r.question, r.language, r.active, r.live_at, r.closes_at, r.deleted_at, r.created_at, r.updated_at, NULLIF(r.image, '')
  FROM jsonb_to_recordset($2::jsonb) AS r(id text, question text, language text, active bool, live_at timestamptz, closes_at timestamptz,
-  deleted_at timestamptz, created_at timestamptz, updated_at timestamptz)
+  deleted_at timestamptz, created_at timestamptz, updated_at timestamptz, image text)
  ORDER BY r.id::uuid
  ON CONFLICT (tenant_id, id) DO UPDATE SET question = EXCLUDED.question, language = EXCLUDED.language, is_active = EXCLUDED.is_active,
   live_at = EXCLUDED.live_at, closes_at = EXCLUDED.closes_at, deleted_at = EXCLUDED.deleted_at, created_at = EXCLUDED.created_at, updated_at = EXCLUDED.updated_at
@@ -988,27 +1006,13 @@ func (rt *Runtime) ImportPolls(ctx context.Context, tx pgx.Tx, in []content.Impo
 	if moved != "" {
 		return fmt.Errorf("%w: poll option %s belongs to another poll", ErrConflict, moved)
 	}
-	// The upsert locks even unchanged question rows. Check votes in a separate
-	// statement so a vote committed during that lock wait is visible.
-	var voted string
-	if err := tx.QueryRow(ctx, `WITH incoming AS (
- SELECT r.poll_id::uuid AS question_id, r.id::uuid AS id, r.label, r.position
- FROM jsonb_to_recordset($2::jsonb) AS r(poll_id text, id text, label text, position int)
-)
- SELECT coalesce(min(q.id::text), '') FROM `+s.t.pollQuestions+` q
- WHERE q.tenant_id = $3 AND q.id = ANY($1::uuid[])
- AND EXISTS (SELECT 1 FROM `+s.t.pollVotes+` v WHERE v.tenant_id = $3 AND v.question_id = q.id)
- AND EXISTS (
-  (SELECT o.id, o.label, o.position FROM `+s.t.pollOptions+` o WHERE o.tenant_id = $3 AND o.question_id = q.id
-   EXCEPT SELECT i.id, i.label, i.position FROM incoming i WHERE i.question_id = q.id)
-  UNION ALL
-  (SELECT i.id, i.label, i.position FROM incoming i WHERE i.question_id = q.id
-   EXCEPT SELECT o.id, o.label, o.position FROM `+s.t.pollOptions+` o WHERE o.tenant_id = $3 AND o.question_id = q.id)
- )`, ids, string(odata), rt.tenant).Scan(&voted); err != nil {
+	// The ordered question upsert above conflicts with live voting's share
+	// lock. Keep option changes and recounts behind those question locks.
+	if _, err := tx.Exec(ctx, `UPDATE `+s.t.pollQuestions+` q SET image_name = NULLIF(r.image, '')
+ FROM jsonb_to_recordset($1::jsonb) AS r(id text, image text)
+ WHERE q.tenant_id = $2 AND q.id = r.id::uuid AND r.image IS NOT NULL
+ AND q.image_name IS DISTINCT FROM NULLIF(r.image, '')`, string(data), rt.tenant); err != nil {
 		return err
-	}
-	if voted != "" {
-		return fmt.Errorf("%w: poll %s choices cannot change after voting starts", ErrConflict, voted)
 	}
 	if _, err := tx.Exec(ctx, `DELETE FROM `+s.t.pollOptions+` o WHERE o.tenant_id = $3 AND o.question_id = ANY($1::uuid[])
  AND NOT EXISTS (SELECT 1 FROM jsonb_to_recordset($2::jsonb) AS r(id text) WHERE r.id::uuid = o.id)`, ids, string(odata), rt.tenant); err != nil {
@@ -1017,11 +1021,24 @@ func (rt *Runtime) ImportPolls(ctx context.Context, tx pgx.Tx, in []content.Impo
 	if len(options) == 0 {
 		return nil
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO `+s.t.pollOptions+` AS o (tenant_id, id, question_id, label, position)
- SELECT $2, r.id::uuid, r.poll_id::uuid, r.label, r.position FROM jsonb_to_recordset($1::jsonb) AS r(id text, poll_id text, label text, position int)
+	_, err = tx.Exec(ctx, `INSERT INTO `+s.t.pollOptions+` AS o (tenant_id, id, question_id, label, position, image_name)
+ SELECT $2, r.id::uuid, r.poll_id::uuid, r.label, r.position, NULLIF(r.image, '') FROM jsonb_to_recordset($1::jsonb) AS r(id text, poll_id text, label text, position int, image text)
  ON CONFLICT (tenant_id, id) DO UPDATE SET label = EXCLUDED.label, position = EXCLUDED.position
  WHERE (o.label, o.position) IS DISTINCT FROM (EXCLUDED.label, EXCLUDED.position)`, string(odata), rt.tenant)
-	return err
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE `+s.t.pollOptions+` o SET image_name = NULLIF(r.image, '')
+ FROM jsonb_to_recordset($1::jsonb) AS r(id text, image text)
+ WHERE o.tenant_id = $2 AND o.id = r.id::uuid AND r.image IS NOT NULL
+ AND o.image_name IS DISTINCT FROM NULLIF(r.image, '')`, string(odata), rt.tenant); err != nil {
+		return err
+	}
+	polls := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		polls[id] = true
+	}
+	return rt.recountVotes(ctx, tx, polls)
 }
 
 // ImportVotes writes votes in tx (one per person, or IP, per poll; the last

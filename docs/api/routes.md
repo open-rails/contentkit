@@ -235,7 +235,7 @@ Anonymous readers can send `ContentKit-Reader-Preferences: {"filters":[{"group_i
 
 | Method | Path | Tier | Request | Response | Description |
 |---|---|---|---|---|---|
-| POST | `/v1/import` | staff `root:import:write` | `Batch` | 200 `Result` | Imports a batch of groups, content items, memberships, aliases, comments, reactions, favorites, polls and signals, idempotently by external id: re-sending converges. Records that fail are reported and the rest written; their rebuild jobs are queued. |
+| POST | `/v1/import` | staff `root:import:write` | `Batch` | 200 `Result` | Imports a batch of groups, content items, memberships, aliases, comments, reactions, favorites, polls and signals, idempotently by external id: re-sending converges. Imported poll choices and images can change after voting; kept choice IDs retain votes. Favorites and legacy reading accept removed tombstones; reaction value 0 clears an imported reaction. Favorite/reaction writes preserve native, unknown-origin and other-source rows. Records that fail are reported and the rest written; their rebuild jobs are queued. |
 | POST | `/v1/import/external-ids` | staff `root:import:write` | `ExternalIDsQuery` | 200 `ExternalIDs` | Pages the external ids imports under a source hold, per entity, with their ids and whether each is deleted: a persistent sync compares them with its source to find the deletes to send. |
 
 ## Error codes

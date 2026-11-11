@@ -86,11 +86,10 @@ func (s *Service) lockTarget(ctx context.Context, tx pgx.Tx, v versions.Target) 
 	return err
 }
 
-// recordFacts writes v's facts and refreshes its facets when they changed.
+// recordFacts writes v's changed media facts.
 func (s *Service) recordFacts(ctx context.Context, tx pgx.Tx, k *mediastore.RegisteredKind, v versions.Target, m *mediastore.Manifest) error {
-	// Catalog edits lock the parent before the version and derive access in
-	// a later statement. Hold that same parent lock through the facet callback
-	// so media facts cannot restore an access snapshot read before an edit.
+	// Catalog edits lock the parent before the version. Keep that order
+	// while reading the active publication and updating its media facts.
 	var id string
 	err := tx.QueryRow(ctx, `SELECT id FROM `+s.t.items+` WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, s.o.Tenant, v.Content).Scan(&id)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -106,14 +105,9 @@ func (s *Service) recordFacts(ctx context.Context, tx pgx.Tx, k *mediastore.Regi
 		m = active.View
 	}
 	f := factsOf(k, m)
-	err = tx.QueryRow(ctx, `UPDATE `+s.t.versions+` SET pages = $4, duration_ms = $5, width = $6, height = $7, has_audio = $8, updated_at = now()
+	_, err = tx.Exec(ctx, `UPDATE `+s.t.versions+` SET pages = $4, duration_ms = $5, width = $6, height = $7, has_audio = $8, updated_at = now()
 WHERE tenant_id = $1 AND id = $2 AND content_id = $3
-AND (pages, duration_ms, width, height, has_audio) IS DISTINCT FROM ($4, $5, $6, $7, $8) RETURNING id`,
-		s.o.Tenant, v.Version, v.Content, f.Pages, f.Duration, f.Width, f.Height, f.HasAudio).Scan(&id)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil
-	} else if err != nil {
-		return err
-	}
-	return s.o.Facets.RefreshTx(ctx, tx, []string{id})
+AND (pages, duration_ms, width, height, has_audio) IS DISTINCT FROM ($4, $5, $6, $7, $8)`,
+		s.o.Tenant, v.Version, v.Content, f.Pages, f.Duration, f.Width, f.Height, f.HasAudio)
+	return err
 }

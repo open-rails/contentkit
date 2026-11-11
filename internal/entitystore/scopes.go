@@ -11,6 +11,7 @@ import (
 	"github.com/open-rails/contentkit/access"
 	entities "github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/internal/gate"
+	"github.com/open-rails/contentkit/internal/jobqueue"
 )
 
 // Folders fences entities' media while they are deleted, records durable
@@ -279,9 +280,9 @@ AND deleted_at<$2 AND kind=ANY($3::text[]) AND id>$4 ORDER BY id LIMIT %d`, s.ta
 	if ctx.Err() != nil {
 		return 0, errors.Join(failures, ctx.Err())
 	}
-	// Exactly one shared storage pass: retries cannot restart the same failing
-	// namespace for every entity batch. Poll and account intents join this pass.
-	_, err = s.folders.PurgeRetired(ctx, limit)
+	// Poll and account intents join the same bounded storage pass, after all
+	// entity claims. A failed batch waits for the next invocation to retry.
+	err = s.purgeRetired(ctx, limit)
 	failures = errors.Join(failures, err)
 	total := 0
 	err = walk(func(refs []entities.Ref) error {
@@ -307,6 +308,19 @@ AND deleted_at<$2 AND kind=ANY($3::text[]) AND id>$4 ORDER BY id LIMIT %d`, s.ta
 		return nil
 	})
 	return total, errors.Join(failures, err)
+}
+
+func (s *Store) purgeRetired(ctx context.Context, limit int) error {
+	deadline := time.Now().Add(jobqueue.MediaCleanupBudget)
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		n, err := s.folders.PurgeRetired(ctx, limit)
+		if err != nil || n < limit || !time.Now().Before(deadline) {
+			return err
+		}
+	}
 }
 
 func (s *Store) checkMediaRestorable(ctx context.Context, tx pgx.Tx, ref entities.Ref) error {

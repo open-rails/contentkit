@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"regexp"
 	"strings"
 	"time"
@@ -215,21 +216,32 @@ func (s *Store) compile(opts ListOptions, ids []string) (cardQuery, error) {
 		}
 		scope, parent = visibleLink("scope_id"), visibleLink("parent_id")
 	}
+	listed := liveListed
+	if !opts.IncludeInternal && len(s.boundary) > 0 {
+		boundary, args := s.boundary.SQL("f", "entity_domain")
+		listed += " AND " + boundary
+		maps.Copy(c.args, args)
+	}
 	count := "coalesce(cc.n, 0)"
 	counts := fmt.Sprintf(`LEFT JOIN LATERAL (SELECT count(DISTINCT f.content_id)::int AS n FROM %s f
  WHERE f.tenant_id=g.tenant_id AND (f.entity_ids @> ARRAY[g.id] OR f.owner_entity_id=g.id)
  AND g.state='active' AND %s AND (@count_language='' OR @count_language::text=ANY(f.languages))%s) cc ON true`,
-		s.table("content_facets"), liveListed, countKind)
+		s.table("content_facets"), listed, countKind)
 	eligible, eligibilityJoin := "", ""
-	if countKind != "" && !opts.IncludeInternal {
+	if (countKind != "" || len(s.boundary) > 0) && !opts.IncludeInternal {
 		// Eligibility and counts share one facet scan, including owner-only links.
+		// Direct lookups keep the scan within the requested entities' facets.
+		members := ""
+		if ids != nil {
+			members = " AND (f.entity_ids && @ids::text[] OR f.owner_entity_id = ANY(@ids::text[]))"
+		}
 		eligible = fmt.Sprintf(`WITH eligible AS MATERIALIZED (
  SELECT membership.entity_id, count(DISTINCT f.content_id)::int AS n
  FROM %s f CROSS JOIN LATERAL unnest(array_append(f.entity_ids,f.owner_entity_id)) membership(entity_id)
  WHERE f.tenant_id=@tenant AND membership.entity_id IS NOT NULL AND %s
- AND (@count_language='' OR @count_language::text=ANY(f.languages))%s
+ AND (@count_language='' OR @count_language::text=ANY(f.languages))%s%s
  GROUP BY membership.entity_id)
-`, s.table("content_facets"), liveListed, countKind)
+`, s.table("content_facets"), listed, countKind, members)
 		eligibilityJoin = " JOIN eligible cc ON cc.entity_id=g.id"
 		counts = ""
 	} else if c.sort == entities.SortCount {
@@ -241,7 +253,7 @@ func (s *Store) compile(opts ListOptions, ids []string) (cardQuery, error) {
  WHERE f.tenant_id=@tenant AND membership.entity_id IS NOT NULL AND %s
  AND (@count_language='' OR @count_language::text=ANY(f.languages))%s
  GROUP BY membership.entity_id,f.content_id) members
- GROUP BY members.entity_id) cc ON cc.entity_id=g.id AND g.state='active'`, s.table("content_facets"), liveListed, countKind)
+ GROUP BY members.entity_id) cc ON cc.entity_id=g.id AND g.state='active'`, s.table("content_facets"), listed, countKind)
 	}
 	c.args["covered_kinds"] = s.coveredKinds()
 	covers := fmt.Sprintf(`LEFT JOIN LATERAL (SELECT jsonb_build_object('content_id',f.content_id,'auto',true) AS cover
@@ -251,7 +263,7 @@ func (s *Store) compile(opts ListOptions, ids []string) (cardQuery, error) {
  AND g.state='active' AND (g.cover IS NULL OR g.cover ? 'auto') AND %s
  AND (%s OR f.kind=ANY(@covered_kinds::text[]))
  ORDER BY coalesce(ic.favorites,0) DESC,f.published_at DESC NULLS LAST,f.content_id LIMIT 1) ac ON true`,
-		s.table("content_facets"), s.table("content_interaction_counts"), liveListed, entitlement.PublicSQL("f"))
+		s.table("content_facets"), s.table("content_interaction_counts"), listed, entitlement.PublicSQL("f"))
 	autoCover := "ac.cover"
 	if opts.namesOnly {
 		count, counts, covers, autoCover = "0", "", "", "NULL::jsonb"
@@ -453,7 +465,9 @@ func (s *Store) ManagementDetail(ctx context.Context, id entities.EntityID, lang
 	if err := s.requireInternalRead(ctx, true); err != nil {
 		return entities.EntityDetail{}, err
 	}
-	return s.detail(ctx, id, language, true)
+	unscoped := *s
+	unscoped.boundary = nil
+	return unscoped.detail(ctx, id, language, true)
 }
 
 func (s *Store) requireInternalRead(ctx context.Context, include bool) error {

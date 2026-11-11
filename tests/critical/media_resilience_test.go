@@ -30,8 +30,10 @@ import (
 	"github.com/open-rails/authkit/authtest"
 	"github.com/open-rails/authkit/iam"
 	ck "github.com/open-rails/contentkit"
+	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/internal/media/worker"
 	"github.com/open-rails/contentkit/internal/media/workqueue"
+	"github.com/open-rails/contentkit/internal/versionstore"
 	"github.com/open-rails/contentkit/media"
 	medias3 "github.com/open-rails/contentkit/media/s3"
 	"github.com/riverqueue/river"
@@ -841,4 +843,130 @@ func TestMediaWorkerRecovery(t *testing.T) {
 			t.Fatalf("replayed completed output was reencoded: writes %d -> %d", writes, afterWrites)
 		}
 	})
+}
+
+func TestMediaCommitLockContention(t *testing.T) {
+	m := newResilientMedia(t)
+	client := m.app.engine.Client()
+	ref := galleryRef(t, client, "Retryable manifest contention")
+	op := stageFile(t, client, ref, "pages/one.png", imageBytes(t))
+	target, err := m.config.Kinds.VersionRef(ref.Kind, ref.ID, ref.Version)
+	must(t, err)
+	item, err := m.config.Kinds.Item(target)
+	must(t, err)
+	unlock, err := mediastore.PGLocker(m.pool).Lock(t.Context(), item.ManifestKey())
+	must(t, err)
+	defer unlock()
+	// Release even the unchanged implementation so the negative control ends.
+	timer := time.AfterFunc(19*time.Second, unlock)
+	defer timer.Stop()
+	operation := uuid.NewString()
+	batch := media.CommitBody{Ref: ref, OperationID: operation, Ops: []media.Op{op}}
+	_, err = client.PostMediaUploadCommit(t.Context(), batch)
+	requireError(t, err, http.StatusServiceUnavailable, media.CodeUnavailable)
+	var reply *ck.Error
+	if !errors.As(err, &reply) || reply.RetryAfter <= 0 || !strings.Contains(reply.Message, "same operation_id") {
+		t.Fatalf("contention lost commit retry instructions: %v", err)
+	}
+	unlock()
+	_, err = client.PostMediaUploadCommit(t.Context(), batch)
+	must(t, err)
+	_, err = client.PostMediaUploadCommit(t.Context(), batch)
+	must(t, err)
+	var applied int
+	must(t, m.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+pgx.Identifier{m.schema, "content_media_commits"}.Sanitize()+` WHERE tenant_id=$1 AND operation_id=$2 AND state='applied'`, target.TenantID, operation).Scan(&applied))
+	if applied != 1 {
+		t.Fatalf("same-operation retry applied %d receipts", applied)
+	}
+}
+
+func TestChapterMarkerLockContention(t *testing.T) {
+	m := newResilientMedia(t, func(c *ck.Config) {
+		c.Media.Kinds[0].Publish = &media.Publish{Pages: "pages/{name}", Renditions: []string{"reader"}}
+	})
+	client := m.app.engine.Client()
+	ref := galleryRef(t, client, "Retryable chapter marker contention")
+	_, err := client.PostMediaUploadCommit(t.Context(), media.CommitBody{Ref: ref, OperationID: uuid.NewString(), Ops: []media.Op{stageFile(t, client, ref, "pages/one.png", imageBytes(t))}})
+	must(t, err)
+	unlock, err := versionstore.LockSources(t.Context(), m.pool, m.app.cfg.Scope.AppID.String(), []string{ref.Version})
+	must(t, err)
+	defer unlock()
+	// Bound the negative control even if the source waiter has no budget.
+	timer := time.AfterFunc(19*time.Second, unlock)
+	defer timer.Stop()
+	input := catalog.SegmentsInput{Segments: []catalog.SegmentInput{{Title: "Chapter one", StartPage: "pages/one.png"}}}
+	_, err = client.PutContentVersionSegments(t.Context(), ref.ID, ref.Version, input)
+	requireError(t, err, http.StatusServiceUnavailable, "unavailable")
+	var reply *ck.Error
+	if !errors.As(err, &reply) || !strings.Contains(reply.Message, "retry") {
+		t.Fatalf("chapter contention lost retry instructions: %v", err)
+	}
+	unlock()
+	_, err = client.PutContentVersionSegments(t.Context(), ref.ID, ref.Version, input)
+	must(t, err)
+}
+
+func TestMediaIngestLockContention(t *testing.T) {
+	m := newResilientMedia(t)
+	client := m.app.engine.Client()
+	ref := galleryRef(t, client, "Ingest survives manifest contention")
+	_, err := client.PostMediaUploadCommit(t.Context(), media.CommitBody{Ref: ref, OperationID: uuid.NewString(), Ops: []media.Op{stageFile(t, client, ref, "pages/one.png", imageBytes(t))}})
+	must(t, err)
+	manifests, target := failureManifests(t, m, ref)
+	item, err := m.config.Kinds.Item(target)
+	must(t, err)
+	queue := m.queue(t)
+	jobs, err := queue.JobList(t.Context(), river.NewJobListParams().Kinds((workqueue.IngestArgs{}).Kind()))
+	must(t, err)
+	if len(jobs.Jobs) != 1 {
+		t.Fatalf("expected one accepted ingest job, got %d", len(jobs.Jobs))
+	}
+	id := jobs.Jobs[0].ID
+	unlock, err := mediastore.PGLocker(m.pool).Lock(t.Context(), item.ManifestKey())
+	must(t, err)
+	defer unlock()
+	stop := startVideoFailureWorker(t, m)
+	defer stop()
+	waitForWithin(t, 150*time.Second, func() bool {
+		job, err := queue.JobGet(t.Context(), id)
+		must(t, err)
+		if job.State == rivertype.JobStateCompleted || job.State == rivertype.JobStateCancelled || job.State == rivertype.JobStateDiscarded {
+			t.Fatalf("lock contention settled ingest: state=%s attempt=%d errors=%+v", job.State, job.Attempt, job.Errors)
+		}
+		if job.State != rivertype.JobStateRetryable {
+			return false
+		}
+		if len(job.Errors) == 0 || !strings.Contains(job.Errors[len(job.Errors)-1].Error, "acquisition budget expired") {
+			t.Fatalf("ingest did not encounter the held manifest lock: %+v", job.Errors)
+		}
+		var meta struct {
+			TransientAttempts int `json:"contentkit_transient_attempts"`
+		}
+		must(t, json.Unmarshal(job.Metadata, &meta))
+		if meta.TransientAttempts != job.Attempt {
+			t.Fatalf("contention consumed ingest attempts: attempt=%d metadata=%s", job.Attempt, job.Metadata)
+		}
+		snapshot, _, err := manifests.Get(t.Context(), target)
+		must(t, err)
+		file, ok := snapshot.Get("pages/one.png")
+		if !ok || !file.IsUpload() || file.Fail() != nil {
+			t.Fatalf("contention failed or removed staged upload: %+v", file)
+		}
+		if job.Attempt > workqueue.MaxAttempts {
+			t.Logf("ingest remains retryable after %d contended attempts; metadata=%s", job.Attempt, job.Metadata)
+			return true
+		}
+		_, err = queue.JobRetry(t.Context(), id)
+		must(t, err)
+		return false
+	})
+	unlock()
+	_, err = queue.JobRetry(t.Context(), id)
+	must(t, err)
+	awaitMediaReady(t, client, ref)
+	job, err := queue.JobGet(t.Context(), id)
+	must(t, err)
+	if job.State != rivertype.JobStateCompleted {
+		t.Fatalf("ingest failed to resume after contention: %+v", job)
+	}
 }

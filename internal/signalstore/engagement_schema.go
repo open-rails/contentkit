@@ -36,6 +36,6 @@ var measuredSchema = map[string]tableSpec{
 		engine: "ReplacingMergeTree", version: "version", sortingKey: "tenant, subject_kind, subject, content_kind, content_id, content_version_id",
 		columns: append(append([]columnSpec{{"tenant", "LowCardinality(String)"}, {"subject_kind", "LowCardinality(String)"}, {"subject", "String"}}, refColumnSpecs...),
 			columnSpec{"first_seen_at", "DateTime('UTC')"}, columnSpec{"last_seen_at", "DateTime('UTC')"}, columnSpec{"progress", "UInt32"}, columnSpec{"progress_max", "UInt32"},
-			columnSpec{"completed", "Bool"}, columnSpec{"resume", "String"}, columnSpec{"version", "UInt256"}),
+			columnSpec{"completed", "Bool"}, columnSpec{"resume", "String"}, columnSpec{"version", "UInt256"}, columnSpec{"removed", "Bool"}),
 	},
 }

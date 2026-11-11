@@ -48,7 +48,8 @@ func (r *reactions) applyTx(ctx context.Context, tx pgx.Tx, actor access.Actor, 
 	}
 	if found {
 		if prev == value {
-			return 0, 0, nil
+			_, err := tx.Exec(ctx, `UPDATE `+r.s.t.reactions+` SET import_source = '' WHERE `+keyPred(1)+` AND `+actorPred(userID, 5)+` AND import_source IS DISTINCT FROM ''`, append(keyArgs(key), actorArg(userID, ip))...)
+			return 0, 0, err
 		}
 		if err := r.update(ctx, tx, userID, ip, key, value); err != nil {
 			return 0, 0, err
@@ -70,7 +71,7 @@ func (r *reactions) applyTx(ctx context.Context, tx pgx.Tx, actor access.Actor, 
 	// ON CONFLICT DO NOTHING makes the losing racer block on the other tx then
 	// no-op; a bare INSERT would abort the whole transaction.
 	tag, err := tx.Exec(ctx, `INSERT INTO `+r.s.t.reactions+`
-		(`+keyCols+`, user_id, ip, value, revision, author_hidden) VALUES ($1, $2, $3, $4, $5, $6, $7, `+r.s.nextRevision()+`, $8)`+onConflict(userID),
+		(`+keyCols+`, user_id, ip, value, revision, author_hidden, import_source) VALUES ($1, $2, $3, $4, $5, $6, $7, `+r.s.nextRevision()+`, $8, '')`+onConflict(userID),
 		append(keyArgs(key), nullIf(userID), nullIf(ip), value, hidden)...)
 	if err != nil {
 		return 0, 0, err
@@ -88,7 +89,8 @@ func (r *reactions) applyTx(ctx context.Context, tx pgx.Tx, actor access.Actor, 
 		return 0, 0, err
 	}
 	if prev == value {
-		return 0, 0, nil
+		_, err := tx.Exec(ctx, `UPDATE `+r.s.t.reactions+` SET import_source = '' WHERE `+keyPred(1)+` AND `+actorPred(userID, 5)+` AND import_source IS DISTINCT FROM ''`, append(keyArgs(key), actorArg(userID, ip))...)
+		return 0, 0, err
 	}
 	if err := r.update(ctx, tx, userID, ip, key, value); err != nil {
 		return 0, 0, err
@@ -101,7 +103,7 @@ func (r *reactions) applyTx(ctx context.Context, tx pgx.Tx, actor access.Actor, 
 }
 
 func (r *reactions) update(ctx context.Context, tx pgx.Tx, userID, ip string, key contentref.ContentKey, value int16) error {
-	_, err := tx.Exec(ctx, `UPDATE `+r.s.t.reactions+` SET value = $1, revision = `+r.s.nextRevision()+`, updated_at = now()
+	_, err := tx.Exec(ctx, `UPDATE `+r.s.t.reactions+` SET import_source = '', value = $1, revision = `+r.s.nextRevision()+`, updated_at = now()
 		WHERE `+keyPred(2)+` AND `+actorPred(userID, 6), append([]any{value}, append(keyArgs(key), actorArg(userID, ip))...)...)
 	return err
 }
