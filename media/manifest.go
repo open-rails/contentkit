@@ -241,7 +241,7 @@ func (f File) Fail() *Failure {
 }
 
 const (
-	MaxManifestBytes = 8 << 20
+	MaxManifestBytes = 16 << 20
 )
 
 const (
