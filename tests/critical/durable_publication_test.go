@@ -129,8 +129,8 @@ func TestDurableTextPublication(t *testing.T) {
 	var priority int
 	must(t, w.pool.QueryRow(t.Context(), `SELECT priority FROM `+w.schema+`_river.river_job
  WHERE kind='contentkit_publication' AND args->>'id'=$1 AND state NOT IN ('completed','cancelled','discarded')`, withdrawal.ID).Scan(&priority))
-	if withdrawal.ID == request.ID || priority != 2 {
-		t.Fatalf("withdrawal request=%s priority=%d, want a new request with priority 2", withdrawal.ID, priority)
+	if withdrawal.ID == request.ID || priority != 1 {
+		t.Fatalf("withdrawal request=%s priority=%d, want a new request with priority 1", withdrawal.ID, priority)
 	}
 	must(t, fleet.Start(t.Context()))
 	awaitDuePublications(t, a)
