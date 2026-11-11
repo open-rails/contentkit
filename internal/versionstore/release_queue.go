@@ -228,9 +228,24 @@ func (s *Service) scheduleReleaseAtTx(ctx context.Context, tx pgx.Tx, target ver
 		}
 		break
 	}
+	// First publication goes first.
+	var first bool
+	if err := tx.QueryRow(ctx, `SELECT release_id IS NULL FROM `+s.t.versions+`
+ WHERE tenant_id=$1 AND id=$2 AND content_id=$3`, s.o.Tenant, target.Version, target.Content).Scan(&first); err != nil {
+		return err
+	}
+	priority := 2
+	if first {
+		priority = 1
+	}
 	return mediastore.InsertOnce(ctx, func(ctx context.Context, args river.JobArgs, options *river.InsertOpts) (*rivertype.JobInsertResult, error) {
-		return client.InsertTx(ctx, tx, args, options)
-	}, publicationArgs{ID: id, Due: at}, river.InsertOpts{Queue: QueueFor(s.o.Tenant), ScheduledAt: at})
+		res, err := client.InsertTx(ctx, tx, args, options)
+		if err == nil && res.UniqueSkippedAsDuplicate && res.Job.State != rivertype.JobStateRunning && res.Job.ScheduledAt.After(at) {
+			// An earlier due moves the waiting job up.
+			res.Job, err = client.JobRetryTx(ctx, tx, res.Job.ID)
+		}
+		return res, err
+	}, publicationArgs{ID: id}, river.InsertOpts{Queue: QueueFor(s.o.Tenant), ScheduledAt: at, Priority: priority})
 }
 
 // errRequestGone cancels a job whose request a newer release pruned.
@@ -248,10 +263,10 @@ func (s *Service) pruneRequestsTx(ctx context.Context, tx pgx.Tx, target version
 	return err
 }
 
+// Publication jobs dedupe per request, regardless of due time.
 type publicationArgs struct {
-	ID    string    `json:"id"`
-	Due   time.Time `json:"due"`
-	After int64     `json:"after,omitempty"`
+	ID    string `json:"id"`
+	After int64  `json:"after,omitempty"`
 }
 
 func (publicationArgs) Kind() string { return "contentkit_publication" }
