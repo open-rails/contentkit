@@ -78,8 +78,9 @@ func wakeDuePublicationJobs(t *testing.T, a *application) {
 	// freeze independently of wall time. Wake to that same clock boundary.
 	_, err := a.deps.Postgres.Exec(t.Context(), `UPDATE `+pgx.Identifier{publicationRiverSchema(a), "river_job"}.Sanitize()+` job
  SET scheduled_at=now(),state='available'
- WHERE job.state IN ('scheduled','retryable') AND (job.args->>'due')::timestamptz<=$1
+ WHERE job.state IN ('scheduled','retryable')
  AND job.kind='contentkit_publication' AND EXISTS
-  (SELECT 1 FROM `+requests+` request WHERE request.tenant_id=$2 AND request.id::text=job.args->>'id')`, publicationNow(a), publicationTenant(a))
+  (SELECT 1 FROM `+requests+` request WHERE request.tenant_id=$2 AND request.id::text=job.args->>'id'
+   AND request.scheduled_at<=$1)`, publicationNow(a), publicationTenant(a))
 	must(t, err)
 }
