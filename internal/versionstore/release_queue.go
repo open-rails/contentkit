@@ -228,14 +228,15 @@ func (s *Service) scheduleReleaseAtTx(ctx context.Context, tx pgx.Tx, target ver
 		}
 		break
 	}
-	// First publication goes first.
-	var first bool
-	if err := tx.QueryRow(ctx, `SELECT release_id IS NULL FROM `+s.t.versions+`
- WHERE tenant_id=$1 AND id=$2 AND content_id=$3`, s.o.Tenant, target.Version, target.Content).Scan(&first); err != nil {
+	// First publications and removals of released versions go first.
+	var urgent bool
+	if err := tx.QueryRow(ctx, `SELECT v.release_id IS NULL OR v.state<>'published' OR c.state<>'published'
+ FROM `+s.t.versions+` v JOIN `+s.t.items+` c ON c.tenant_id=v.tenant_id AND c.id=v.content_id
+ WHERE v.tenant_id=$1 AND v.id=$2 AND v.content_id=$3`, s.o.Tenant, target.Version, target.Content).Scan(&urgent); err != nil {
 		return err
 	}
 	priority := 2
-	if first {
+	if urgent {
 		priority = 1
 	}
 	return mediastore.InsertOnce(ctx, func(ctx context.Context, args river.JobArgs, options *river.InsertOpts) (*rivertype.JobInsertResult, error) {
