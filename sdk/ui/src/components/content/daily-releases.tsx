@@ -97,9 +97,10 @@ function ReleaseDaySection({ day, initial, step, pending, cardProps: p, collapse
       premium ??= { key: "premium-summary", card, summary: true, position: i + 1 };
       return [];
     });
+    if (p.premiumLast) result.sort((a, b) => Number(a.card.access.level === "tier") - Number(b.card.access.level === "tier"));
     if (premium) result.push(premium);
     return result;
-  }, [cards, collapsePremium, premiumExpanded]);
+  }, [cards, collapsePremium, premiumExpanded, p.premiumLast]);
   const exposed = useMemo(() => open && !pending ? entries.filter((entry) => !entry.summary).map((entry) => ({ ...entry.card, position: entry.position })) : [], [open, pending, entries]);
   const exposure = useExposure(exposed, { surface: p.surface ?? "releases", render: day.date, client: p.client });
   const layout = cardGridLayout(p.grid);

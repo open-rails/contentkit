@@ -38,6 +38,8 @@ export interface CardListProps extends Omit<ContentCardProps, "card" | "onOpen" 
   appearance?: ContentKitUiAppearance;
   /** Collapse paid/locked cards into a counted tile, or hide them; default show. */
   locked?: LockedCards;
+  /** Keep tier-access cards after public cards, preserving each group's query order. */
+  premiumLast?: boolean;
   /** Optional-filter summary tiles are on by default; hosts may suppress them in previews. */
   showFilteredSummary?: boolean;
   /** Show the collapsed locked tile only at this measured grid width. Default 0. */
@@ -143,10 +145,11 @@ function CardGridBody({ list, render, filterKinds, filterLanguage, horizontal, s
       }
       result.push({ key: card.id, card, position: positionOffset + i + 1 });
     }
+    if (p.premiumLast) result.sort((a, b) => Number(a.card?.access.level === "tier") - Number(b.card?.access.level === "tier"));
     if (lockedTile) result.push({ key: "premium-summary", premium: true, card: preview });
     const limit = mobile && p.mobileCardLimit !== undefined ? p.mobileCardLimit : p.cardLimit;
     return limit !== undefined && Number.isFinite(limit) ? result.slice(0, Math.max(0, Math.floor(limit))) : result;
-  }, [list.items, collapse, p.locked, lockedTile, mobile, p.mobileCardLimit, p.cardLimit, positionOffset]);
+  }, [list.items, collapse, p.locked, lockedTile, mobile, p.mobileCardLimit, p.cardLimit, p.premiumLast, positionOffset]);
   const shown = useMemo(() => entries.flatMap((entry) => ("premium" in entry ? [] : [{ ...entry.card, position: entry.position }])), [entries]);
   const exposure = useExposure(shown, { surface: p.surface ?? "list", render, client: p.client, query_id: queryID, search_query: searchQuery, ranker, settledEmpty });
   const [sentinel, near] = useNearViewport({ margin: "600px 0px", leaveMargin: "1200px 0px" });
