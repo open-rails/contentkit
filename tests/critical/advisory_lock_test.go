@@ -2,6 +2,7 @@ package critical_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -13,7 +14,12 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/open-rails/contentkit/internal/pglock"
+	"github.com/open-rails/contentkit/internal/versionstore"
 )
+
+type panicLockContext struct{ context.Context }
+
+func (panicLockContext) Deadline() (time.Time, bool) { panic("test: waiter context panicked") }
 
 func TestAdvisoryLockSession(t *testing.T) {
 	dsn := os.Getenv("CONTENTKIT_CRITICAL_PG")
@@ -212,4 +218,92 @@ func TestAdvisoryLockSession(t *testing.T) {
 		}
 		other()
 	})
+	t.Run("CK279_wait_budget_preserves_other_shared_locks", func(t *testing.T) {
+		ctx := t.Context()
+		a, name := process(t)
+		b, _ := process(t)
+		first, _, err := pglock.Acquire(ctx, a, prefix+"budget-first", true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer first()
+		second, _, err := pglock.Acquire(ctx, a, prefix+"budget-second", true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer second()
+		blocker, _, err := pglock.Acquire(ctx, b, prefix+"budget-blocker", true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer blocker()
+		// The caller still has time left when the acquisition's own budget ends.
+		waitCtx, cancel := context.WithTimeout(ctx, 19*time.Second)
+		defer cancel()
+		started := time.Now()
+		_, ok, err := pglock.Acquire(waitCtx, a, prefix+"budget-blocker", true)
+		if ok || err == nil || !errors.Is(err, context.DeadlineExceeded) || !errors.Is(err, pglock.ErrContended) {
+			t.Errorf("wait timeout did not return retryable contention: ok=%v err=%v", ok, err)
+		}
+		if elapsed := time.Since(started); elapsed > 17*time.Second || waitCtx.Err() != nil {
+			t.Errorf("acquisition used the caller's long deadline: elapsed=%s caller=%v", elapsed, waitCtx.Err())
+		}
+		if held, locks := sessions(t, b, name); held != 1 || locks != 2 {
+			t.Errorf("wait timeout disturbed shared session: sessions=%d locks=%d", held, locks)
+		}
+		var waiters int
+		if err := b.QueryRow(ctx, `SELECT count(*) FROM pg_locks l JOIN pg_stat_activity a ON a.pid=l.pid WHERE l.locktype='advisory' AND NOT l.granted AND a.application_name=$1`, name).Scan(&waiters); err != nil {
+			t.Fatal(err)
+		}
+		if waiters != 0 {
+			t.Errorf("timed-out dedicated waiter still owns %d queued locks", waiters)
+		}
+		for _, key := range []string{"budget-first", "budget-second"} {
+			if release, ok, err := pglock.Acquire(ctx, b, prefix+key, false); err != nil || ok {
+				if ok {
+					release()
+				}
+				t.Errorf("timeout dropped another owner's %s: ok=%v err=%v", key, ok, err)
+			}
+		}
+	})
+
+	t.Run("CK279_source_lock_partial_acquisition_releases_on_panic", func(t *testing.T) {
+		ctx := t.Context()
+		a, name := process(t)
+		b, _ := process(t)
+		t.Cleanup(func() {
+			// This also cleans up the unchanged implementation's leaked key.
+			cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			_, err := b.Exec(cleanup, `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE application_name=$1`, name)
+			if err != nil {
+				t.Error(err)
+			}
+		})
+		tenant := uuid.NewString()
+		key := "contentkit:media:contentkit:versions:" + tenant + ":"
+		blocker, _, err := pglock.Acquire(ctx, b, key+"b", true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer blocker()
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Error("second acquisition did not panic")
+				}
+			}()
+			_, _ = versionstore.LockSources(panicLockContext{ctx}, a, tenant, []string{"b", "a"})
+		}()
+		release, ok, err := pglock.Acquire(ctx, b, key+"a", false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !ok {
+			t.Fatal("LockSources retained its first key after the second acquisition panicked")
+		}
+		release()
+	})
+
 }

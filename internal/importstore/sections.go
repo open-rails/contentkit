@@ -248,7 +248,7 @@ func (run *batchRun) reaction(r *resolver, i int) (any, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	return content.ImportReaction{Ref: t.ref, UserID: x.UserID, IP: x.IP, Value: x.Value, CreatedAt: x.CreatedAt, UpdatedAt: x.UpdatedAt}, "", nil
+	return content.ImportReaction{Source: run.b.Source, Ref: t.ref, UserID: x.UserID, IP: x.IP, Value: x.Value, CreatedAt: x.CreatedAt, UpdatedAt: x.UpdatedAt}, "", nil
 }
 
 func (run *batchRun) favorite(r *resolver, i int) (any, string, error) {
@@ -257,7 +257,7 @@ func (run *batchRun) favorite(r *resolver, i int) (any, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	return content.ImportFavorite{Ref: t.ref, UserID: f.UserID, CreatedAt: f.CreatedAt}, "", nil
+	return content.ImportFavorite{Source: run.b.Source, Ref: t.ref, UserID: f.UserID, Removed: f.Removed, CreatedAt: f.CreatedAt}, "", nil
 }
 
 func (run *batchRun) poll(r *resolver, i int) (any, string, error) {
@@ -266,14 +266,14 @@ func (run *batchRun) poll(r *resolver, i int) (any, string, error) {
 	if err != nil {
 		return nil, p.ExternalID, err
 	}
-	in := content.ImportPoll{ID: id, Kind: p.Kind, Question: p.Question, Language: p.Language, Active: p.Active == nil || *p.Active, LiveAt: p.LiveAt,
+	in := content.ImportPoll{ID: id, Kind: p.Kind, Question: p.Question, Image: p.Image, Language: p.Language, Active: p.Active == nil || *p.Active, LiveAt: p.LiveAt,
 		ClosesAt: p.ClosesAt, DeletedAt: p.DeletedAt, CreatedAt: p.CreatedAt, UpdatedAt: p.UpdatedAt}
 	for _, o := range p.Options {
 		oid, err := r.own(importer.RecordOption, o.ExternalID, o.ID, p.CreatedAt)
 		if err != nil {
 			return nil, p.ExternalID, err
 		}
-		in.Options = append(in.Options, content.ImportPollOption{ID: oid, Label: o.Label, Position: o.Position})
+		in.Options = append(in.Options, content.ImportPollOption{ID: oid, Label: o.Label, Position: o.Position, Image: o.Image})
 	}
 	return in, p.ExternalID, nil
 }
@@ -375,5 +375,5 @@ func (run *batchRun) legacyReading(r *resolver, i int) (any, string, error) {
 	}
 	key := subject.Kind() + ":" + subject.Key() + "/" + target.content + "/" + target.version
 	return discovery.ImportLegacyReading{ContentID: target.content, VersionID: target.version, Subject: subject, FirstReadAt: row.FirstReadAt,
-		LastReadAt: row.LastReadAt, Progress: row.Progress, ProgressMax: row.ProgressMax, Completed: row.Completed, Resume: row.Resume, Revision: row.Revision}, key, nil
+		LastReadAt: row.LastReadAt, Removed: row.Removed, Progress: row.Progress, ProgressMax: row.ProgressMax, Completed: row.Completed, Resume: row.Resume, Revision: row.Revision}, key, nil
 }

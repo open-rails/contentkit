@@ -45,7 +45,7 @@ func (s *Service) ImportLegacyReading(ctx context.Context, in []discovery.Import
 			first = *row.FirstReadAt
 		}
 		out = append(out, signal.LegacyReading{ContentRef: contentref.NewVersion(s.o.Tenant, target.kind, row.ContentID, row.VersionID), Subject: row.Subject,
-			FirstReadAt: first, LastReadAt: row.LastReadAt, Progress: row.Progress, ProgressMax: row.ProgressMax, Completed: row.Completed, Resume: row.Resume, Revision: row.Revision})
+			FirstReadAt: first, LastReadAt: row.LastReadAt, Progress: row.Progress, ProgressMax: row.ProgressMax, Completed: row.Completed, Resume: row.Resume, Revision: row.Revision, Removed: row.Removed})
 	}
 	for start := 0; start < len(out); start += signal.MaxSignalsPerBatch {
 		if err := s.o.Hub.ImportLegacyReading(ctx, out[start:min(start+signal.MaxSignalsPerBatch, len(out))]); err != nil {

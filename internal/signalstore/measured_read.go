@@ -31,7 +31,7 @@ func (st *Store) readingState(scope string) string {
  SELECT tenant,subject_kind,subject,content_kind,content_id,content_version_id,
  first_seen_at,last_seen_at,toUInt64(0),progress,progress_max,
  toFloat64(progress)/greatest(toFloat64(progress_max),1.),completed,resume,toFloat64(0)
- FROM %s.legacy_reading_state FINAL WHERE %s)
+ FROM %s.legacy_reading_state FINAL WHERE NOT removed AND %s)
  GROUP BY tenant,subject_kind,subject,content_kind,content_id,content_version_id`, st.db, scope, st.db, scope)
 	return "SELECT tenant,subject_kind,subject,content_kind,content_id,content_version_id," +
 		"if(r.first_seen_at=toDateTime(0,'UTC'),f.first_signal_at,r.first_seen_at) AS first_seen_at," +

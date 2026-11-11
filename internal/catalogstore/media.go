@@ -119,8 +119,8 @@ func (s *Store) BindMedia(m Media) error {
 	return nil
 }
 
-// RefreshTx is versions.Facets: it refreshes the facets of the versions'
-// content items after their media facts changed.
+// RefreshTx refreshes the listing facets of the versions' content items
+// in the writing transaction.
 func (s *Store) RefreshTx(ctx context.Context, tx pgx.Tx, versionIDs []string) error {
 	rows, err := tx.Query(ctx, `SELECT DISTINCT content_id FROM `+s.t.versions+` WHERE tenant_id = $1 AND id = ANY($2)`, s.tenant, versionIDs)
 	if err != nil {

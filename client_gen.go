@@ -3668,7 +3668,7 @@ func (c *Client) GetManageSearchSuggestions(ctx context.Context, q GetManageSear
 	return out, err
 }
 
-// PostImport is POST /v1/import (staff). Imports a batch of groups, content items, memberships, aliases, comments, reactions, favorites, polls and signals, idempotently by external id: re-sending converges. Records that fail are reported and the rest written; their rebuild jobs are queued.
+// PostImport is POST /v1/import (staff). Imports a batch of groups, content items, memberships, aliases, comments, reactions, favorites, polls and signals, idempotently by external id: re-sending converges. Imported poll choices and images can change after voting; kept choice IDs retain votes. Favorites and legacy reading accept removed tombstones; reaction value 0 clears an imported reaction. Favorite/reaction writes preserve native, unknown-origin and other-source rows. Records that fail are reported and the rest written; their rebuild jobs are queued.
 func (c *Client) PostImport(ctx context.Context, body importer.Batch) (importer.Result, error) {
 	var out importer.Result
 	err := c.call(ctx, http.MethodPost, "/v1/import", nil, body, &out)

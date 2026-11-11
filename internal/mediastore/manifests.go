@@ -39,7 +39,7 @@ type ManifestOptions struct {
 	Journal *PGJournal
 	// CacheBytes bounds the decoded manifests kept in process, revalidated
 	// by ETag. A manifest costs about three times its JSON, so the largest
-	// (MaxManifestBytes) costs 24 MiB; default 128 MiB, at least two of them.
+	// (MaxManifestBytes) costs 48 MiB; default 128 MiB, at least two of them.
 	CacheBytes int64
 	MaxRetries int // conditional-write attempts per recovery fence; default 16
 	// CleanupGrace bounds unfinished private allocations; default 24 hours.
@@ -332,7 +332,9 @@ func (m *Manifests) cleanup(ctx context.Context, item Item, publicOnly bool, sel
 	}
 	defer func() {
 		if c.State == "open" {
-			err = errors.Join(err, m.journal.finish(context.WithoutCancel(ctx), c, false, nil, nil))
+			settleCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
+			defer cancel()
+			err = errors.Join(err, m.journal.finish(settleCtx, c, false, nil, nil))
 		}
 	}()
 	cur, _, err := m.get(ctx, item.ManifestKey())
@@ -836,12 +838,15 @@ func (m *Manifests) CompleteCommit(ctx context.Context, ref contentref.ContentRe
 	if err != nil {
 		return err
 	}
-	unlock, err := m.locker.Lock(ctx, item.ManifestKey())
-	if err != nil {
+	err = func() error {
+		unlock, err := m.locker.Lock(ctx, item.ManifestKey())
+		if err != nil {
+			return err
+		}
+		defer unlock()
+		_, _, err = m.recoverAttemptLocked(ctx, item, &id)
 		return err
-	}
-	_, _, err = m.recoverAttemptLocked(ctx, item, &id)
-	unlock()
+	}()
 	if err != nil {
 		return err
 	}

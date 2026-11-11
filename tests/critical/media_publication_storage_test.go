@@ -3,9 +3,12 @@ package critical_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -14,7 +17,10 @@ import (
 	mediastore "github.com/open-rails/contentkit/internal/mediastore"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	ck "github.com/open-rails/contentkit"
+	"github.com/open-rails/contentkit/internal/media/workqueue"
+	"github.com/open-rails/contentkit/internal/pglock"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/layout"
 	"github.com/open-rails/contentkit/media/token"
@@ -261,5 +267,248 @@ func TestPublicationStorage(t *testing.T) {
 	}
 	if _, err := storage.store.PresignEditorGet(t.Context(), originalKey, 6*time.Minute); err == nil {
 		t.Fatal("editor preview accepted a lifetime beyond five minutes")
+	}
+}
+
+// These probes wrap the real lock and S3 store to schedule an edit precisely
+// between holds and count the storage work done while each hold is live.
+type publicationBatchStore struct {
+	media.Store
+	destinations  map[string]bool
+	heads, copies int
+	loseCopyAt    int
+	forbidHeads   bool
+	panicProbe    bool
+}
+
+func (s *publicationBatchStore) Head(ctx context.Context, key string) (media.Object, error) {
+	if s.destinations[key] {
+		s.heads++
+		if s.forbidHeads {
+			return media.Object{}, errors.New("test: delivery was verified again during adoption")
+		}
+	}
+	return s.Store.Head(ctx, key)
+}
+
+func (s *publicationBatchStore) Copy(ctx context.Context, source, destination string, options media.CopyOptions) (media.Object, error) {
+	s.copies++
+	object, err := s.Store.Copy(ctx, source, destination, options)
+	if err == nil && s.copies == s.loseCopyAt {
+		return media.Object{}, errors.New("test: copy response lost in second batch")
+	}
+	return object, err
+}
+
+func (s *publicationBatchStore) Capabilities(ctx context.Context) (media.Capabilities, error) {
+	if s.panicProbe {
+		panic("test: recovery storage probe panicked")
+	}
+	return s.Store.Capabilities(ctx)
+}
+
+type publicationBatchLocker struct {
+	mediastore.Locker
+	store      *publicationBatchStore
+	after      func()
+	holds      [][2]int // destination HEADs and COPYs per hold
+	lastUnlock func()
+}
+
+func (l *publicationBatchLocker) Lock(ctx context.Context, key string) (func(), error) {
+	unlock, err := l.Locker.Lock(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	l.lastUnlock = unlock
+	heads, copies := l.store.heads, l.store.copies
+	return func() {
+		unlock()
+		l.holds = append(l.holds, [2]int{l.store.heads - heads, l.store.copies - copies})
+		if l.after != nil {
+			l.after()
+		}
+	}, nil
+}
+
+func TestPromotionLockBatches(t *testing.T) {
+	m := newResilientMedia(t)
+	ctx := t.Context()
+	registry := m.config.Kinds
+	queue, err := workqueue.New(m.pool, registry, m.config.Schema)
+	must(t, err)
+	journal, err := mediastore.NewPGJournal(m.pool, m.schema, queue)
+	must(t, err)
+	clean, err := mediastore.NewManifests(m.storage.store, registry, mediastore.ManifestOptions{Locker: mediastore.PGLocker(m.pool), Journal: journal})
+	must(t, err)
+	for _, scenario := range []string{"commits_and_derivative_edits", "withdrawal", "retirement", "source_retired_at_adoption", "changed_delivery_at_adoption", "partial_copy_retry", "panic_in_complete_commit"} {
+		t.Run(scenario, func(t *testing.T) {
+			ref := galleryRef(t, m.app.engine.Client(), scenario)
+			target, err := registry.VersionRef(ref.Kind, ref.ID, ref.Version)
+			must(t, err)
+			item, err := registry.Item(target)
+			must(t, err)
+			payload := []byte("immutable publication output")
+			sum := sha256.Sum256(payload)
+			sums := make([][]byte, 33)
+			for i := range sums {
+				sums[i] = sum[:]
+			}
+			blobs, err := clean.NewBlobs(ctx, target, layout.AreaInternal, sums)
+			must(t, err)
+			inputs := make([]mediastore.Promotion, len(blobs))
+			for i, blob := range blobs {
+				key, err := item.Blob(blob)
+				must(t, err)
+				_, err = m.storage.store.Put(ctx, key, bytes.NewReader(payload), int64(len(payload)), media.PutOptions{ContentType: "image/webp", ChecksumSHA256: sum[:]})
+				must(t, err)
+				inputs[i] = mediastore.Promotion{Source: blob, Area: layout.AreaPublic}
+			}
+			_, err = clean.EditExisting(ctx, target, func(current *mediastore.Manifest) error {
+				for i, blob := range blobs {
+					current.Files = append(current.Files, media.File{Path: fmt.Sprintf("reader/%02d.webp", i), Blob: blob, Type: "image/webp", Size: int64(len(payload)), Preset: "reader", From: "pages/one.png", FP: "initial"})
+				}
+				return nil
+			})
+			must(t, err)
+			operation := uuid.NewString()
+			plan, err := clean.PreparePromotion(ctx, target, operation, inputs)
+			must(t, err)
+			store := &publicationBatchStore{Store: m.storage.store, destinations: map[string]bool{}}
+			for _, file := range plan.Files {
+				key, err := item.Blob(file.Blob)
+				must(t, err)
+				store.destinations[key] = true
+			}
+			locker := &publicationBatchLocker{Locker: mediastore.PGLocker(m.pool), store: store}
+			manifests, err := mediastore.NewManifests(store, registry, mediastore.ManifestOptions{Locker: locker, Journal: journal})
+			must(t, err)
+			edits := 0
+			locker.after = func() {
+				if store.heads == 0 {
+					return
+				}
+				if store.copies > 16 && len(locker.holds) == 1 {
+					t.Errorf("first hold copied %d files, want at most 16", store.copies)
+				}
+				switch scenario {
+				case "commits_and_derivative_edits":
+					if store.copies == len(blobs) {
+						return
+					}
+					_, err := m.app.engine.Client().PostMediaUploadCommit(ctx, media.CommitBody{Ref: ref, OperationID: uuid.NewString(), Ops: []media.Op{{Op: media.OpMeta, Meta: map[string]any{"between_batches": store.copies}}}})
+					must(t, err)
+					_, err = clean.EditExisting(ctx, target, func(current *mediastore.Manifest) error { current.Files[0].FP = fmt.Sprint(store.copies); return nil })
+					must(t, err)
+					edits++
+				case "withdrawal":
+					locker.after = nil
+					must(t, clean.WithdrawPromotion(ctx, target, operation))
+				case "retirement":
+					locker.after = nil
+					key, err := item.Blob(plan.Files[16].Blob)
+					must(t, err)
+					_, err = m.pool.Exec(ctx, `UPDATE `+pgx.Identifier{m.schema, "content_media_allocations"}.Sanitize()+` SET retired_at=now() WHERE tenant_id=$1 AND object_key=$2`, target.TenantID, key)
+					must(t, err)
+				case "source_retired_at_adoption":
+					if store.copies != len(blobs) {
+						return
+					}
+					locker.after = nil
+					key, err := item.Blob(plan.Files[0].Source)
+					must(t, err)
+					_, err = m.pool.Exec(ctx, `UPDATE `+pgx.Identifier{m.schema, "content_media_allocations"}.Sanitize()+` SET retired_at=now() WHERE tenant_id=$1 AND object_key=$2`, target.TenantID, key)
+					must(t, err)
+				case "changed_delivery_at_adoption":
+					if store.copies != len(blobs) {
+						return
+					}
+					locker.after = nil
+					_, err := clean.EditExisting(ctx, target, func(current *mediastore.Manifest) error {
+						for i := range current.Deliveries {
+							if current.Deliveries[i].ID == operation {
+								files := current.Deliveries[i].Files
+								files[0], files[1] = files[1], files[0]
+							}
+						}
+						return nil
+					})
+					must(t, err)
+					store.forbidHeads = true
+				default:
+					locker.after = nil
+				}
+			}
+			if scenario == "panic_in_complete_commit" {
+				locker.after = nil
+				store.panicProbe = true
+				func() {
+					defer func() {
+						if recover() == nil {
+							t.Error("recovery did not panic")
+						}
+					}()
+					_ = manifests.CompleteCommit(ctx, target, uuid.NewString())
+				}()
+				// Clean up even the unchanged implementation's leaked holder.
+				defer locker.lastUnlock()
+				release, ok, err := pglock.Acquire(ctx, m.pool, "contentkit:media:"+item.ManifestKey(), false)
+				must(t, err)
+				if !ok {
+					t.Fatal("CompleteCommit retained its manifest lock after panic")
+				}
+				release()
+				return
+			}
+			if scenario == "partial_copy_retry" {
+				store.loseCopyAt = 18
+			}
+			finished, err := manifests.Promote(ctx, target, operation)
+			switch scenario {
+			case "withdrawal":
+				if !errors.Is(err, mediastore.ErrDeliveryWithdrawn) || store.copies != 16 {
+					t.Fatalf("withdrawal: copies=%d err=%v", store.copies, err)
+				}
+			case "retirement":
+				if !errors.Is(err, mediastore.ErrAllocationRetired) || store.copies != 16 {
+					t.Fatalf("retirement: copies=%d err=%v", store.copies, err)
+				}
+			case "source_retired_at_adoption":
+				if !errors.Is(err, mediastore.ErrAllocationRetired) {
+					t.Fatalf("adoption accepted a retired source pin: %v", err)
+				}
+			case "changed_delivery_at_adoption":
+				if !errors.Is(err, mediastore.ErrCommitIdentity) {
+					t.Fatalf("changed delivery reused stale proof: %v", err)
+				}
+			case "partial_copy_retry":
+				if err == nil || store.copies != 18 {
+					t.Fatalf("partial copy: copies=%d err=%v", store.copies, err)
+				}
+				finished, err = manifests.Promote(ctx, target, operation)
+				must(t, err)
+				if !finished.Ready || store.copies != len(blobs) || !slices.Equal(finished.Files, plan.Files) {
+					t.Fatalf("retry changed or recopied immutable destinations: copies=%d", store.copies)
+				}
+			default:
+				must(t, err)
+				if !finished.Ready || edits != 2 {
+					t.Fatalf("publication did not allow edits between batches: ready=%v edits=%d", finished.Ready, edits)
+				}
+				current, _, err := clean.Get(ctx, target)
+				must(t, err)
+				if current.Meta["between_batches"] != float64(32) || current.Files[0].FP != "32" {
+					t.Fatal("adoption lost concurrent commit or derivative edit")
+				}
+				if store.heads != 2*len(blobs) {
+					t.Fatalf("adoption re-HEADed immutable delivery: got %d destination HEADs", store.heads)
+				}
+			}
+			for _, hold := range locker.holds {
+				if hold[0] > 32 || hold[1] > 16 {
+					t.Errorf("unbounded hold: %d destination HEADs, %d copies", hold[0], hold[1])
+				}
+			}
+		})
 	}
 }

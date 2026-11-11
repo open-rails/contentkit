@@ -21,118 +21,107 @@ func TestImportedPollChoices(t *testing.T) {
 	a := w.apps[0]
 	admin := a.engine.Client()
 	created := time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
-	record := importer.PollRecord{ExternalID: "season", ID: contentref.NewID(), Question: "Choose a season", Language: "en", CreatedAt: &created,
-		Options: []importer.PollOptionRecord{
-			{ExternalID: "summer", ID: contentref.NewID(), Label: "Summer"},
-			{ExternalID: "winter", ID: contentref.NewID(), Label: "Winter", Position: 1},
-			{ExternalID: "spring", ID: contentref.NewID(), Label: "Spring", Position: 2},
-		}}
-	batch := importer.Batch{Source: "poll-choice-lock", Polls: []importer.PollRecord{record}}
-	for range 2 {
-		result, err := admin.PostImport(t.Context(), batch)
-		must(t, err)
-		if len(result.Failed) != 0 || result.Written[importer.SectionPolls] != 1 || result.IDs[importer.RecordPoll][record.ExternalID] != record.ID {
-			t.Fatalf("initial or identical import failed: %+v", result)
-		}
-		for _, option := range record.Options {
-			if result.IDs[importer.RecordOption][option.ExternalID] != option.ID {
-				t.Fatalf("import changed option identity: %+v", result)
-			}
-		}
-	}
-	for _, label := range []string{"Autumn", "Spring"} {
-		unvoted := record
-		unvoted.Options = slices.Clone(record.Options)
-		unvoted.Options[2].Label = label
-		result, err := admin.PostImport(t.Context(), importer.Batch{Source: batch.Source, Polls: []importer.PollRecord{unvoted}})
+	record := importer.PollRecord{ExternalID: "season", Question: "Choose a season", Language: "en", CreatedAt: &created,
+		Options: []importer.PollOptionRecord{{ExternalID: "summer", Label: "Summer"}, {ExternalID: "winter", Label: "Winter", Position: 1}, {ExternalID: "spring", Label: "Spring", Position: 2}}}
+	write := func(record importer.PollRecord, deferred bool) importer.Result {
+		t.Helper()
+		result, err := admin.PostImport(t.Context(), importer.Batch{Source: "legacy-polls", DeferRecounts: deferred, Polls: []importer.PollRecord{record}})
 		must(t, err)
 		if len(result.Failed) != 0 || result.Written[importer.SectionPolls] != 1 {
-			t.Fatalf("unvoted choices could not change: %+v", result)
+			t.Fatalf("poll import: %+v", result)
 		}
+		return result
+	}
+	initial := write(record, false)
+	record.ID = initial.IDs[importer.RecordPoll][record.ExternalID]
+	for i := range record.Options {
+		record.Options[i].ID = initial.IDs[importer.RecordOption][record.Options[i].ExternalID]
 	}
 	person, _ := w.person(t, 0)
-	votes := importer.Batch{Source: batch.Source, Votes: []importer.VoteRecord{
-		{Poll: importer.Ref{ExternalID: record.ExternalID}, Option: importer.Ref{ExternalID: record.Options[0].ExternalID}, UserID: person.ID, CreatedAt: &created},
-		{Poll: importer.Ref{ExternalID: record.ExternalID}, Option: importer.Ref{ExternalID: record.Options[1].ExternalID}, IP: "203.0.113.40", CreatedAt: &created},
-	}}
+	_, token := w.person(t, 0)
+	result, err := admin.PostImport(t.Context(), importer.Batch{Source: "legacy-polls", Votes: []importer.VoteRecord{
+		{Poll: importer.Ref{ID: record.ID}, Option: importer.Ref{ID: record.Options[0].ID}, UserID: person.ID},
+		{Poll: importer.Ref{ID: record.ID}, Option: importer.Ref{ID: record.Options[1].ID}, IP: "203.0.113.40"},
+	}})
+	must(t, err)
+	if len(result.Failed) != 0 {
+		t.Fatalf("votes: %+v", result)
+	}
+	// Change a kept voted choice, remove another voted choice and add a new one.
+	questionImage, choiceImage := "i-"+contentref.NewID(), "i-"+contentref.NewID()
+	record.Question, record.Image = "Choose again", &questionImage
+	record.Options = []importer.PollOptionRecord{record.Options[0], {ExternalID: "autumn", Label: "Autumn"}}
+	record.Options[0].Label, record.Options[0].Position, record.Options[0].Image = "Hot summer", 1, &choiceImage
+	added := write(record, true) // poll replacement must recount even in bulk mode
+	record.Options[1].ID = added.IDs[importer.RecordOption]["autumn"]
 	for range 2 {
-		result, err := admin.PostImport(t.Context(), votes)
-		must(t, err)
-		if len(result.Failed) != 0 || result.Written[importer.SectionVotes] != 2 {
-			t.Fatalf("vote import failed: %+v", result)
-		}
-	}
-	before, err := admin.GetPoll(t.Context(), record.ID)
-	must(t, err)
-	if before.TotalVotes != 2 || before.Options[0].VoteCount != 1 || before.Options[1].VoteCount != 1 {
-		t.Fatalf("imported votes did not preserve counts: %+v", before)
-	}
-	var metadata string
-	must(t, w.pool.QueryRow(t.Context(), `SELECT to_jsonb(q)::text FROM `+w.schema+`.content_poll_questions q WHERE tenant_id=$1 AND id=$2`,
-		a.cfg.Scope.AppID.String(), record.ID).Scan(&metadata))
-	for _, name := range []string{"add", "remove", "remove_all", "rename", "reorder", "replace_id"} {
-		t.Run(name, func(t *testing.T) {
-			changed := record
-			changed.Options = slices.Clone(record.Options)
-			changed.Question = "Must roll back"
-			switch name {
-			case "add":
-				changed.Options = append(changed.Options, importer.PollOptionRecord{ExternalID: "autumn", Label: "Autumn", Position: 3})
-			case "remove":
-				changed.Options = changed.Options[:2]
-			case "remove_all":
-				changed.Options = nil
-			case "rename":
-				changed.Options[2].Label = "Autumn"
-			case "reorder":
-				changed.Options[0].Position, changed.Options[2].Position = 2, 0
-			case "replace_id":
-				changed.Options[2].ExternalID, changed.Options[2].ID = "replacement", contentref.NewID()
-			}
-			// A rejected record rolls back its metadata and new ID mappings;
-			// another valid record in the same chunk still commits.
-			sibling := importer.PollRecord{ExternalID: "sibling-" + name, Question: "Independent poll", Language: "en", Options: slices.Clone(record.Options)}
-			for i := range sibling.Options {
-				sibling.Options[i].ID = contentref.NewID()
-				sibling.Options[i].ExternalID = sibling.ExternalID + sibling.Options[i].ExternalID
-			}
-			result, err := admin.PostImport(t.Context(), importer.Batch{Source: batch.Source, Polls: []importer.PollRecord{changed, sibling}})
-			must(t, err)
-			if len(result.Failed) != 1 || result.Failed[0].Code != importer.CodeConflict || result.Failed[0].ExternalID != record.ExternalID || result.Written[importer.SectionPolls] != 1 {
-				t.Fatalf("choice change did not fail independently: %+v", result)
-			}
-			got, err := admin.GetPoll(t.Context(), record.ID)
-			must(t, err)
-			if !reflect.DeepEqual(got, before) {
-				t.Fatalf("refused import changed poll or votes: before=%+v after=%+v", before, got)
-			}
-			var after string
-			must(t, w.pool.QueryRow(t.Context(), `SELECT to_jsonb(q)::text FROM `+w.schema+`.content_poll_questions q WHERE tenant_id=$1 AND id=$2`,
-				a.cfg.Scope.AppID.String(), record.ID).Scan(&after))
-			if after != metadata {
-				t.Fatalf("refused import changed metadata: before=%s after=%s", metadata, after)
-			}
-		})
-	}
-	identities, err := admin.PostImportExternalIds(t.Context(), importer.ExternalIDsQuery{Source: batch.Source, Lists: []importer.ExternalIDList{{Entity: importer.RecordOption}}})
-	must(t, err)
-	for _, identity := range identities.Lists[0].IDs {
-		if identity.ExternalID == "autumn" || identity.ExternalID == "replacement" {
-			t.Fatalf("refused import retained a new option identity: %+v", identity)
-		}
-	}
-	// Array order is immaterial when option IDs, labels and positions match.
-	slices.Reverse(record.Options)
-	record.Question = "Updated question, unchanged choices"
-	result, err := admin.PostImport(t.Context(), importer.Batch{Source: batch.Source, Polls: []importer.PollRecord{record}})
-	must(t, err)
-	if len(result.Failed) != 0 || result.Written[importer.SectionPolls] != 1 || result.IDs[importer.RecordPoll][record.ExternalID] != record.ID {
-		t.Fatalf("identical voted choices did not reimport: %+v", result)
+		write(record, true)
 	}
 	got, err := admin.GetPoll(t.Context(), record.ID)
 	must(t, err)
-	if got.Question != record.Question || got.TotalVotes != before.TotalVotes || !reflect.DeepEqual(got.Options, before.Options) {
-		t.Fatalf("identical reimport changed choices or counts: %+v", got)
+	if got.Question != record.Question || got.TotalVotes != 1 || len(got.Options) != 2 || got.Options[0].ID != record.Options[1].ID || got.Options[0].VoteCount != 0 || got.Options[1].ID != record.Options[0].ID || got.Options[1].Label != "Hot summer" || got.Options[1].VoteCount != 1 {
+		t.Fatalf("replacement lost identity/votes/counts: %+v", got)
+	}
+	var votes int
+	must(t, w.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+w.schema+`.content_poll_votes WHERE tenant_id=$1 AND question_id=$2`, a.cfg.Scope.AppID.String(), record.ID).Scan(&votes))
+	if votes != 1 {
+		t.Fatalf("removed choice retained votes: %d", votes)
+	}
+	images := func(wantQuestion, wantChoice string) {
+		t.Helper()
+		var question, choice string
+		must(t, w.pool.QueryRow(t.Context(), `SELECT coalesce(q.image_name,''),coalesce(o.image_name,'') FROM `+w.schema+`.content_poll_questions q JOIN `+w.schema+`.content_poll_options o ON o.tenant_id=q.tenant_id AND o.question_id=q.id WHERE q.tenant_id=$1 AND q.id=$2 AND o.id=$3`, a.cfg.Scope.AppID.String(), record.ID, record.Options[0].ID).Scan(&question, &choice))
+		if question != wantQuestion || choice != wantChoice {
+			t.Fatalf("images: %q %q, want %q %q", question, choice, wantQuestion, wantChoice)
+		}
+	}
+	images(questionImage, choiceImage)
+	record.Image, record.Options[0].Image = nil, nil
+	write(record, false)
+	images(questionImage, choiceImage)
+	questionImage, choiceImage = "i-"+contentref.NewID(), "i-"+contentref.NewID()
+	record.Image, record.Options[0].Image = &questionImage, &choiceImage
+	write(record, false)
+	images(questionImage, choiceImage)
+	label := "Staff edit"
+	_, err = admin.PatchPollOption(t.Context(), record.ID, record.Options[0].ID, content.PollOptionPatch{Label: &label})
+	requireError(t, err, 409, "conflict")
+	_, err = admin.PutPollOptionImage(t.Context(), record.ID, record.Options[0].ID, content.ImageInput{Image: new(string)})
+	requireError(t, err, 409, "conflict")
+	// Invalid images roll back metadata and mappings; a sibling still commits.
+	for _, optionImage := range []bool{false, true} {
+		bad := record
+		bad.Options = slices.Clone(record.Options)
+		bad.Question = "Must roll back"
+		invalid := "https://invalid.example/image.png"
+		if optionImage {
+			bad.Options[0].Image = &invalid
+		} else {
+			bad.Image = &invalid
+		}
+		failed, err := admin.PostImport(t.Context(), importer.Batch{Source: "legacy-polls", Polls: []importer.PollRecord{bad, {ExternalID: fmt.Sprint("sibling-", optionImage), Question: "Sibling", Language: "en"}}})
+		must(t, err)
+		if len(failed.Failed) != 1 || failed.Failed[0].Code != importer.CodeInvalid || failed.Written[importer.SectionPolls] != 1 {
+			t.Fatalf("invalid image isolation: %+v", failed)
+		}
+		after, err := admin.GetPoll(t.Context(), record.ID)
+		must(t, err)
+		if !reflect.DeepEqual(after, got) {
+			t.Fatalf("failed image import changed poll: before=%+v after=%+v", got, after)
+		}
+	}
+	record.Image, record.Options[0].Image = new(string), new(string)
+	write(record, false)
+	images("", "")
+	// Removing every choice also removes every vote, including a native vote.
+	_, err = a.client(token).PostPollVote(t.Context(), record.ID, content.PollVote{OptionID: record.Options[1].ID})
+	must(t, err)
+	record.Options = nil
+	write(record, true)
+	got, err = admin.GetPoll(t.Context(), record.ID)
+	must(t, err)
+	if got.TotalVotes != 0 || len(got.Options) != 0 {
+		t.Fatalf("empty replacement: %+v", got)
 	}
 }
 
@@ -150,7 +139,7 @@ func TestImportedPollChoiceRaces(t *testing.T) {
 		})
 		return waiter
 	}
-	for _, name := range []string{"public_vote_before_import", "imported_vote_before_staff_edit", "staff_delete_before_imported_vote"} {
+	for _, name := range []string{"public_vote_before_import", "import_delete_before_public_vote", "imported_vote_before_staff_edit", "staff_delete_before_imported_vote"} {
 		t.Run(name, func(t *testing.T) {
 			created := time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
 			record := importer.PollRecord{ExternalID: name, Question: "Choose", Language: "en", CreatedAt: &created,
@@ -166,6 +155,36 @@ func TestImportedPollChoiceRaces(t *testing.T) {
 			must(t, err)
 			defer holder.Rollback(t.Context())
 			voteBatch := importer.Batch{Source: "poll-choice-race", Votes: []importer.VoteRecord{{Poll: importer.Ref{ID: p.ID}, Option: importer.Ref{ID: p.Options[2].ID}, IP: "203.0.113.41"}}}
+			if name == "import_delete_before_public_vote" {
+				_, err = holder.Exec(t.Context(), `SELECT 1 FROM `+w.schema+`.content_poll_options WHERE tenant_id=$1 AND id=$2 FOR UPDATE`, tenant, p.Options[2].ID)
+				must(t, err)
+				record.Options = record.Options[:2]
+				imported := make(chan error, 1)
+				go func() {
+					result, err := admin.PostImport(t.Context(), importer.Batch{Source: voteBatch.Source, Polls: []importer.PollRecord{record}})
+					if err == nil && len(result.Failed) != 0 {
+						t.Errorf("replacement failed: %+v", result)
+					}
+					imported <- err
+				}()
+				importerPID := blockedBy(t, holder.Conn().PgConn().PID())
+				_, token := w.person(t, 0)
+				voted := make(chan error, 1)
+				go func() {
+					_, err := a.client(token).PostPollVote(t.Context(), p.ID, content.PollVote{OptionID: p.Options[2].ID})
+					voted <- err
+				}()
+				blockedBy(t, importerPID)
+				must(t, holder.Commit(t.Context()))
+				must(t, <-imported)
+				requireError(t, <-voted, 400, "invalid_request")
+				got, err := admin.GetPoll(t.Context(), p.ID)
+				must(t, err)
+				if got.TotalVotes != 0 || len(got.Options) != 2 {
+					t.Fatalf("vote raced past removed choice: %+v", got)
+				}
+				return
+			}
 			if name == "staff_delete_before_imported_vote" {
 				_, err = holder.Exec(t.Context(), `SELECT 1 FROM `+w.schema+`.content_poll_questions WHERE tenant_id=$1 AND id=$2 FOR NO KEY UPDATE`, tenant, p.ID)
 				must(t, err)
@@ -209,8 +228,8 @@ func TestImportedPollChoiceRaces(t *testing.T) {
 				record.Options[2].Label = "Changed"
 				go func() {
 					result, err := admin.PostImport(t.Context(), importer.Batch{Source: voteBatch.Source, Polls: []importer.PollRecord{record}})
-					if err == nil && (len(result.Failed) != 1 || result.Failed[0].Code != importer.CodeConflict) {
-						t.Errorf("poll import did not refuse after waiting for vote: %+v", result)
+					if err == nil && (len(result.Failed) != 0 || result.Written[importer.SectionPolls] != 1) {
+						t.Errorf("poll import failed after waiting for vote: %+v", result)
 					}
 					changed <- err
 				}()
@@ -231,7 +250,11 @@ func TestImportedPollChoiceRaces(t *testing.T) {
 			}
 			got, err := admin.GetPoll(t.Context(), p.ID)
 			must(t, err)
-			if got.TotalVotes != 1 || got.Options[2].Label != p.Options[2].Label || got.Options[2].VoteCount != 1 {
+			wantLabel := p.Options[2].Label
+			if name == "public_vote_before_import" {
+				wantLabel = "Changed"
+			}
+			if got.TotalVotes != 1 || got.Options[2].Label != wantLabel || got.Options[2].VoteCount != 1 {
 				t.Fatalf("choice race changed voted choice or counts: %+v", got)
 			}
 		})

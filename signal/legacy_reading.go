@@ -9,6 +9,7 @@ import (
 // completion statistics, popularity or recommendation seeds.
 type LegacyReading struct {
 	ContentRef
+	Removed     bool
 	Subject     Subject
 	FirstReadAt time.Time
 	LastReadAt  time.Time

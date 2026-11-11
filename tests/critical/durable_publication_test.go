@@ -55,6 +55,21 @@ func TestDurableTextPublication(t *testing.T) {
 	if !request.Due.Equal(due) {
 		t.Fatalf("accepted request due=%v, want %v", request.Due, due)
 	}
+	for _, at := range []time.Time{due.Add(time.Hour), due.Add(-30 * time.Minute)} {
+		_, err = admin.PostContentPublish(t.Context(), item.ID, catalog.PublishInput{PublishAt: &at})
+		must(t, err)
+		next := currentPublicationJob(t, a, item.Versions[0].ID)
+		if next.ID != request.ID || !next.Due.Equal(at) {
+			t.Fatalf("rescheduled request=%+v, want %s due %v", next, request.ID, at)
+		}
+		var scheduled time.Time
+		var priority int
+		must(t, w.pool.QueryRow(t.Context(), `SELECT count(*),min(scheduled_at),min(priority) FROM `+w.schema+`_river.river_job
+ WHERE kind='contentkit_publication' AND args->>'id'=$1 AND state NOT IN ('completed','cancelled','discarded')`, request.ID).Scan(&jobs, &scheduled, &priority))
+		if jobs != 1 || scheduled.After(at) || priority != 1 {
+			t.Fatalf("rescheduled publication: jobs=%d scheduled=%v priority=%d, want one job by %v with priority 1", jobs, scheduled, priority, at)
+		}
+	}
 	actual := due.Add(2 * time.Hour)
 	w.clock.set(actual)
 	_, err = reader.GetContent(t.Context(), item.ID, ck.GetContentQuery{})
@@ -108,7 +123,16 @@ func TestDurableTextPublication(t *testing.T) {
 	if added.Access == nil || added.Access.Level != access.TierLevel {
 		t.Fatalf("new edition did not copy its creation default: %+v", added.Access)
 	}
+	must(t, fleet.Stop(t.Context()))
 	must(t, admin.DeleteContentVersion(t.Context(), item.ID, edition.ID))
+	withdrawal := currentPublicationJob(t, a, edition.ID)
+	var priority int
+	must(t, w.pool.QueryRow(t.Context(), `SELECT priority FROM `+w.schema+`_river.river_job
+ WHERE kind='contentkit_publication' AND args->>'id'=$1 AND state NOT IN ('completed','cancelled','discarded')`, withdrawal.ID).Scan(&priority))
+	if withdrawal.ID == request.ID || priority != 1 {
+		t.Fatalf("withdrawal request=%s priority=%d, want a new request with priority 1", withdrawal.ID, priority)
+	}
+	must(t, fleet.Start(t.Context()))
 	awaitDuePublications(t, a)
 	// Deletion hides the edition from ordinary readers while retaining its
 	// completed publication for exact-key holders until physical purge.

@@ -32,15 +32,21 @@ func LockSources(ctx context.Context, pool *pgxpool.Pool, tenant string, vers []
 			r()
 		}
 	}
+	acquired := false
+	defer func() {
+		if !acquired {
+			release()
+		}
+	}()
 	for _, id := range ids {
 		// Keep the original media.PGLocker namespace so existing publishers and
 		// upgraded catalog writers contend on exactly the same advisory key.
 		r, _, err := pglock.Acquire(ctx, pool, "contentkit:media:contentkit:versions:"+tenant+":"+id, true)
 		if err != nil {
-			release()
 			return nil, err
 		}
 		releases = append(releases, r)
 	}
+	acquired = true
 	return release, nil
 }

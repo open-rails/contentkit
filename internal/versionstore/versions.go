@@ -24,8 +24,7 @@ import (
 	"github.com/riverqueue/river"
 )
 
-// Facets refreshes the listing projection of versions whose derived media
-// facts changed, in the writing transaction.
+// Facets is the catalog callback for listing and publication updates.
 type Facets interface {
 	RefreshTx(ctx context.Context, tx pgx.Tx, vers []string) error
 }
