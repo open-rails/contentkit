@@ -1,3 +1,4 @@
+import { entityDisplayName } from "../../client/entity-fields.js";
 import { cn } from "cn";
 import type { ReactNode } from "react";
 import type { ContentKitUiAppearance } from "../../appearance.js";
@@ -82,22 +83,22 @@ export function EntityHeader(p: EntityHeaderProps) {
                   <span key={x.id}>
                     {i > 0 && " · "}
                     <EntityLink entity={x} href={p.href} className="hover:underline">
-                      {x.name || x.slug}
+                      {entityDisplayName(x)}
                     </EntityLink>
                   </span>
                 ))}
             </p>
           )}
-          <h1 className="text-xl font-semibold break-words">{g.name || g.slug}</h1>
+          <h1 className="text-xl font-semibold break-words">{entityDisplayName(g)}</h1>
           <p className="text-xs text-muted-foreground tabular-nums">{m.plural("entities.items", count)}</p>
         </div>
         {others.length > 0 && (
           <p className="text-muted-foreground" data-ckui="entity-names">
             <span className="sr-only">{t("entities.alsoKnownAs")} </span>
             {others.map((n, i) => (
-              <span key={`${n.language}:${n.name}`} lang={n.language}>
+              <span key={`${n.language}:${entityDisplayName({ kind: g.kind, name: n.name })}`} lang={n.language}>
                 {i > 0 && " · "}
-                {n.name}
+                {entityDisplayName({ kind: g.kind, name: n.name })}
                 {n.kind === "name" && <span className="text-xs"> ({languageName(n.language)})</span>}
               </span>
             ))}

@@ -1,3 +1,4 @@
+import { entityDisplayName } from "../../client/entity-fields.js";
 import { FavouriteIcon, LockIcon, SparklesIcon, ThumbsUpIcon, Tick02Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { ReleaseNotice } from "./release-notice.js";
@@ -242,12 +243,12 @@ export function ContentCard({ card, client, href, onOpen, shape = "portrait", as
   const minutes = v.duration_ms ? Math.round(v.duration_ms / 60_000) : 0;
   const selectedTraits = metadata?.traits;
   const traits = selectedTraits === false ? [] : Array.isArray(selectedTraits) ? v.traits.filter((trait) => selectedTraits.includes(trait)) : v.traits;
-  const metaEntity = metadata?.entities?.map((kind) => (card.entities[kind] ?? []).find((entity) => !filterEntity || filterEntity(entity, kind))).find(Boolean);
+  const metaEntity = metadata?.entities?.map((kind) => (card.entities[kind] ?? []).filter((entity) => !filterEntity || filterEntity(entity, kind)).map((entity) => ({ ...entity, kind }))[0]).find(Boolean);
   const meta: ReactNode[] = [
     ...(metadata?.languages === false ? [] : v.languages.map(languageName)),
     metadata?.pages !== false && v.pages ? m.plural("contents.pages", v.pages) : null,
     metadata?.duration !== false && minutes ? m.plural("contents.minutes", minutes) : null,
-    metaEntity ? <MetaLink key="group" url={metaEntity.path} name={metaEntity.name || metaEntity.slug} /> : null,
+    metaEntity ? <MetaLink key="group" url={metaEntity.path} name={entityDisplayName(metaEntity)} /> : null,
   ].filter(Boolean);
   const title = cardTitle?.(card) || card.title || card.code;
   const entityClassName = cn("flex flex-wrap", entityStyle === "text" ? "gap-x-[0.3em] gap-y-1 [&>li:not(:last-child)]:after:text-muted-foreground [&>li:not(:last-child)]:after:content-[',']" : "gap-1");
@@ -265,7 +266,7 @@ export function ContentCard({ card, client, href, onOpen, shape = "portrait", as
     return [base > 0 && more(base, "lg:hidden"), lg > 0 && more(lg, "hidden lg:list-item")].filter(Boolean);
   };
   const entityItems = (kind: string, entities: EntityChip[], total: number) => [
-    ...entities.map((entity, i) => <li key={`${kind}:${entity.id}`} data-kind={kind} className={atWidth(i)}><Chip url={entity.path} name={entity.name || entity.slug} variant={entityStyle} /></li>),
+    ...entities.map((entity, i) => <li key={`${kind}:${entity.id}`} data-kind={kind} className={atWidth(i)}><Chip url={entity.path} name={entityDisplayName({ ...entity, kind })} variant={entityStyle} /></li>),
     ...overflowItems(kind, total),
   ];
   const [chipList, setChipList] = useState<HTMLUListElement | null>(null);
@@ -279,7 +280,7 @@ export function ContentCard({ card, client, href, onOpen, shape = "portrait", as
       const at = index++;
       const out = fit !== null && at >= fit.through;
       const squeezed = fit?.squeezed && at === fit.through - 1;
-      return <li key={`${kind}:${entity.id}`} data-kind={kind} className={cn(squeezed ? "min-w-0 shrink [&>*]:block [&>*]:truncate" : "shrink-0", atWidth(i), out && "pointer-events-none invisible absolute")} aria-hidden={out || undefined}><Chip url={entity.path} name={entity.name || entity.slug} variant={entityStyle} /></li>;
+      return <li key={`${kind}:${entity.id}`} data-kind={kind} className={cn(squeezed ? "min-w-0 shrink [&>*]:block [&>*]:truncate" : "shrink-0", atWidth(i), out && "pointer-events-none invisible absolute")} aria-hidden={out || undefined}><Chip url={entity.path} name={entityDisplayName({ ...entity, kind })} variant={entityStyle} /></li>;
     }));
     if (!chipOverflow) return items;
     // Always present, so its width is kept free; shown once measured with chips left out.

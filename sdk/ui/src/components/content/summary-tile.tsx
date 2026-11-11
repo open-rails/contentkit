@@ -1,3 +1,4 @@
+import { entityDisplayName } from "../../client/entity-fields.js";
 import { StarIcon, Settings01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { cn } from "cn";
@@ -35,7 +36,7 @@ export function ContentSummaryTile({
 }) {
   const { t } = useMessages();
   const filterNames = kind === "filtered"
-    ? [...new Set((filteredEntities ?? []).filter(({ count }) => count > 0).map(({ entity }) => entity.name.trim()).filter(Boolean))].join(", ")
+    ? [...new Set((filteredEntities ?? []).filter(({ count }) => count > 0).map(({ entity }) => entityDisplayName(entity).trim()).filter(Boolean))].join(", ")
     : "";
   const [ref, near] = useNearViewport({ margin: "0px", leaveMargin: "1200px 0px" });
   const { presets } = usePresets({ client: p.client });

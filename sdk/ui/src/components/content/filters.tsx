@@ -1,3 +1,4 @@
+import { entityDisplayName } from "../../client/entity-fields.js";
 import { cn } from "cn";
 import { useId } from "react";
 import type { ContentKitUiAppearance } from "../../appearance.js";
@@ -61,7 +62,7 @@ export function ContentFilterSettings(p: ContentFilterSettingsProps) {
           <li key={x.entity.id} className="flex flex-wrap items-center gap-3 p-3" data-ckui="content-filter" data-slug={x.entity.slug} data-visible={x.visible}>
             <Switch id={`${id}-${x.entity.id}`} checked={x.visible} disabled={save.pending} onCheckedChange={(v) => void save.run(() => f.setVisible(x.entity.id, v))} />
             <Label htmlFor={`${id}-${x.entity.id}`} className="min-w-0 flex-1">
-              {x.entity.name || x.entity.slug}
+              {entityDisplayName(x.entity)}
               {p.counts !== undefined && (
                 <span className="tabular-nums">: {p.countsLowerBound ? "≥ " : ""}{new Intl.NumberFormat(m.language).format(p.counts.filter((entry) => entry.entity.id === x.entity.id).reduce((n, entry) => n + entry.count, 0))}</span>
               )}

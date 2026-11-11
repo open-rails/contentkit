@@ -1,3 +1,4 @@
+import { entityDisplayName } from "../../client/entity-fields.js";
 import { cn } from "cn";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { ContentKitUiAppearance } from "../../appearance.js";
@@ -211,13 +212,13 @@ function Entities({ items, loading, error, reload, ...p }: Shown & { items: Enti
                   <EntityCover entity={g} className="size-full" />
                 </div>
               )}
-              <span className="font-medium break-words group-hover:underline">{g.name || g.slug}</span>
+              <span className="font-medium break-words group-hover:underline">{entityDisplayName(g)}</span>
               <span className="text-xs text-muted-foreground tabular-nums">{m.plural("entities.items", g.count)}</span>
             </EntityLink>
           ) : (
             // A 32px chip taking taps over 40px; a zero count is left out rather than shown as "0".
             <EntityLink entity={g} href={p.href} className="relative flex h-8 w-full items-center comfortable:h-10 gap-1.5 rounded-md border border-border px-2.5 transition-colors after:absolute after:inset-x-0 after:-inset-y-1 hover:bg-muted">
-              <span className="truncate" title={g.name || g.slug}>{g.name || g.slug}</span>
+              <span className="truncate" title={entityDisplayName(g)}>{entityDisplayName(g)}</span>
               {g.count > 0 && (
                 <span className="ms-auto shrink-0 text-xs text-muted-foreground tabular-nums" aria-label={m.plural("entities.items", g.count)}>
                   {count(g.count)}

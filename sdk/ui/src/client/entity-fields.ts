@@ -91,3 +91,9 @@ export function humanize(id: string): string {
   const s = id.replace(/[_-]+/g, " ").trim();
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
+
+/** Tags start with a capital letter; retain the remaining spelling and other entity names. */
+export function entityDisplayName(entity: { kind: string; name?: string; slug?: string }): string {
+  const name = entity.name || entity.slug || "";
+  return entity.kind === "tag" ? name.replace(/^(\s*)(\S)/u, (_, space: string, first: string) => space + first.toUpperCase()) : name;
+}

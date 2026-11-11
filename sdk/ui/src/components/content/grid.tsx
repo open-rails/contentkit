@@ -1,3 +1,4 @@
+import { entityDisplayName } from "../../client/entity-fields.js";
 import { cn } from "cn";
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type { ContentKitUiAppearance } from "../../appearance.js";
@@ -400,7 +401,7 @@ export function SearchEntities({ entities, href }: { entities: readonly EntityCa
     <nav aria-label={t("contents.matchingEntities")} className="mb-4 flex flex-wrap gap-2" data-ckui="search-entities">
       {entities.map((entity) => (
         <EntityLink key={entity.id} entity={entity} href={href} className="inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-sm hover:bg-muted">
-          <span>{entity.name || entity.slug}</span>
+          <span>{entityDisplayName(entity)}</span>
           <span className="text-muted-foreground tabular-nums">{entity.count}</span>
         </EntityLink>
       ))}

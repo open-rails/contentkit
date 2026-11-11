@@ -1,3 +1,4 @@
+import { entityDisplayName } from "../../client/entity-fields.js";
 import { cn } from "cn";
 import { useId, useState } from "react";
 import type { ContentKitClient } from "../../client/client.js";
@@ -59,7 +60,7 @@ function ScopedSection(p: ScopedEntitiesProps & { kind: string; title: string })
           const body = (
             <>
               <EntityAvatar entity={g} className="size-7 text-xs" />
-              <span className="min-w-0 truncate">{g.name || g.slug}</span>
+              <span className="min-w-0 truncate">{entityDisplayName(g)}</span>
               {g.count > 0 && <span className="text-xs text-muted-foreground tabular-nums">{g.count}</span>}
             </>
           );

@@ -1,3 +1,4 @@
+import { entityDisplayName } from "../../client/entity-fields.js";
 import { Add01Icon, Cancel01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { cn } from "cn";
@@ -280,7 +281,7 @@ export function EntityChips(p: EntityChipsProps) {
                     pick(g);
                   }}
                 >
-                  <span className="min-w-0 truncate">{g.name || g.slug}</span>
+                  <span className="min-w-0 truncate">{entityDisplayName(g)}</span>
                   <span className="text-xs text-muted-foreground">{g.slug}</span>
                 </li>
               ) : (

@@ -45,7 +45,7 @@ export function Pagination(p: PaginationProps) {
   // One page has nothing to choose.
   if (last <= 1 && !p.atLeast) return null;
   const control = (target: number, label: ReactNode, o: { current?: boolean; disabled?: boolean; aria?: string } = {}) => {
-    const className = cn(buttonVariants({ variant: o.current ? "default" : "ghost", size: "sm" }), "min-w-8 tabular-nums", o.disabled && "pointer-events-none opacity-50");
+    const className = cn(buttonVariants({ variant: o.current ? "default" : "ghost", size: "sm" }), "min-w-8 tabular-nums", o.current && "text-white hover:text-white", o.disabled && "pointer-events-none opacity-50");
     const go = (event: MouseEvent) => {
       if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return;
       event.preventDefault();
@@ -62,7 +62,7 @@ export function Pagination(p: PaginationProps) {
     );
   };
   return (
-    <nav aria-label={t("listing.pages")} className={cn("flex flex-wrap items-center justify-end gap-1 text-sm", p.className)} data-ckui="pagination">
+    <nav aria-label={t("listing.pages")} className={cn("flex w-full flex-wrap items-center justify-center gap-1 text-sm", p.className)} data-ckui="pagination">
       {control(page - 1, <HugeiconsIcon icon={ArrowLeft01Icon} strokeWidth={2} />, { disabled: page <= 1, aria: t("listing.previous") })}
       {pageWindow(page, last).map((n, i) =>
         n === "gap" ? (

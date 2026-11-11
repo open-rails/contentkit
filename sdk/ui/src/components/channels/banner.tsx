@@ -1,3 +1,4 @@
+import { entityDisplayName } from "../../client/entity-fields.js";
 import { cn } from "cn";
 import type { ReactNode } from "react";
 import type { Channel } from "../../client/generated/wire.js";
@@ -42,7 +43,7 @@ export function ChannelBanner(props: ChannelBannerProps) {
       <div className="flex flex-wrap items-start gap-2"><ChannelMembershipBox channel={channel} onCheckout={props.onCheckout} />{props.children}</div>
     </div>
     {text?.description && <p className="px-2 break-words whitespace-pre-line sm:px-4">{text.description}</p>}
-    {!!channel.entities.length && <div className="flex flex-wrap gap-2 px-2 sm:px-4">{channel.entities.map((entity) => <EntityLink key={entity.id} entity={entity} className="rounded border px-2 py-1">{entity.name || entity.slug}</EntityLink>)}</div>}
+    {!!channel.entities.length && <div className="flex flex-wrap gap-2 px-2 sm:px-4">{channel.entities.map((entity) => <EntityLink key={entity.id} entity={entity} className="rounded border px-2 py-1">{entityDisplayName(entity)}</EntityLink>)}</div>}
   </ContentKitUiRoot>;
 }
 
