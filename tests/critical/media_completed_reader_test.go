@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +17,7 @@ import (
 	mediastore "github.com/open-rails/contentkit/internal/mediastore"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/media/workqueue"
@@ -146,6 +148,15 @@ func TestCompletedPublicationReader(t *testing.T) {
 		return nil
 	})
 	must(t, err)
+	cleanup := pgx.Identifier{w.schema, "content_media_cleanup"}.Sanitize()
+	_, err = w.pool.Exec(t.Context(), `UPDATE `+cleanup+` SET deletion_operations = deletion_operations || ARRAY(SELECT gen_random_uuid() FROM generate_series(1,300))
+WHERE tenant_id=$1 AND folder_prefix=$2`, ref.TenantID, item.Prefix())
+	must(t, err)
+	cleanupState := `SELECT pg_column_toast_chunk_id(deletion_operations),revision,deletion_operations FROM ` + cleanup + ` WHERE tenant_id=$1 AND folder_prefix=$2`
+	var chunk, nextChunk uint32
+	var revision, nextRevision uuid.UUID
+	var operations, nextOperations []uuid.UUID
+	must(t, w.pool.QueryRow(t.Context(), cleanupState, ref.TenantID, item.Prefix()).Scan(&chunk, &revision, &operations))
 	options := mediastore.ReaderOptions{Manifests: manifests, Delivery: media.Delivery{Mode: media.DeliverURL, SigningKey: storage.key, TTL: time.Hour}}
 	reader, err := mediastore.NewReader(options)
 	must(t, err)
@@ -193,8 +204,17 @@ func TestCompletedPublicationReader(t *testing.T) {
 	operation := uuid.NewString()
 	_, err = manifests.PreparePromotion(t.Context(), ref, operation, []mediastore.Promotion{{Source: trackSource, Area: layout.AreaPrivate}, {Source: indexSource, Area: layout.AreaPrivate}, {Source: publicSource, Area: layout.AreaPublic}})
 	must(t, err)
+	must(t, w.pool.QueryRow(t.Context(), cleanupState, ref.TenantID, item.Prefix()).Scan(&nextChunk, &nextRevision, &nextOperations))
+	if nextChunk != chunk || nextRevision == revision || !slices.Equal(nextOperations, operations) {
+		t.Fatalf("cleanup without retirement: chunk %d -> %d, revision %s -> %s, operations unchanged=%v", chunk, nextChunk, revision, nextRevision, slices.Equal(nextOperations, operations))
+	}
 	_, err = manifests.Promote(t.Context(), ref, operation)
 	must(t, err)
+	var merged bool
+	must(t, w.pool.QueryRow(t.Context(), `SELECT deletion_operations @> $3::uuid[] AND cardinality(deletion_operations)>$4 FROM `+cleanup+` WHERE tenant_id=$1 AND folder_prefix=$2`, ref.TenantID, item.Prefix(), operations, len(operations)).Scan(&merged))
+	if !merged {
+		t.Fatalf("retirement lost seeded cleanup operations or added no new operation")
+	}
 	if out := read(viewer, false); len(out.Files) != 0 {
 		t.Fatal("physical completion replaced catalog publication authority")
 	}
