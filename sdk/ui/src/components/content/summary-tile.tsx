@@ -1,9 +1,9 @@
-import { Diamond02Icon, Settings01Icon } from "@hugeicons/core-free-icons";
+import { StarIcon, Settings01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { cn } from "cn";
 import type { CSSProperties, MouseEvent } from "react";
 import { ratio } from "../../client/aspect.js";
-import type { Card } from "../../client/generated/wire.js";
+import type { Card, ReleaseFilteredEntity } from "../../client/generated/wire.js";
 import { useMessages } from "../../i18n/context.js";
 import { usePresets } from "../../react/public.js";
 import { useNearViewport } from "../../react/viewport.js";
@@ -19,6 +19,7 @@ export function ContentSummaryTile({
   preview,
   open,
   label,
+  filteredEntities,
   onClick,
   cardProps: p,
 }: {
@@ -28,10 +29,14 @@ export function ContentSummaryTile({
   preview?: Card;
   open: boolean;
   label: string;
+  filteredEntities?: readonly ReleaseFilteredEntity[];
   onClick: (event: MouseEvent<HTMLButtonElement>) => void;
   cardProps: CardListProps;
 }) {
   const { t } = useMessages();
+  const filterNames = kind === "filtered"
+    ? [...new Set((filteredEntities ?? []).filter(({ count }) => count > 0).map(({ entity }) => entity.name.trim()).filter(Boolean))].join(", ")
+    : "";
   const [ref, near] = useNearViewport({ margin: "0px", leaveMargin: "1200px 0px" });
   const { presets } = usePresets({ client: p.client });
   const aspect: CSSProperties["aspectRatio"] =
@@ -44,7 +49,7 @@ export function ContentSummaryTile({
         type="button"
         variant="secondary"
         data-ckui={`${kind}-release-tile`}
-        aria-label={label}
+        aria-label={filterNames ? `${label}: ${filterNames}` : label}
         aria-expanded={kind === "premium" ? false : undefined}
         aria-haspopup={kind === "filtered" ? "dialog" : undefined}
         className={cn("relative flex h-auto w-full flex-col justify-center overflow-hidden rounded-lg p-0 text-center whitespace-normal", kind === "premium" && "border-transparent bg-black text-white shadow-none hover:bg-black hover:text-white dark:border-transparent")}
@@ -55,12 +60,13 @@ export function ContentSummaryTile({
           <RenditionImg outputs={preview.cover} alt="" fit="cover" loading="lazy" className="absolute inset-0 size-full opacity-[0.22]" />
         )}
         <span className={cn("relative grid justify-items-center", kind === "premium" ? "gap-2.5 p-3 md:gap-4 md:p-6" : "gap-3 p-4")}>
-          <HugeiconsIcon icon={kind === "premium" ? Diamond02Icon : Settings01Icon} strokeWidth={2} className={kind === "premium" ? "size-6 md:size-7" : "size-8"} aria-hidden />
+          <HugeiconsIcon icon={kind === "premium" ? StarIcon : Settings01Icon} strokeWidth={2} className={kind === "premium" ? "size-6 fill-current md:size-7" : "size-8"} aria-hidden />
           <span
             data-ckui="release-summary-label"
             data-stacked={kind === "premium" && label.includes("\n") || undefined}
             className={cn("font-semibold text-balance", kind === "premium" ? "text-sm leading-[1.4] whitespace-pre-line md:text-xl" : "text-xl")}
           >{label}</span>
+          {filterNames && <span data-ckui="filtered-summary-entities" className="text-sm leading-relaxed text-balance wrap-anywhere">{filterNames}</span>}
           <span className={kind === "premium" ? "max-w-[14ch] text-xs leading-[1.4] text-balance opacity-80 md:max-w-[20ch] md:text-base" : "text-sm text-muted-foreground"}>{t(kind === "premium" ? "releases.premiumHint" : "releases.manageFilters")}</span>
         </span>
       </Button>
