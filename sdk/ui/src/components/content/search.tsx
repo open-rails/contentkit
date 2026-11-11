@@ -1,3 +1,4 @@
+import { entityDisplayName } from "../../client/entity-fields.js";
 import { Cancel01Icon, Clock01Icon, File01Icon, Folder01Icon, Image01Icon, Search01Icon, TagsIcon, UserIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon, type IconSvgElement } from "@hugeicons/react";
 import { cn } from "cn";
@@ -54,7 +55,7 @@ const entities = (entities: EntityCard[]): Suggestion[] => entities.map((entity)
 const titles = (contents: Card[]): Suggestion[] => contents.map((card) => ({ type: "content", card }));
 const suggestionKey = (s: Suggestion) => s.type === "content" ? `c:${s.card.id}` : s.type === "entity" ? `g:${s.entity.id}` : s.type === "channel" ? `channel:${s.channel.id}` : `r:${s.query}`;
 const suggestionKind = (s: Exclude<Suggestion, { type: "recent" }>) => s.type === "content" ? s.card.kind : s.type === "entity" ? s.entity.kind : "channel";
-const suggestionName = (s: Exclude<Suggestion, { type: "recent" }>) => s.type === "content" ? s.card.title || s.card.code : s.type === "entity" ? s.entity.name || s.entity.slug : s.channel.name || s.channel.slug;
+const suggestionName = (s: Exclude<Suggestion, { type: "recent" }>) => s.type === "content" ? s.card.title || s.card.code : s.type === "entity" ? entityDisplayName(s.entity) : s.channel.name || s.channel.slug;
 
 // Mirror search-only normalization. Identity/slug normalization stays separate;
 // complete English filler words never change Japanese/CJK or interior letters.

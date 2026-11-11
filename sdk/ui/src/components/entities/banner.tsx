@@ -1,3 +1,4 @@
+import { entityDisplayName } from "../../client/entity-fields.js";
 import { cn } from "cn";
 import { type ReactNode } from "react";
 import type { ContentKitUiAppearance } from "../../appearance.js";
@@ -56,7 +57,7 @@ export function EntityBanner(p: EntityBannerProps) {
               {g.scope.name || g.scope.slug}
             </EntityLink>
           )}
-          <h1 className="text-xl font-semibold break-words">{g.name || g.slug}</h1>
+          <h1 className="text-xl font-semibold break-words">{entityDisplayName(g)}</h1>
           <p className="text-xs text-muted-foreground tabular-nums">{m.plural("entities.items", count)}</p>
         </div>
         <div className="flex flex-wrap items-start gap-2">
