@@ -27,7 +27,7 @@ func (j *PGJournal) scheduleCleanupTx(ctx context.Context, tx pgx.Tx, ref conten
 VALUES ($1, $2, $3, $4, $5)
 ON CONFLICT (tenant_id, folder_prefix) DO UPDATE SET
 due_at = CASE WHEN $6 THEN greatest(c.due_at,EXCLUDED.due_at) ELSE least(c.due_at,EXCLUDED.due_at) END,
-deletion_operations = ARRAY(SELECT DISTINCT op FROM unnest(c.deletion_operations || EXCLUDED.deletion_operations) AS op ORDER BY op),
+deletion_operations = CASE WHEN c.deletion_operations @> EXCLUDED.deletion_operations THEN c.deletion_operations ELSE ARRAY(SELECT DISTINCT op FROM unnest(c.deletion_operations || EXCLUDED.deletion_operations) AS op ORDER BY op) END,
 revision = gen_random_uuid()`, ref.TenantID, prefix, ref.ContentKind, due, operations, migrating)
 	return err
 }
