@@ -135,18 +135,15 @@ function CardGridBody({ list, render, filterKinds, filterLanguage, horizontal, s
   const lockedTile = collapse && !pastEnd && lockedCount > 0 && columns >= Math.max(0, p.lockedSummaryMinColumns ?? 0);
   const entries = useMemo(() => {
     const result: ({ key: string; card: Card; position: number } | { key: string; premium: true; card?: Card })[] = [];
-    let inserted = false;
+    let preview: Card | undefined;
     for (const [i, card] of list.items.entries()) {
       if (isLockedCard(card) && (collapse || p.locked === "hide")) {
-        if (lockedTile && !inserted) {
-          result.push({ key: "premium-summary", premium: true, card });
-          inserted = true;
-        }
+        preview ??= card;
         continue;
       }
       result.push({ key: card.id, card, position: positionOffset + i + 1 });
     }
-    if (lockedTile && !inserted) result.push({ key: "premium-summary", premium: true });
+    if (lockedTile) result.push({ key: "premium-summary", premium: true, card: preview });
     const limit = mobile && p.mobileCardLimit !== undefined ? p.mobileCardLimit : p.cardLimit;
     return limit !== undefined && Number.isFinite(limit) ? result.slice(0, Math.max(0, Math.floor(limit))) : result;
   }, [list.items, collapse, p.locked, lockedTile, mobile, p.mobileCardLimit, p.cardLimit, positionOffset]);
@@ -256,6 +253,7 @@ function CardGridBody({ list, render, filterKinds, filterLanguage, horizontal, s
                     channelHref={p.channelHref}
                     decorate={p.decorate}
                     cardTitle={p.cardTitle}
+                    showLockBadge={p.showLockBadge}
                     status={p.status}
                     dimDisliked={p.dimDisliked}
                     onOpen={() => exposure.click(entry.card.id, entry.position, exposure.href(entry.card.id, entry.position, p.href ? p.href(entry.card) : entry.card.path))}

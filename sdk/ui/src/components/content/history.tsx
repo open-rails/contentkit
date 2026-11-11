@@ -74,6 +74,7 @@ export function ContentHistory({ query = {}, heading, ...p }: CardListProps & { 
               channelHref={p.channelHref}
               decorate={p.decorate}
               cardTitle={p.cardTitle}
+              showLockBadge={p.showLockBadge}
             >
               <HistoryProgress card={card} presentation={kinds?.kinds[card.kind]?.presentation} />
               <Button size="xs" variant="ghost" className="justify-self-start comfortable:h-10" disabled={forget.pending} onClick={() => void forget.run(() => list.forget({ content_id: card.id }))}>
