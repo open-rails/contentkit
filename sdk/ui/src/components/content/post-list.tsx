@@ -1,5 +1,5 @@
 import { HugeiconsIcon } from "@hugeicons/react";
-import { LockIcon } from "@hugeicons/core-free-icons";
+import { Image01Icon, LockIcon } from "@hugeicons/core-free-icons";
 import { cn } from "cn";
 import { useMemo, type ReactNode } from "react";
 import type { ContentKitUiAppearance } from "../../appearance.js";
@@ -105,12 +105,10 @@ function PostRow({ card, url, unread, lock, excerptLength }: { card: Card; url: 
   const text = excerpt(card.excerpt ?? "", excerptLength);
   return (
     <li className="grid gap-4 py-4 sm:grid-cols-[14rem_minmax(0,1fr)]" data-ckui="post-row" data-id={card.id} data-unread={unread || undefined} lang={card.language || undefined}>
-      {card.cover.length > 0 && (
-        <a href={url} className="relative block aspect-[331/232] overflow-hidden rounded-lg bg-muted" tabIndex={-1} aria-hidden>
-          <RenditionImg outputs={card.cover} alt="" fit="cover" skeleton loading="lazy" className={cn("size-full", lock && "blur-md")} />
-        </a>
-      )}
-      <div className={cn("grid min-w-0 content-start gap-1.5", card.cover.length === 0 && "sm:col-span-2")}>
+      <a href={url} className="relative block aspect-[331/232] overflow-hidden rounded-lg bg-muted" tabIndex={-1} aria-hidden>
+        {card.cover.length > 0 ? <RenditionImg outputs={card.cover} alt="" fit="cover" skeleton loading="lazy" className={cn("size-full", lock && "blur-md")} /> : <NoCover className="size-8" />}
+      </a>
+      <div className="grid min-w-0 content-start gap-1.5">
         <a href={url} className="flex items-start gap-2 text-lg leading-snug font-semibold break-words hover:underline">
           {unread && (
             <span className="mt-2 size-2 shrink-0 rounded-full bg-primary" data-ckui="post-unread">
@@ -134,6 +132,15 @@ function PostRow({ card, url, unread, lock, excerptLength }: { card: Card; url: 
   );
 }
 
+/** A post without a cover keeps its thumbnail slot, filled with a quiet image mark. */
+function NoCover({ className }: { className: string }) {
+  return (
+    <span aria-hidden className="grid size-full place-items-center text-muted-foreground" data-ckui="post-no-cover">
+      <HugeiconsIcon icon={Image01Icon} strokeWidth={1.5} className={className} />
+    </span>
+  );
+}
+
 function SidebarSection({ title, kind, sort, size, language, url, client }: { title: string; kind: string; sort: "newest" | `popular:${Period}`; size: number; language?: string; url: (card: Card) => string; client?: ContentKitClient }) {
   const list = useContents(useMemo(() => ({ kind, sort, limit: size, display_language: language }), [kind, sort, size, language]), { client });
   if (!list.loading && list.items.length === 0) return null;
@@ -145,12 +152,10 @@ function SidebarSection({ title, kind, sort, size, language, url, client }: { ti
           ? Array.from({ length: Math.min(size, 3) }, (_, i) => <Skeleton key={i} className="h-14 w-full" />)
           : list.items.slice(0, size).map((card) => (
               <li key={card.id}>
-                <a href={url(card)} className={cn("grid items-center gap-3 hover:underline", card.cover.length > 0 && "grid-cols-[5rem_minmax(0,1fr)]")}>
-                  {card.cover.length > 0 && (
-                    <span className="block aspect-[3/2] overflow-hidden rounded-md bg-muted">
-                      <RenditionImg outputs={card.cover} alt="" fit="cover" skeleton loading="lazy" className={cn("size-full", !card.access.allowed && "blur-sm")} />
-                    </span>
-                  )}
+                <a href={url(card)} className="grid grid-cols-[5rem_minmax(0,1fr)] items-center gap-3 hover:underline">
+                  <span className="block aspect-[3/2] overflow-hidden rounded-md bg-muted">
+                    {card.cover.length > 0 ? <RenditionImg outputs={card.cover} alt="" fit="cover" skeleton loading="lazy" className={cn("size-full", !card.access.allowed && "blur-sm")} /> : <NoCover className="size-5" />}
+                  </span>
                   <span className="grid min-w-0 gap-0.5">
                     <span className="line-clamp-2 font-medium break-words">{card.title || card.code}</span>
                     {card.published_at && <PublishedDate at={card.published_at} className="text-xs text-muted-foreground" />}
