@@ -163,6 +163,30 @@ AND (NOT starts_with(a.object_key, $5) OR a.created_at > now() - interval '7 day
 	return nil
 }
 
+func (m *Manifests) expiredStaged(ctx context.Context, item Item, keys []string, incarnation string) ([]string, error) {
+	if len(keys) == 0 {
+		return nil, nil
+	}
+	journal := m.journal.forTenant(item.Ref().TenantID)
+	rows, err := journal.pool.Query(ctx, `SELECT object_key FROM `+journal.allocations+`
+WHERE tenant_id = $1 AND folder_prefix = $2 AND object_key = ANY($3::text[]) AND incarnation = $4
+AND retired_at IS NULL AND starts_with(object_key, $5) AND created_at <= now() - interval '7 days'`,
+		item.Ref().TenantID, item.Prefix(), keys, incarnation, item.TempPrefix())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var expired []string
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			return nil, err
+		}
+		expired = append(expired, key)
+	}
+	return expired, rows.Err()
+}
+
 func (m *Manifests) retireAllocations(ctx context.Context, item Item, keys []string) error {
 	journal := m.journal.forTenant(item.Ref().TenantID)
 	if len(keys) == 0 {
