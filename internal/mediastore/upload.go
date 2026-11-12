@@ -513,6 +513,7 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 		}
 		o.objects = objects
 		before, uploads := m.uploadBytes(), m.uploads()
+		var applied []string
 		for n, op := range ops {
 			if op.Op == media.OpPut {
 				created, err := o.created(op)
@@ -532,11 +533,46 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 					}
 					o.objects[op.Blob] = objects[op.Blob]
 				}
+				key, err := item.Staged(op.Blob)
+				if err != nil {
+					key, _ = item.Blob(op.Blob)
+				}
+				applied = append(applied, key)
 			}
 			if err := o.apply(n, op); err != nil {
 				return err
 			}
 		}
+		// Apply the sweep's staged expiry so a commit does not keep a dead temporary allocation.
+		priorStaged := prior.StagedNames()
+		var inherited []string
+		for _, name := range m.StagedNames() {
+			if slices.Contains(priorStaged, name) {
+				key, _ := item.Staged(name)
+				if !slices.Contains(applied, key) {
+					inherited = append(inherited, key)
+				}
+			}
+		}
+		expired, err := u.o.Manifests.expiredStaged(editCtx, item, inherited, m.Incarnation)
+		if err != nil {
+			return err
+		}
+		var expiredPaths []string
+		var expiredBytes int64
+		for _, f := range m.Files {
+			if !f.IsUpload() || f.Staged == "" {
+				continue
+			}
+			key, _ := item.Staged(f.Staged)
+			if slices.Contains(expired, key) {
+				expiredPaths = append(expiredPaths, f.Path)
+				if f.Frame == nil {
+					expiredBytes += max(f.Size, uploadFloor)
+				}
+			}
+		}
+		o.dropUploads(expiredPaths)
 		mutation.effects.Renames = map[string]string{}
 		for before, after := range o.renames {
 			if before != after {
@@ -557,7 +593,7 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 		mutation.effects.Process = &job
 		if u.o.Limiter != nil {
 			mutation.effects.Settlement = Settlement{Tenant: ref.TenantID, Owner: grant.Owner,
-				Keys: append(slices.Clone(keys), copied...), Delta: m.uploadBytes() - before, Enforce: !grant.Exempt}
+				Keys: append(slices.Clone(keys), copied...), Delta: m.uploadBytes() - before + expiredBytes, Enforce: !grant.Exempt}
 			if mutation.effects.Settlement.Delta > 0 && !grant.Exempt {
 				// Resolve host policy before the journal opens its transaction.
 				// Shrinks and ordering edits must not depend on quota availability.
