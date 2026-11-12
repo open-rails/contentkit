@@ -91,7 +91,7 @@ func download(mk *Kind, k kinds.Kind) error {
 // the group's selection (entities.Cover.Image) among them.
 func EntityKind(name string, gk kinds.EntityKind) Kind {
 	image := func(path string) Upload {
-		return Upload{Path: path + "/{name}", Types: slices.Clone(ImageTypes), MaxBytes: 20 << 20, Named: true, Max: 20}
+		return Upload{Path: path + "/{name}", Types: slices.Clone(ImageTypes), MaxBytes: 64 << 20, Named: true, Max: 20}
 	}
 	k := Kind{Name: name, KeepOriginals: true, Uploads: []Upload{image(CoverPreset)},
 		Public: []Public{{Name: CoverPreset, From: CoverPreset + "/{name}", To: "cover-{name}-{w}.webp", Widths: []int{320, 640, 1280},

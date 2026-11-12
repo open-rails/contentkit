@@ -560,7 +560,7 @@
             "image/heif",
             "image/tiff"
           ],
-          "max_bytes": 20971520,
+          "max_bytes": 67108864,
           "max": 20,
           "named": true
         }
@@ -597,7 +597,7 @@
             "image/heif",
             "image/tiff"
           ],
-          "max_bytes": 20971520,
+          "max_bytes": 67108864,
           "max": 20,
           "named": true
         }
@@ -634,7 +634,7 @@
             "image/heif",
             "image/tiff"
           ],
-          "max_bytes": 20971520,
+          "max_bytes": 67108864,
           "max": 20,
           "named": true
         }
@@ -671,7 +671,7 @@
             "image/heif",
             "image/tiff"
           ],
-          "max_bytes": 20971520,
+          "max_bytes": 67108864,
           "max": 20,
           "named": true
         }
@@ -708,7 +708,7 @@
             "image/heif",
             "image/tiff"
           ],
-          "max_bytes": 20971520,
+          "max_bytes": 67108864,
           "max": 20,
           "named": true
         }
@@ -745,7 +745,7 @@
             "image/heif",
             "image/tiff"
           ],
-          "max_bytes": 20971520,
+          "max_bytes": 67108864,
           "max": 20,
           "named": true
         }

@@ -1023,7 +1023,8 @@
         "TestUploadAcceptanceAndRetry/CK-J09-S04_invalid_type_path_size_and_checksum_leave_no_adopted_files/digest",
         "TestUploadAcceptanceAndRetry/CK-J09-S04_invalid_type_path_size_and_checksum_leave_no_adopted_files/path",
         "TestUploadAcceptanceAndRetry/CK-J09-S04_invalid_type_path_size_and_checksum_leave_no_adopted_files/size",
-        "TestUploadAcceptanceAndRetry/CK-J09-S04_invalid_type_path_size_and_checksum_leave_no_adopted_files/type"
+        "TestUploadAcceptanceAndRetry/CK-J09-S04_invalid_type_path_size_and_checksum_leave_no_adopted_files/type",
+        "TestMediaAdmissionBoundaries/CK-J09-S04_entity_cover_admits_64_MiB_and_refuses_more"
       ]
     },
     {
