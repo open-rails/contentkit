@@ -6,6 +6,7 @@ export const entities = {
     directorySort_name: "A–Z",
     directorySort_count: "Most titles",
     directorySort_newest: "Newest",
+    directorySort_popular: "Popular",
     all: "All",
     otherLetters: "Other characters",
     empty: "Nothing here yet.",

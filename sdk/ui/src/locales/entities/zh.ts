@@ -7,6 +7,7 @@ export const entities: typeof en = {
     directorySort_name: "按名称",
     directorySort_count: "作品最多",
     directorySort_newest: "最新",
+    directorySort_popular: "热门",
     all: "全部",
     otherLetters: "其他字符",
     empty: "这里还没有内容。",

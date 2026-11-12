@@ -7,6 +7,7 @@ export const entities: typeof en = {
     directorySort_name: "A–Z",
     directorySort_count: "Más títulos",
     directorySort_newest: "Más recientes",
+    directorySort_popular: "Populares",
     all: "Todos",
     otherLetters: "Otros caracteres",
     empty: "Aún no hay nada aquí.",
