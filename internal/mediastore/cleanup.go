@@ -104,7 +104,11 @@ WHERE tenant_id=$1 AND content_kind=ANY($2) AND due_at<=$3 ORDER BY due_at,folde
 			err = ErrCommitIdentity
 		}
 		if err == nil {
-			wait, err = j.cleanupFolder(ctx, item, c.operations)
+			var revision uuid.UUID
+			wait, revision, err = j.cleanupFolder(ctx, item, c.operations)
+			if revision != uuid.Nil {
+				c.revision = revision
+			}
 		}
 		if err != nil {
 			failures = errors.Join(failures, fmt.Errorf("purge media %s: %w", c.prefix, err))
@@ -131,19 +135,12 @@ WHERE tenant_id=$1 AND folder_prefix=$2 AND revision=$3`, tenant, c.prefix, c.re
 	return processed, failures
 }
 
-func (j *Jobs) cleanupFolder(ctx context.Context, item Item, operations []uuid.UUID) (time.Duration, error) {
-	result, err := j.sweep(ctx, item.Prefix())
+func (j *Jobs) cleanupFolder(ctx context.Context, item Item, operations []uuid.UUID) (time.Duration, uuid.UUID, error) {
+	result, current, revision, err := j.sweep(ctx, item.Prefix())
 	if err != nil {
-		return 0, err
+		return 0, uuid.Nil, err
 	}
-	// Expiring allocations records exact retirement in this same sweep. Read
-	// those receipts before deleting so first-pass bytes do not wait a day.
-	jr := j.cfg.Journal.forTenant(item.Ref().TenantID)
-	var current []uuid.UUID
-	err = jr.pool.QueryRow(ctx, `SELECT deletion_operations FROM `+jr.cleanup+` WHERE tenant_id=$1 AND folder_prefix=$2`, item.Ref().TenantID, item.Prefix()).Scan(&current)
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return 0, err
-	}
+	// Replay the sweep's locked receipts too, including its new retirements.
 	for _, id := range current {
 		if !slices.Contains(operations, id) {
 			operations = append(operations, id)
@@ -159,7 +156,7 @@ func (j *Jobs) cleanupFolder(ctx context.Context, item Item, operations []uuid.U
 			return err
 		})
 		if err != nil {
-			return 0, err
+			return 0, revision, err
 		}
 		if intent.Effects.FolderDelete != nil {
 			err = j.retireFolder(ctx, item, intent)
@@ -167,11 +164,11 @@ func (j *Jobs) cleanupFolder(ctx context.Context, item Item, operations []uuid.U
 			err = j.repeatDeletion(ctx, item, operation)
 		}
 		if err != nil {
-			return 0, err
+			return 0, revision, err
 		}
 		wait = max(wait, intent.Effects.CleanupAt.Sub(j.cfg.Now()))
 	}
-	return max(wait, result.Wait), nil
+	return max(wait, result.Wait), revision, nil
 }
 
 func (r *Registry) cleanupKinds(tenant string) []string {
