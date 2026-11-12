@@ -1023,7 +1023,8 @@
         "TestUploadAcceptanceAndRetry/CK-J09-S04_invalid_type_path_size_and_checksum_leave_no_adopted_files/digest",
         "TestUploadAcceptanceAndRetry/CK-J09-S04_invalid_type_path_size_and_checksum_leave_no_adopted_files/path",
         "TestUploadAcceptanceAndRetry/CK-J09-S04_invalid_type_path_size_and_checksum_leave_no_adopted_files/size",
-        "TestUploadAcceptanceAndRetry/CK-J09-S04_invalid_type_path_size_and_checksum_leave_no_adopted_files/type"
+        "TestUploadAcceptanceAndRetry/CK-J09-S04_invalid_type_path_size_and_checksum_leave_no_adopted_files/type",
+        "TestMediaAdmissionBoundaries/CK-J09-S04_entity_cover_admits_64_MiB_and_refuses_more"
       ]
     },
     {
@@ -1214,7 +1215,9 @@
       "cases": [
         "TestMediaFailureRecovery/CK-J11-S06",
         "TestMediaFailureRecovery/CK-J11-S06/database-settlement-abort",
+        "TestMediaFailureRecovery/CK-J11-S06/missing-staged-upload-fails-again",
         "TestMediaFailureRecovery/CK-J11-S06/resource-failure-is-visible-and-regeneration-recovers",
+        "TestMediaFailureRecovery/CK-J11-S06/staged-placement-failure-regenerates",
         "TestMediaFailureRecovery/CK-J11-S06/storage-refusal",
                 "TestMediaVideoFailureRecovery/video",
         "TestMediaVideoFailureRecovery/mp4",

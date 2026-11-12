@@ -128,6 +128,73 @@ func newMediaWire(t *testing.T) *mediaWire {
 
 func TestMediaFailureRecovery(t *testing.T) {
 	t.Run("CK-J11-S06", func(t *testing.T) {
+		for _, missing := range []bool{false, true} {
+			name := "staged-placement-failure-regenerates"
+			if missing {
+				name = "missing-staged-upload-fails-again"
+			}
+			t.Run(name, func(t *testing.T) {
+				m := newResilientMedia(t)
+				client := m.app.engine.Client()
+				ref := galleryRef(t, client, name)
+				op := stageFile(t, client, ref, "pages/one.png", imageBytes(t))
+				_, err := client.PostMediaUploadCommit(t.Context(), media.CommitBody{Ref: ref, OperationID: uuid.NewString(), Ops: []media.Op{op}})
+				must(t, err)
+				logical, err := m.config.Kinds.VersionRef(ref.Kind, ref.ID, ref.Version)
+				must(t, err)
+				queue, err := workqueue.New(m.pool, m.config.Kinds, m.config.Schema)
+				must(t, err)
+				journal, err := mediastore.NewPGJournal(m.pool, m.schema, queue)
+				must(t, err)
+				manifests, err := mediastore.NewManifests(m.storage.store, m.config.Kinds, mediastore.ManifestOptions{Locker: mediastore.PGLocker(m.pool), Journal: journal})
+				must(t, err)
+				if missing {
+					item, err := m.config.Kinds.Item(logical)
+					must(t, err)
+					key, err := item.Staged(op.Blob)
+					must(t, err)
+					must(t, m.storage.store.Delete(t.Context(), key))
+					placed, err := manifests.Place(t.Context(), logical)
+					must(t, err)
+					if placed != 0 {
+						t.Fatalf("placed missing source: %d", placed)
+					}
+				} else {
+					must(t, manifests.FailIngest(t.Context(), logical, errors.New("placement attempts exhausted")))
+				}
+				before, _, err := manifests.Get(t.Context(), logical)
+				must(t, err)
+				file := before.Files[before.Find(op.Path)]
+				if file.Blob != "" || file.Staged != op.Blob || file.Fail() == nil || missing && file.Fail().Code != media.CodeNotUploaded {
+					t.Fatalf("expected a current failure before placement: %+v", file)
+				}
+				_, err = client.PostMediaUploadCommit(t.Context(), media.CommitBody{Ref: ref, OperationID: uuid.NewString(), Ops: []media.Op{{Op: media.OpRegenerate}}})
+				must(t, err)
+				retried, _, err := manifests.Get(t.Context(), logical)
+				must(t, err)
+				file = retried.Files[retried.Find(op.Path)]
+				if file.Fail() != nil || len(file.Pending) == 0 {
+					t.Fatalf("regeneration did not clear the staged failure: %+v", file)
+				}
+				m.start(t)
+				if missing {
+					waitFor(t, func() bool {
+						read, err := client.GetMediaVersion(t.Context(), ref.Kind, ref.ID, ref.Version, ck.GetMediaVersionQuery{Status: true})
+						must(t, err)
+						return read.Status != nil && read.Status.State == media.StateFailed && len(read.Status.Failures) == 1 && read.Status.Failures[0].Code == media.CodeNotUploaded
+					})
+				} else {
+					ready := awaitMediaReady(t, client, ref)
+					requireMediaPaths(t, ready, op.Path, "reader/one.webp")
+					after, _, err := manifests.Get(t.Context(), logical)
+					must(t, err)
+					file = after.Files[after.Find(op.Path)]
+					if file.Blob == "" || file.Staged != "" || file.Fail() != nil {
+						t.Fatalf("regenerated upload was not placed: %+v", file)
+					}
+				}
+			})
+		}
 		for _, profile := range []string{"storage-refusal", "database-settlement-abort"} {
 			t.Run(profile, func(t *testing.T) {
 				m := newResilientMedia(t)

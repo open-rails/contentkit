@@ -24,6 +24,20 @@ import (
 )
 
 func TestMediaAdmissionBoundaries(t *testing.T) {
+	t.Run("CK-J09-S04_entity_cover_admits_64_MiB_and_refuses_more", func(t *testing.T) {
+		m := newResilientMedia(t)
+		_, credential, entity := ownedChannel(t, m.world, m.app, "Cover size boundary")
+		client := m.app.client(credential)
+		request := media.PresignBody{Ref: media.RefBody{Kind: "channel", ID: string(entity.ID)}, Path: "cover/large.png", Type: "image/png", Size: 64 << 20, SHA256: strings.Repeat("ab", 32)}
+		plan, err := client.PostMediaUploadPresign(t.Context(), request)
+		must(t, err)
+		if plan.Put == nil || plan.Multipart != nil {
+			t.Fatal("64 MiB entity cover was not admitted as a single PUT")
+		}
+		request.Size++
+		_, err = client.PostMediaUploadPresign(t.Context(), request)
+		requireError(t, err, 413, "too_large")
+	})
 	t.Run("CK-J10-S04_expired_issuer_ticket_cannot_read_complete_abort_or_presign_parts", func(t *testing.T) {
 		m := newResilientMedia(t)
 		client := m.app.engine.Client()
