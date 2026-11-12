@@ -50,6 +50,14 @@ func TestEntityPopularity(t *testing.T) {
 	}
 	must(t, a.deps.ClickHouse.Exec(t.Context(), `INSERT INTO `+a.cfg.ClickHouse.Database+`.popularity_daily_prepared (tenant,content_kind,domain,language,day,computed_at) VALUES(?,?,?,?,?,?)`,
 		tenant, "article", "", "", day, day.AddDate(0, 0, 3)))
+	// Publishing started River, whose startup refresh placed the tags before
+	// the scores existed. Once it has, the next hour's refresh rebuilds them.
+	waitForWithin(t, time.Minute, func() bool {
+		var placed int
+		must(t, w.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+w.schema+`.content_entity_popular_rankings WHERE entity_kind='tag'`).Scan(&placed))
+		return placed == 4
+	})
+	w.clock.set(w.clock.now().Add(2 * time.Hour))
 	refreshPopularRankings(t, w)
 	late := tag("late")
 
