@@ -153,8 +153,9 @@ language, it reuses its scores. It sums them for each active entity of the
 kind over the entity's live content of that content kind, and stores each
 entity's place in that order, then by content count (over every domain and
 language) and id. A scope whose places are missing or older than its content
-ranking is due at once. Listings read the places of the reader's domain scope
-without a language; an entity created since the last build comes last. On the
+ranking is due at once. Validation requires the bucket to declare a scope
+without a language for every domain a read can resolve. Listings read the
+places of the reader's domain scope without a language; an entity created since the last build comes last. On the
 Doujins catalog (7,919 tags, 436,754 links) one build takes under a second of
 PostgreSQL time per kind and domain.
 

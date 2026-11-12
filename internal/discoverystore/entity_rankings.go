@@ -76,7 +76,8 @@ ranked AS (SELECT e.id, round(coalesce(sum(s.score), 0)::numeric, 12) AS score, 
  FROM `+s.t.entities+` e LEFT JOIN members mb ON mb.entity_id=e.id LEFT JOIN scores s ON s.content_id=mb.content_id
  WHERE e.tenant_id=@tenant AND e.kind=@entity_kind AND e.state='active' GROUP BY e.id)
 INSERT INTO `+s.t.entityRankings+` (tenant_id,entity_kind,period,domain,language,entity_id,place,computed_at)
-SELECT @tenant,@entity_kind,@period,@domain,@language,id,row_number() OVER (ORDER BY score DESC, n DESC, id),@computed FROM ranked`, args)
+SELECT @tenant,@entity_kind,@period,@domain,@language,id,row_number() OVER (ORDER BY score DESC, n DESC, id),@computed FROM ranked
+ON CONFLICT (tenant_id,entity_kind,period,domain,language,entity_id) DO UPDATE SET place=excluded.place,computed_at=excluded.computed_at`, args)
 			return err
 		})
 		if err != nil {

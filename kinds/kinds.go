@@ -507,8 +507,23 @@ func (c Config) Validate() error {
 			return err
 		}
 		if p := gk.Popular; p != nil {
-			if _, ok := c.PopularBucket(*p); !ok || !slices.Contains(c.Kinds[p.ContentKind].Entities, name) {
+			bucket, ok := c.PopularBucket(*p)
+			if !ok || !slices.Contains(c.Kinds[p.ContentKind].Entities, name) {
 				return fmt.Errorf("%w: group kind %s: popular names a kind that groups it by %s and one of that kind's popularity buckets", ErrInvalid, name, name)
+			}
+			// Entities rank per domain over every language, so each domain a
+			// read can resolve (DomainFor) needs a scope without a language.
+			domains := []string{}
+			if !slices.ContainsFunc(c.ContentFilters.Domains, func(d Domain) bool { return d.Name == "main" }) {
+				domains = append(domains, "")
+			}
+			for _, d := range c.ContentFilters.Domains {
+				domains = append(domains, d.Name)
+			}
+			for _, d := range domains {
+				if _, ok := bucket.Scope(d, ""); !ok {
+					return fmt.Errorf("%w: group kind %s: popular bucket %s declares no scope without a language for domain %q", ErrInvalid, name, p.Bucket, d)
+				}
 			}
 		}
 	}
