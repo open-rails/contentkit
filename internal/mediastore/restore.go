@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -192,7 +193,7 @@ func (j *Jobs) Restore(ctx context.Context, snap Snapshot, o RestoreOptions) (*M
 			remap[from] = cmp.Or(to, name)
 			destinations[i] = item.Prefix() + area + "/" + name
 		}
-		if err := j.cfg.Journal.allocateRestore(ctx, mutation.commit, next.Incarnation, destinations); err != nil {
+		if err := j.cfg.Journal.allocateRestore(ctx, mutation.commit, next.Incarnation, destinations, j.cfg.Now().Add(j.cfg.Grace)); err != nil {
 			return err
 		}
 		for i, key := range sources {
@@ -287,7 +288,7 @@ func (j *Jobs) finishPublicationRestore(ctx context.Context, item Item, commit m
 
 // Ownership precedes historical copies. Recovery may invalidate this open lease
 // while bytes are in flight; final prepare then refuses to publish their root.
-func (j *PGJournal) allocateRestore(ctx context.Context, c manifestCommit, incarnation string, keys []string) error {
+func (j *PGJournal) allocateRestore(ctx context.Context, c manifestCommit, incarnation string, keys []string, due time.Time) error {
 	j = j.forTenant(c.Ref.TenantID)
 	return pgx.BeginFunc(ctx, j.pool, func(tx pgx.Tx) error {
 		found, err := j.load(ctx, tx, c.Ref.TenantID, c.ID)
@@ -304,6 +305,6 @@ func (j *PGJournal) allocateRestore(ctx context.Context, c manifestCommit, incar
 				return err
 			}
 		}
-		return nil
+		return j.scheduleCleanupTx(ctx, tx, c.Ref, c.Folder, due, nil, false)
 	})
 }
