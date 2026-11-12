@@ -639,7 +639,7 @@ func (e *Engine) start(ctx context.Context) error {
 	case e.started:
 		return errors.New("contentkit: Start called twice")
 	}
-	client, err := riverhelpers.New(ctx, e.pool, &river.Config{Schema: e.riverSchema, Queues: map[string]river.QueueConfig{}, Logger: e.log},
+	client, err := riverhelpers.New(ctx, e.pool, &river.Config{Schema: e.riverSchema, Queues: map[string]river.QueueConfig{}, Logger: e.log, ReindexerSchedule: river.NeverSchedule()},
 		e.jobs.contribution())
 	if err != nil {
 		return err
