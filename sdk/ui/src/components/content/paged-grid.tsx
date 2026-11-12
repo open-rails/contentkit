@@ -11,7 +11,7 @@ import { Pagination } from "./pagination.js";
 const NUMBERED_PAGE_SIZE = 24;
 
 /** The page a list shows: the host's, else its own, which starts again when the query changes. */
-function usePage(p: CardListProps, query: unknown): [number, (page: number) => void] {
+export function usePage(p: { page?: number; onPageChange?: (page: number) => void }, query: unknown): [number, (page: number) => void] {
   const key = JSON.stringify(query);
   const [own, setOwn] = useState({ key, page: 1 });
   const ownPage = own.key === key ? own.page : 1;

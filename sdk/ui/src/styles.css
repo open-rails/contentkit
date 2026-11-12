@@ -199,3 +199,77 @@
     font-size: 2.25rem;
   }
 }
+
+/* A post's reading typography: about 68ch of a 20px serif face. Hosts may
+   restyle it; it sits in the components layer under their own rules. */
+@layer components {
+  [data-ckui="post-body"] {
+    font-family: Charter, "Bitstream Charter", "Sitka Text", Cambria, Georgia, serif;
+    font-size: clamp(1.125rem, 2vw, 1.25rem);
+    line-height: 1.8;
+  }
+  [data-ckui="post-body"] :is(p, ul, ol, blockquote, pre) {
+    margin-block: 0 1.4em;
+  }
+  [data-ckui="post-body"] :is(h1, h2, h3, h4, h5, h6) {
+    margin-block: 1.8em 0.65em;
+    font-family: var(--font-sans, ui-sans-serif, system-ui, sans-serif);
+    font-weight: 700;
+    line-height: 1.3;
+    letter-spacing: -0.02em;
+  }
+  [data-ckui="post-body"] :is(h1, h2) {
+    font-size: 1.6em;
+  }
+  [data-ckui="post-body"] h3 {
+    font-size: 1.3em;
+  }
+  [data-ckui="post-body"] :is(h4, h5, h6) {
+    font-size: 1.1em;
+  }
+  [data-ckui="post-body"] li {
+    margin-block: 0.35em;
+  }
+  [data-ckui="post-body"] ul {
+    padding-inline-start: 1.5em;
+    list-style-type: disc;
+  }
+  [data-ckui="post-body"] ol {
+    padding-inline-start: 1.5em;
+    list-style-type: decimal;
+  }
+  [data-ckui="post-body"] a {
+    color: var(--ckui-foreground);
+    text-decoration: underline;
+    text-decoration-color: var(--ckui-primary);
+    text-underline-offset: 0.2em;
+  }
+  [data-ckui="post-body"] blockquote {
+    border-inline-start: 2px solid var(--ckui-border);
+    padding-inline-start: 1.2em;
+    font-style: italic;
+  }
+  [data-ckui="post-body"] pre {
+    max-width: 100%;
+    overflow-x: auto;
+    padding: 1rem;
+    background: var(--ckui-muted);
+    border-radius: 0.5rem;
+    font-family: ui-monospace, monospace;
+    font-size: 0.8em;
+    white-space: pre;
+  }
+  [data-ckui="post-body"] img {
+    max-width: 100%;
+    height: auto;
+    margin-block: 2rem;
+    border-radius: 0.5rem;
+  }
+  [data-ckui="post-body"] iframe {
+    width: 100%;
+    max-width: 100%;
+    height: auto;
+    aspect-ratio: 16 / 9;
+    border: 0;
+  }
+}

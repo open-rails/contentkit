@@ -118,4 +118,8 @@ export const discovery: typeof en = {
     trending: "Im Trend",
     unread: "Ungelesen",
   },
+  postArticle: {
+    back: "Zurück zu den Beiträgen",
+    related: "Neueste Beiträge",
+  },
 };

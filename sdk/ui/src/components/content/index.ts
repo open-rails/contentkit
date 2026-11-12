@@ -15,4 +15,6 @@ export { AccessEditor, ContentDetailsEditor, ContentSections, SegmentsEditor, Ve
 export { ReaderStats, type ReaderStatsProps } from "./reader-stats.js";
 export { VersionDownloadButton, type VersionDownloadButtonProps } from "./download-button.js";
 export { ContentFavorites } from "./favorites.js";
-export { PostList, excerpt, type PostListProps } from "./post-list.js";
+export { PostList, excerpt, usePostCoverAspect, type PostListProps } from "./post-list.js";
+export { PostArticle, type PostArticleProps } from "./post-article.js";
+export { InAppLink } from "./in-app-link.js";

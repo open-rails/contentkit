@@ -117,4 +117,8 @@ export const discovery = {
     trending: "Trending",
     unread: "Unread",
   },
+  postArticle: {
+    back: "Back to posts",
+    related: "Newest posts",
+  },
 };

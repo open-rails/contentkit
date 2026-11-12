@@ -118,4 +118,8 @@ export const discovery: typeof en = {
     trending: "トレンド",
     unread: "未読",
   },
+  postArticle: {
+    back: "投稿一覧に戻る",
+    related: "最新の投稿",
+  },
 };
