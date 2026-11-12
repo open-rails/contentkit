@@ -99,11 +99,8 @@ func (j *Jobs) sweep(ctx context.Context, prefix string) (SweepResult, []uuid.UU
 				}
 				continue
 			}
-			if parsed.Area == layout.AreaPublic {
-				effects.Public = append(effects.Public, key)
-			} else {
-				effects.Private = append(effects.Private, key)
-			}
+			// Private records exact allocation keys, regardless of storage area.
+			effects.Private = append(effects.Private, key)
 		}
 		for _, key := range effects.Private {
 			if _, live := protected[key]; live {

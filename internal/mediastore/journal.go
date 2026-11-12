@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"slices"
 	"time"
 
 	"github.com/google/uuid"
@@ -141,7 +140,7 @@ func (j *PGJournal) prepareCleanup(ctx context.Context, c *manifestCommit, effec
 		}
 		if _, err := tx.Exec(ctx, `UPDATE `+j.allocations+` SET retired_at = now()
 WHERE tenant_id = $1 AND folder_prefix = $2 AND object_key = ANY($3::text[]) AND retired_at IS NULL`,
-			c.Ref.TenantID, c.Folder, slices.Concat(effects.Public, effects.Private)); err != nil {
+			c.Ref.TenantID, c.Folder, effects.Private); err != nil {
 			return err
 		}
 		if err := j.projectTx(ctx, tx, proj); err != nil {

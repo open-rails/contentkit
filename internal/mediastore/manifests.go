@@ -818,7 +818,7 @@ func (m *Manifests) finishCommit(ctx context.Context, item Item, commit manifest
 				return err
 			}
 		}
-		if err := m.retireAllocations(ctx, item, slices.Concat(commit.Effects.Public, commit.Effects.Private)); err != nil {
+		if err := m.retireAllocations(ctx, item, commit.Effects.Private); err != nil {
 			return err
 		}
 		for _, c := range commit.Effects.Mirror {
