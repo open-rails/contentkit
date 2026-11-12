@@ -144,6 +144,17 @@ ClickHouse outage.
 Pagination binds the selected bucket/range and filters, but does not freeze later
 ranking or catalog edits. A refresh while someone browses can change item order.
 
+## Entity popularity
+
+An entity kind with `popular: {content_kind, bucket}` lists one kind by
+`sort=popular`. Once a day the popular refresh worker sums, for each active
+entity of the kind, the bucket scores of its live content of that content kind,
+in every scope of the bucket. It stores the kind's entities in that order, then
+by content count and id, as one list per scope. Listings read that list for the
+reader's domain and language, as content popularity does; an entity created
+since the last list comes last. On the Doujins catalog (7,919 tags, 436,754
+links) one list takes under a second of PostgreSQL time.
+
 ## Performance evidence
 
 The [daily participation experiment](../benchmarks/daily-participation/README.md)

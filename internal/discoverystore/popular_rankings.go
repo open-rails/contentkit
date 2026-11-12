@@ -148,6 +148,7 @@ func (s *Service) RefreshPopularRankings(ctx context.Context) error {
 			}
 		}
 	}
+	failures = append(failures, s.refreshEntityRankings(ctx, now))
 	return errors.Join(failures...)
 }
 

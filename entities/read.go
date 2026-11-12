@@ -22,6 +22,13 @@ const (
 	SortNewest Sort = "newest"
 )
 
+const (
+	// SortPopular orders one kind by its daily popularity ranking: the summed
+	// popularity of the entities' content, then their content count. Entities
+	// created since the last ranking come last.
+	SortPopular Sort = "popular"
+)
+
 // MaxListIDs bounds ListOptions.IDs.
 const MaxListIDs = 100
 

@@ -362,6 +362,24 @@ type EntityKind struct {
 	// Roles are membership roles (publisher on an artist entity).
 	Roles      []string             `json:"roles,omitempty" yaml:"roles"`
 	Attributes map[string]Attribute `json:"attributes,omitempty" yaml:"attributes"`
+	// Popular lets the kind's listings sort by popularity.
+	Popular *EntityPopularity `json:"popular,omitempty" yaml:"popular"`
+}
+
+// EntityPopularity ranks a kind's entities daily by the summed popularity of
+// their content of ContentKind in that kind's Bucket, then by content count.
+type EntityPopularity struct {
+	ContentKind string `json:"content_kind" yaml:"content_kind"`
+	Bucket      string `json:"bucket" yaml:"bucket"`
+}
+
+// PopularBucket is the content bucket that ranks an entity kind.
+func (c Config) PopularBucket(p EntityPopularity) (PopularityBucket, bool) {
+	i := slices.IndexFunc(c.Kinds[p.ContentKind].Popularity, func(b PopularityBucket) bool { return b.ID == p.Bucket })
+	if i < 0 {
+		return PopularityBucket{}, false
+	}
+	return c.Kinds[p.ContentKind].Popularity[i], true
 }
 
 // HasAvatar reports whether the kind's entities take an avatar.
@@ -486,6 +504,11 @@ func (c Config) Validate() error {
 		}
 		if err := validateAttributes("group kind "+name, gk.Attributes); err != nil {
 			return err
+		}
+		if p := gk.Popular; p != nil {
+			if _, ok := c.PopularBucket(*p); !ok || !slices.Contains(c.Kinds[p.ContentKind].Entities, name) {
+				return fmt.Errorf("%w: group kind %s: popular names a kind that groups it by %s and one of that kind's popularity buckets", ErrInvalid, name, name)
+			}
 		}
 	}
 	if ch := c.Channels; ch != nil {

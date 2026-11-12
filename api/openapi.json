@@ -7072,7 +7072,7 @@
           {
             "name": "sort",
             "in": "query",
-            "description": "name (the default), count or newest",
+            "description": "name (the default), count, newest or popular (one kind with popularity; its daily ranking, then count)",
             "schema": {
               "type": "string"
             }
@@ -7466,7 +7466,7 @@
           {
             "name": "sort",
             "in": "query",
-            "description": "name, count or newest",
+            "description": "name, count, newest or popular",
             "schema": {
               "type": "string"
             }
@@ -15209,6 +15209,9 @@
             "additionalProperties": {
               "$ref": "#/components/schemas/Attribute"
             }
+          },
+          "popular": {
+            "$ref": "#/components/schemas/EntityPopularity"
           }
         }
       },
@@ -15230,6 +15233,21 @@
         },
         "required": [
           "entities"
+        ]
+      },
+      "EntityPopularity": {
+        "type": "object",
+        "properties": {
+          "content_kind": {
+            "type": "string"
+          },
+          "bucket": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "content_kind",
+          "bucket"
         ]
       },
       "EntityRecord": {
