@@ -123,11 +123,10 @@ func (o *opRun) apply(n int, op media.Op) error {
 		if op.Preset != "" && k.private(op.Preset) == nil && k.public(op.Preset) == nil {
 			return uploadErr(media.CodeNotFound, "kind %q has no preset %q", k.Name, op.Preset)
 		}
-		// Uploads that failed for their current blob and edit are retried:
-		// their presets are pending again, as after a new upload. A generated
-		// frame can fail before it has its first blob and must be retried too.
+		// Retry failures for the current source and edit, including staged uploads
+		// awaiting placement and generated frames awaiting their first blob.
 		for i, f := range m.Files {
-			if !f.IsUpload() || f.Gone || f.Blob == "" && f.Frame == nil || f.Fail() == nil {
+			if !f.IsUpload() || f.Gone || f.Blob == "" && f.Staged == "" && f.Frame == nil || f.Fail() == nil {
 				continue
 			}
 			presets := k.Presets(f.Path, false)
