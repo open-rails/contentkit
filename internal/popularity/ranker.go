@@ -2,6 +2,7 @@ package popularity
 
 import (
 	"context"
+	"slices"
 	"time"
 
 	signalstore "github.com/open-rails/contentkit/internal/signalstore"
@@ -66,15 +67,19 @@ func prepare(ctx context.Context, source Source, availability AvailabilityProvid
 // arbitrary whole-day range after checking DailyPopularityCoverage; they never
 // invoke preparation or scan raw receipts.
 func Rank(ctx context.Context, source Source, _ AvailabilityProvider, kind string, window signal.Window, scope signal.ActivityScope, limit int) ([]string, error) {
+	hits, err := Hits(ctx, source, kind, window, scope, limit)
+	ids := make([]string, 0, len(hits))
+	for _, h := range hits {
+		ids = append(ids, h.ContentID)
+	}
+	return ids, err
+}
+
+// Hits are Rank's contents with their scores.
+func Hits(ctx context.Context, source Source, kind string, window signal.Window, scope signal.ActivityScope, limit int) ([]signal.PopularHit, error) {
 	hits, err := source.DailyPopular(ctx, kind, window, scope, limit)
 	if err != nil {
 		return nil, err
 	}
-	ids := make([]string, 0, len(hits))
-	for _, h := range hits {
-		if h.Score > 0 {
-			ids = append(ids, h.ContentID)
-		}
-	}
-	return ids, nil
+	return slices.DeleteFunc(hits, func(h signal.PopularHit) bool { return h.Score <= 0 }), nil
 }

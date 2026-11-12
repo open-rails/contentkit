@@ -866,6 +866,18 @@
       ]
     },
     {
+      "id": "CK-J07-S25",
+      "journey": "CK-J07",
+      "behavior": "Popular entity listings follow the daily ranking of their kind: summed content popularity, then content count",
+      "status": "verified",
+      "evidence": [
+        "A tag whose two articles were read outranks a tag with one more-read article, tags without readers follow by content count, and a tag created since the ranking comes last; cursor and numbered pages keep that order, and a kind without popularity or a listing of no kind is refused."
+      ],
+      "cases": [
+        "TestEntityPopularity"
+      ]
+    },
+    {
       "id": "CK-J07-S19",
       "journey": "CK-J07",
       "behavior": "Observed search query and absolute result rank join to exact clicked visits across same-tab and native new-tab navigation",

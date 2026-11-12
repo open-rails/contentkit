@@ -640,7 +640,7 @@ content URLs, React hooks and styled components. See
 ## Entities
 
 Entity kinds come from `kinds.Config.EntityKinds` (ordered, parent, scoped_by,
-version_level, roles, attributes). They describe content; channel ownership and
+version_level, roles, attributes, popular). They describe content; channel ownership and
 authority are configured separately with `channels` and a content kind's `channel`
 policy. See [Posts and channels](docs/posts-and-channels.md) for fixed staff blogs,
 creator feeds and reposts.

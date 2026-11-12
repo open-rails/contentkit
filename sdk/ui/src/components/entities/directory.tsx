@@ -37,6 +37,8 @@ export interface EntityDirectoryProps {
   onLetterChange?: (letter: string | null) => void;
   /** Hide the A-Z bar. */
   letters?: boolean;
+  /** The first button reads "Popular" instead of "All" and lists every entity by popularity; a letter keeps sort. The kind needs popular configured. */
+  popular?: boolean;
   /** "list" (names with counts, default) or "grid" (covers). */
   layout?: "list" | "grid";
   /** The cover grid's columns, as on CardGrid, so covers can match the host's content cards. Default about 9rem per cover. */
@@ -80,7 +82,8 @@ export function EntityDirectory(p: EntityDirectoryProps) {
     const c = chosen.getBoundingClientRect();
     if (c.left < n.left || c.right > n.right) nav.scrollLeft += c.left - n.left - (n.width - c.width) / 2;
   }, [letter]);
-  const filter: EntityFilter = { kind: p.kind, language: p.language, contentKind: p.contentKind, parent: p.parent, scope: p.scope, sort, letter: letter ?? undefined, pageSize: p.pageSize };
+  const ranked = !!p.popular && letter === null;
+  const filter: EntityFilter = { kind: p.kind, language: p.language, contentKind: p.contentKind, parent: p.parent, scope: p.scope, sort: ranked ? "popular" : sort, letter: letter ?? undefined, pageSize: p.pageSize };
   return (
     <ContentKitUiRoot appearance={p.appearance} className={cn("grid gap-4 text-sm", p.className)} data-ckui="entity-directory" data-kind={p.kind}>
       {(p.letters !== false || !!p.sorts?.length) && (
@@ -99,12 +102,12 @@ export function EntityDirectory(p: EntityDirectoryProps) {
                   className="min-w-7 max-sm:h-10 max-sm:min-w-10 comfortable:h-10 comfortable:min-w-10"
                   onClick={() => choose(l)}
                 >
-                  {l === null ? t("entities.all") : l.toUpperCase()}
+                  {l === null ? t(p.popular ? "entities.directorySort_popular" : "entities.all") : l.toUpperCase()}
                 </Button>
               ))}
             </nav>
           )}
-          {!!p.sorts?.length && <SortMenu value={sort} sorts={p.sorts} onChange={chooseSort} label={(s) => t(`entities.directorySort_${s}`)} className="ms-auto" />}
+          {!!p.sorts?.length && !ranked && <SortMenu value={sort} sorts={p.sorts} onChange={chooseSort} label={(s) => t(`entities.directorySort_${s}`)} className="ms-auto" />}
         </div>
       )}
       {p.pagination === "pages" ? <NumberedEntities {...p} filter={filter} /> : <CursorEntities {...p} filter={filter} />}
