@@ -404,6 +404,60 @@ func TestMediaPurgeClosesSweepRevision(t *testing.T) {
 	}
 }
 
+func TestFailedMediaRestoreSchedulesAllocations(t *testing.T) {
+	for _, existing := range []bool{false, true} {
+		name := "new row"
+		if existing {
+			name = "existing row"
+		}
+		t.Run(name, func(t *testing.T) {
+			w := newWorld(t)
+			a := w.apps[0]
+			m := attachMedia(t, w, a)
+			registry, jobs := newPurgeJobs(t, w, a, m.store)
+			ref := galleryRef(t, a.engine.Client(), "Failed historical copy")
+			target, err := registry.VersionRef(ref.Kind, ref.ID, ref.Version)
+			must(t, err)
+			item, err := registry.Item(target)
+			must(t, err)
+			cleanup := pgx.Identifier{w.schema, "content_media_cleanup"}.Sanitize()
+			var before uuid.UUID
+			if existing {
+				must(t, w.pool.QueryRow(t.Context(), `INSERT INTO `+cleanup+` (tenant_id,folder_prefix,content_kind,due_at)
+VALUES ($1,$2,$3,$4) RETURNING revision`, target.TenantID, item.Prefix(), target.ContentKind, w.clock.now().Add(48*time.Hour)).Scan(&before))
+			}
+			sum := sha256.Sum256([]byte("missing snapshot bytes"))
+			blob := layout.BlobRef(layout.AreaOriginals, layout.BlobName(sum[:], uuid.NewString()))
+			key, err := item.Blob(blob)
+			must(t, err)
+			snapshot := mediastore.Snapshot{Ref: target, VersionID: uuid.NewString(),
+				Manifest: &mediastore.Manifest{V: media.ManifestVersion, Incarnation: uuid.NewString(),
+					Files: []media.File{{Path: "pages/missing.png", Type: "image/png", Blob: blob}}},
+				Objects: []media.ObjectVersion{{Key: key, VersionID: uuid.NewString()}},
+			}
+			_, err = jobs.Restore(t.Context(), snapshot, mediastore.RestoreOptions{OperationID: uuid.NewString()})
+			if err == nil {
+				t.Fatal("restore copied a nonexistent object version")
+			}
+			var allocations int
+			must(t, w.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+pgx.Identifier{w.schema, "content_media_allocations"}.Sanitize()+` WHERE tenant_id=$1 AND folder_prefix=$2 AND retired_at IS NULL`, target.TenantID, item.Prefix()).Scan(&allocations))
+			if allocations != 1 {
+				t.Fatalf("failed restore left %d allocations, expected 1 (restore error: %v)", allocations, err)
+			}
+			var due time.Time
+			var after uuid.UUID
+			var operations []uuid.UUID
+			must(t, w.pool.QueryRow(t.Context(), `SELECT due_at,revision,deletion_operations FROM `+cleanup+` WHERE tenant_id=$1 AND folder_prefix=$2`, target.TenantID, item.Prefix()).Scan(&due, &after, &operations))
+			if delta := due.Sub(w.clock.now().Add(24 * time.Hour)); delta < -time.Second || delta > time.Second {
+				t.Fatalf("restore allocation cleanup due at %s, expected now + grace", due)
+			}
+			if after == before || len(operations) != 0 {
+				t.Fatalf("restore did not refresh allocation-only scheduling: revision=%s operations=%v", after, operations)
+			}
+		})
+	}
+}
+
 func TestMediaPurgePreservesPostSnapshotAllocation(t *testing.T) {
 	w := newWorld(t)
 	a := w.apps[0]
