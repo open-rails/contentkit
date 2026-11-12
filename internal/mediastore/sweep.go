@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/contentkit/contentref"
 	media "github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/layout"
@@ -32,7 +33,7 @@ func (j *Jobs) Sweep(ctx context.Context, ref contentref.ContentRef) (SweepResul
 	if err != nil {
 		return SweepResult{}, err
 	}
-	result, err := j.sweep(ctx, item.Prefix())
+	result, _, _, err := j.sweep(ctx, item.Prefix())
 	if err == nil {
 		_, _, err = j.cleanupFolder(ctx, item, nil)
 	}
@@ -63,16 +64,21 @@ func (j *Jobs) SweepAll(ctx context.Context) error {
 	return errors.Join(errs...)
 }
 
-func (j *Jobs) sweep(ctx context.Context, prefix string) (SweepResult, error) {
+func (j *Jobs) sweep(ctx context.Context, prefix string) (SweepResult, []uuid.UUID, uuid.UUID, error) {
 	item, err := j.itemForFolder(ctx, prefix)
 	if err != nil {
-		return SweepResult{}, err
+		return SweepResult{}, nil, uuid.Nil, err
 	}
 	if err := j.expireStaged(ctx, item); err != nil {
-		return SweepResult{}, err
+		return SweepResult{}, nil, uuid.Nil, err
 	}
+	unlock, err := j.cfg.Locker.Lock(ctx, item.ManifestKey())
+	if err != nil {
+		return SweepResult{}, nil, uuid.Nil, err
+	}
+	defer unlock()
 	var result SweepResult
-	err = j.manifests.cleanup(ctx, item, false, func(m *Manifest, _ bool) (journalEffects, error) {
+	err = j.manifests.cleanupLocked(ctx, item, false, func(m *Manifest, _ bool) (journalEffects, error) {
 		now := j.cfg.Now()
 		keep := j.keeps(item, m)
 		protected, err := j.manifests.allocationDeadlines(ctx, item, j.cfg.Grace)
@@ -112,9 +118,20 @@ func (j *Jobs) sweep(ctx context.Context, prefix string) (SweepResult, error) {
 		return effects, nil
 	})
 	if err != nil {
-		return SweepResult{}, err
+		return SweepResult{}, nil, uuid.Nil, err
 	}
-	return result, nil
+	// Capture the obligations and revision under the allocation scan's lock.
+	jr := j.cfg.Journal.forTenant(item.Ref().TenantID)
+	var operations []uuid.UUID
+	var revision uuid.UUID
+	err = jr.pool.QueryRow(ctx, `SELECT deletion_operations,revision FROM `+jr.cleanup+` WHERE tenant_id=$1 AND folder_prefix=$2`, item.Ref().TenantID, item.Prefix()).Scan(&operations, &revision)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return result, nil, uuid.Nil, nil
+	}
+	if err != nil {
+		return SweepResult{}, nil, uuid.Nil, err
+	}
+	return result, operations, revision, nil
 }
 
 // expireStaged drops unusable upload references at their known deadline.

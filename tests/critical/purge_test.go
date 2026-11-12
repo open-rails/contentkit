@@ -395,6 +395,143 @@ func TestMediaPurgeClosesSweepRevision(t *testing.T) {
 	}
 }
 
+func TestMediaPurgePreservesPostSnapshotAllocation(t *testing.T) {
+	w := newWorld(t)
+	a := w.apps[0]
+	m := attachMedia(t, w, a)
+	config, err := a.cfg.MediaKinds()
+	must(t, err)
+	registry, err := mediastore.NewRegistry(config, mediastore.Hooks{})
+	must(t, err)
+	journal, err := mediastore.NewPGJournal(w.pool, w.schema, nil)
+	must(t, err)
+	jobs, err := mediastore.NewJobs(mediastore.JobsConfig{Store: m.store, Registry: registry, Locker: mediastore.PGLocker(w.pool), Journal: journal, Now: w.clock.now})
+	must(t, err)
+	ref := galleryRef(t, a.engine.Client(), "Allocation after cleanup snapshot")
+	target, err := registry.VersionRef(ref.Kind, ref.ID, ref.Version)
+	must(t, err)
+	item, err := registry.Item(target)
+	must(t, err)
+	sum := sha256.Sum256([]byte("allocation A"))
+	blobs, err := jobs.Manifests().NewBlobs(t.Context(), target, layout.AreaInternal, [][]byte{sum[:]})
+	must(t, err)
+	keyA, err := item.Blob(blobs[0])
+	must(t, err)
+	w.clock.set(w.clock.now().Add(25 * time.Hour))
+	processed, err := jobs.PurgeRetired(t.Context(), 1)
+	must(t, err)
+	if processed != 1 {
+		t.Fatalf("purge attempted %d folders, expected 1", processed)
+	}
+	allocations := pgx.Identifier{w.schema, "content_media_allocations"}.Sanitize()
+	cleanup := pgx.Identifier{w.schema, "content_media_cleanup"}.Sanitize()
+	commits := pgx.Identifier{w.schema, "content_media_commits"}.Sanitize()
+	var retired bool
+	must(t, w.pool.QueryRow(t.Context(), `SELECT retired_at IS NOT NULL FROM `+allocations+` WHERE tenant_id=$1 AND folder_prefix=$2 AND object_key=$3`, target.TenantID, item.Prefix(), keyA).Scan(&retired))
+	if !retired {
+		t.Fatal("purge did not retire allocation A")
+	}
+	var operations []uuid.UUID
+	var due time.Time
+	must(t, w.pool.QueryRow(t.Context(), `SELECT deletion_operations,due_at FROM `+cleanup+` WHERE tenant_id=$1 AND folder_prefix=$2`, target.TenantID, item.Prefix()).Scan(&operations, &due))
+	if len(operations) != 1 || !due.After(w.clock.now()) {
+		t.Fatalf("first purge did not schedule one follow-up: operations=%v due=%s", operations, due)
+	}
+	var deadline time.Time
+	must(t, w.pool.QueryRow(t.Context(), `SELECT (effects->>'cleanup_at')::timestamptz FROM `+commits+` WHERE tenant_id=$1 AND operation_id=$2`, target.TenantID, operations[0]).Scan(&deadline))
+	if deadline.After(due) {
+		due = deadline
+	}
+	w.clock.set(due.Add(time.Second))
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	holder, err := w.pool.Begin(ctx)
+	must(t, err)
+	defer func() {
+		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = holder.Rollback(cleanup)
+	}()
+	var holderPID int
+	must(t, holder.QueryRow(ctx, `SELECT pg_backend_pid() FROM `+commits+` WHERE tenant_id=$1 AND operation_id=$2 FOR UPDATE`, target.TenantID, operations[0]).Scan(&holderPID))
+	// Pause receipt replay after the snapshot releases the folder lock, then
+	// allocate B before the worker tries to close that snapshot's revision.
+	done := make(chan error, 1)
+	go func() {
+		processed, err := jobs.PurgeRetired(ctx, 1)
+		if err == nil && processed != 1 {
+			err = fmt.Errorf("purge attempted %d folders, expected 1", processed)
+		}
+		done <- err
+	}()
+	waitFor(t, func() bool {
+		var blocked bool
+		must(t, w.pool.QueryRow(ctx, `SELECT EXISTS (
+SELECT 1 FROM pg_stat_activity a JOIN pg_locks l ON l.pid=a.pid
+WHERE a.wait_event_type='Lock' AND NOT l.granted AND $1=ANY(pg_blocking_pids(a.pid))
+AND a.query LIKE $2)`, holderPID, "%"+commits+"%FOR UPDATE%").Scan(&blocked))
+		return blocked
+	})
+	sum = sha256.Sum256([]byte("allocation B"))
+	blobs, err = jobs.Manifests().NewBlobs(ctx, target, layout.AreaInternal, [][]byte{sum[:]})
+	must(t, err)
+	keyB, err := item.Blob(blobs[0])
+	must(t, err)
+	must(t, holder.Rollback(ctx))
+	must(t, <-done)
+	var scheduled bool
+	must(t, w.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM `+cleanup+` WHERE tenant_id=$1 AND folder_prefix=$2)`, target.TenantID, item.Prefix()).Scan(&scheduled))
+	if !scheduled {
+		t.Fatal("purge dropped cleanup scheduled by allocation B")
+	}
+	must(t, w.pool.QueryRow(ctx, `SELECT retired_at IS NOT NULL FROM `+allocations+` WHERE tenant_id=$1 AND folder_prefix=$2 AND object_key=$3`, target.TenantID, item.Prefix(), keyB).Scan(&retired))
+	if retired {
+		t.Fatal("purge retired allocation B outside its snapshot")
+	}
+}
+
+func TestMediaPurgeRetiresPublicAllocation(t *testing.T) {
+	w := newWorld(t)
+	a := w.apps[0]
+	m := attachMedia(t, w, a)
+	config, err := a.cfg.MediaKinds()
+	must(t, err)
+	registry, err := mediastore.NewRegistry(config, mediastore.Hooks{})
+	must(t, err)
+	journal, err := mediastore.NewPGJournal(w.pool, w.schema, nil)
+	must(t, err)
+	jobs, err := mediastore.NewJobs(mediastore.JobsConfig{Store: m.store, Registry: registry, Locker: mediastore.PGLocker(w.pool), Journal: journal, Now: w.clock.now})
+	must(t, err)
+	ref := galleryRef(t, a.engine.Client(), "Unadopted public allocation")
+	target, err := registry.VersionRef(ref.Kind, ref.ID, ref.Version)
+	must(t, err)
+	item, err := registry.Item(target)
+	must(t, err)
+	sum := sha256.Sum256([]byte("unadopted public blob"))
+	blobs, err := jobs.Manifests().NewBlobs(t.Context(), target, layout.AreaPublic, [][]byte{sum[:]})
+	must(t, err)
+	key, err := item.Blob(blobs[0])
+	must(t, err)
+	w.clock.set(w.clock.now().Add(25 * time.Hour))
+	processed, err := jobs.PurgeRetired(t.Context(), 1)
+	must(t, err)
+	if processed != 1 {
+		t.Fatalf("purge attempted %d folders, expected 1", processed)
+	}
+	var retired bool
+	must(t, w.pool.QueryRow(t.Context(), `SELECT retired_at IS NOT NULL FROM `+pgx.Identifier{w.schema, "content_media_allocations"}.Sanitize()+` WHERE tenant_id=$1 AND folder_prefix=$2 AND object_key=$3`, target.TenantID, item.Prefix(), key).Scan(&retired))
+	if !retired {
+		t.Error("purge did not retire the public allocation")
+	}
+	_, err = jobs.Sweep(t.Context(), target)
+	must(t, err)
+	var retirements int
+	must(t, w.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+pgx.Identifier{w.schema, "content_media_commits"}.Sanitize()+` WHERE tenant_id=$1 AND folder_prefix=$2 AND effects->'public' @> jsonb_build_array($3::text)`, target.TenantID, item.Prefix(), key).Scan(&retirements))
+	if retirements != 1 {
+		t.Fatalf("public allocation appears in %d cleanup commits, expected 1", retirements)
+	}
+}
+
 func TestMediaCleanupDrainsDueFolders(t *testing.T) {
 	w := newWorld(t)
 	a := w.apps[0]

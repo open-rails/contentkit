@@ -136,19 +136,11 @@ WHERE tenant_id=$1 AND folder_prefix=$2 AND revision=$3`, tenant, c.prefix, c.re
 }
 
 func (j *Jobs) cleanupFolder(ctx context.Context, item Item, operations []uuid.UUID) (time.Duration, uuid.UUID, error) {
-	result, err := j.sweep(ctx, item.Prefix())
+	result, current, revision, err := j.sweep(ctx, item.Prefix())
 	if err != nil {
 		return 0, uuid.Nil, err
 	}
-	// Expiring allocations records exact retirement in this same sweep. Read
-	// those receipts before deleting so first-pass bytes do not wait a day.
-	jr := j.cfg.Journal.forTenant(item.Ref().TenantID)
-	var current []uuid.UUID
-	var revision uuid.UUID
-	err = jr.pool.QueryRow(ctx, `SELECT deletion_operations,revision FROM `+jr.cleanup+` WHERE tenant_id=$1 AND folder_prefix=$2`, item.Ref().TenantID, item.Prefix()).Scan(&current, &revision)
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return 0, uuid.Nil, err
-	}
+	// Replay the sweep's locked receipts too, including its new retirements.
 	for _, id := range current {
 		if !slices.Contains(operations, id) {
 			operations = append(operations, id)

@@ -316,12 +316,17 @@ func (m *Manifests) DropUnreferenced(ctx context.Context, ref contentref.Content
 
 // cleanup owns a journal lease before selecting targets. Retirement and its
 // recoverable exact-key effects commit together before any DELETE is sent.
-func (m *Manifests) cleanup(ctx context.Context, item Item, publicOnly bool, selectKeys func(*Manifest, bool) (journalEffects, error)) (err error) {
+func (m *Manifests) cleanup(ctx context.Context, item Item, publicOnly bool, selectKeys func(*Manifest, bool) (journalEffects, error)) error {
 	unlock, err := m.locker.Lock(ctx, item.ManifestKey())
 	if err != nil {
 		return err
 	}
 	defer unlock()
+	return m.cleanupLocked(ctx, item, publicOnly, selectKeys)
+}
+
+// cleanupLocked requires the caller to hold item.ManifestKey()'s lock.
+func (m *Manifests) cleanupLocked(ctx context.Context, item Item, publicOnly bool, selectKeys func(*Manifest, bool) (journalEffects, error)) (err error) {
 	if _, _, err := m.recoverLocked(ctx, item); err != nil {
 		return err
 	}
@@ -813,7 +818,7 @@ func (m *Manifests) finishCommit(ctx context.Context, item Item, commit manifest
 				return err
 			}
 		}
-		if err := m.retireAllocations(ctx, item, commit.Effects.Private); err != nil {
+		if err := m.retireAllocations(ctx, item, slices.Concat(commit.Effects.Public, commit.Effects.Private)); err != nil {
 			return err
 		}
 		for _, c := range commit.Effects.Mirror {
