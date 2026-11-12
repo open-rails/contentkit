@@ -34,10 +34,39 @@ func (j *Jobs) Sweep(ctx context.Context, ref contentref.ContentRef) (SweepResul
 		return SweepResult{}, err
 	}
 	result, _, _, err := j.sweep(ctx, item.Prefix())
-	if err == nil {
-		_, _, err = j.cleanupFolder(ctx, item, nil)
+	if err != nil {
+		return result, err
 	}
-	return result, err
+	jr := j.cfg.Journal.forTenant(ref.TenantID)
+	attempted := map[uuid.UUID]bool{}
+	for {
+		turn, err := j.cleanupFolder(ctx, item, nil)
+		if err != nil {
+			return result, err
+		}
+		bctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		err = jr.checkpointCleanup(bctx, ref.TenantID, item.Prefix(), turn, time.Time{})
+		cancel()
+		if err != nil {
+			return result, err
+		}
+		if turn.complete {
+			return result, nil
+		}
+		if err := ctx.Err(); err != nil {
+			return result, err
+		}
+		progress := false
+		for _, id := range turn.attempted {
+			if !attempted[id] {
+				progress = true
+				attempted[id] = true
+			}
+		}
+		if !progress {
+			return result, nil
+		}
+	}
 }
 
 // SweepAll is an explicit repair command over the registry's item folders.

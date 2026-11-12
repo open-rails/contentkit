@@ -251,7 +251,7 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 		}
 		return river.AddWorkerSafely(cfg.Workers, &derivativeWorker{c: c, images: images, manifests: manifests, prepare: prepare, video: video.WorkerConfig{Encoder: enc, Pool: c.Pool, Schema: c.Schema, Slice: c.VideoSlice, Stopping: stopping, Logger: c.Logger}})
 	}, nil, nil)
-	client, err := riverhelpers.New(ctx, c.Pool, &river.Config{Schema: c.Schema,
+	client, err := riverhelpers.New(ctx, c.Pool, &river.Config{Schema: c.Schema, ReindexerSchedule: river.NeverSchedule(),
 		JobTimeout: time.Hour, RescueStuckJobsAfter: 2 * time.Hour,
 		Logger: c.Logger, Hooks: hooks, Middleware: middleware}, processing)
 	if err != nil {

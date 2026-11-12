@@ -2,6 +2,7 @@ package mediastore
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/open-rails/contentkit/internal/pglock"
@@ -17,5 +18,9 @@ type pgLocker struct{ pool *pgxpool.Pool }
 
 func (l pgLocker) Lock(ctx context.Context, key string) (func(), error) {
 	release, _, err := pglock.Acquire(ctx, l.pool, "contentkit:media:"+key, true)
+	if err != nil {
+		// A classified acquisition error is one outcome, even when joined.
+		return nil, fmt.Errorf("media: lock %s: %w", key, err)
+	}
 	return release, err
 }
