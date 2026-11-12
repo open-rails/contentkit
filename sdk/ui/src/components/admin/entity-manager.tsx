@@ -44,7 +44,7 @@ export function useEntityManagerAccess(o: FlowClientOptions = {}): StaffAccess<"
   return useStaffAccess(["entities"] as const, o);
 }
 
-const SORTS: readonly EntitySort[] = ["name", "count", "newest"];
+const SORTS = ["name", "count", "newest"] as const satisfies readonly EntitySort[];
 
 /**
  * Staff: entities per kind. A kind's entities by letter, order and language; a
@@ -186,7 +186,7 @@ function List({ loc, href, kind, kinds, client, contentKind, labels, onError, pa
         </div>
         <Select value={sort} onValueChange={(v) => filter({ sort: v === "name" ? undefined : (String(v) as EntitySort) })}>
           <SelectTrigger size="sm" aria-label={t("entityManager.sort")}>
-            <SelectValue>{(v: string) => t(`entityManager.sort_${v as EntitySort}`)}</SelectValue>
+            <SelectValue>{(v: string) => t(`entityManager.sort_${v as (typeof SORTS)[number]}`)}</SelectValue>
           </SelectTrigger>
           <SelectContent>
             {SORTS.map((s) => (

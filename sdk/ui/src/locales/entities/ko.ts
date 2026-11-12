@@ -7,6 +7,7 @@ export const entities: typeof en = {
     directorySort_name: "가나다순",
     directorySort_count: "작품 많은 순",
     directorySort_newest: "최신순",
+    directorySort_popular: "인기순",
     all: "전체",
     otherLetters: "기타 문자",
     empty: "아직 아무것도 없습니다.",

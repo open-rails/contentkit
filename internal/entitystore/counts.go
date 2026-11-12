@@ -11,10 +11,10 @@ import (
 	"github.com/open-rails/contentkit/kinds"
 )
 
-// liveListed reads completed-publication facets. live_from is populated only
+// LiveListed reads completed-publication facets. live_from is populated only
 // after durable publication; a scheduled date alone never creates availability.
 // Counts and automatic covers follow committed edits without projection jobs.
-const liveListed = `NOT f.deleted AND f.live_from IS NOT NULL AND f.live_from <= now()`
+const LiveListed = `NOT f.deleted AND f.live_from IS NOT NULL AND f.live_from <= now()`
 
 // coveredKinds are the content kinds whose locked view shows covers.
 func (s *Store) coveredKinds() []string {
@@ -37,7 +37,7 @@ func (s *Store) counts(ctx context.Context, q Querier, ids []string) (map[entiti
  CROSS JOIN LATERAL unnest(array_append(f.languages, '')) l(language)
  WHERE g.tenant_id=@tenant AND g.id=ANY(@ids::text[]) AND g.state='active' AND %s AND %s
  GROUP BY g.id,f.kind,l.language ORDER BY g.id,f.kind,l.language`,
-		s.table("content_entities"), s.table("content_facets"), liveListed, boundary), params)
+		s.table("content_entities"), s.table("content_facets"), LiveListed, boundary), params)
 	if err != nil {
 		return nil, err
 	}
