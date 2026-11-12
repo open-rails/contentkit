@@ -118,4 +118,8 @@ export const discovery: typeof en = {
     trending: "인기",
     unread: "읽지 않음",
   },
+  postArticle: {
+    back: "게시물 목록으로",
+    related: "최신 게시물",
+  },
 };

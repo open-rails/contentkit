@@ -118,4 +118,8 @@ export const discovery: typeof en = {
     trending: "热门",
     unread: "未读",
   },
+  postArticle: {
+    back: "返回文章列表",
+    related: "最新文章",
+  },
 };
