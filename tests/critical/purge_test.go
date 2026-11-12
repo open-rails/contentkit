@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -347,6 +348,51 @@ CREATE TRIGGER critical_pause_restore BEFORE UPDATE ON %s.content_versions FOR E
 		_, err = admin.GetContent(t.Context(), restored.ID, ck.GetContentQuery{})
 		must(t, err)
 	})
+}
+
+func TestMediaPurgeClosesSweepRevision(t *testing.T) {
+	w := newWorld(t)
+	a := w.apps[0]
+	m := attachMedia(t, w, a)
+	config, err := a.cfg.MediaKinds()
+	must(t, err)
+	registry, err := mediastore.NewRegistry(config, mediastore.Hooks{})
+	must(t, err)
+	journal, err := mediastore.NewPGJournal(w.pool, w.schema, nil)
+	must(t, err)
+	jobs, err := mediastore.NewJobs(mediastore.JobsConfig{Store: m.store, Registry: registry, Locker: mediastore.PGLocker(w.pool), Journal: journal, Now: w.clock.now})
+	must(t, err)
+	ref := galleryRef(t, a.engine.Client(), "Unadopted allocation")
+	target, err := registry.VersionRef(ref.Kind, ref.ID, ref.Version)
+	must(t, err)
+	item, err := registry.Item(target)
+	must(t, err)
+	sum := sha256.Sum256([]byte("never adopted"))
+	_, err = jobs.Manifests().NewBlobs(t.Context(), target, layout.AreaInternal, [][]byte{sum[:]})
+	must(t, err)
+	w.clock.set(w.clock.now().Add(25 * time.Hour))
+	cutoff := w.clock.now()
+	cleanup := pgx.Identifier{w.schema, "content_media_cleanup"}.Sanitize()
+	var due time.Time
+	must(t, w.pool.QueryRow(t.Context(), `SELECT due_at FROM `+cleanup+` WHERE tenant_id=$1 AND folder_prefix=$2`, target.TenantID, item.Prefix()).Scan(&due))
+	if due.After(cutoff) {
+		t.Fatal("allocation cleanup is not due")
+	}
+	processed, err := jobs.PurgeRetired(t.Context(), 1)
+	must(t, err)
+	if processed != 1 {
+		t.Fatalf("purge attempted %d folders, expected 1", processed)
+	}
+	var retired bool
+	must(t, w.pool.QueryRow(t.Context(), `SELECT retired_at IS NOT NULL FROM `+pgx.Identifier{w.schema, "content_media_allocations"}.Sanitize()+` WHERE tenant_id=$1 AND folder_prefix=$2`, target.TenantID, item.Prefix()).Scan(&retired))
+	if !retired {
+		t.Fatal("purge did not retire the expired allocation")
+	}
+	var overdue int
+	must(t, w.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+cleanup+` WHERE tenant_id=$1 AND folder_prefix=$2 AND due_at<=$3`, target.TenantID, item.Prefix(), cutoff).Scan(&overdue))
+	if overdue != 0 {
+		t.Fatal("purge left its swept folder overdue")
+	}
 }
 
 func TestMediaCleanupDrainsDueFolders(t *testing.T) {

@@ -34,7 +34,7 @@ func (j *Jobs) Sweep(ctx context.Context, ref contentref.ContentRef) (SweepResul
 	}
 	result, err := j.sweep(ctx, item.Prefix())
 	if err == nil {
-		_, err = j.cleanupFolder(ctx, item, nil)
+		_, _, err = j.cleanupFolder(ctx, item, nil)
 	}
 	return result, err
 }
