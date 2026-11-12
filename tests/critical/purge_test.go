@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -33,6 +35,7 @@ import (
 	"github.com/open-rails/contentkit/internal/jobhook"
 	"github.com/open-rails/contentkit/internal/jobqueue"
 	"github.com/open-rails/contentkit/internal/media/workqueue"
+	"github.com/open-rails/contentkit/internal/pglock"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/layout"
 	medias3 "github.com/open-rails/contentkit/media/s3"
@@ -401,6 +404,244 @@ func TestMediaPurgeClosesSweepRevision(t *testing.T) {
 	must(t, w.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+cleanup+` WHERE tenant_id=$1 AND folder_prefix=$2 AND due_at<=$3`, target.TenantID, item.Prefix(), cutoff).Scan(&overdue))
 	if overdue != 0 {
 		t.Fatal("purge left its swept folder overdue")
+	}
+}
+
+type purgeDeleteHook struct {
+	media.Store
+	beforeDelete func(context.Context, string) error
+}
+
+func (s *purgeDeleteHook) Delete(ctx context.Context, key string) error {
+	if err := s.beforeDelete(ctx, key); err != nil {
+		return err
+	}
+	return s.Store.Delete(ctx, key)
+}
+
+func TestMediaPurgeBoundsTurns(t *testing.T) {
+	for _, name := range []string{"settled", "future", "sweep", "missing", "interrupted", "cancelled", "contended"} {
+		t.Run(name, func(t *testing.T) {
+			w := newWorld(t)
+			a := w.apps[0]
+			m := attachMedia(t, w, a)
+			registry, jobs := newPurgeJobs(t, w, a, m.store)
+			cleanup := pgx.Identifier{w.schema, "content_media_cleanup"}.Sanitize()
+			commits := pgx.Identifier{w.schema, "content_media_commits"}.Sanitize()
+			cutoff := w.clock.now()
+			cleanupAt := cutoff.Add(-time.Hour)
+			future := name == "future"
+			if future {
+				cleanupAt = cutoff.Add(time.Hour)
+			}
+			seed := func(title string, count int, due, deadline time.Time) (mediastore.Item, []uuid.UUID) {
+				t.Helper()
+				ref := galleryRef(t, a.engine.Client(), title)
+				target, err := registry.VersionRef(ref.Kind, ref.ID, ref.Version)
+				must(t, err)
+				item, err := registry.Item(target)
+				must(t, err)
+				sum := sha256.Sum256([]byte(title))
+				key := item.Prefix() + layout.AreaInternal + "/" + layout.BlobName(sum[:], "")
+				_, err = w.pool.Exec(t.Context(), `WITH receipts AS (
+ INSERT INTO `+commits+`
+ (tenant_id,operation_id,content_kind,content_id,content_version_id,folder_prefix,actor_id,fingerprint,lease_id,state,effects)
+ SELECT $1,id,$2,$3,$4,$5,'',decode(repeat('00',32),'hex'),gen_random_uuid(),'applied',
+ jsonb_build_object('cleanup_delete',true,'cleanup_at',$6::timestamptz,'private',jsonb_build_array($7::text || id::text))
+ FROM (SELECT gen_random_uuid() AS id FROM generate_series(1,$8::int)) ids RETURNING operation_id
+)
+INSERT INTO `+cleanup+` (tenant_id,folder_prefix,content_kind,due_at,deletion_operations)
+VALUES ($1,$5,$2,$9,ARRAY(SELECT operation_id FROM receipts ORDER BY operation_id))`,
+					target.TenantID, target.ContentKind, target.ContentID, target.ContentVersionID, item.Prefix(), deadline, key, count, due)
+				must(t, err)
+				var operations []uuid.UUID
+				must(t, w.pool.QueryRow(t.Context(), `SELECT deletion_operations FROM `+cleanup+` WHERE tenant_id=$1 AND folder_prefix=$2`, target.TenantID, item.Prefix()).Scan(&operations))
+				return item, operations
+			}
+			count := 1500
+			if name == "missing" || name == "interrupted" || name == "cancelled" {
+				count = 96
+			}
+			huge, original := seed("Huge cleanup row", count, cutoff.Add(-2*time.Hour), cleanupAt)
+			if name == "contended" {
+				unlock, err := mediastore.PGLocker(w.pool).Lock(t.Context(), huge.ManifestKey())
+				must(t, err)
+				defer unlock()
+				ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+				defer cancel()
+				processed, err := jobs.PurgeRetired(ctx, 1)
+				if processed != 1 || !errors.Is(err, context.DeadlineExceeded) {
+					t.Fatalf("purge attempted %d folders with error %v", processed, err)
+				}
+				if err.Error() != context.DeadlineExceeded.Error() || errors.Is(err, pglock.ErrContended) {
+					t.Fatalf("lock deadline became a row failure: %v", err)
+				}
+				var operations []uuid.UUID
+				must(t, w.pool.QueryRow(t.Context(), `SELECT deletion_operations FROM `+cleanup+` WHERE tenant_id=$1 AND folder_prefix=$2`, huge.Ref().TenantID, huge.Prefix()).Scan(&operations))
+				if !slices.Equal(operations, original) {
+					t.Fatal("contended purge changed the row's operations")
+				}
+				return
+			}
+			keyFor := func(id uuid.UUID) string {
+				t.Helper()
+				var key string
+				must(t, w.pool.QueryRow(t.Context(), `SELECT effects->'private'->>0 FROM `+commits+` WHERE tenant_id=$1 AND operation_id=$2`, huge.Ref().TenantID, id).Scan(&key))
+				return key
+			}
+			if count == 96 {
+				if name != "cancelled" {
+					_, err := w.pool.Exec(t.Context(), `DELETE FROM `+commits+` WHERE tenant_id=$1 AND operation_id=$2`, huge.Ref().TenantID, original[0])
+					must(t, err)
+				}
+				ctx, cancel := context.WithCancel(t.Context())
+				defer cancel()
+				deleteFailure := errors.New("independent deletion failure")
+				if name != "missing" {
+					cancelKey := keyFor(original[64])
+					if name == "interrupted" {
+						_, err := w.pool.Exec(t.Context(), `UPDATE `+commits+` SET folder_prefix=$3 WHERE tenant_id=$1 AND operation_id=$2`, huge.Ref().TenantID, original[34], huge.Prefix()+"wrong/")
+						must(t, err)
+					}
+					_, jobs = newPurgeJobs(t, w, a, &purgeDeleteHook{Store: m.store, beforeDelete: func(ctx context.Context, key string) error {
+						if key == cancelKey {
+							cancel()
+							err := fmt.Errorf("%w: s3 delete %s: %w", media.ErrUnavailable, key, ctx.Err())
+							if name == "interrupted" {
+								return errors.Join(deleteFailure, err)
+							}
+							return err
+						}
+						return nil
+					}})
+				}
+				processed, err := jobs.PurgeRetired(ctx, 1)
+				if processed != 1 || err == nil {
+					t.Fatalf("purge attempted %d folders with error %v", processed, err)
+				}
+				if name != "cancelled" && !strings.Contains(err.Error(), original[0].String()) {
+					t.Fatalf("purge lost the missing receipt failure: %v", err)
+				}
+				if name == "interrupted" && !strings.Contains(err.Error(), original[34].String()) {
+					t.Fatalf("purge lost validation failure from the interrupted chunk: %v", err)
+				}
+				if name == "interrupted" && !errors.Is(err, deleteFailure) {
+					t.Fatalf("purge lost independent deletion failure: %v", err)
+				}
+				if errors.Is(err, media.ErrUnavailable) {
+					t.Fatalf("classified cancellation became a row failure: %v", err)
+				}
+				if name != "missing" && !errors.Is(err, context.Canceled) {
+					t.Fatalf("purge lost cancellation: %v", err)
+				}
+				if name == "cancelled" && err.Error() != context.Canceled.Error() {
+					t.Fatalf("pure cancellation became a row failure: %v", err)
+				}
+				var operations []uuid.UUID
+				must(t, w.pool.QueryRow(t.Context(), `SELECT deletion_operations FROM `+cleanup+` WHERE tenant_id=$1 AND folder_prefix=$2`, huge.Ref().TenantID, huge.Prefix()).Scan(&operations))
+				if name == "missing" {
+					if !slices.Equal(operations, original[:1]) {
+						t.Fatalf("missing receipt prevented settling the others: %v", operations)
+					}
+				} else {
+					for _, id := range original[1:32] {
+						if slices.Contains(operations, id) {
+							t.Fatalf("cancellation lost settled progress for %s", id)
+						}
+					}
+				}
+				return
+			}
+			var tail []string
+			for _, i := range []int{1024, 1200, 1499} {
+				key := keyFor(original[i])
+				_, err := m.store.Put(t.Context(), key, strings.NewReader("tail"), 4, media.PutOptions{ContentType: "text/plain"})
+				must(t, err)
+				tail = append(tail, key)
+			}
+			assertTailGone := func() {
+				t.Helper()
+				for _, key := range tail {
+					if _, err := m.store.Head(t.Context(), key); !errors.Is(err, mediastore.ErrNotFound) {
+						t.Fatalf("tail object %s survived cleanup: %v", key, err)
+					}
+				}
+			}
+			if name == "sweep" {
+				_, err := jobs.Sweep(t.Context(), huge.Ref())
+				must(t, err)
+				var operations []uuid.UUID
+				must(t, w.pool.QueryRow(t.Context(), `SELECT deletion_operations FROM `+cleanup+` WHERE tenant_id=$1 AND folder_prefix=$2`, huge.Ref().TenantID, huge.Prefix()).Scan(&operations))
+				if len(operations) != 0 {
+					t.Fatalf("explicit sweep left %d settled operations", len(operations))
+				}
+				assertTailGone()
+				return
+			}
+			small, _ := seed("Later cleanup row", 1, cutoff.Add(-time.Hour), cutoff.Add(-time.Hour))
+			var revision uuid.UUID
+			must(t, w.pool.QueryRow(t.Context(), `SELECT revision FROM `+cleanup+` WHERE tenant_id=$1 AND folder_prefix=$2`, huge.Ref().TenantID, huge.Prefix()).Scan(&revision))
+			processed, err := jobs.PurgeRetired(t.Context(), 1)
+			must(t, err)
+			if processed != 1 {
+				t.Fatalf("purge attempted %d folders, expected 1", processed)
+			}
+			var operations []uuid.UUID
+			var due time.Time
+			var after uuid.UUID
+			must(t, w.pool.QueryRow(t.Context(), `SELECT deletion_operations,due_at,revision FROM `+cleanup+` WHERE tenant_id=$1 AND folder_prefix=$2`, huge.Ref().TenantID, huge.Prefix()).Scan(&operations, &due, &after))
+			want := slices.Clone(original[1024:])
+			if future {
+				want = append(want, original[:1024]...)
+			}
+			if !slices.Equal(operations, want) {
+				t.Fatalf("turn left %d operations in the wrong order, expected %d", len(operations), len(want))
+			}
+			if !due.After(cutoff) || after != revision {
+				t.Fatalf("checkpoint changed revision or left row overdue: due=%s revision=%s", due, after)
+			}
+			processed, err = jobs.PurgeRetired(t.Context(), 1)
+			must(t, err)
+			if processed != 1 {
+				t.Fatalf("next purge attempted %d folders, expected 1", processed)
+			}
+			var remaining int
+			must(t, w.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+cleanup+` WHERE tenant_id=$1 AND folder_prefix=$2`, small.Ref().TenantID, small.Prefix()).Scan(&remaining))
+			if remaining != 0 {
+				t.Fatal("huge row starved the later due folder")
+			}
+			if future {
+				ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+				defer cancel()
+				_, err := jobs.Sweep(ctx, huge.Ref())
+				must(t, err)
+				must(t, w.pool.QueryRow(t.Context(), `SELECT deletion_operations FROM `+cleanup+` WHERE tenant_id=$1 AND folder_prefix=$2`, huge.Ref().TenantID, huge.Prefix()).Scan(&operations))
+				if len(operations) != len(original) {
+					t.Fatal("explicit sweep pruned future receipts")
+				}
+			}
+			next := cutoff
+			if cleanupAt.After(next) {
+				next = cleanupAt
+			}
+			w.clock.set(next.Add(time.Second))
+			for range 2 {
+				processed, err = jobs.PurgeRetired(t.Context(), 1)
+				must(t, err)
+				if processed != 1 {
+					t.Fatalf("finishing purge attempted %d folders, expected 1", processed)
+				}
+				must(t, w.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+cleanup+` WHERE tenant_id=$1 AND folder_prefix=$2`, huge.Ref().TenantID, huge.Prefix()).Scan(&remaining))
+				if remaining == 0 {
+					break
+				}
+				w.clock.set(w.clock.now().Add(time.Second))
+			}
+			if remaining != 0 {
+				t.Fatal("huge cleanup row did not finish across turns")
+			}
+			assertTailGone()
+		})
 	}
 }
 

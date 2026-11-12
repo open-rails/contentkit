@@ -311,13 +311,28 @@ AND deleted_at<$2 AND kind=ANY($3::text[]) AND id>$4 ORDER BY id LIMIT %d`, s.ta
 }
 
 func (s *Store) purgeRetired(ctx context.Context, limit int) error {
-	deadline := time.Now().Add(jobqueue.MediaCleanupBudget)
+	work, cancel := context.WithTimeout(ctx, jobqueue.MediaCleanupBudget)
+	defer cancel()
 	for {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		n, err := s.folders.PurgeRetired(ctx, limit)
-		if err != nil || n < limit || !time.Now().Before(deadline) {
+		n, err := s.folders.PurgeRetired(work, limit)
+		if work.Err() != nil && ctx.Err() == nil {
+			// The spent media budget ends this pass; it is not a row failure.
+			var failures error
+			if joined, ok := err.(interface{ Unwrap() []error }); ok {
+				for _, part := range joined.Unwrap() {
+					if part != context.DeadlineExceeded {
+						failures = errors.Join(failures, part)
+					}
+				}
+			} else if err != context.DeadlineExceeded {
+				failures = err
+			}
+			return failures
+		}
+		if err != nil || n < limit {
 			return err
 		}
 	}
