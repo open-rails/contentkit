@@ -99,6 +99,7 @@ check("sha256Hex", async () => {
 });
 check("isContentId", () => {
   assert.equal(sdk.isContentId(uuid), true);
+  assert.equal(sdk.isContentId("d7e11aeb-caad-50b1-b119-c2973498895d"), true);
   for (const bad of [uuid.toUpperCase(), "af985306-d261-4499-8c67-eccdcde5612e", "00000000-0000-0000-0000-000000000000", "019c6e27-e55b-73d1-17d8-4e01f1f75043", "", ` ${uuid}`, `${uuid} `]) assert.equal(sdk.isContentId(bad), false);
 });
 check("itemKey", () => {

@@ -42,7 +42,7 @@ See [Go module retractions](https://go.dev/ref/mod#go-mod-file-retract).
 |---|---|
 | `Scope.TenantID` | the business owning an account directory and its apps |
 | `Scope.AppID` | one tenant-owned app and its separate content catalog, such as Doujins or Hentai0 |
-| `content_id` | the host-owned work: a gallery, a video, a listing; a canonical UUIDv7, never reused ([Content ids](HOST_INTEGRATION.md#content-ids)) |
+| `content_id` | the host-owned work: a gallery, a video, a listing; a canonical UUIDv7 (or UUIDv5), never reused ([Content ids](HOST_INTEGRATION.md#content-ids)) |
 | `content_version_id` | one selectable version of that work (optional) |
 | `channel_id` | the overall item's primary authoring channel |
 | `entity_id` | an associated tag, artist, series, character, playlist or featured rail |
