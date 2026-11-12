@@ -826,12 +826,18 @@ export interface EntityKind {
   creatable?: boolean;
   roles?: string[];
   attributes?: Record<string, Attribute>;
+  popular?: EntityPopularity;
 }
 
 export interface EntityPage {
   entities: EntityCard[];
   next_cursor?: string;
   total?: number;
+}
+
+export interface EntityPopularity {
+  content_kind: string;
+  bucket: string;
 }
 
 export interface EntityRecord {

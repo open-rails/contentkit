@@ -36,7 +36,7 @@ export function useKinds(o: { client?: ContentKitClient } = {}): UseKinds {
   return { kinds: r.data ?? null, loading: !r.data && (r.loading || !r.loaded), error: r.error, reload: r.reload };
 }
 
-export type EntitySort = "name" | "count" | "newest";
+export type EntitySort = "name" | "count" | "newest" | "popular";
 
 export interface EntityFilter {
   kind?: string;
