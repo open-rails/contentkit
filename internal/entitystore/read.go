@@ -662,17 +662,11 @@ func (s *Store) popularRanking(ctx context.Context, opts ListOptions) (popularRa
 		return popularRanking{}, fmt.Errorf("%w: sort popular lists one kind with popularity; %q has none", entities.ErrInvalid, kind)
 	}
 	bucket, _ := s.cfg.PopularBucket(*p)
-	language := ""
-	if l := strings.TrimSpace(opts.Language); l != "" {
-		var err error
-		if language, err = normalizeLanguage(l); err != nil {
-			return popularRanking{}, err
-		}
-	}
+	// Entities rank per domain over every language (discoverystore builds no other).
 	domain, _ := s.cfg.DomainFor(gate.Domain(ctx))
-	scope, ok := bucket.Scope(domain.Name, language)
+	scope, ok := bucket.Scope(domain.Name, "")
 	if !ok {
-		return popularRanking{}, fmt.Errorf("%w: %s popularity has no scope for this domain and language", entities.ErrInvalid, kind)
+		return popularRanking{}, fmt.Errorf("%w: %s popularity declares no scope without a language for this domain", entities.ErrInvalid, kind)
 	}
 	return popularRanking{bucket.ID, scope.Domain, scope.Language}, nil
 }

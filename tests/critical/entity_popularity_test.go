@@ -76,6 +76,18 @@ func TestEntityPopularity(t *testing.T) {
 	if ids := entityIDs(numbered.Entities); len(ids) != 2 || ids[0] != quiet || ids[1] != unused || numbered.Total == nil || *numbered.Total != 5 {
 		t.Fatalf("page 2 = %v of %v; want quiet, unused of 5", ids, numbered.Total)
 	}
+	// Places lost after their content ranking was stored (a failed build, or
+	// the first deploy) are rebuilt at once, though that ranking is fresh.
+	_, err = w.pool.Exec(t.Context(), `DELETE FROM `+w.schema+`.content_entity_popular_rankings`)
+	must(t, err)
+	refreshPopularRankings(t, w)
+	var placed int
+	must(t, w.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+w.schema+`.content_entity_popular_rankings WHERE entity_kind='tag'`).Scan(&placed))
+	rebuilt, err := admin.GetEntities(t.Context(), ck.GetEntitiesQuery{Kind: "tag", Sort: "popular", Limit: 3})
+	must(t, err)
+	if ids := entityIDs(rebuilt.Entities); placed != 5 || len(ids) != 3 || ids[0] != pair || ids[1] != solo || ids[2] != quiet {
+		t.Fatalf("after lost places: %d placed, first page %v; want 5, then pair, solo, quiet", placed, ids)
+	}
 	_, err = admin.GetEntities(t.Context(), ck.GetEntitiesQuery{Kind: "label", Sort: "popular"})
 	requireError(t, err, 400, "invalid_request")
 	_, err = admin.GetEntities(t.Context(), ck.GetEntitiesQuery{Sort: "popular"})

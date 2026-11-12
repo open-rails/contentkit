@@ -366,9 +366,9 @@ type EntityKind struct {
 	Popular *EntityPopularity `json:"popular,omitempty" yaml:"popular"`
 }
 
-// EntityPopularity ranks a kind's entities by the summed popularity of their
-// content of ContentKind in that kind's Bucket, then by content count, with
-// every rebuild of that content ranking.
+// EntityPopularity ranks a kind's entities per domain by the summed popularity
+// of their content of ContentKind in that kind's Bucket, then by content
+// count, with every rebuild of that content ranking.
 type EntityPopularity struct {
 	ContentKind string `json:"content_kind" yaml:"content_kind"`
 	Bucket      string `json:"bucket" yaml:"bucket"`

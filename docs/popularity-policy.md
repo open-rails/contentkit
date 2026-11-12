@@ -147,14 +147,16 @@ ranking or catalog edits. A refresh while someone browses can change item order.
 ## Entity popularity
 
 An entity kind with `popular: {content_kind, bucket}` lists one kind by
-`sort=popular`. Whenever the popular refresh worker rebuilds that content
-ranking, in any scope, it reuses its scores: it sums them for each active
-entity of the kind over the entity's live content of that content kind, and
-stores each entity's place in that order, then by content count and id.
-Listings read the places for the reader's domain and language, as content
-popularity does; an entity created since the last build comes last. On the
+`sort=popular`. Entities rank per domain over every language: whenever the
+popular refresh worker rebuilds that content ranking in a scope without a
+language, it reuses its scores. It sums them for each active entity of the
+kind over the entity's live content of that content kind, and stores each
+entity's place in that order, then by content count (over every domain and
+language) and id. A scope whose places are missing or older than its content
+ranking is due at once. Listings read the places of the reader's domain scope
+without a language; an entity created since the last build comes last. On the
 Doujins catalog (7,919 tags, 436,754 links) one build takes under a second of
-PostgreSQL time.
+PostgreSQL time per kind and domain.
 
 ## Performance evidence
 

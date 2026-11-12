@@ -128,7 +128,13 @@ func (s *Service) RefreshPopularRankings(ctx context.Context) error {
 					return err
 				}
 				if snapshot.ComputedAt != nil && snapshot.ComputedAt.Add(bucket.Every()).After(now) && sameBound(snapshot.WindowFrom, from) && sameBound(snapshot.WindowUntil, until) {
-					continue
+					stale, err := s.entityRankingsStale(ctx, key, *snapshot.ComputedAt)
+					if err != nil {
+						return err
+					}
+					if !stale {
+						continue
+					}
 				}
 				groups[group] = append(groups[group], pending{key, window})
 			}
