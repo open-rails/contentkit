@@ -213,8 +213,10 @@ is no ordinary parent-content DELETE route or Go method.
 
 ## Content ids
 
-`content_id` is a canonical lowercase UUIDv7 (`contentref.ValidateID`), never
-reused. Every boundary refuses anything else with `contentref.ErrInvalidID`:
+`content_id` is a canonical lowercase UUIDv7 or UUIDv5 (`contentref.ValidateID`),
+never reused. UUIDv5 covers name-based ids a host already has, such as a
+migrated account's; mint new ids as UUIDv7. Every boundary refuses anything
+else with `contentref.ErrInvalidID`:
 `ContentRef.Validate`, media refs and routes, jobs and the upload SDK.
 `content` routes take a host route id (an id, alias or `{id}:en`) and key rows
 by the resolver's `Ref`, or by the route id itself when `Ref` is zero, which is

@@ -10,8 +10,8 @@ import (
 	"time"
 )
 
-// ErrInvalidID is a content id that is not a canonical UUIDv7.
-var ErrInvalidID = errors.New("contentref: content_id must be a canonical lowercase UUIDv7")
+// ErrInvalidID is a content id that is not a canonical UUIDv7 or UUIDv5.
+var ErrInvalidID = errors.New("contentref: content_id must be a canonical lowercase UUIDv7 or UUIDv5")
 
 // IDError is a rejected content id; errors.Is(err, ErrInvalidID) holds.
 type IDError struct{ ID string }
@@ -20,9 +20,10 @@ func (e *IDError) Error() string { return fmt.Sprintf("%v, got %q", ErrInvalidID
 func (e *IDError) Unwrap() error { return ErrInvalidID }
 
 // ValidateID accepts only a canonical content id: 36 characters, lowercase
-// hex, version 7, RFC 9562 variant. A content id names a media folder and a
-// search/signal key, and is never reused: time-ordered UUIDs cannot repeat
-// after a host's database or sequence is reset.
+// hex, version 7 or 5, RFC 9562 variant. A content id names a media folder and
+// a search/signal key, and is never reused: time-ordered UUIDs cannot repeat
+// after a host's database or sequence is reset, and name-based UUIDv5s (a
+// migrated account's id) are fixed by their name.
 func ValidateID(id string) error {
 	if len(id) != 36 {
 		return &IDError{ID: id}
@@ -40,7 +41,7 @@ func ValidateID(id string) error {
 			}
 		}
 	}
-	if id[14] != '7' || (id[19] != '8' && id[19] != '9' && id[19] != 'a' && id[19] != 'b') {
+	if (id[14] != '7' && id[14] != '5') || (id[19] != '8' && id[19] != '9' && id[19] != 'a' && id[19] != 'b') {
 		return &IDError{ID: id}
 	}
 	return nil
