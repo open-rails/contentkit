@@ -69,7 +69,7 @@ var routes = []httpapi.Route[handler]{
 			httpapi.Text("scope", "only entities scoped by this entity"), httpapi.Text("slug", "only the entity with this slug"),
 			httpapi.Text("letter", "only sort names starting with this letter (a-z), or with anything else (#)"), language,
 			httpapi.Text("content_kind", "count contents of this kind; every kind by default"),
-			httpapi.Text("sort", "name (the default), count, newest or popular (one kind with popularity; its daily ranking, then count)"), httpapi.Text("cursor", "the previous page's next_cursor"),
+			httpapi.Text("sort", "name (the default), count, newest or popular (one kind with popularity; its hourly ranking, then count)"), httpapi.Text("cursor", "the previous page's next_cursor"),
 			httpapi.Int("page", "a numbered page from 1 instead of cursor, with the total; page × limit is at most 10,000"),
 			httpapi.Int("limit", "page size: 50 by default, at most 200")},
 		Responses: []httpapi.Reply{httpapi.OK(entities.EntityPage{})}}, Serve: httpapi.H(handler.list)},

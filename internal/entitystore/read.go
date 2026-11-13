@@ -61,7 +61,7 @@ type ListOptions struct {
 }
 
 // popularRanking keys a stored entity ranking.
-type popularRanking struct{ period, domain, language string }
+type popularRanking struct{ domain string }
 
 // unranked orders entities missing from a stored ranking after it.
 const unranked = "9223372036854775807"
@@ -98,7 +98,7 @@ func (s *Store) compile(opts ListOptions, ids []string) (cardQuery, error) {
 	}
 	place := "coalesce(pr.place, " + unranked + ")"
 	order := map[entities.Sort]string{entities.SortName: sortName + ", g.id", entities.SortCount: "coalesce(cc.n, 0) DESC, g.id", entities.SortNewest: "g.created_at DESC, g.id DESC",
-		entities.SortPopular: place + ", g.id"}[c.sort]
+		entities.SortPopular: place + ", coalesce(cc.n, 0) DESC, g.id"}[c.sort]
 	if order == "" {
 		return c, fmt.Errorf("%w: sort %q", entities.ErrInvalid, opts.Sort)
 	}
@@ -108,8 +108,8 @@ func (s *Store) compile(opts ListOptions, ids []string) (cardQuery, error) {
 			return c, fmt.Errorf("%w: sort popular lists one popular kind", entities.ErrInvalid)
 		}
 		popularJoin = fmt.Sprintf(`LEFT JOIN %s pr ON pr.tenant_id=g.tenant_id AND pr.entity_kind=g.kind
- AND pr.period=@pop_period AND pr.domain=@pop_domain AND pr.language=@pop_language AND pr.entity_id=g.id`, s.table("content_entity_popular_rankings"))
-		c.args["pop_period"], c.args["pop_domain"], c.args["pop_language"] = opts.popular.period, opts.popular.domain, opts.popular.language
+ AND pr.domain=@pop_domain AND pr.entity_id=g.id`, s.table("content_entity_popular_rankings"))
+		c.args["pop_domain"] = opts.popular.domain
 	}
 	if c.limit <= 0 {
 		c.limit = 50
@@ -228,7 +228,8 @@ func (s *Store) compile(opts ListOptions, ids []string) (cardQuery, error) {
 		case entities.SortNewest:
 			where, c.args["ct"] = append(where, "(g.created_at, g.id) < (@ct, @cid)"), cur.Time
 		case entities.SortPopular:
-			where, c.args["co"] = append(where, "("+place+", g.id) > (@co, @cid)"), cur.Place
+			where = append(where, "("+place+" > @co OR ("+place+" = @co AND (coalesce(cc.n, 0) < @cn OR (coalesce(cc.n, 0) = @cn AND g.id > @cid))))")
+			c.args["co"], c.args["cn"] = cur.Place, cur.Count
 		}
 	}
 	c.args["limit"] = c.limit + 1
@@ -267,7 +268,7 @@ func (s *Store) compile(opts ListOptions, ids []string) (cardQuery, error) {
 `, s.table("content_facets"), listed, countKind, members)
 		eligibilityJoin = " JOIN eligible cc ON cc.entity_id=g.id"
 		counts = ""
-	} else if c.sort == entities.SortCount {
+	} else if c.sort == entities.SortCount || c.sort == entities.SortPopular {
 		// Ranking needs counts for every candidate entity. Aggregate the eligible
 		// facets once instead of repeating an indexed lookup per entity.
 		counts = fmt.Sprintf(`LEFT JOIN (SELECT members.entity_id, count(*)::int AS n FROM (
@@ -315,7 +316,7 @@ func (s *Store) compile(opts ListOptions, ids []string) (cardQuery, error) {
 		placed, placeColumn = ", "+place+" AS popular_place", "g.popular_place"
 		selectJoins = popularJoin + " " + selectJoins
 	}
-	if c.sort == entities.SortCount || eligible != "" {
+	if c.sort == entities.SortCount || c.sort == entities.SortPopular || eligible != "" {
 		// Carry precomputed counts outward instead of aggregating them twice.
 		from = "(SELECT g.*, " + count + " AS content_count" + placed + " FROM " + from + " " + counts + " " + selectJoins + " " + predicate + " ORDER BY " + order + paging + ") g"
 		count, counts = "g.content_count", ""
@@ -326,7 +327,7 @@ func (s *Store) compile(opts ListOptions, ids []string) (cardQuery, error) {
 		from = "(SELECT g.*" + placed + " FROM " + from + " " + selectJoins + " " + predicate + " ORDER BY " + order + paging + ") g"
 	}
 	if popularJoin != "" {
-		order = "g.popular_place, g.id"
+		order = "g.popular_place, " + count + " DESC, g.id"
 	}
 	predicate, paging = "", ""
 	base := fmt.Sprintf(`SELECT g.id, g.kind, g.slug, %[9]s, %[10]s, coalesce(nm.name, ''), coalesce(nm.language, ''),
@@ -388,7 +389,7 @@ func (s *Store) cards(ctx context.Context, q Querier, c cardQuery) (entities.Ent
 		case entities.SortNewest:
 			cur.Time = last.CreatedAt
 		case entities.SortPopular:
-			cur.Place = places[c.limit-1]
+			cur.Place, cur.Count = places[c.limit-1], last.Count
 		}
 		b, _ := json.Marshal(cur)
 		page.NextCursor = base64.RawURLEncoding.EncodeToString(b)
@@ -653,20 +654,12 @@ func (s *Store) text(ctx context.Context, q Querier, id string) ([]entities.Text
 	return out, rows.Err()
 }
 
-// popularRanking selects the stored ranking of opts' kind for the request's
-// domain and the listing's language, as content popularity does.
+// popularRanking selects the kind's ranking for the request domain.
 func (s *Store) popularRanking(ctx context.Context, opts ListOptions) (popularRanking, error) {
 	kind := strings.TrimSpace(opts.Kind)
-	p := s.cfg.EntityKinds[kind].Popular
-	if p == nil {
+	if s.cfg.EntityKinds[kind].Popular == nil {
 		return popularRanking{}, fmt.Errorf("%w: sort popular lists one kind with popularity; %q has none", entities.ErrInvalid, kind)
 	}
-	bucket, _ := s.cfg.PopularBucket(*p)
-	// Entities rank per domain over every language (discoverystore builds no other).
 	domain, _ := s.cfg.DomainFor(gate.Domain(ctx))
-	scope, ok := bucket.Scope(domain.Name, "")
-	if !ok {
-		return popularRanking{}, fmt.Errorf("%w: %s popularity declares no scope without a language for this domain", entities.ErrInvalid, kind)
-	}
-	return popularRanking{bucket.ID, scope.Domain, scope.Language}, nil
+	return popularRanking{domain.Name}, nil
 }

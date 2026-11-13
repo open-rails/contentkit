@@ -1644,7 +1644,7 @@ type GetEntitiesQuery struct {
 	Language string
 	// count contents of this kind; every kind by default
 	ContentKind string
-	// name (the default), count, newest or popular (one kind with popularity; its daily ranking, then count)
+	// name (the default), count, newest or popular (one kind with popularity; its hourly ranking, then count)
 	Sort string
 	// the previous page's next_cursor
 	Cursor string
