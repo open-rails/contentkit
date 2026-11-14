@@ -195,6 +195,99 @@ func TestMediaFailureRecovery(t *testing.T) {
 				}
 			})
 		}
+		for _, action := range []string{"attach-regenerate", "edit-live", "remove-live", "create-retry"} {
+			t.Run("expired-staged-"+action, func(t *testing.T) {
+				m := newResilientMedia(t, func(c *ck.Config) {
+					c.Content.Channels.Uploads.QuotaBytes = 1 << 20 // enable the shared usage ledger
+				})
+				owner, credential := m.person(t, 0)
+				authtest.GrantRole(t, m.tenant[0], m.app.group, iam.UserSubject(owner.ID), m.writer)
+				client := m.app.client(credential)
+				ref := galleryRef(t, client, "Expired staged peer")
+				logical, err := m.config.Kinds.VersionRef(ref.Kind, ref.ID, ref.Version)
+				must(t, err)
+				item, err := m.config.Kinds.Item(logical)
+				must(t, err)
+				queue, err := workqueue.New(m.pool, m.config.Kinds, m.config.Schema)
+				must(t, err)
+				journal, err := mediastore.NewPGJournal(m.pool, m.schema, queue)
+				must(t, err)
+				manifests, err := mediastore.NewManifests(m.storage.store, m.config.Kinds, mediastore.ManifestOptions{Locker: mediastore.PGLocker(m.pool), Journal: journal})
+				must(t, err)
+				usage := func() int64 {
+					t.Helper()
+					var used int64
+					must(t, m.pool.QueryRow(t.Context(), `SELECT used_bytes FROM `+pgx.Identifier{m.schema, "content_media_usage"}.Sanitize()+` WHERE tenant_id=$1 AND owner_id=$2`, logical.TenantID, string(owner.ID)).Scan(&used))
+					return used
+				}
+				payload := imageBytes(t)
+				kept := stageFile(t, client, ref, "pages/kept.png", payload)
+				_, err = client.PostMediaUploadCommit(t.Context(), media.CommitBody{Ref: ref, OperationID: uuid.NewString(), Ops: []media.Op{kept}})
+				must(t, err)
+				oneUpload := usage()
+				if oneUpload <= 0 {
+					t.Fatal("kept upload was not charged")
+				}
+				expired := stageFile(t, client, ref, "pages/expired.png", payload)
+				expired.CreateID = uuid.NewString()
+				expired.Unattached = true
+				live := stageFile(t, client, ref, "pages/live.png", payload)
+				peer := stageFile(t, client, ref, "pages/peer.png", payload)
+				_, err = client.PostMediaUploadCommit(t.Context(), media.CommitBody{Ref: ref, OperationID: uuid.NewString(), Ops: []media.Op{expired, live, peer}})
+				must(t, err)
+				if action == "attach-regenerate" {
+					must(t, manifests.FailIngest(t.Context(), logical, errors.New("placement attempts exhausted")))
+				}
+				key, err := item.Staged(expired.Blob)
+				must(t, err)
+				updated, err := m.pool.Exec(t.Context(), `UPDATE `+pgx.Identifier{m.schema, "content_media_allocations"}.Sanitize()+` SET created_at = now() - interval '7 days 1 minute' WHERE tenant_id=$1 AND object_key=$2`, logical.TenantID, key)
+				must(t, err)
+				if updated.RowsAffected() != 1 {
+					t.Fatal("did not age the staged allocation")
+				}
+				aged, _, err := manifests.Get(t.Context(), logical)
+				must(t, err)
+				if aged.Find(expired.Path) < 0 {
+					t.Fatal("aged upload was removed before commit")
+				}
+				before := usage()
+				ops := []media.Op{{Op: media.OpAttach, Path: expired.Path}, {Op: media.OpRegenerate}}
+				wantUsage := before
+				switch action {
+				case "create-retry":
+					ops = []media.Op{expired}
+				case "edit-live":
+					ops = []media.Op{{Op: media.OpEdit, Path: live.Path, Edit: &media.Edit{Rotate: 90}}}
+				case "remove-live":
+					ops = []media.Op{{Op: media.OpRemove, Path: live.Path}}
+					wantUsage -= oneUpload
+				}
+				batch := media.CommitBody{Ref: ref, OperationID: uuid.NewString(), Ops: ops}
+				for range 2 {
+					reply, err := client.PostMediaUploadCommit(t.Context(), batch)
+					must(t, err)
+					for _, file := range reply.Files {
+						if file.Path == expired.Path {
+							t.Fatal("commit returned the expired upload")
+						}
+					}
+					if got := usage(); got != wantUsage {
+						t.Fatalf("usage after expiry = %d, want %d (before %d)", got, wantUsage, before)
+					}
+				}
+				after, _, err := manifests.Get(t.Context(), logical)
+				must(t, err)
+				if after.Find(expired.Path) >= 0 || after.Find(peer.Path) < 0 || after.Find(kept.Path) < 0 {
+					t.Fatalf("expiry removed the wrong uploads: %+v", after.Files)
+				}
+				if after.Files[after.Find(peer.Path)].Staged != peer.Blob || after.Files[after.Find(kept.Path)].Staged != kept.Blob {
+					t.Fatal("expiry changed a live staged peer")
+				}
+				if (after.Find(live.Path) >= 0) != (action != "remove-live") {
+					t.Fatalf("live upload does not match %s", action)
+				}
+			})
+		}
 		for _, profile := range []string{"storage-refusal", "database-settlement-abort"} {
 			t.Run(profile, func(t *testing.T) {
 				m := newResilientMedia(t)

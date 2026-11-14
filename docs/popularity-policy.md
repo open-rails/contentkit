@@ -146,18 +146,34 @@ ranking or catalog edits. A refresh while someone browses can change item order.
 
 ## Entity popularity
 
-An entity kind with `popular: {content_kind, bucket}` lists one kind by
-`sort=popular`. Entities rank per domain over every language: whenever the
-popular refresh worker rebuilds that content ranking in a scope without a
-language, it reuses its scores. It sums them for each active entity of the
-kind over the entity's live content of that content kind, and stores each
-entity's place in that order, then by content count (over every domain and
-language) and id. A scope whose places are missing or older than its content
-ranking is due at once. Validation requires the bucket to declare a scope
-without a language for every domain a read can resolve. Listings read the
-places of the reader's domain scope without a language; an entity created since the last build comes last. On the
-Doujins catalog (7,919 tags, 436,754 links) one build takes under a second of
-PostgreSQL time per kind and domain.
+An entity kind with `popular: {content_kind}` supports `sort=popular`. The
+content kind must exist and group that entity kind. An hourly Postgres job on
+the ContentKit queue rebuilds every configured domain, independently of
+ClickHouse. Without configured domains it builds the default domain `""`;
+that default is also built when no domain is named `main`. Reads resolve only
+the request domain through `DomainFor`.
+
+The build uses active favourites (`value=1`) from registered accounts in the
+last 180 days, on live, listed content inside the domain's hard catalogue
+boundary. Multiple version favourites from one account on one content collapse
+to the most recent. Membership includes facet entity IDs and the owner entity.
+Each favourite weighs `2^(-age / 60 days)`. Each account contributes its highest
+weight across an entity's contents, giving total support R.
+
+The one-hit guard computes B, the support left after removing the entity's
+strongest content. For each account, removing its best content loses only the
+gap between its best and second-best weights (zero second-best if none). The
+largest summed loss for any content is subtracted from R. The score is
+`min(R, 2*B)`, so support entirely on one content scores zero. Only active,
+public, non-categorical entities with score at least 20 receive places, ordered
+by score descending and entity ID. `categorical` is a boolean entity attribute.
+
+Each kind and domain is replaced in one transaction; a failure retains its
+previous ranking. Listings order by place, then the same content count as
+`sort=count`, descending, then ID. Unranked entities follow ranked entities;
+with no ranking, the whole list follows count and ID. The cursor carries all
+three keys. Counts retain the listing's language, content kind and visibility
+rules. A refresh or catalogue edit while browsing can change the order.
 
 ## Performance evidence
 

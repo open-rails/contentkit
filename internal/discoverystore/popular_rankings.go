@@ -63,7 +63,7 @@ func (s *Service) rankingJoin(key popularRanking) (string, pgx.NamedArgs) {
  CROSS JOIN LATERAL unnest(p.content_ids) WITH ORDINALITY AS r(content_id,ord)
  WHERE p.tenant_id=@d_rank_tenant AND p.kind=@d_rank_kind AND p.period=@d_rank_period AND p.domain=@d_rank_domain AND p.language=@d_rank_language) activity
  ON activity.content_id=f.content_id `, pgx.NamedArgs{"d_rank_tenant": s.o.Tenant, "d_rank_kind": key.kind, "d_rank_period": key.period,
-			"d_rank_domain": key.domain, "d_rank_language": key.language}
+		"d_rank_domain": key.domain, "d_rank_language": key.language}
 }
 
 // topRanked returns up to limit ids of the stored ranking, best first.
@@ -128,13 +128,7 @@ func (s *Service) RefreshPopularRankings(ctx context.Context) error {
 					return err
 				}
 				if snapshot.ComputedAt != nil && snapshot.ComputedAt.Add(bucket.Every()).After(now) && sameBound(snapshot.WindowFrom, from) && sameBound(snapshot.WindowUntil, until) {
-					stale, err := s.entityRankingsStale(ctx, key, *snapshot.ComputedAt)
-					if err != nil {
-						return err
-					}
-					if !stale {
-						continue
-					}
+					continue
 				}
 				groups[group] = append(groups[group], pending{key, window})
 			}
@@ -169,13 +163,12 @@ func optionalBound(value time.Time) *time.Time {
 }
 
 func (s *Service) buildRanking(ctx context.Context, key popularRanking, window, coverage signal.Window, computed time.Time) error {
-	hits, err := popularity.Hits(ctx, s.o.Hub, key.kind, window, signal.ActivityScope{Domain: key.domain, Language: key.language}, discovery.PopularityDepth)
+	ids, err := popularity.Rank(ctx, s.o.Hub, s, key.kind, window, signal.ActivityScope{Domain: key.domain, Language: key.language}, discovery.PopularityDepth)
 	if err != nil {
 		return fmt.Errorf("discovery: rank %s %s: %w", key.kind, key.period, err)
 	}
-	ids := make([]string, len(hits))
-	for i, h := range hits {
-		ids[i] = h.ContentID
+	if ids == nil {
+		ids = []string{}
 	}
 	covered := coverage
 	if window.From.After(covered.From) {
@@ -191,8 +184,5 @@ func (s *Service) buildRanking(ctx context.Context, key popularRanking, window, 
  VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
  ON CONFLICT (tenant_id,kind,period,domain,language) DO UPDATE SET window_from=excluded.window_from,window_until=excluded.window_until,computed_at=excluded.computed_at,content_ids=excluded.content_ids,covered_from=excluded.covered_from,covered_until=excluded.covered_until,available_from=excluded.available_from`,
 		s.o.Tenant, key.kind, key.period, key.domain, key.language, optionalBound(window.From), optionalBound(window.To), computed, ids, optionalBound(covered.From), optionalBound(covered.To), optionalBound(coverage.From))
-	if err != nil {
-		return err
-	}
-	return s.buildEntityRankings(ctx, key, hits, computed)
+	return err
 }

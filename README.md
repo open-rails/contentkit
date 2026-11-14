@@ -644,6 +644,10 @@ version_level, roles, attributes, popular). They describe content; channel owner
 authority are configured separately with `channels` and a content kind's `channel`
 policy. See [Posts and channels](docs/posts-and-channels.md) for fixed staff blogs,
 creator feeds and reposts.
+
+`popular: {content_kind}` enables `sort=popular`, refreshed hourly from recent
+account favourites in Postgres. See [Entity popularity](docs/popularity-policy.md#entity-popularity).
+
 Reader editors use one page per stable version code. Shared entity edits use
 `PUT /contents/{id}/entities/shared`; per-version credits use
 `PUT /contents/{id}/versions/{vid}/entities`. Catalog responses keep the same

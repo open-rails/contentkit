@@ -19,6 +19,9 @@ export interface PaginationProps {
   className?: string;
 }
 
+/** The API serves numbered pages over a list's first 10,000 items and refuses deeper ones. */
+const PAGED_ITEMS_MAX = 10_000;
+
 /** The page numbers shown: first, last and two either side of the current one, with gaps. */
 export function pageWindow(page: number, last: number): (number | "gap")[] {
   const shown = new Set([1, last, page - 2, page - 1, page, page + 1, page + 2].filter((n) => n >= 1 && n <= last));
@@ -38,12 +41,15 @@ export function Pagination(p: PaginationProps) {
   const m = useMessages();
   const { t } = m;
   const size = Math.max(1, p.pageSize);
-  const known = Math.max(1, Math.ceil(p.total / size));
+  // Pages past the API's reach are not offered: their links only led to an error.
+  const reachable = Math.max(1, Math.floor(PAGED_ITEMS_MAX / size));
+  const known = Math.min(Math.max(1, Math.ceil(p.total / size)), reachable);
   const page = Math.max(1, p.page);
   const last = Math.max(known, page);
+  const atLeast = p.atLeast && last < reachable;
   const format = (n: number) => new Intl.NumberFormat(m.language).format(n);
   // One page has nothing to choose.
-  if (last <= 1 && !p.atLeast) return null;
+  if (last <= 1 && !atLeast) return null;
   const control = (target: number, label: ReactNode, o: { current?: boolean; disabled?: boolean; aria?: string } = {}) => {
     const className = cn(buttonVariants({ variant: o.current ? "default" : "ghost", size: "sm" }), "min-w-8 tabular-nums", o.current && "text-white hover:text-white", o.disabled && "pointer-events-none opacity-50");
     const go = (event: MouseEvent) => {
@@ -73,8 +79,8 @@ export function Pagination(p: PaginationProps) {
           <span key={n}>{control(n, format(n), { current: n === page, aria: t("listing.goToPage", { page: format(n) }) })}</span>
         ),
       )}
-      {p.atLeast && <span aria-hidden className="px-1 text-muted-foreground">…</span>}
-      {control(page + 1, <HugeiconsIcon icon={ArrowRight01Icon} strokeWidth={2} />, { disabled: page >= last && !p.atLeast, aria: t("listing.next") })}
+      {atLeast && <span aria-hidden className="px-1 text-muted-foreground">…</span>}
+      {control(page + 1, <HugeiconsIcon icon={ArrowRight01Icon} strokeWidth={2} />, { disabled: page >= last && !atLeast, aria: t("listing.next") })}
     </nav>
   );
 }

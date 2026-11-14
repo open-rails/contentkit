@@ -632,7 +632,8 @@ const content = useContentEntities(contentId); // content.set(memberships, kinds
 - **`EntityDirectory`**: one kind's entities with A–Z buckets (`letter` and
   `onLetterChange` to keep it in the URL), content counts, `layout` list or
   grid, paged. With `popular`, for a kind with `popular` configured, the
-  first button reads "Popular" instead of "All" and ranks every entity. **`EntityHeader`**: an entity page's cover, names, description,
+  first button reads "Popular" instead of "All". Entities rank by recent account
+  favourites, refreshed hourly; unranked entities follow by content count. **`EntityHeader`**: an entity page's cover, names, description,
   typed attributes, parent, scope and sub-entities. Links go to each entity's
   canonical path (`href` overrides) through the provider's `navigate`.
 - **`EntityEditor`** (staff): create, or edit slug, parent, scope, declared

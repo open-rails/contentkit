@@ -7072,7 +7072,7 @@
           {
             "name": "sort",
             "in": "query",
-            "description": "name (the default), count, newest or popular (one kind with popularity; its daily ranking, then count)",
+            "description": "name (the default), count, newest or popular (one kind with popularity; its hourly ranking, then count)",
             "schema": {
               "type": "string"
             }
@@ -15240,14 +15240,10 @@
         "properties": {
           "content_kind": {
             "type": "string"
-          },
-          "bucket": {
-            "type": "string"
           }
         },
         "required": [
-          "content_kind",
-          "bucket"
+          "content_kind"
         ]
       },
       "EntityRecord": {

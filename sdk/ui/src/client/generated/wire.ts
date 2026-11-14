@@ -837,7 +837,6 @@ export interface EntityPage {
 
 export interface EntityPopularity {
   content_kind: string;
-  bucket: string;
 }
 
 export interface EntityRecord {

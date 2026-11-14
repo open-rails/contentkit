@@ -146,11 +146,16 @@ function CardGridBody({ list, render, filterKinds, filterLanguage, horizontal, s
       }
       result.push({ key: card.id, card, position: positionOffset + i + 1 });
     }
-    if (p.premiumLast) result.sort((a, b) => Number(a.card?.access.level === "tier") - Number(b.card?.access.level === "tier"));
-    if (lockedTile) result.push({ key: "premium-summary", premium: true, card: preview });
+    // Cut to the limit first, keeping its last cell for the tile: sorted or pushed before the cut, premium fell off a limited row.
     const limit = mobile && p.mobileCardLimit !== undefined ? p.mobileCardLimit : p.cardLimit;
-    return limit !== undefined && Number.isFinite(limit) ? result.slice(0, Math.max(0, Math.floor(limit))) : result;
-  }, [list.items, collapse, p.locked, lockedTile, mobile, p.mobileCardLimit, p.cardLimit, p.premiumLast, positionOffset]);
+    const room = limit !== undefined && Number.isFinite(limit) ? Math.max(0, Math.floor(limit)) : Infinity;
+    const tile = lockedTile && room > 0;
+    const kept = result.slice(0, tile ? room - 1 : room);
+    // A list that appends pages keeps its query order: sorted again, each new page's cards would land above the reader.
+    if (p.premiumLast && (p.pagination === "pages" || !p.infinite)) kept.sort((a, b) => Number(a.card?.access.level === "tier") - Number(b.card?.access.level === "tier"));
+    if (tile) kept.push({ key: "premium-summary", premium: true, card: preview });
+    return kept;
+  }, [list.items, collapse, p.locked, lockedTile, mobile, p.mobileCardLimit, p.cardLimit, p.premiumLast, p.pagination, p.infinite, positionOffset]);
   const shown = useMemo(() => entries.flatMap((entry) => ("premium" in entry ? [] : [{ ...entry.card, position: entry.position }])), [entries]);
   const exposure = useExposure(shown, { surface: p.surface ?? "list", render, client: p.client, query_id: queryID, search_query: searchQuery, ranker, settledEmpty });
   const [sentinel, near] = useNearViewport({ margin: "600px 0px", leaveMargin: "1200px 0px" });

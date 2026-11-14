@@ -68,6 +68,7 @@ func (j *jobs) contribution() riverhelpers.Contribution {
 			func() error { return river.AddWorkerSafely(cfg.Workers, &preferenceSyncWorker{e: e}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &searchPruneWorker{e: e}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &popularRefreshWorker{e: e}) },
+			func() error { return river.AddWorkerSafely(cfg.Workers, &entityPopularRefreshWorker{e: e}) },
 		} {
 			if err := add(); err != nil {
 				return err
@@ -82,6 +83,10 @@ func (j *jobs) contribution() riverhelpers.Contribution {
 		}
 		periodic("contentkit_search_sync", searchSyncEvery, searchSyncArgs{})
 		periodic("contentkit_search_prune", searchPruneEvery, searchPruneArgs{})
+		cfg.PeriodicJobs = append(cfg.PeriodicJobs, riverhelpers.NewPeriodicJob(cfg, time.Hour,
+			func() (river.JobArgs, *river.InsertOpts) {
+				return entityPopularRefreshArgs{}, &river.InsertOpts{Queue: queueContentKit, MaxAttempts: 3, UniqueOpts: mediastore.PendingOnce}
+			}, &river.PeriodicJobOpts{ID: "contentkit_entity_popular_refresh", RunOnStart: true}))
 		if e.hub.SignalsConfigured() { // their runs skip while it is down
 			periodic("contentkit_preference_sync", preferenceSyncEvery, preferenceSyncArgs{})
 			periodic("contentkit_preference_resync", resyncEvery, preferenceSyncArgs{Resync: true})
@@ -247,6 +252,23 @@ func (w *popularRefreshWorker) Timeout(*river.Job[popularRefreshArgs]) time.Dura
 
 func (w *popularRefreshWorker) Work(ctx context.Context, _ *river.Job[popularRefreshArgs]) error {
 	return w.e.discover.RefreshPopularRankings(ctx)
+}
+
+type entityPopularRefreshArgs struct{}
+
+func (entityPopularRefreshArgs) Kind() string { return "contentkit_entity_popular_refresh" }
+
+type entityPopularRefreshWorker struct {
+	river.WorkerDefaults[entityPopularRefreshArgs]
+	e *Engine
+}
+
+func (w *entityPopularRefreshWorker) Timeout(*river.Job[entityPopularRefreshArgs]) time.Duration {
+	return time.Hour
+}
+
+func (w *entityPopularRefreshWorker) Work(ctx context.Context, _ *river.Job[entityPopularRefreshArgs]) error {
+	return w.e.discover.RefreshEntityPopularRankings(ctx)
 }
 
 func init() {

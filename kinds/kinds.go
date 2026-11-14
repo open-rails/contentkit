@@ -366,21 +366,9 @@ type EntityKind struct {
 	Popular *EntityPopularity `json:"popular,omitempty" yaml:"popular"`
 }
 
-// EntityPopularity ranks a kind's entities per domain by the summed popularity
-// of their content of ContentKind in that kind's Bucket, then by content
-// count, with every rebuild of that content ranking.
+// EntityPopularity ranks a kind's entities by recent account favourites.
 type EntityPopularity struct {
 	ContentKind string `json:"content_kind" yaml:"content_kind"`
-	Bucket      string `json:"bucket" yaml:"bucket"`
-}
-
-// PopularBucket is the content bucket that ranks an entity kind.
-func (c Config) PopularBucket(p EntityPopularity) (PopularityBucket, bool) {
-	i := slices.IndexFunc(c.Kinds[p.ContentKind].Popularity, func(b PopularityBucket) bool { return b.ID == p.Bucket })
-	if i < 0 {
-		return PopularityBucket{}, false
-	}
-	return c.Kinds[p.ContentKind].Popularity[i], true
 }
 
 // HasAvatar reports whether the kind's entities take an avatar.
@@ -507,23 +495,9 @@ func (c Config) Validate() error {
 			return err
 		}
 		if p := gk.Popular; p != nil {
-			bucket, ok := c.PopularBucket(*p)
-			if !ok || !slices.Contains(c.Kinds[p.ContentKind].Entities, name) {
-				return fmt.Errorf("%w: group kind %s: popular names a kind that groups it by %s and one of that kind's popularity buckets", ErrInvalid, name, name)
-			}
-			// Entities rank per domain over every language, so each domain a
-			// read can resolve (DomainFor) needs a scope without a language.
-			domains := []string{}
-			if !slices.ContainsFunc(c.ContentFilters.Domains, func(d Domain) bool { return d.Name == "main" }) {
-				domains = append(domains, "")
-			}
-			for _, d := range c.ContentFilters.Domains {
-				domains = append(domains, d.Name)
-			}
-			for _, d := range domains {
-				if _, ok := bucket.Scope(d, ""); !ok {
-					return fmt.Errorf("%w: group kind %s: popular bucket %s declares no scope without a language for domain %q", ErrInvalid, name, p.Bucket, d)
-				}
+			content, ok := c.Kinds[p.ContentKind]
+			if !ok || !slices.Contains(content.Entities, name) {
+				return fmt.Errorf("%w: group kind %s: popular names a content kind that groups it", ErrInvalid, name)
 			}
 		}
 	}
