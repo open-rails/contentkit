@@ -29,21 +29,30 @@ means durable acceptance, not completion of downstream erasure.
 
 ## Media
 
-The media bucket is versioned with a 30-day noncurrent expiry
-(`s3.Store.Configure(ctx, 30)`), so retired permanent files and folder deletions
-stay recoverable for 30 days. Temporary uploads and regeneratable caches have
-a separate seven-day expiration and one-day noncurrent retention; they are not
-durable originals. To restore to time T:
+The media bucket is versioned. Noncurrent versions expire after 7 days, and
+once a version is a day old only the 3 newest noncurrent versions of each
+object stay (the Doujins and Hentai0 buckets get these rules from
+doujins-gitops `scripts/media_rgw_policy.py`; `s3.Store.Configure(ctx, days)`
+sets only the age limit). Retired permanent files and folder deletions stay
+recoverable for 7 days. Hash-named files are never rewritten, so the version
+limit does not touch them; it limits objects rewritten in place, chiefly
+manifests: a manifest that changed more than three times after T cannot return
+to T from a day after the first of those changes. Delete markers count among
+the three, so a key deleted again and again keeps its data only a day: delete
+each key once. Temporary uploads and regeneratable
+caches have a separate seven-day expiration and one-day noncurrent retention;
+they are not durable originals. To restore to time T:
 
 1. Restore PostgreSQL to T (the steps above).
 2. Run `store.Restore(ctx, "{tenant}/", T)`: manifests return to their
    versions at T (those created after T are removed), and the originals,
    renditions and public copies the restored manifests list lose their delete
    markers (every other object is hash-named and never rewritten). `RestoreReport.Missing` lists references whose
-   versions have expired.
+   versions have expired, including manifests past the version limit.
 3. Re-apply media erasures made after T (`Erase`/`RetireItemsTx`) from
    the host's deletion ledger.
 
-The RGW→R2 mirror must keep deleted objects at the destination for at least
-30 days to cover the same window. Erased files therefore remain as backup data
-(RGW versions and the R2 mirror) for 30 days; the privacy policy must say so.
+An RGW→R2 mirror must keep deleted objects at the destination for at least
+7 days to cover the same window. Erased files therefore remain as backup data
+for 7 days in RGW versions, and for as long as a mirror keeps deleted objects
+(its script's default is 30 days); the privacy policy must say so.
