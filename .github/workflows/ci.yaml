@@ -1,8 +1,10 @@
 name: CI
-# Source validation runs only on ready PRs into delivery branches or explicit dispatch.
+# Runs only on ready PRs or explicit dispatch. A PR into the open release
+# candidate (rc/**) gets the light checks; the candidate's PR into master gets
+# every suite; master takes PRs only from rc/* and release/* heads.
 'on':
   pull_request:
-    branches: [master, 'release/**']
+    branches: [master, 'rc/**', 'release/**']
     types: [opened, synchronize, reopened, ready_for_review, converted_to_draft, closed]
   workflow_dispatch: {}
   workflow_call: {}
@@ -12,11 +14,29 @@ concurrency:
   group: ci-${{ github.event.pull_request.draft && github.event.action != 'converted_to_draft' && github.event.action != 'closed' && format('draft-{0}', github.run_id) || github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 jobs:
+  source-branch:
+    name: Source branch
+    if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'master' && github.event.pull_request.draft != true && github.event.action != 'closed'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+    - name: master takes only release candidates and release preparation
+      env:
+        HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+      run: |
+        if [[ "$HEAD_REPO" == "$GITHUB_REPOSITORY" && "$HEAD_REF" =~ ^(rc|release)/. ]]; then
+          echo "$HEAD_REF may merge into master."
+          exit 0
+        fi
+        echo "::error::master takes pull requests only from rc/* and release/* branches of this repository; $HEAD_REPO:$HEAD_REF is neither. Retarget this pull request to the open release candidate named in OPEN.md."
+        exit 1
   source:
     name: Verify candidate source
     if: github.event.pull_request.draft != true && github.event.action != 'closed'
     runs-on: ubuntu-24.04
     outputs:
+      light: ${{ steps.areas.outputs.light }}
       images: ${{ steps.areas.outputs.images }}
       critical: ${{ steps.areas.outputs.critical }}
       suite: ${{ steps.areas.outputs.suite }}
@@ -62,11 +82,13 @@ jobs:
       id: areas
       env:
         PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        PR_BASE_REF: ${{ github.event.pull_request.base.ref }}
+        PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
       run: |
         set -euo pipefail
         python3 .github/scripts/check-ci-policy.py
         if [[ "$GITHUB_EVENT_NAME" == pull_request ]]; then
-          python3 .github/scripts/ci-scope.py --base "$PR_BASE_SHA" --head "$GITHUB_SHA" --github-output "$GITHUB_OUTPUT" | tee "$RUNNER_TEMP/selected-checks.json"
+          python3 .github/scripts/ci-scope.py --base "$PR_BASE_SHA" --head "$GITHUB_SHA" --base-ref "$PR_BASE_REF" --head-ref "$PR_HEAD_REF" --github-output "$GITHUB_OUTPUT" | tee "$RUNNER_TEMP/selected-checks.json"
         else
           python3 .github/scripts/ci-scope.py --full --github-output "$GITHUB_OUTPUT" | tee "$RUNNER_TEMP/selected-checks.json"
         fi
@@ -82,10 +104,40 @@ jobs:
     uses: ./.github/workflows/go.yaml
     with:
       suite: ${{ needs.source.outputs.suite }}
+  build:
+    name: Build and vet every module
+    needs: source
+    if: needs.source.outputs.light == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      GOWORK: 'off'
+      GOMAXPROCS: '2'
+    steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: ${{ github.sha }}
+        persist-credentials: false
+    - uses: actions/setup-go@v5
+      with:
+        go-version-file: tests/critical/go.mod
+        cache-dependency-path: |
+          go.sum
+          tests/critical/go.sum
+          server/go.sum
+          adapters/authkit/go.sum
+          adapters/openrails/go.sum
+    - name: Install native processing dependencies
+      run: $GITHUB_WORKSPACE/.github/scripts/apt-install.sh libvips-dev
+    - run: bash .github/scripts/build-and-vet.sh
+  ui-package:
+    needs: source
+    if: needs.source.outputs.light == 'true'
+    uses: ./.github/workflows/sdk-ui.yaml
   codec-free:
     name: Hosts link no media codecs
     needs: source
-    if: needs.source.outputs.critical == 'true'
+    if: needs.source.outputs.critical == 'true' || needs.source.outputs.light == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -113,7 +165,7 @@ jobs:
       verify_only: true
   gate:
     name: ${{ (github.event.pull_request.draft || github.event.action == 'closed') && 'Inactive PR (CI not requested)' || 'CI Gate' }}
-    needs: [source, scan, critical, codec-free, image-definitions]
+    needs: [source, scan, critical, build, ui-package, codec-free, image-definitions]
     if: always() && github.event.pull_request.draft != true && github.event.action != 'closed'
     runs-on: ubuntu-24.04
     steps:
@@ -127,11 +179,12 @@ jobs:
         if jobs['source']['result'] != 'success':
             raise SystemExit('source verification did not pass')
         plan = jobs['source']['outputs']
-        for name, area in [('scan', 'scan'), ('critical', 'critical'), ('codec-free', 'critical'), ('image-definitions', 'images')]:
-            selected = plan.get(area)
-            if selected not in ('true', 'false'):
+        for area in ('scan', 'critical', 'images', 'light'):
+            if plan.get(area) not in ('true', 'false'):
                 raise SystemExit(f'missing selection for {area}')
-            expected = 'success' if selected == 'true' else 'skipped'
+        for name, areas in [('scan', ['scan']), ('critical', ['critical']), ('build', ['light']), ('ui-package', ['light']),
+                            ('codec-free', ['critical', 'light']), ('image-definitions', ['images'])]:
+            expected = 'success' if any(plan[area] == 'true' for area in areas) else 'skipped'
             if jobs[name]['result'] != expected:
                 raise SystemExit(f"{name}: {jobs[name]['result']}; expected {expected}")
         PY_CHECK

@@ -7,7 +7,9 @@ import re
 import subprocess
 
 SOURCE = ("critical", "scan")
-ALL = (*SOURCE, "images")
+HEAVY = (*SOURCE, "images")
+# light: build, vet, static guards and generated-file checks, for PRs into a release candidate.
+ALL = (*HEAVY, "light")
 
 
 def sdk_source(path):
@@ -15,7 +17,20 @@ def sdk_source(path):
 
 
 def full():
-    return {key: True for key in ALL}
+    return {key: key in HEAVY for key in ALL}
+
+
+def light():
+    return {key: key in ("scan", "light") for key in ALL}
+
+
+def kind(base_ref, head_ref):
+    """Which run a pull request gets, from its base and head branches."""
+    if base_ref.startswith("rc/"):
+        return "light", "pull request into a release candidate: light checks"
+    if base_ref == "master" and head_ref.startswith("rc/"):
+        return "full", "release candidate into master: full qualification"
+    return "selected", ""
 
 
 def select(changes):
@@ -63,18 +78,28 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base")
     parser.add_argument("--head")
+    parser.add_argument("--base-ref")
+    parser.add_argument("--head-ref")
     parser.add_argument("--full", action="store_true")
     parser.add_argument("--github-output", type=Path)
     args = parser.parse_args()
     if args.full:
-        selected, reasons = full(), ["explicit full qualification"]
+        run, why = "full", "explicit full qualification"
     else:
         if not all(re.fullmatch(r"[0-9a-f]{40}", value or "") for value in (args.base, args.head)):
             parser.error("base and head must be full commit SHAs")
+        if not args.base_ref or not args.head_ref:
+            parser.error("base and head branch names are required")
+        run, why = kind(args.base_ref, args.head_ref)
+    if run == "full":
+        selected, reasons = full(), [why]
+    elif run == "light":
+        selected, reasons = light(), [why]
+    else:
         selected, reasons = select(read_changes(args.base, args.head))
     critical_suite = "none"
     if selected["critical"]:
-        changes = [] if args.full else read_changes(args.base, args.head)
+        changes = [] if run == "full" else read_changes(args.base, args.head)
         behavioral = [path for status, path in changes if select([(status, path)])[0]["critical"]]
         sdk_only = bool(behavioral) and all(sdk_source(path) for path in behavioral)
         critical_suite = "sdk" if sdk_only and not selected["images"] else "all"
@@ -87,14 +112,14 @@ def main():
     for suite, enabled in selected.items():
         if not enabled:
             explanations[suite] = {"selected": False, "reason": "No changed input reaches this suite under the explicit isolation rules."}
-        elif args.full:
-            explanations[suite] = {"selected": True, "reason": "Explicit full qualification."}
+        elif run != "selected":
+            explanations[suite] = {"selected": True, "reason": why}
         else:
             inputs = [reason for change in read_changes(args.base, args.head)
                       for flags, why in [select([change])] if flags[suite] for reason in why]
             explanations[suite] = {"selected": True, "affected_inputs": len(inputs),
                                    "examples": inputs[:8] or reasons}
-    print(json.dumps({"suites": selected, "critical_suite": critical_suite, "reasons": reasons, "suite_explanations": explanations}, indent=2))
+    print(json.dumps({"run": run, "suites": selected, "critical_suite": critical_suite, "reasons": reasons, "suite_explanations": explanations}, indent=2))
 
 
 if __name__ == "__main__":
