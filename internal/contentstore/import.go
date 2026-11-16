@@ -994,6 +994,9 @@ func (rt *Runtime) ImportPolls(ctx context.Context, tx pgx.Tx, in []content.Impo
   EXCLUDED.created_at)`, rt.tenant, string(data)); err != nil {
 		return err
 	}
+	if err := rt.dropDeletedPollVotes(ctx, tx, ids); err != nil {
+		return err
+	}
 	odata, err := json.Marshal(options)
 	if err != nil {
 		return err
@@ -1122,6 +1125,9 @@ func (rt *Runtime) ImportVotes(ctx context.Context, tx pgx.Tx, in []content.Impo
 			return err
 		}
 	}
+	if err := rt.dropDeletedPollVotes(ctx, tx, slices.Collect(maps.Keys(polls))); err != nil {
+		return err
+	}
 	return rt.settle(ctx, tx, later, Recounts{polls: polls})
 }
 
@@ -1165,9 +1171,9 @@ func (rt *Runtime) RaisePreferenceFloor(ctx context.Context, tx pgx.Tx, floor in
 
 // ImportDeletes deletes comments and polls in tx as their delete routes do:
 // a comment is tombstoned and its reference's and thread's counts follow (or
-// later recounts them); a poll tombstone and exact media retirement intent
-// commit together. The existing content-deletion sweep erases files; deleted
-// rows remain for history.
+// later recounts them); a poll tombstone, the deletion of its votes and exact
+// media retirement intent commit together. The existing content-deletion
+// sweep erases files; other deleted rows remain for history.
 func (rt *Runtime) ImportDeletes(ctx context.Context, tx pgx.Tx, comments, polls []string, later *Recounts) error {
 	s := rt.store
 	if len(comments) > 0 {
@@ -1224,6 +1230,9 @@ func (rt *Runtime) ImportDeletes(ctx context.Context, tx pgx.Tx, comments, polls
 	}
 	gone, err := pgx.CollectRows(rows, pgx.RowTo[string])
 	if err != nil {
+		return err
+	}
+	if err := rt.dropDeletedPollVotes(ctx, tx, polls); err != nil {
 		return err
 	}
 	for _, id := range gone {

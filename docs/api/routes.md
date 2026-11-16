@@ -59,7 +59,7 @@ Anonymous readers can send `ContentKit-Reader-Preferences: {"filters":[{"group_i
 | GET | `/v1/polls/{id}` | public | — | 200 `Poll` | A poll with the caller's vote; a scheduled poll only for root:polls:write holders. |
 | POST | `/v1/polls` | staff `root:polls:write` | `PollInput` | 201 `Poll` | Creates a poll with at least two predefined options; only multiple_choice is supported. |
 | PATCH | `/v1/polls/{id}` | staff `root:polls:write` | `PollUpdate` | 200 `Poll` | Updates a poll's given fields; closes_at null reopens it until deactivated. |
-| DELETE | `/v1/polls/{id}` | staff `root:polls:write` | — | 204 — | Deletes a poll and its media folder. |
+| DELETE | `/v1/polls/{id}` | staff `root:polls:write` | — | 204 — | Deletes a poll, its votes and its media folder. |
 | POST | `/v1/polls/{id}/vote` | public | `PollVote` | 200 `Poll` | Votes for an option of an open multiple-choice poll, signed out where Config.anonymous.votes allows it; a vote is final, and voting again changes nothing. |
 | PUT | `/v1/polls/{id}/image` | staff `root:polls:write` | `ImageInput` | 200 `PollImage` | Sets the question image to an inline image uploaded to the poll's media folder; "" clears it. |
 | POST | `/v1/polls/{id}/options` | staff `root:polls:write` | `PollOptionPatch` | 201 `PollOption` | Before voting starts, adds an option to a multiple-choice poll, at the end unless position is given. |
