@@ -232,9 +232,8 @@ function List({ loc, client, languages: offered, pageSize = 20, onError }: Inner
             <span />
           </li>
           {list.items.map((poll) => {
-            const s = pollState(poll);
             const now = Date.now();
-            const closedAt = poll.closes_at && Date.parse(poll.closes_at) <= now ? poll.closes_at : undefined;
+            const s = pollState(poll, now);
             return (
               <li
                 key={poll.id}
@@ -257,8 +256,8 @@ function List({ loc, client, languages: offered, pageSize = 20, onError }: Inner
                   {count.format(poll.total_votes)}
                 </div>
                 <div className="grid text-muted-foreground">
-                  <span>{closedAt ? t("pollManager.closedOn", { date: formatDate(m, closedAt, false) }) : t(Date.parse(poll.live_at) > now ? "pollManager.goesLive" : "pollManager.wentLive", { date: formatDate(m, poll.live_at, false) })}</span>
-                  {!closedAt && poll.closes_at && <span className="text-xs">{t("poll.closes", { date: formatDate(m, poll.closes_at, false) })}</span>}
+                  <span>{s === "closed" && poll.closes_at ? t("pollManager.closedOn", { date: formatDate(m, poll.closes_at, false) }) : t(Date.parse(poll.live_at) > now ? "pollManager.goesLive" : "pollManager.wentLive", { date: formatDate(m, poll.live_at, false) })}</span>
+                  {(s === "live" || s === "scheduled") && poll.closes_at && <span className="text-xs">{t("poll.closes", { date: formatDate(m, poll.closes_at, false) })}</span>}
                 </div>
                 <div className="ms-auto flex items-center justify-end gap-1">
                   <Button size="sm" variant="outline" onClick={() => loc.go(poll.id)}>
