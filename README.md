@@ -798,13 +798,11 @@ python3 tests/critical/run.py --race
 The runner fails on missing fixtures, skipped or missing selected cases, zero
 executions, or incomplete scenario/operation review. This draft replacement is
 still incomplete; focused development runs are explicitly partial evidence.
-CI runs on ready PRs into `master` or `release/**`, or by explicit dispatch,
-and retains the source/base freshness gate, build, type, security and artifact
-checks. Ordinary source pushes do not run the suite.
-Selection is automatic and conservative: documentation-only changes skip heavy
-checks; isolated SDK source changes require all reviewed TypeScript bindings;
-shared, unknown, dependency and CI changes select the broader suite. Each run
-reports its selection reasons. The critical job builds and checks the SDK once.
+Features merge into the open release candidate (`rc/<version>`, named in
+[OPEN.md](OPEN.md)), the candidate merges into `master`, and a release is a tag
+on `master`. CI runs on ready PRs only: light build, type and static checks into
+a release candidate, every suite once for the candidate's PR into `master`.
+Ordinary source pushes run nothing. See [docs/ci.md](docs/ci.md).
 
 Previously observed backend capabilities (not replacement-suite qualification):
 

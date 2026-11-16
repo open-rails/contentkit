@@ -49,13 +49,13 @@ jobs:
             --jq '.workflow_runs[] | select(.event == "pull_request" or .event == "workflow_dispatch") | .id')"
           qualified=false
           for run in $runs; do
-            # Draft PR runs can succeed with every suite skipped; they do not
-            # qualify a release. The real gate requires all selected suites.
-            gate="$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$run/jobs?per_page=100" \
-              --jq '.jobs[] | select(.name == "CI Gate" and .conclusion == "success") | .id')"
-            if [[ -n "$gate" ]]; then qualified=true; break; fi
+            # The gate also passes on the light checks of a PR into a release
+            # candidate; a release needs the run whose critical suite passed.
+            passed="$(gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs/$run/jobs?per_page=100" \
+              --jq '.jobs[] | select(.conclusion == "success") | .name')"
+            if grep -qx 'CI Gate' <<<"$passed" && grep -q 'Critical backend and browser$' <<<"$passed"; then qualified=true; break; fi
           done
-          [[ "$qualified" == true ]] || { echo 'UI prerelease source has no successful CI Gate.' >&2; exit 1; }
+          [[ "$qualified" == true ]] || { echo 'UI prerelease source has no CI run with a successful critical suite and CI Gate.' >&2; exit 1; }
         else
           git merge-base --is-ancestor HEAD origin/master
         fi
