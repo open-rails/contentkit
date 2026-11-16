@@ -141,8 +141,9 @@ def main():
         env = dict(os.environ, GOWORK="off", GOMAXPROCS=os.getenv("GOMAXPROCS", "2"))
         # The full real-service suite exceeded twenty minutes after 1,501
         # named passes, while still advancing through TypeScript contracts.
-        # Keep every required owner and leave room for media/browser execution.
-        command = ["go", "test", "-json", "-count=1", "-p", "1", "-timeout=30m"]
+        # Keep every required owner and leave room for media/browser execution;
+        # slower runners took it past thirty minutes in November 2026.
+        command = ["go", "test", "-json", "-count=1", "-p", "1", "-timeout=40m"]
         if args.race:
             command.append("-race")
         if args.focus:
