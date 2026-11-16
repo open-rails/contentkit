@@ -798,7 +798,7 @@ python3 tests/critical/run.py --race
 The runner fails on missing fixtures, skipped or missing selected cases, zero
 executions, or incomplete scenario/operation review. This draft replacement is
 still incomplete; focused development runs are explicitly partial evidence.
-Features merge into the open release candidate (`rc/<name>`, named in
+Features merge into the open release candidate (`rc/<version>`, named in
 [OPEN.md](OPEN.md)), the candidate merges into `master`, and a release is a tag
 on `master`. CI runs on ready PRs only: light build, type and static checks into
 a release candidate, every suite once for the candidate's PR into `master`.

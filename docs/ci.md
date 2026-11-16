@@ -3,7 +3,7 @@
 ## Branches and releases
 
 - `master` is the release mainline. It takes pull requests only from `rc/*` (a release candidate) and `release/*` (release preparation, such as module pins); the `Source branch` check refuses any other head.
-- Features merge into the open release candidate, `rc/<name>`. Its copy of [OPEN.md](../OPEN.md) names it and what it is for. Check that before opening or merging a pull request: work merged into a stale `rc/*` reaches no release.
+- Features merge into the open release candidate, `rc/<version>`, named for the version it will become (`rc/1.2.0`). Its copy of [OPEN.md](../OPEN.md) names it and what it is for. Check that before opening or merging a pull request: work merged into a stale `rc/*` reaches no release.
 - One release candidate is open at a time. It is cut from `master` with a first commit that names it in `OPEN.md`; its last commit resets `OPEN.md` to none; it merges into `master` through one pull request and its branch is then deleted.
 - A release is a tag on a `master` commit. Not every `master` commit is a release. Publishing workflows refuse a tag whose commit is not on `master`.
 
