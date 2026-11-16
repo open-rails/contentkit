@@ -355,19 +355,19 @@ func (w *ingestWorker) Timeout(*river.Job[workqueue.IngestArgs]) time.Duration {
 // Work places an item's staged uploads, after any equal job it follows, then
 // enqueues its processing.
 func (w *ingestWorker) Work(ctx context.Context, job *river.Job[workqueue.IngestArgs]) (err error) {
-	if err := w.c.restoreRescuedAttempt(ctx, job.JobRow); err != nil {
-		return err
-	}
 	fail := func(ctx context.Context, cause error) error {
 		if err := full(ctx, w.manifests, job.Args.Ref, w.manifests.FailIngest(ctx, job.Args.Ref, cause)); err != nil {
 			return err
 		}
 		return w.queue.Enqueue(ctx, mediastore.ProcessJob{Ref: job.Args.Ref, Preset: job.Args.Preset})
 	}
+	defer func() { err = w.c.finishAttempt(ctx, job.JobRow, err, fail) }()
+	if err := w.c.restoreRescuedAttempt(ctx, job.JobRow); err != nil {
+		return err
+	}
 	if err := w.c.checkAttemptBudget(ctx, job.JobRow, fail); err != nil {
 		return err
 	}
-	defer func() { err = w.c.finishAttempt(ctx, job.JobRow, err, fail) }()
 	a := job.Args
 	item, err := w.c.Kinds.Item(a.Ref)
 	if err != nil {
@@ -418,9 +418,6 @@ func (w *derivativeWorker) Timeout(*river.Job[workqueue.DerivativeArgs]) time.Du
 // Work generates image outputs and advances video outputs through their existing
 // resumable chunks. Both formats share this one durable item obligation.
 func (w *derivativeWorker) Work(ctx context.Context, job *river.Job[workqueue.DerivativeArgs]) (err error) {
-	if err := w.c.restoreRescuedAttempt(ctx, job.JobRow); err != nil {
-		return err
-	}
 	fail := func(ctx context.Context, cause error) error {
 		pending := mediastore.ProcessJob{Ref: job.Args.Ref, Preset: job.Args.Preset, Editor: job.Args.Editor}
 		return full(ctx, w.manifests, job.Args.Ref, errors.Join(
@@ -428,10 +425,13 @@ func (w *derivativeWorker) Work(ctx context.Context, job *river.Job[workqueue.De
 			w.video.Encoder.FailPending(ctx, pending, cause),
 		))
 	}
+	defer func() { err = w.c.finishAttempt(ctx, job.JobRow, err, fail) }()
+	if err := w.c.restoreRescuedAttempt(ctx, job.JobRow); err != nil {
+		return err
+	}
 	if err := w.c.checkAttemptBudget(ctx, job.JobRow, fail); err != nil {
 		return err
 	}
-	defer func() { err = w.c.finishAttempt(ctx, job.JobRow, err, fail) }()
 	a := job.Args
 	// A rescued attempt (process death) keeps its number but leaves an error.
 	pj := mediastore.ProcessJob{Ref: a.Ref, Preset: a.Preset, Force: a.Force, Editor: a.Editor, Retry: len(job.Errors) > 0}

@@ -16,6 +16,7 @@ import (
 
 	"github.com/open-rails/contentkit/internal/jobhook"
 	"github.com/open-rails/contentkit/internal/worker"
+	"github.com/open-rails/contentkit/media"
 )
 
 // queueContentKit is the queue of the engine's own jobs.
@@ -111,7 +112,11 @@ func (j *jobs) contribution() riverhelpers.Contribution {
 		j.mu.Unlock()
 		return nil
 	})
-	parts := []riverhelpers.Contribution{own, e.catalog.RiverJobs(), e.versions.RiverJobs()}
+	var store media.Store
+	if e.media != nil {
+		store = e.media.store
+	}
+	parts := []riverhelpers.Contribution{own, e.catalog.RiverJobs(store), e.versions.RiverJobs()}
 	return riverhelpers.Group(parts...)
 }
 
