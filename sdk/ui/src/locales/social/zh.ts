@@ -160,7 +160,7 @@ export const social: typeof en = {
     optionsHint: "拖动以排序。每个选项都需要文字；图片可选。",
     optionsLive: "拖动以排序。选项的更改会立即保存。",
     optionsLocked: "投票已开始，无法更改选项。",
-    schedule: "排期与可见性",
+    schedule: "排期与投票",
     scheduleHint: "时间为你所在的时区。",
     visibleHint: "已停止的投票不再接受投票，也不再作为当前投票；结果仍可查看。",
     preview: "实时预览",

@@ -50,6 +50,7 @@ func TestCompletedPublicationReader(t *testing.T) {
 	viewer := access.Actor{ID: uuid.NewString()}
 	authority := &completedReaderAuthority{editor: editor.ID}
 	var active string
+	var current *mediastore.Manifest
 	omitIndex, directIndex, leakPreparation := false, false, false
 	var trackSource, indexSource, publicSource string
 	cfg := media.Config{Scope: layout.Scope{TenantID: a.cfg.Scope.TenantID.String(), AppID: a.cfg.Scope.AppID.String()}, BaseURL: storage.gateway.URL,
@@ -59,7 +60,7 @@ func TestCompletedPublicationReader(t *testing.T) {
 		}},
 	}
 	hooks := mediastore.Hooks{Resolver: authority}
-	hooks.ReaderManifest = func(_ context.Context, _ contentref.ContentRef, _ access.Actor, current *mediastore.Manifest) (*mediastore.Manifest, error) {
+	hooks.ReaderManifest = func(_ context.Context, _ contentref.ContentRef, _ access.Actor) (*mediastore.Manifest, error) {
 		out := current.Clone()
 		out.Deliveries = nil
 		if leakPreparation {
@@ -148,6 +149,8 @@ func TestCompletedPublicationReader(t *testing.T) {
 		return nil
 	})
 	must(t, err)
+	current, _, err = manifests.Get(t.Context(), ref)
+	must(t, err)
 	cleanup := pgx.Identifier{w.schema, "content_media_cleanup"}.Sanitize()
 	_, err = w.pool.Exec(t.Context(), `UPDATE `+cleanup+` SET deletion_operations = deletion_operations || ARRAY(SELECT gen_random_uuid() FROM generate_series(1,300))
 WHERE tenant_id=$1 AND folder_prefix=$2`, ref.TenantID, item.Prefix())
@@ -209,6 +212,8 @@ WHERE tenant_id=$1 AND folder_prefix=$2`, ref.TenantID, item.Prefix())
 		t.Fatalf("cleanup without retirement: chunk %d -> %d, revision %s -> %s, operations unchanged=%v", chunk, nextChunk, revision, nextRevision, slices.Equal(nextOperations, operations))
 	}
 	_, err = manifests.Promote(t.Context(), ref, operation)
+	must(t, err)
+	current, _, err = manifests.Get(t.Context(), ref)
 	must(t, err)
 	var merged bool
 	must(t, w.pool.QueryRow(t.Context(), `SELECT deletion_operations @> $3::uuid[] AND cardinality(deletion_operations)>$4 FROM `+cleanup+` WHERE tenant_id=$1 AND folder_prefix=$2`, ref.TenantID, item.Prefix(), operations, len(operations)).Scan(&merged))

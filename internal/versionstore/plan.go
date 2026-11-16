@@ -106,14 +106,19 @@ func (s *Service) Plan(ctx context.Context, actor access.Actor, t versions.Targe
 	if err != nil {
 		return nil, err
 	}
-	m, _, err := s.m.Manifests.Get(ctx, ref)
-	if err != nil {
-		return nil, err
+	m := active.View
+	if d.res.Editor {
+		current, _, err := s.m.Manifests.Get(ctx, ref)
+		if err != nil {
+			return nil, err
+		}
+		if !current.PublicationLayoutReady() {
+			return nil, ErrNotReady
+		}
 	}
 	if !m.PublicationLayoutReady() {
 		return nil, ErrNotReady
 	}
-	m = active.View
 	paths := map[string]string{}
 	for _, f := range m.Files {
 		if f.Blob != "" && !f.Gone {

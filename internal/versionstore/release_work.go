@@ -175,20 +175,16 @@ func (s *Service) activeRelease(ctx context.Context, q querier, t versions.Targe
 
 // readerManifest returns only the last completed storage view. Pending edits
 // remain in the authoring manifest and cannot change an already released view.
-func (s *Service) readerManifest(ctx context.Context, ref contentref.ContentRef, actor access.Actor, source *mediastore.Manifest) (*mediastore.Manifest, error) {
-	k, err := s.reg.Kind(ref.ContentKind)
-	if err != nil || !k.Versions {
-		return source, err
-	}
-	if !source.PublicationLayoutReady() {
-		return nil, ErrNotReady
-	}
+func (s *Service) readerManifest(ctx context.Context, ref contentref.ContentRef, actor access.Actor) (*mediastore.Manifest, error) {
 	active, err := s.activeRelease(ctx, s.o.Pool, versions.Target{Content: ref.ContentID, Version: ref.Version()})
 	if err != nil {
 		return nil, err
 	}
 	if active == nil || active.View == nil {
 		return &mediastore.Manifest{V: media.ManifestVersion, Files: []media.File{}}, nil
+	}
+	if !active.View.PublicationLayoutReady() {
+		return nil, ErrNotReady
 	}
 	return active.View.Clone(), nil
 }
