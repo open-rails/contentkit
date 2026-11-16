@@ -77,7 +77,7 @@ export function PollStateDot({ state, className }: { state: PollState; className
 
 /**
  * Staff: creates or edits a poll (root:polls:write): question, language, type, when
- * it goes live and closes, visibility, a question image, and options with
+ * it goes live and closes, whether it takes votes, a question image, and options with
  * images, reordered with the move buttons. A new poll is written at once with
  * its images; an existing one saves its fields with Save and each option
  * change as it is made. A live preview shows it as voters will.

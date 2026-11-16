@@ -160,7 +160,7 @@ export const social: typeof en = {
     optionsHint: "Arrastra para reordenar. Cada opción necesita un texto; las imágenes son opcionales.",
     optionsLive: "Arrastra para reordenar. Los cambios en las opciones se guardan al hacerlos.",
     optionsLocked: "Las opciones están bloqueadas porque la votación ha comenzado.",
-    schedule: "Programación y visibilidad",
+    schedule: "Programación y votación",
     scheduleHint: "Las horas están en tu zona horaria.",
     visibleHint: "Las encuestas cerradas no aceptan más votos y dejan de ser la encuesta actual; sus resultados siguen visibles.",
     preview: "Vista previa",

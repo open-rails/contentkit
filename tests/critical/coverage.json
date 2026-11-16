@@ -2552,6 +2552,18 @@
       ]
     },
     {
+      "id": "CK-J30-S02",
+      "journey": "CK-J30",
+      "behavior": "A closed poll stays public with its results, so staff poll states never say whether a poll is public, a switched-off poll is closed to voting, and a poll past its close time has a different name",
+      "status": "verified",
+      "evidence": [
+        "The SDK message sources of every language are read: the poll list's label for a switched-off poll equals the editor's switch label and neither contains nor is contained in the label for a poll past its close time, and no poll state label or the editor's scheduling section uses a hidden, visibility, private or public word."
+      ],
+      "cases": [
+        "TestPollStaffLabelsSayClosed"
+      ]
+    },
+    {
       "id": "CK-J02-S30",
       "journey": "CK-J02",
       "behavior": "Each edition owns independently authored text and media references",
