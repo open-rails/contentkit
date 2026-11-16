@@ -1232,7 +1232,7 @@ func (rt *Runtime) ImportDeletes(ctx context.Context, tx pgx.Tx, comments, polls
 	if err != nil {
 		return err
 	}
-	if err := rt.dropDeletedPollVotes(ctx, tx, gone); err != nil {
+	if err := rt.dropDeletedPollVotes(ctx, tx, polls); err != nil {
 		return err
 	}
 	for _, id := range gone {

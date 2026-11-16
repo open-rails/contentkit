@@ -3,6 +3,7 @@ package critical_test
 import (
 	"io"
 	"net/http"
+	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -424,5 +425,55 @@ func TestDeletedPollKeepsNoVotes(t *testing.T) {
 		write(importer.Batch{Votes: append(ballots("removed"), ballots("dated")...)})
 		votes(t, removed, 0, 0)
 		votes(t, dated, 0, 0)
+	})
+	t.Run("CK-J30-S01_votes_left_on_deleted_polls_are_removed", func(t *testing.T) {
+		tenant := a.cfg.Scope.AppID.String()
+		input := content.PollInput{Question: "Deleted before the fix", Language: "en", Options: []content.PollOptionInput{{Label: "Yes"}, {Label: "No", Position: 1}}}
+		result, err := admin.PostImport(t.Context(), importer.Batch{Source: "legacy-polls", Polls: []importer.PollRecord{
+			{ExternalID: "resent", Question: input.Question, Language: "en", Options: []importer.PollOptionRecord{{ExternalID: "resent-yes", Label: "Yes"}, {ExternalID: "resent-no", Label: "No", Position: 1}}},
+		}})
+		must(t, err)
+		resent := result.IDs[importer.RecordPoll]["resent"]
+		var migrated, kept content.Poll
+		for _, p := range []*content.Poll{&migrated, &kept} {
+			*p, err = admin.PostPolls(t.Context(), input)
+			must(t, err)
+		}
+		polls := map[string][2]string{resent: {result.IDs[importer.RecordOption]["resent-yes"], result.IDs[importer.RecordOption]["resent-no"]},
+			migrated.ID: {migrated.Options[0].ID, migrated.Options[1].ID}, kept.ID: {kept.Options[0].ID, kept.Options[1].ID}}
+		for id, options := range polls {
+			_, err := a.client(token).PostPollVote(t.Context(), id, content.PollVote{OptionID: options[0]})
+			must(t, err)
+			_, err = a.client("").PostPollVote(t.Context(), id, content.PollVote{OptionID: options[1]})
+			must(t, err)
+		}
+		// Deleted as before the fix: the votes stay.
+		_, err = w.pool.Exec(t.Context(), `UPDATE `+w.schema+`.content_poll_questions SET deleted_at=now() WHERE tenant_id=$1 AND id=ANY($2::uuid[])`, tenant, []string{resent, migrated.ID})
+		must(t, err)
+		votes(t, resent, 2, 1)
+		votes(t, migrated.ID, 2, 1)
+		write := func(batch importer.Batch) {
+			t.Helper()
+			result, err := admin.PostImport(t.Context(), batch)
+			must(t, err)
+			if len(result.Failed) != 0 {
+				t.Fatalf("import: %+v", result)
+			}
+		}
+		write(importer.Batch{Source: "legacy-polls", Deletes: []importer.DeleteRecord{{Entity: importer.RecordPoll, ExternalID: "resent"}}})
+		votes(t, resent, 0, 0)
+		votes(t, migrated.ID, 2, 1)
+		migration, err := os.ReadFile("../../internal/migrations/postgres/0069_deleted_poll_votes.up.sql")
+		must(t, err)
+		tx, err := w.pool.Begin(t.Context())
+		must(t, err)
+		defer tx.Rollback(t.Context())
+		_, err = tx.Exec(t.Context(), `SELECT set_config('search_path', $1, true)`, w.schema)
+		must(t, err)
+		_, err = tx.Exec(t.Context(), string(migration))
+		must(t, err)
+		must(t, tx.Commit(t.Context()))
+		votes(t, migrated.ID, 0, 0)
+		votes(t, kept.ID, 2, 1)
 	})
 }
