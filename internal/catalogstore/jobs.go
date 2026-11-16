@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	catalog "github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/internal/jobqueue"
@@ -492,7 +493,9 @@ func (w *jobWorker[T]) Timeout(*river.Job[T]) time.Duration { return w.timeout }
 func (w *jobWorker[T]) Work(ctx context.Context, job *river.Job[T]) error {
 	_, err := w.run(ctx)
 	err = mediastore.SnoozeUnavailable(ctx, w.store, job.JobRow, err)
-	if deps.PostgresUnavailable(err) {
+	var connectErr *pgconn.ConnectError
+	var pgErr *pgconn.PgError
+	if errors.As(err, &connectErr) || errors.As(err, &pgErr) && deps.PostgresUnavailable(pgErr) {
 		return river.JobSnooze(mediastore.UnavailableSnooze)
 	}
 	return err
