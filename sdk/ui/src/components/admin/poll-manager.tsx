@@ -251,7 +251,7 @@ function List({ loc, client, languages: offered, pageSize = 20, onError }: Inner
                   </span>
                 </div>
                 <div>
-                  <PollStateDot state={s} />
+                  <PollStateDot state={s} className="whitespace-normal" />
                 </div>
                 <div className="text-muted-foreground tabular-nums" title={m.plural("poll.votes", poll.total_votes)}>
                   {count.format(poll.total_votes)}

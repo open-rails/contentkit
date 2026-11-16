@@ -68,7 +68,7 @@ const dot: Record<PollState, string> = { live: "bg-success", scheduled: "bg-sky-
 export function PollStateDot({ state, className }: { state: PollState; className?: string }) {
   const { t } = useMessages();
   return (
-    <span className={cn("inline-flex items-center gap-2 font-medium text-foreground", className)}>
+    <span className={cn("inline-flex items-center gap-2 whitespace-nowrap font-medium text-foreground", className)}>
       <span aria-hidden className={cn("size-2 shrink-0 rounded-full", dot[state])} />
       {t(`pollManager.${state}`)}
     </span>

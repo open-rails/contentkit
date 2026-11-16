@@ -128,7 +128,7 @@ export const admin: typeof en = {
     allStates: "모든 상태",
     live: "진행 중",
     scheduled: "예약됨",
-    closed: "마감됨",
+    closed: "종료됨",
     inactive: "투표 중지",
     month: "월",
     date: "일",
