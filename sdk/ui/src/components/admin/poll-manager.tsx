@@ -108,7 +108,7 @@ function Polls({ basePath, navigation, ...p }: Inner) {
 }
 
 // The question, its state, votes, when it went live or closes, and its actions; one column each from md up.
-const COLUMNS = "minmax(0,1fr) 7rem 5rem 10rem 5.5rem";
+const COLUMNS = "minmax(0,1fr) 10rem 5rem 10rem 5.5rem";
 
 function List({ loc, client, languages: offered, pageSize = 20, onError }: Inner & { loc: AdminLocation }) {
   const m = useMessages();
@@ -232,7 +232,8 @@ function List({ loc, client, languages: offered, pageSize = 20, onError }: Inner
             <span />
           </li>
           {list.items.map((poll) => {
-            const s = pollState(poll);
+            const now = Date.now();
+            const s = pollState(poll, now);
             return (
               <li
                 key={poll.id}
@@ -249,14 +250,14 @@ function List({ loc, client, languages: offered, pageSize = 20, onError }: Inner
                   </span>
                 </div>
                 <div>
-                  <PollStateDot state={s} />
+                  <PollStateDot state={s} className="whitespace-normal" />
                 </div>
                 <div className="text-muted-foreground tabular-nums" title={m.plural("poll.votes", poll.total_votes)}>
                   {count.format(poll.total_votes)}
                 </div>
                 <div className="grid text-muted-foreground">
-                  <span>{s === "closed" && poll.closes_at ? t("pollManager.closedOn", { date: formatDate(m, poll.closes_at, false) }) : t(s === "scheduled" ? "pollManager.goesLive" : "pollManager.wentLive", { date: formatDate(m, poll.live_at, false) })}</span>
-                  {s !== "closed" && poll.closes_at && <span className="text-xs">{t("poll.closes", { date: formatDate(m, poll.closes_at, false) })}</span>}
+                  <span>{s === "closed" && poll.closes_at ? t("pollManager.closedOn", { date: formatDate(m, poll.closes_at, false) }) : t(Date.parse(poll.live_at) > now ? "pollManager.goesLive" : "pollManager.wentLive", { date: formatDate(m, poll.live_at, false) })}</span>
+                  {(s === "live" || s === "scheduled") && poll.closes_at && <span className="text-xs">{t("poll.closes", { date: formatDate(m, poll.closes_at, false) })}</span>}
                 </div>
                 <div className="ms-auto flex items-center justify-end gap-1">
                   <Button size="sm" variant="outline" onClick={() => loc.go(poll.id)}>

@@ -160,7 +160,7 @@ export const social: typeof en = {
     optionsHint: "Zum Sortieren ziehen. Jede Option braucht eine Beschriftung; Bilder sind optional.",
     optionsLive: "Zum Sortieren ziehen. Änderungen an Optionen werden sofort gespeichert.",
     optionsLocked: "Die Auswahlmöglichkeiten sind gesperrt, da die Abstimmung begonnen hat.",
-    schedule: "Zeitplan & Sichtbarkeit",
+    schedule: "Zeitplan & Abstimmung",
     scheduleHint: "Zeiten in deiner Zeitzone.",
     visibleHint: "Geschlossene Umfragen nehmen keine Stimmen mehr an und sind nicht mehr die aktuelle Umfrage; ihre Ergebnisse bleiben lesbar.",
     preview: "Live-Vorschau",

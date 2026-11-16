@@ -159,7 +159,7 @@ export const social = {
     optionsHint: "Drag to reorder. Every option needs a label; images are optional.",
     optionsLive: "Drag to reorder. Changes to options save as you make them.",
     optionsLocked: "Choices are locked because voting has started.",
-    schedule: "Schedule & visibility",
+    schedule: "Schedule & voting",
     scheduleHint: "Times are in your time zone.",
     visibleHint: "Closed polls take no more votes and leave the current poll; their results stay readable.",
     preview: "Live preview",

@@ -3,6 +3,7 @@ package critical_test
 import (
 	"io"
 	"net/http"
+	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -14,6 +15,7 @@ import (
 	"github.com/open-rails/authkit/iam"
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/content"
+	"github.com/open-rails/contentkit/importer"
 )
 
 func TestChoicePolls(t *testing.T) {
@@ -352,4 +354,126 @@ func TestAnonymousChoicePolls(t *testing.T) {
 		_, err = a.engine.Client().PatchPollOption(t.Context(), poll.ID, poll.Options[1].ID, content.PollOptionPatch{Label: &label})
 		requireError(t, err, http.StatusConflict, "conflict")
 	}
+}
+
+func TestDeletedPollKeepsNoVotes(t *testing.T) {
+	w := newWorld(t, func(c *ck.Config) { c.Interactions.Anonymous.Votes = true; c.Interactions.Limits.Disabled = true })
+	a := w.apps[0]
+	admin := a.engine.Client()
+	_, token := w.person(t, 0)
+	person, _ := w.person(t, 0)
+	votes := func(t *testing.T, poll string, wantRows, wantIPs int) {
+		t.Helper()
+		var rows, ips int
+		must(t, w.pool.QueryRow(t.Context(), `SELECT count(*), count(ip) FROM `+w.schema+`.content_poll_votes WHERE tenant_id=$1 AND question_id=$2`, a.cfg.Scope.AppID.String(), poll).Scan(&rows, &ips))
+		if rows != wantRows || ips != wantIPs {
+			t.Fatalf("poll %s has %d votes and %d IPs, want %d and %d", poll, rows, ips, wantRows, wantIPs)
+		}
+	}
+	t.Run("CK-J30-S01_staff_delete_removes_votes", func(t *testing.T) {
+		input := content.PollInput{Question: "Delete me", Language: "en", Options: []content.PollOptionInput{{Label: "Yes"}, {Label: "No", Position: 1}}}
+		var polls [2]content.Poll
+		for i := range polls {
+			p, err := admin.PostPolls(t.Context(), input)
+			must(t, err)
+			_, err = a.client(token).PostPollVote(t.Context(), p.ID, content.PollVote{OptionID: p.Options[0].ID})
+			must(t, err)
+			_, err = a.client("").PostPollVote(t.Context(), p.ID, content.PollVote{OptionID: p.Options[1].ID})
+			must(t, err)
+			votes(t, p.ID, 2, 1)
+			polls[i] = p
+		}
+		must(t, admin.DeletePoll(t.Context(), polls[0].ID))
+		votes(t, polls[0].ID, 0, 0)
+		votes(t, polls[1].ID, 2, 1)
+	})
+	t.Run("CK-J30-S01_imported_deletes_remove_votes", func(t *testing.T) {
+		record := func(ext string) importer.PollRecord {
+			return importer.PollRecord{ExternalID: ext, Question: "Imported", Language: "en",
+				Options: []importer.PollOptionRecord{{ExternalID: ext + "-yes", Label: "Yes"}, {ExternalID: ext + "-no", Label: "No", Position: 1}}}
+		}
+		write := func(batch importer.Batch) {
+			t.Helper()
+			batch.Source = "legacy-polls"
+			result, err := admin.PostImport(t.Context(), batch)
+			must(t, err)
+			if len(result.Failed) != 0 {
+				t.Fatalf("import: %+v", result)
+			}
+		}
+		created, err := admin.PostImport(t.Context(), importer.Batch{Source: "legacy-polls", Polls: []importer.PollRecord{record("removed"), record("dated")}})
+		must(t, err)
+		ids := created.IDs
+		ballots := func(ext string) []importer.VoteRecord {
+			poll := importer.Ref{ID: ids[importer.RecordPoll][ext]}
+			return []importer.VoteRecord{
+				{Poll: poll, Option: importer.Ref{ID: ids[importer.RecordOption][ext+"-yes"]}, UserID: person.ID},
+				{Poll: poll, Option: importer.Ref{ID: ids[importer.RecordOption][ext+"-no"]}, IP: "203.0.113.41"},
+			}
+		}
+		write(importer.Batch{Votes: append(ballots("removed"), ballots("dated")...)})
+		removed, dated := ids[importer.RecordPoll]["removed"], ids[importer.RecordPoll]["dated"]
+		votes(t, removed, 2, 1)
+		votes(t, dated, 2, 1)
+		write(importer.Batch{Deletes: []importer.DeleteRecord{{Entity: importer.RecordPoll, ExternalID: "removed"}}})
+		votes(t, removed, 0, 0)
+		votes(t, dated, 2, 1)
+		deleted, now := record("dated"), time.Now()
+		deleted.DeletedAt = &now
+		write(importer.Batch{Polls: []importer.PollRecord{deleted}})
+		votes(t, dated, 0, 0)
+		write(importer.Batch{Votes: append(ballots("removed"), ballots("dated")...)})
+		votes(t, removed, 0, 0)
+		votes(t, dated, 0, 0)
+	})
+	t.Run("CK-J30-S01_votes_left_on_deleted_polls_are_removed", func(t *testing.T) {
+		tenant := a.cfg.Scope.AppID.String()
+		input := content.PollInput{Question: "Deleted before the fix", Language: "en", Options: []content.PollOptionInput{{Label: "Yes"}, {Label: "No", Position: 1}}}
+		result, err := admin.PostImport(t.Context(), importer.Batch{Source: "legacy-polls", Polls: []importer.PollRecord{
+			{ExternalID: "resent", Question: input.Question, Language: "en", Options: []importer.PollOptionRecord{{ExternalID: "resent-yes", Label: "Yes"}, {ExternalID: "resent-no", Label: "No", Position: 1}}},
+		}})
+		must(t, err)
+		resent := result.IDs[importer.RecordPoll]["resent"]
+		var migrated, kept content.Poll
+		for _, p := range []*content.Poll{&migrated, &kept} {
+			*p, err = admin.PostPolls(t.Context(), input)
+			must(t, err)
+		}
+		polls := map[string][2]string{resent: {result.IDs[importer.RecordOption]["resent-yes"], result.IDs[importer.RecordOption]["resent-no"]},
+			migrated.ID: {migrated.Options[0].ID, migrated.Options[1].ID}, kept.ID: {kept.Options[0].ID, kept.Options[1].ID}}
+		for id, options := range polls {
+			_, err := a.client(token).PostPollVote(t.Context(), id, content.PollVote{OptionID: options[0]})
+			must(t, err)
+			_, err = a.client("").PostPollVote(t.Context(), id, content.PollVote{OptionID: options[1]})
+			must(t, err)
+		}
+		// Deleted as before the fix: the votes stay.
+		_, err = w.pool.Exec(t.Context(), `UPDATE `+w.schema+`.content_poll_questions SET deleted_at=now() WHERE tenant_id=$1 AND id=ANY($2::uuid[])`, tenant, []string{resent, migrated.ID})
+		must(t, err)
+		votes(t, resent, 2, 1)
+		votes(t, migrated.ID, 2, 1)
+		write := func(batch importer.Batch) {
+			t.Helper()
+			result, err := admin.PostImport(t.Context(), batch)
+			must(t, err)
+			if len(result.Failed) != 0 {
+				t.Fatalf("import: %+v", result)
+			}
+		}
+		write(importer.Batch{Source: "legacy-polls", Deletes: []importer.DeleteRecord{{Entity: importer.RecordPoll, ExternalID: "resent"}}})
+		votes(t, resent, 0, 0)
+		votes(t, migrated.ID, 2, 1)
+		migration, err := os.ReadFile("../../internal/migrations/postgres/0069_deleted_poll_votes.up.sql")
+		must(t, err)
+		tx, err := w.pool.Begin(t.Context())
+		must(t, err)
+		defer tx.Rollback(t.Context())
+		_, err = tx.Exec(t.Context(), `SELECT set_config('search_path', $1, true)`, w.schema)
+		must(t, err)
+		_, err = tx.Exec(t.Context(), string(migration))
+		must(t, err)
+		must(t, tx.Commit(t.Context()))
+		votes(t, migrated.ID, 0, 0)
+		votes(t, kept.ID, 2, 1)
+	})
 }
