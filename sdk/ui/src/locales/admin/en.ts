@@ -128,7 +128,7 @@ export const admin = {
     live: "Live",
     scheduled: "Scheduled",
     closed: "Closed",
-    inactive: "Inactive",
+    inactive: "Closed to voting",
     month: "Month",
     date: "Day",
     clear: "Clear filters",

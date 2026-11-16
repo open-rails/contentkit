@@ -129,7 +129,7 @@ export const admin: typeof en = {
     live: "进行中",
     scheduled: "已排期",
     closed: "已结束",
-    inactive: "未启用",
+    inactive: "已停止投票",
     month: "月份",
     date: "日期",
     clear: "清除筛选",

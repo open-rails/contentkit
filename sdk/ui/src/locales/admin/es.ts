@@ -129,7 +129,7 @@ export const admin: typeof en = {
     live: "Activa",
     scheduled: "Programada",
     closed: "Cerrada",
-    inactive: "Inactiva",
+    inactive: "Cerrada a votación",
     month: "Mes",
     date: "Día",
     clear: "Quitar filtros",

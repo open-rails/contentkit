@@ -129,7 +129,7 @@ export const admin: typeof en = {
     live: "진행 중",
     scheduled: "예약됨",
     closed: "종료됨",
-    inactive: "비활성",
+    inactive: "투표 마감",
     month: "월",
     date: "일",
     clear: "필터 지우기",

@@ -160,7 +160,7 @@ export const social: typeof en = {
     optionsHint: "ドラッグで並べ替え。各選択肢にラベルが必要です。画像は任意です。",
     optionsLive: "ドラッグで並べ替え。選択肢の変更はすぐに保存されます。",
     optionsLocked: "投票が始まったため、選択肢は変更できません。",
-    schedule: "スケジュールと公開設定",
+    schedule: "スケジュールと投票受付",
     scheduleHint: "時刻はあなたのタイムゾーンです。",
     visibleHint: "終了した投票は新しい票を受け付けず、現在の投票から外れます。結果は引き続き閲覧できます。",
     preview: "ライブプレビュー",

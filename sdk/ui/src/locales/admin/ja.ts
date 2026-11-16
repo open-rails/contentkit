@@ -129,7 +129,7 @@ export const admin: typeof en = {
     live: "公開中",
     scheduled: "予約済み",
     closed: "終了",
-    inactive: "非公開",
+    inactive: "投票終了",
     month: "月",
     date: "日",
     clear: "絞り込みを解除",
