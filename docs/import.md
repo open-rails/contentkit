@@ -166,7 +166,9 @@ and import votes through the `votes` section. Options replace the stored set,
 even after voting: a kept option ID retains its votes when its label, position
 or image changes; removing an option deletes its votes; new IDs start at zero.
 Counts are recomputed in the same transaction, even with `defer_recounts`.
-Staff choice mutations remain refused after voting starts.
+Staff choice mutations remain refused after voting starts. A deleted poll
+keeps no votes: deleting it by route, `deletes` record or `deleted_at` deletes
+them, and votes imported for it are dropped.
 
 `PollRecord.image` and each `PollOptionRecord.image` accept the inline image
 name (`i-{uuid}`) returned by media ingestion in that poll's folder. Omit to

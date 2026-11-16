@@ -2533,10 +2533,10 @@
     {
       "id": "CK-J30-S01",
       "journey": "CK-J30",
-      "behavior": "Only predefined-choice polls accept creation, import and votes; choices lock after voting while scope, closure, final-vote and erasure counts remain correct",
+      "behavior": "Only predefined-choice polls accept creation, import and votes; choices lock after voting while scope, closure, final-vote and erasure counts remain correct; a deleted poll keeps no votes",
       "status": "verified",
       "evidence": [
-        "Real public Go/HTTP poll operations exercise unsupported-kind rejection, duplicate concurrent final voting, anonymous policy, mismatched options, cross-app IDs, future/closed polls and repeated account erasure. PostgreSQL tests cover staff/import choice locking, replay, concurrent voting and a live vote cast just before or during an import's recount of the same option; the shipped-editor browser test covers editing before voting and refreshing a stale editor after conflict."
+        "Real public Go/HTTP poll operations exercise unsupported-kind rejection, duplicate concurrent final voting, anonymous policy, mismatched options, cross-app IDs, future/closed polls and repeated account erasure. PostgreSQL tests cover staff/import choice locking, replay, concurrent voting and a live vote cast just before or during an import's recount of the same option; the shipped-editor browser test covers editing before voting and refreshing a stale editor after conflict. Staff and import deletes, an import's deleted_at and votes imported afterwards leave a deleted poll no member or IP vote, and other polls keep theirs; a repeated import delete and migration 0069 remove votes left on polls deleted earlier."
       ],
       "cases": [
         "TestChoicePolls/CK-J30-S01_predefined_choices_validate_requests",
@@ -2545,10 +2545,25 @@
         "TestAnonymousChoicePolls",
         "TestChoicePolls/CK-J30-S01_choices_lock_after_voting",
         "TestChoicePolls/CK-J30-S01_vote_and_option_delete_serialize",
+        "TestDeletedPollKeepsNoVotes/CK-J30-S01_staff_delete_removes_votes",
+        "TestDeletedPollKeepsNoVotes/CK-J30-S01_imported_deletes_remove_votes",
+        "TestDeletedPollKeepsNoVotes/CK-J30-S01_votes_left_on_deleted_polls_are_removed",
         "TestImportedPollChoices",
         "TestImportedPollChoiceRaces",
         "TestImportedVoteRecountKeepsLiveVote",
         "TestPollChoicesBrowser"
+      ]
+    },
+    {
+      "id": "CK-J30-S02",
+      "journey": "CK-J30",
+      "behavior": "A closed poll stays public with its results, so staff poll states never say whether a poll is public, a switched-off poll is closed to voting, and a poll past its close time has a different name",
+      "status": "verified",
+      "evidence": [
+        "The SDK message sources of every language are read: the poll list's label for a switched-off poll equals the editor's switch label and neither contains nor is contained in the label for a poll past its close time, and no poll state label or the editor's scheduling section uses a hidden, visibility, private or public word."
+      ],
+      "cases": [
+        "TestPollStaffLabelsSayClosed"
       ]
     },
     {

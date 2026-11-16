@@ -166,9 +166,9 @@ func (p *polls) update(ctx context.Context, actor access.Actor, id string, in co
 	return p.get(ctx, actor, id)
 }
 
-// softDelete flags deleted_at; the row (and its votes) stay for history, and
-// its media retirement intent commits with the tombstone. The existing
-// content-deletion sweep erases its files; history remains after failures.
+// softDelete flags deleted_at and deletes the poll's votes; the question and
+// options stay as a tombstone, and its media retirement intent commits with
+// it. The existing content-deletion sweep erases its files.
 func (p *polls) softDelete(ctx context.Context, actor access.Actor, id string) error {
 	if err := p.rt.requirePerm(ctx, actor, access.PollsWrite); err != nil {
 		return err
@@ -190,10 +190,27 @@ func (p *polls) softDelete(ctx context.Context, actor access.Actor, id string) e
 	if err != nil {
 		return err
 	}
+	if err := p.rt.dropDeletedPollVotes(ctx, tx, []string{id}); err != nil {
+		return err
+	}
 	if err := p.rt.deleteMediaTx(ctx, tx, pollFolder, id); err != nil {
 		return err
 	}
 	return tx.Commit(ctx)
+}
+
+// dropDeletedPollVotes deletes the votes of those of ids that are deleted
+// polls, so no voter's account or IP outlives its poll.
+func (rt *Runtime) dropDeletedPollVotes(ctx context.Context, tx pgx.Tx, ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	s := rt.store
+	// Joined through options: only the option index covers every vote.
+	_, err := tx.Exec(ctx, `DELETE FROM `+s.t.pollVotes+` v USING `+s.t.pollQuestions+` q, `+s.t.pollOptions+` o
+ WHERE q.tenant_id = $1 AND q.id = ANY($2::uuid[]) AND q.deleted_at IS NOT NULL
+ AND o.tenant_id = $1 AND o.question_id = q.id AND v.tenant_id = $1 AND v.option_id = o.id`, rt.tenant, ids)
+	return err
 }
 
 // listFilter narrows list: language, a month ("2006-01") or day ("2006-01-02")
@@ -569,7 +586,7 @@ var pollRoutes = []httpapi.Route[*polls]{
 		Responses: []httpapi.Reply{httpapi.OK(content.Poll{})}, Errors: []string{content.CodeInvalidRequest, content.CodeNotFound}},
 		Serve: httpapi.H((*polls).handleUpdate)},
 	{Spec: httpapi.Spec{Method: httpapi.DELETE, Path: "/polls/{id}", Resource: "polls", Auth: httpapi.Staff, Perm: string(access.PollsWrite),
-		Doc:       "Deletes a poll and its media folder.",
+		Doc:       "Deletes a poll, its votes and its media folder.",
 		Responses: []httpapi.Reply{httpapi.NoContent}, Errors: []string{content.CodeNotFound}},
 		Serve: httpapi.H((*polls).handleDelete)},
 	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/polls/{id}/vote", Resource: "polls", Auth: httpapi.Public,
