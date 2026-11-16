@@ -13,7 +13,9 @@ import (
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/internal/jobqueue"
 	mediastore "github.com/open-rails/contentkit/internal/mediastore"
+	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/versions"
+	"github.com/open-rails/helpers/deps"
 	riverhelpers "github.com/open-rails/helpers/river"
 	"github.com/riverqueue/river"
 )
@@ -481,19 +483,24 @@ func (purgeDeletedArgs) Kind() string { return "contentkit_content_purge_deleted
 type jobWorker[T river.JobArgs] struct {
 	river.WorkerDefaults[T]
 	run     func(context.Context) (int, error)
+	store   media.Store
 	timeout time.Duration
 }
 
 func (w *jobWorker[T]) Timeout(*river.Job[T]) time.Duration { return w.timeout }
 
-func (w *jobWorker[T]) Work(ctx context.Context, _ *river.Job[T]) error {
+func (w *jobWorker[T]) Work(ctx context.Context, job *river.Job[T]) error {
 	_, err := w.run(ctx)
+	err = mediastore.SnoozeUnavailable(ctx, w.store, job.JobRow, err)
+	if deps.PostgresUnavailable(err) {
+		return river.JobSnooze(mediastore.UnavailableSnooze)
+	}
 	return err
 }
 
 // RiverJobs contributes retention and permanent deletion work. Publication
 // belongs to the version release service and has no recurring catalog sweep.
-func (s *Store) RiverJobs() riverhelpers.Contribution {
+func (s *Store) RiverJobs(store media.Store) riverhelpers.Contribution {
 	return riverhelpers.NewContribution("contentkit-content", func(_ context.Context, cfg *river.Config) error {
 		queue := QueueFor(s.tenant)
 		if q, ok := cfg.Queues[queue]; ok && q.MaxWorkers < 1 {
@@ -508,7 +515,7 @@ func (s *Store) RiverJobs() riverhelpers.Contribution {
 				return args, &river.InsertOpts{Queue: queue, MaxAttempts: 3, UniqueOpts: unique}
 			}, &river.PeriodicJobOpts{ID: jobqueue.For(id, s.tenant), RunOnStart: true})
 		}
-		if err := river.AddWorkerSafely(cfg.Workers, &jobWorker[purgeDeletedArgs]{run: s.PurgeDeleted, timeout: jobqueue.ContentPurgeTimeout}); err != nil {
+		if err := river.AddWorkerSafely(cfg.Workers, &jobWorker[purgeDeletedArgs]{run: s.PurgeDeleted, store: store, timeout: jobqueue.ContentPurgeTimeout}); err != nil {
 			return err
 		}
 		cfg.PeriodicJobs = append(cfg.PeriodicJobs,

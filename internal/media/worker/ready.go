@@ -46,7 +46,12 @@ func (h *completionHook) WorkEnd(ctx context.Context, job *rivertype.JobRow, err
 		ctx, cancel = context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 		defer cancel()
 	}
-	defer func() { result = mediastore.SnoozeUnavailable(ctx, h.manifests.Store(), job, result) }()
+	defer func() {
+		result = mediastore.SnoozeUnavailable(ctx, h.manifests.Store(), job, result)
+		if transientError(result) {
+			result = retryTransientAttempt(ctx, job, result)
+		}
+	}()
 	var args struct {
 		Ref contentref.ContentRef `json:"ref"`
 	}
@@ -80,11 +85,8 @@ func (c Config) finishAttempt(ctx context.Context, job *rivertype.JobRow, err er
 		return river.JobSnooze(0)
 	}
 	err = mediastore.SnoozeUnavailable(ctx, c.Store, job, err)
-	if errors.Is(err, pglock.ErrContended) || job.Kind == (workqueue.DerivativeArgs{}).Kind() && transientDerivativeError(err) {
-		if setErr := river.MetadataSet(ctx, "contentkit_transient_attempts", transientAttempts(job)+1); setErr != nil {
-			return errors.Join(err, setErr)
-		}
-		return err
+	if transientError(err) {
+		return retryTransientAttempt(ctx, job, err)
 	}
 	var snooze *river.JobSnoozeError
 	var cancel *river.JobCancelError
@@ -109,8 +111,8 @@ func transientAttempts(job *rivertype.JobRow) int {
 }
 
 // Infrastructure failures leave sources pending even after the content retry budget.
-func transientDerivativeError(err error) bool {
-	if errors.Is(err, media.ErrUnavailable) || deps.PostgresUnavailable(err) {
+func transientError(err error) bool {
+	if errors.Is(err, pglock.ErrContended) || deps.PostgresUnavailable(err) {
 		return true
 	}
 	var pg *pgconn.PgError
@@ -123,8 +125,26 @@ func transientDerivativeError(err error) bool {
 	return false
 }
 
+func retryTransientAttempt(ctx context.Context, job *rivertype.JobRow, err error) error {
+	// At River's limit, snooze with its backoff instead of discarding the work.
+	if job.Attempt >= job.MaxAttempts {
+		return river.JobSnooze(time.Until((&river.DefaultClientRetryPolicy{}).NextRetry(job)))
+	}
+	if setErr := river.MetadataSet(ctx, "contentkit_transient_attempts", transientAttempts(job)+1); setErr != nil {
+		return errors.Join(err, setErr)
+	}
+	var cancel *river.JobCancelError
+	if errors.As(err, &cancel) {
+		return cancel.Unwrap()
+	}
+	return err
+}
+
 func (c Config) cancelFailedAttempt(ctx context.Context, job *rivertype.JobRow, err error, fail func(context.Context, error) error) error {
 	if failure := fail(ctx, err); failure != nil {
+		if transientError(failure) {
+			return retryTransientAttempt(ctx, job, failure)
+		}
 		var cancel *river.JobCancelError
 		if errors.As(failure, &cancel) {
 			return failure
