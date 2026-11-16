@@ -18,9 +18,12 @@ import (
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
+	"github.com/open-rails/contentkit/internal/media/workqueue"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/layout"
 	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/riverdriver/riverpgxv5"
+	"github.com/riverqueue/river/rivertype"
 )
 
 func TestDurableTextPublication(t *testing.T) {
@@ -190,11 +193,21 @@ func TestInvalidManifestPublicationIsNotRetried(t *testing.T) {
 	must(t, err)
 	item, err := registry.Item(target)
 	must(t, err)
+	queue, err := river.NewClient(riverpgxv5.New(w.pool), &river.Config{Schema: a.cfg.Media.WorkerSchema})
+	must(t, err)
 	var manifest *mediastore.Manifest
 	var i int
-	// The editor view is written after the page is ready; wait for it so its
-	// writer cannot replace the stale view planted below.
+	// The editor view is written after the page is ready, and other derivative
+	// work may still be editing the manifest through its journal: read it only
+	// once no media job is in flight, as a raw rewrite under an in-flight edit
+	// wedges the folder.
 	waitFor(t, func() bool {
+		jobs, err := queue.JobList(t.Context(), river.NewJobListParams().Kinds((workqueue.IngestArgs{}).Kind(), (workqueue.DerivativeArgs{}).Kind()).States(
+			rivertype.JobStateAvailable, rivertype.JobStateRunning, rivertype.JobStateRetryable, rivertype.JobStateScheduled, rivertype.JobStatePending).First(1))
+		must(t, err)
+		if len(jobs.Jobs) > 0 {
+			return false
+		}
 		body, _, err := storage.store.Get(t.Context(), item.ManifestKey(), media.GetOptions{})
 		must(t, err)
 		stored, err := io.ReadAll(body)
