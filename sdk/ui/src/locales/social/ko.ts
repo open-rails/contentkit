@@ -129,7 +129,7 @@ export const social: typeof en = {
     liveAt: "게시 시작",
     closesAt: "마감(선택)",
     active: "투표 진행 중",
-    inactive: "투표 마감",
+    inactive: "투표 중지",
     image: "질문 이미지",
     options: "선택지",
     option: "선택지 {index}",
@@ -162,7 +162,7 @@ export const social: typeof en = {
     optionsLocked: "투표가 시작되어 선택지를 변경할 수 없습니다.",
     schedule: "일정 및 투표",
     scheduleHint: "시간은 내 시간대 기준입니다.",
-    visibleHint: "마감된 투표는 더 이상 표를 받지 않고 현재 투표에서 빠지며, 결과는 계속 볼 수 있습니다.",
+    visibleHint: "중지된 투표는 더 이상 표를 받지 않고 현재 투표에서 빠지며, 결과는 계속 볼 수 있습니다.",
     preview: "실시간 미리보기",
   },
   moderation: {

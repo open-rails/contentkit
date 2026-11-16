@@ -135,7 +135,7 @@ export const admin = {
     loadFailed: "Polls couldn't be loaded.",
     empty: "No polls match.",
     goesLive: "Goes live {date}",
-    wentLive: "Live since {date}",
+    wentLive: "Went live {date}",
     closedOn: "Closed {date}",
     question: "Question",
     votes: "Votes",

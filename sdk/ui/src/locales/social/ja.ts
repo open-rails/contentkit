@@ -129,7 +129,7 @@ export const social: typeof en = {
     liveAt: "公開日時",
     closesAt: "締め切り（任意）",
     active: "投票受付中",
-    inactive: "投票終了",
+    inactive: "投票停止",
     image: "質問の画像",
     options: "選択肢",
     option: "選択肢 {index}",
@@ -162,7 +162,7 @@ export const social: typeof en = {
     optionsLocked: "投票が始まったため、選択肢は変更できません。",
     schedule: "スケジュールと投票受付",
     scheduleHint: "時刻はあなたのタイムゾーンです。",
-    visibleHint: "終了した投票は新しい票を受け付けず、現在の投票から外れます。結果は引き続き閲覧できます。",
+    visibleHint: "停止した投票は新しい票を受け付けず、現在の投票から外れます。結果は引き続き閲覧できます。",
     preview: "ライブプレビュー",
   },
   moderation: {

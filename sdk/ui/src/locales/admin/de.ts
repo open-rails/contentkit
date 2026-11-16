@@ -136,7 +136,7 @@ export const admin: typeof en = {
     loadFailed: "Die Umfragen konnten nicht geladen werden.",
     empty: "Keine passenden Umfragen.",
     goesLive: "Geht am {date} live",
-    wentLive: "Live seit {date}",
+    wentLive: "Gestartet am {date}",
     closedOn: "Beendet am {date}",
     question: "Frage",
     votes: "Stimmen",

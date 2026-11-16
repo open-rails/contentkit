@@ -136,7 +136,7 @@ export const admin: typeof en = {
     loadFailed: "No se pudieron cargar las encuestas.",
     empty: "Ninguna encuesta coincide.",
     goesLive: "Se publica el {date}",
-    wentLive: "Activa desde el {date}",
+    wentLive: "Publicada el {date}",
     closedOn: "Cerrada el {date}",
     question: "Pregunta",
     votes: "Votos",
