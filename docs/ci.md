@@ -18,7 +18,7 @@ The base and head branches choose the run:
 | Into `rc/**` | Light checks: workflow lint, source scan, build and vet of every module, public-surface boundaries, `Hosts link no media codecs`, and the UI package's generated contract, types, lint and packed exports. No services, no critical suite, no image builds |
 | `rc/*` into `master` | Every suite, whatever changed |
 | `release/*` into `master`, or into `release/**` | Suites selected from the changed paths, below |
-| Any other head into `master` | `Source branch` fails |
+| Any other head into `master` | `Source branch` fails, no suite starts and `CI Gate` fails |
 
 Selection by changed path:
 
@@ -32,7 +32,7 @@ Selection by changed path:
 | Known documentation-only paths | No application suite; source scan still runs |
 | CI/build files, deletions, renames or uncertain diff | Full qualification |
 
-Image-definition changes also select nonpublishing image builds. Diff or source-read errors fail the gate. A selected job must succeed; a skipped selected job or missing selection output fails. The base is checked again before `CI Gate` succeeds. The merge rules for `master`, `rc/**` and `release/**` require that gate with current-base freshness; `master` also requires `Source branch`.
+Image-definition changes also select nonpublishing image builds. Diff or source-read errors fail the gate. A selected job must succeed; a skipped selected job or missing selection output fails. The base is checked again before `CI Gate` succeeds. The merge rules for `master`, `rc/**` and `release/**` require that gate, on `master` and `release/**` with current-base freshness; `master` also requires `Source branch`.
 
 Go package shards, nested modules, native media and SDK/browser tests keep their existing commands and assertions. Whenever the critical suite runs, `Hosts link no media codecs` also builds every host-importable package of the root, server and adapter modules with `CGO_ENABLED=0` and refuses any that depends on `media/image`, `media/video`, `media/worker` or `cmd/media-worker`. Reusable leaf workflows have no independent automatic PR/master triggers. `CI` and `full` manual requests select every suite; individual media/UI workflows remain available for explicit diagnosis. Test selections are documented in the run summary.
 

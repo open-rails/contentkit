@@ -20,17 +20,15 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
+    - uses: actions/checkout@v4
+      with:
+        ref: ${{ github.sha }}
+        persist-credentials: false
     - name: master takes only release candidates and release preparation
       env:
         HEAD_REF: ${{ github.event.pull_request.head.ref }}
         HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
-      run: |
-        if [[ "$HEAD_REPO" == "$GITHUB_REPOSITORY" && "$HEAD_REF" =~ ^(rc|release)/. ]]; then
-          echo "$HEAD_REF may merge into master."
-          exit 0
-        fi
-        echo "::error::master takes pull requests only from rc/* and release/* branches of this repository; $HEAD_REPO:$HEAD_REF is neither. Retarget this pull request to the open release candidate named in OPEN.md."
-        exit 1
+      run: bash .github/scripts/source-branch.sh "$GITHUB_REPOSITORY" "$HEAD_REPO" "$HEAD_REF"
   source:
     name: Verify candidate source
     if: github.event.pull_request.draft != true && github.event.action != 'closed'
@@ -47,6 +45,13 @@ jobs:
         ref: ${{ github.sha }}
         fetch-depth: 2
         persist-credentials: false
+    # Nothing heavy starts for a pull request master will refuse.
+    - name: Refuse a head master does not take
+      if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'master'
+      env:
+        HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+      run: bash .github/scripts/source-branch.sh "$GITHUB_REPOSITORY" "$HEAD_REPO" "$HEAD_REF"
     - name: Verify tested merge
       env:
         GH_TOKEN: ${{ github.token }}
@@ -165,17 +170,21 @@ jobs:
       verify_only: true
   gate:
     name: ${{ (github.event.pull_request.draft || github.event.action == 'closed') && 'Inactive PR (CI not requested)' || 'CI Gate' }}
-    needs: [source, scan, critical, build, ui-package, codec-free, image-definitions]
+    needs: [source-branch, source, scan, critical, build, ui-package, codec-free, image-definitions]
     if: always() && github.event.pull_request.draft != true && github.event.action != 'closed'
     runs-on: ubuntu-24.04
     steps:
     - name: Require every selected contract and artifact check
       env:
         NEEDS: ${{ toJSON(needs) }}
+        INTO_MASTER: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'master' }}
       run: |
         python3 - <<'PY_CHECK'
         import json, os
         jobs = json.loads(os.environ['NEEDS'])
+        expected = 'success' if os.environ['INTO_MASTER'] == 'true' else 'skipped'
+        if jobs['source-branch']['result'] != expected:
+            raise SystemExit(f"source-branch: {jobs['source-branch']['result']}; expected {expected}")
         if jobs['source']['result'] != 'success':
             raise SystemExit('source verification did not pass')
         plan = jobs['source']['outputs']
