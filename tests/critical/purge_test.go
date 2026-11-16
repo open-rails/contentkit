@@ -89,11 +89,13 @@ func TestDeletedContentPurgeOwnsMedia(t *testing.T) {
 		t.Fatalf("purchase did not settle: %+v", purchase)
 	}
 	// Reopen only this app's engine through a controllable real S3 wire. The
-	// storage service and bytes stay real; a failed DELETE is the only fault.
+	// storage service and bytes stay real; the outage rejects deletion and the
+	// fresh bucket health check, while catalog reads remain available.
 	endpoint, err := url.Parse(os.Getenv("CONTENTKIT_CRITICAL_S3_ENDPOINT"))
 	must(t, err)
 	proxy := httputil.NewSingleHostReverseProxy(endpoint)
 	var failDelete atomic.Bool
+	var failCheck atomic.Bool
 	var deletes atomic.Int64
 	var pauseErasure atomic.Pointer[string]
 	erasureEntered, releaseErasure := make(chan struct{}), make(chan struct{})
@@ -110,8 +112,10 @@ func TestDeletedContentPurgeOwnsMedia(t *testing.T) {
 				return
 			}
 		}
-		if deletion && failDelete.Load() {
-			deletes.Add(1)
+		if deletion && failDelete.Load() || failCheck.Load() && strings.HasSuffix(r.URL.Query().Get("prefix"), "_health/") {
+			if deletion {
+				deletes.Add(1)
+			}
 			http.Error(w, "owned fixture storage deletion unavailable", http.StatusServiceUnavailable)
 			return
 		}
@@ -134,21 +138,28 @@ func TestDeletedContentPurgeOwnsMedia(t *testing.T) {
 	admin = a.engine.Client()
 	producer, err := river.NewClient(riverpgxv5.New(w.pool), &river.Config{Schema: w.schema + "_river"})
 	must(t, err)
-	purge := func(t *testing.T, want rivertype.JobState) {
+	purge := func(t *testing.T, want rivertype.JobState) int64 {
 		t.Helper()
 		job, err := producer.Insert(t.Context(), scheduledContentJob{kind: "contentkit_content_purge_deleted"}, &river.InsertOpts{Queue: catalogstore.QueueFor(a.cfg.Scope.AppID.String()), MaxAttempts: 1})
 		must(t, err)
 		waitForWithin(t, 45*time.Second, func() bool {
 			current, err := producer.JobGet(t.Context(), job.Job.ID)
 			must(t, err)
-			if current.State == rivertype.JobStateCompleted || current.State == rivertype.JobStateDiscarded {
+			if current.State == rivertype.JobStateCompleted || current.State == rivertype.JobStateDiscarded || current.State == rivertype.JobStateScheduled {
 				if current.State != want {
 					t.Fatalf("purge finished %s, expected %s: %+v", current.State, want, current.Errors)
+				}
+				if want == rivertype.JobStateScheduled && (current.Attempt != 0 || current.FinalizedAt != nil) {
+					t.Fatalf("storage outage spent the purge budget: %+v", current)
+				}
+				if want == rivertype.JobStateScheduled && !bytes.Contains(current.Metadata, []byte(`"contentkit_outage_snoozes":`)) {
+					t.Fatalf("purge snoozed without confirming the store outage: metadata=%s", current.Metadata)
 				}
 				return true
 			}
 			return false
 		})
+		return job.Job.ID
 	}
 	root := layout.Scope{TenantID: a.cfg.Scope.TenantID.String(), AppID: a.cfg.Scope.AppID.String()}.Root()
 	objectCount := func() int {
@@ -190,10 +201,14 @@ func TestDeletedContentPurgeOwnsMedia(t *testing.T) {
 			t.Fatal("retention equality purged before its strict deadline")
 		}
 	})
+	var outageJob int64
 	t.Run("CK-J08-S05_storage_failure_retains_database_records_and_retry_obligation", func(t *testing.T) {
 		w.clock.set(parentDeadline.Add(time.Microsecond))
 		failDelete.Store(true)
+		// A failed deletion on a healthy bucket still spends its attempt.
 		purge(t, rivertype.JobStateDiscarded)
+		failCheck.Store(true)
+		outageJob = purge(t, rivertype.JobStateScheduled)
 		if deletes.Load() == 0 {
 			t.Fatal("storage deletion fault was not exercised")
 		}
@@ -205,7 +220,17 @@ func TestDeletedContentPurgeOwnsMedia(t *testing.T) {
 	})
 	t.Run("CK-J08-S04_CK-J08-S05_retried_same_sweep_erases_media_and_records_but_retains_billing", func(t *testing.T) {
 		failDelete.Store(false)
-		purge(t, rivertype.JobStateCompleted)
+		failCheck.Store(false)
+		_, err := producer.JobRetry(t.Context(), outageJob)
+		must(t, err)
+		waitForWithin(t, 45*time.Second, func() bool {
+			current, err := producer.JobGet(t.Context(), outageJob)
+			must(t, err)
+			if current.State == rivertype.JobStateDiscarded || current.State == rivertype.JobStateCancelled {
+				t.Fatalf("purge retry was lost: %+v", current)
+			}
+			return current.State == rivertype.JobStateCompleted
+		})
 		rows, err := admin.GetManage(t.Context(), ck.GetManageQuery{State: "deleted", Ids: []string{ref.ID}})
 		must(t, err)
 		if len(rows) != 0 || objectCount() != 0 {
@@ -953,15 +978,15 @@ SELECT tenant_id,folder_prefix,content_kind,$4 FROM recorded`, scope.Partition()
 	must(t, err)
 	jobs := pgx.Identifier{w.schema + "_river", "river_job"}.Sanitize()
 	kind := "contentkit_content_purge_deleted"
-	// A 16-minute-old checkpoint must catch up on startup; the former four-hour
-	// cadence would suppress the run and leave all the due folders untouched.
+	// A discarded purge must catch up on startup once its 15-minute interval
+	// has elapsed, retaining the due folders from the failed sweep.
 	_, err = w.pool.Exec(t.Context(), `DELETE FROM `+jobs+` WHERE kind=$1 AND queue=$2`, kind, queue)
 	must(t, err)
 	metadata, err := json.Marshal(map[string]string{"river:periodic_job_id": jobqueue.For(kind, a.cfg.Scope.AppID.String())})
 	must(t, err)
 	previous, err := producer.Insert(t.Context(), scheduledContentJob{kind: kind}, &river.InsertOpts{Queue: queue, Metadata: metadata})
 	must(t, err)
-	_, err = w.pool.Exec(t.Context(), `UPDATE `+jobs+` SET state='completed',created_at=$2,scheduled_at=$2,attempted_at=$2,finalized_at=$2 WHERE id=$1`, previous.Job.ID, time.Now().Add(-16*time.Minute))
+	_, err = w.pool.Exec(t.Context(), `UPDATE `+jobs+` SET state='discarded',created_at=$2,scheduled_at=$2,attempted_at=$2,finalized_at=$2 WHERE id=$1`, previous.Job.ID, time.Now().Add(-16*time.Minute))
 	must(t, err)
 	pause.Store(true)
 	must(t, fleet.Start(t.Context()))
