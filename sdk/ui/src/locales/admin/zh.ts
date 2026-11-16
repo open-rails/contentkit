@@ -128,7 +128,7 @@ export const admin: typeof en = {
     allStates: "所有状态",
     live: "进行中",
     scheduled: "已排期",
-    closed: "已结束",
+    closed: "已截止",
     inactive: "已停止投票",
     month: "月份",
     date: "日期",

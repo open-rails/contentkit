@@ -128,7 +128,7 @@ export const admin: typeof en = {
     allStates: "Todos los estados",
     live: "Activa",
     scheduled: "Programada",
-    closed: "Cerrada",
+    closed: "Plazo vencido",
     inactive: "Cerrada a votación",
     month: "Mes",
     date: "Día",

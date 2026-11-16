@@ -127,7 +127,7 @@ export const admin = {
     allStates: "Every state",
     live: "Live",
     scheduled: "Scheduled",
-    closed: "Closed",
+    closed: "Past close time",
     inactive: "Closed to voting",
     month: "Month",
     date: "Day",

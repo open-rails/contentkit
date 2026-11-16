@@ -128,7 +128,7 @@ export const admin: typeof en = {
     allStates: "Jeder Status",
     live: "Live",
     scheduled: "Geplant",
-    closed: "Beendet",
+    closed: "Endzeit erreicht",
     inactive: "Abstimmung geschlossen",
     month: "Monat",
     date: "Tag",
