@@ -2444,7 +2444,7 @@
         "tags": [
           "polls"
         ],
-        "summary": "Deletes a poll and its media folder.",
+        "summary": "Deletes a poll, its votes and its media folder.",
         "parameters": [
           {
             "name": "id",

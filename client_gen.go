@@ -619,7 +619,7 @@ func (c *Client) PatchPoll(ctx context.Context, id string, body content.PollUpda
 	return out, err
 }
 
-// DeletePoll is DELETE /v1/polls/{id} (staff). Deletes a poll and its media folder.
+// DeletePoll is DELETE /v1/polls/{id} (staff). Deletes a poll, its votes and its media folder.
 func (c *Client) DeletePoll(ctx context.Context, id string) error {
 	return c.call(ctx, http.MethodDelete, expand("/v1/polls/{id}", "{id}", url.PathEscape(id)), nil, nil, nil)
 }
