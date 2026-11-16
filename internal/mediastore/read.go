@@ -169,27 +169,27 @@ func (r *Reader) Grant(ctx context.Context, ref contentref.ContentRef, actor acc
 			return nil, err
 		}
 	}
-	man, _, err := r.o.Manifests.Get(ctx, ref)
-	if errors.Is(err, ErrNotFound) {
-		man = &Manifest{V: media.ManifestVersion}
-	} else if err != nil {
-		return nil, err
-	}
-	if item.Kind().Versions && !editorRead {
-		if !man.PublicationLayoutReady() {
-			return nil, ErrPublicationLayoutRequired
-		}
-	}
+	var man *Manifest
 	if item.Kind().Versions && !editorRead && !inspectionRead {
 		if r.reg.hooks.ReaderManifest == nil {
 			return nil, fmt.Errorf("%w: version reader manifest is not configured", ErrResolve)
 		}
-		man, err = r.reg.hooks.ReaderManifest(ctx, ref, actor, man)
+		man, err = r.reg.hooks.ReaderManifest(ctx, ref, actor)
 		if err != nil {
 			return nil, err
 		}
 		if man == nil {
 			return nil, ErrNotVisible
+		}
+	} else {
+		man, _, err = r.o.Manifests.Get(ctx, ref)
+		if errors.Is(err, ErrNotFound) {
+			man = &Manifest{V: media.ManifestVersion}
+		} else if err != nil {
+			return nil, err
+		}
+		if item.Kind().Versions && !editorRead && !man.PublicationLayoutReady() {
+			return nil, ErrPublicationLayoutRequired
 		}
 	}
 	g := &Grant{Item: item, Resolution: res, Manifest: man, actor: actor, editorRead: editorRead, inspectionRead: inspectionRead, ctx: ctx, r: r,

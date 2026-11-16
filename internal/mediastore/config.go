@@ -36,8 +36,8 @@ type Hooks struct {
 	Resolver resolve.Resolver
 	// ReaderManifest supplies the catalog's completed reader snapshot. It is a
 	// metadata projection only: the gateway still authorizes one item's folder.
-	// Editors use the current authoring manifest without this projection.
-	ReaderManifest func(ctx context.Context, ref contentref.ContentRef, actor access.Actor, current *Manifest) (*Manifest, error)
+	// Editor and inspection reads use the current authoring manifest instead.
+	ReaderManifest func(ctx context.Context, ref contentref.ContentRef, actor access.Actor) (*Manifest, error)
 	// ValidatePathsChanged validates virtual-name mutations before the manifest
 	// write while its lock is held. It must perform reads only.
 	ValidatePathsChanged func(ctx context.Context, ref contentref.ContentRef, renames map[string]string, removed []string) error

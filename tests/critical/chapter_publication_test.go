@@ -17,6 +17,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -27,9 +28,179 @@ import (
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
+	"github.com/open-rails/contentkit/internal/jobhook"
 	"github.com/open-rails/contentkit/media"
+	medias3 "github.com/open-rails/contentkit/media/s3"
 	"github.com/open-rails/contentkit/media/versions"
+	"github.com/riverqueue/river"
 )
+
+type manifestReadStore struct {
+	*medias3.Store
+	reads, conditional atomic.Int32
+	fail               atomic.Bool
+}
+
+func (s *manifestReadStore) Get(ctx context.Context, key string, opts media.GetOptions) (io.ReadCloser, media.Object, error) {
+	if strings.HasSuffix(key, "/manifest.json") {
+		s.reads.Add(1)
+		if opts.IfNoneMatch != "" {
+			s.conditional.Add(1)
+		}
+		if s.fail.Load() {
+			return nil, media.Object{}, media.ErrUnavailable
+		}
+	}
+	return s.Store.Get(ctx, key, opts)
+}
+
+func TestPublishedReaderWithoutManifestReads(t *testing.T) {
+	w := newWorld(t)
+	a := w.apps[0]
+	storage := attachMedia(t, w, a, func(c *ck.Config) {
+		c.Media.Kinds[0].Publish = &media.Publish{Pages: "pages/{name}", Renditions: []string{"reader"}}
+	})
+	admin := a.engine.Client()
+	ref := galleryRef(t, admin, "Database reader snapshot")
+	_, err := admin.IngestMedia(t.Context(), http.DefaultClient, ref, uuid.NewString(), []ck.MediaFile{{Path: "pages/one.png", Type: "image/png", Body: bytes.NewReader(imageBytes(t))}})
+	must(t, err)
+	awaitMediaReady(t, admin, ref)
+	_, err = admin.PostContentPublish(t.Context(), ref.ID, catalog.PublishInput{})
+	must(t, err)
+	awaitEditionPublication(t, a, admin, ref.ID, ref.Version)
+	awaitDuePublications(t, a)
+
+	// Keep the real release and authorization, with publication consumers
+	// stopped so a pending replacement cannot finish during the reads.
+	a.server.Close()
+	must(t, a.engine.Close(t.Context()))
+	store := &manifestReadStore{Store: storage.store}
+	a.deps.Store = store
+	a.engine, err = ck.New(t.Context(), a.cfg, a.deps)
+	must(t, err)
+	a.server = mountEngine(t, a.engine)
+	admin, visitor := a.engine.Client(), a.client("")
+	_, err = jobhook.Fleet(t.Context(), a.engine, &river.Config{Schema: publicationRiverSchema(a), Queues: map[string]river.QueueConfig{}})
+	must(t, err)
+
+	read := func() versions.ReaderPlan {
+		t.Helper()
+		reply, err := visitor.GetContentVersionReader(t.Context(), ref.ID, ref.Version)
+		must(t, err)
+		if reply.Status != http.StatusOK {
+			t.Fatalf("reader plan: %d %s", reply.Status, reply.Body)
+		}
+		var plan versions.ReaderPlan
+		must(t, reply.Decode(&plan))
+		if plan.Pages == nil || *plan.Pages != 1 || len(plan.Segments) != 1 || len(plan.Segments[0].Pages) != 1 {
+			t.Fatalf("missing released page: %+v", plan)
+		}
+		files, err := visitor.GetMediaVersion(t.Context(), ref.Kind, ref.ID, ref.Version, ck.GetMediaVersionQuery{})
+		must(t, err)
+		if len(files.Files) != 1 || files.Files[0].Path != "reader/one.webp" || files.Files[0].URL == "" {
+			t.Fatalf("missing released media grant: %+v", files)
+		}
+		return plan
+	}
+	store.fail.Store(true)
+	initial := read()
+	if store.reads.Load() != 0 {
+		t.Fatal("visitor read fetched the live manifest")
+	}
+	store.fail.Store(false)
+	_, err = admin.PostContentPublish(t.Context(), ref.ID, catalog.PublishInput{})
+	must(t, err)
+	if pending := currentPublicationJob(t, a, ref.Version); pending.ID == initial.Publication {
+		t.Fatal("replacement did not create a separate publication request")
+	}
+	store.reads.Store(0)
+	store.fail.Store(true)
+	if got := read(); got.Publication != initial.Publication {
+		t.Fatalf("pending replacement displaced active release: %s, want %s", got.Publication, initial.Publication)
+	}
+	if store.reads.Load() != 0 {
+		t.Fatal("pending replacement fetched the live manifest")
+	}
+
+	// Warm the authoring cache, then prove both editor paths still send a
+	// conditional GET and propagate a storage outage on their next read.
+	store.fail.Store(false)
+	_, err = admin.GetMediaVersion(t.Context(), ref.Kind, ref.ID, ref.Version, ck.GetMediaVersionQuery{Editor: true})
+	must(t, err)
+	for _, editorPlan := range []bool{true, false} {
+		store.conditional.Store(0)
+		store.fail.Store(true)
+		if editorPlan {
+			_, err := admin.GetContentVersionReader(t.Context(), ref.ID, ref.Version)
+			if err == nil {
+				t.Fatal("editor plan ignored manifest revalidation failure")
+			}
+		} else {
+			_, err := admin.GetMediaVersion(t.Context(), ref.Kind, ref.ID, ref.Version, ck.GetMediaVersionQuery{Editor: true})
+			if err == nil {
+				t.Fatal("editor grant ignored manifest revalidation failure")
+			}
+		}
+		if store.conditional.Load() == 0 {
+			t.Fatal("editor read did not revalidate the cached manifest")
+		}
+	}
+
+	requests := pgx.Identifier{w.schema, "content_publication_requests"}.Sanitize()
+	var result []byte
+	must(t, w.pool.QueryRow(t.Context(), `SELECT result FROM `+requests+` WHERE tenant_id=$1 AND id=$2::uuid`, publicationTenant(a), initial.Publication).Scan(&result))
+	for _, invalid := range []struct{ field, value string }{
+		{"publication_layout", "0"}, // a release from an older layout after a binary upgrade
+		{"deleted", "true"},
+	} {
+		_, err := w.pool.Exec(t.Context(), `UPDATE `+requests+` SET result=jsonb_set(result,$3::text[],$4::jsonb) WHERE tenant_id=$1 AND id=$2::uuid`, publicationTenant(a), initial.Publication, []string{"view", invalid.field}, invalid.value)
+		must(t, err)
+		store.reads.Store(0)
+		reply, err := visitor.GetContentVersionReader(t.Context(), ref.ID, ref.Version)
+		must(t, err)
+		if reply.Status != http.StatusAccepted {
+			t.Fatalf("invalid release %s plan: %d %s", invalid.field, reply.Status, reply.Body)
+		}
+		_, err = visitor.GetMediaVersion(t.Context(), ref.Kind, ref.ID, ref.Version, ck.GetMediaVersionQuery{})
+		if err == nil || store.reads.Load() != 0 {
+			t.Fatalf("invalid release %s grant: error=%v, manifest reads=%d", invalid.field, err, store.reads.Load())
+		}
+		_, err = w.pool.Exec(t.Context(), `UPDATE `+requests+` SET result=$3 WHERE tenant_id=$1 AND id=$2::uuid`, publicationTenant(a), initial.Publication, result)
+		must(t, err)
+	}
+
+	refused := func() {
+		t.Helper()
+		store.reads.Store(0)
+		store.fail.Store(true)
+		_, err := visitor.GetContentVersionReader(t.Context(), ref.ID, ref.Version)
+		requireError(t, err, http.StatusNotFound, "not_found")
+		_, err = visitor.GetMediaVersion(t.Context(), ref.Kind, ref.ID, ref.Version, ck.GetMediaVersionQuery{})
+		requireError(t, err, http.StatusNotFound, "not_found")
+		if store.reads.Load() != 0 {
+			t.Fatal("invisible version fetched the live manifest")
+		}
+		store.fail.Store(false)
+	}
+	store.fail.Store(false)
+	_, err = admin.PatchContentVersion(t.Context(), ref.ID, ref.Version, catalog.VersionInput{State: catalog.StateDraft})
+	must(t, err)
+	refused()
+	_, err = admin.PatchContentVersion(t.Context(), ref.ID, ref.Version, catalog.VersionInput{State: catalog.StatePublished})
+	must(t, err)
+	_, err = admin.PostContentUnpublish(t.Context(), ref.ID)
+	must(t, err)
+	refused()
+	_, err = admin.PostContentPublish(t.Context(), ref.ID, catalog.PublishInput{})
+	must(t, err)
+	must(t, admin.DeleteContentVersion(t.Context(), ref.ID, ref.Version))
+	refused()
+	var contentDeleted, versionDeleted bool
+	must(t, w.pool.QueryRow(t.Context(), `SELECT c.state='deleted',v.state='deleted' FROM `+w.schema+`.content_items c JOIN `+w.schema+`.content_versions v ON v.tenant_id=c.tenant_id AND v.content_id=c.id WHERE c.tenant_id=$1 AND v.id=$2`, publicationTenant(a), ref.Version).Scan(&contentDeleted, &versionDeleted))
+	if !contentDeleted || !versionDeleted {
+		t.Fatal("last-version deletion did not delete both catalog rows")
+	}
+}
 
 func chapterImage(t *testing.T, seed uint8) []byte {
 	t.Helper()
