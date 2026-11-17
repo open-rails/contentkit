@@ -47,13 +47,15 @@ try {
   assert(queries.some(q => q.get("mode") === "lock" && q.get("page") === "1"), "opened pages did not list every article");
   assert.equal(await tile.count(), 0);
 
+  // The declared window first: once its section shows, the kinds are loaded for the undeclared one.
   queries.length = 0;
-  await page.evaluate(() => window.popular.posts("30d"));
-  await page.locator("[data-ckui=post-list-sidebar] h2").first().waitFor();
   await page.evaluate(() => window.popular.posts("readers-week"));
   await page.locator("[data-ckui=post-list-sidebar] h2", { hasText: "Trending" }).waitFor();
-  assert(!queries.some(q => q.get("sort") === "popular:30d"), "post list asked for an undeclared trending window");
   assert(queries.some(q => q.get("sort") === "popular:readers-week"), "post list skipped a declared trending window");
+  await page.evaluate(() => window.popular.posts("30d"));
+  await page.waitForFunction(() => !document.querySelector("[data-ckui=post-list-sidebar]")?.textContent?.includes("Trending"));
+  await page.waitForLoadState("networkidle");
+  assert(!queries.some(q => q.get("sort") === "popular:30d"), "post list asked for an undeclared trending window");
   assert.deepEqual(errors, []);
   console.log(JSON.stringify({ scenario: "CK-J07-S20", status: "passed" }));
 } finally {
