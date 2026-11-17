@@ -9,6 +9,7 @@ import type { ContentQuery, Period } from "../../client/discovery.js";
 import type { Card } from "../../client/generated/wire.js";
 import { useMessages } from "../../i18n/context.js";
 import { useContents, useContentsPage } from "../../react/discovery.js";
+import { useKinds } from "../../react/entities.js";
 import { usePostReads } from "../../react/post-reads.js";
 import { usePresets } from "../../react/public.js";
 import { ContentKitUiRoot } from "../../scope.js";
@@ -37,7 +38,7 @@ export interface PostListProps {
   pageHref?: (page: number) => string;
   /** A CSS aspect ratio for covers; default the kind's cover preset, else 331 / 232. */
   aspectRatio?: CSSProperties["aspectRatio"];
-  /** Trending window for the sidebar, or false to leave it out; default 30d. */
+  /** Trending window for the sidebar, or false to leave it out; default 30d. Shown only when the kind declares it. */
   trending?: Period | false;
   /** Posts per sidebar section; default 5, 0 hides the sidebar. */
   sidebarSize?: number;
@@ -121,6 +122,9 @@ function PostListLayout({ kind, language, href, pageSize = 10, aspectRatio, tren
   const aspect = usePostCoverAspect(kind, aspectRatio, client);
   const url = (card: Card) => (href ? href(card) : card.path);
   const sidebar = sidebarSize > 0;
+  const { kinds } = useKinds({ client });
+  // An undeclared window is refused, so the section waits for the kind to declare it.
+  const ranked = !!trending && !!kinds?.kinds[kind]?.popularity?.some((b) => b.id === trending && (!b.scopes?.length || b.scopes.some((s) => !s.language || s.language === (language ?? ""))));
   return (
     <ContentKitUiRoot appearance={appearance} className={cn("grid gap-6 text-sm", sidebar && "lg:grid-cols-[minmax(0,1fr)_18rem]", className)} data-ckui="post-list">
       <div ref={listRef} className="grid min-w-0 scroll-mt-20 content-start gap-3">
@@ -161,7 +165,7 @@ function PostListLayout({ kind, language, href, pageSize = 10, aspectRatio, tren
       {sidebar && (
         <aside className="grid content-start gap-6" data-ckui="post-list-sidebar">
           <SidebarSection title={t("postList.newest")} kind={kind} sort="newest" size={sidebarSize} language={language} url={url} aspect={aspect} client={client} />
-          {trending && <SidebarSection title={t("postList.trending")} kind={kind} sort={`popular:${trending}`} size={sidebarSize} language={language} url={url} aspect={aspect} client={client} />}
+          {ranked && <SidebarSection title={t("postList.trending")} kind={kind} sort={`popular:${trending as Period}`} size={sidebarSize} language={language} url={url} aspect={aspect} client={client} />}
         </aside>
       )}
     </ContentKitUiRoot>
