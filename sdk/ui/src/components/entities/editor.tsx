@@ -213,7 +213,7 @@ function EditForm({ entity, spec, languages, g, onLeaveGuard, ...p }: EntityEdit
       <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_20rem]">
         <div className="grid min-w-0 gap-6">
           <Names names={names} languages={languages} language={language} onLanguage={setLanguage} kind={nameKind} onKind={setNameKind} text={newName} onText={(newName) => draft.edit((f) => ({ ...f, newName }))} onChange={(names) => draft.edit((f) => ({ ...f, names }))} onAdd={() => draft.edit((f) => ({ ...f, names: pendingNames(), newName: "" }))} />
-          <Texts form={text} languages={offered} onChange={(l, patch) => draft.edit((f) => ({ ...f, text: { ...f.text, [l]: { ...f.text[l]!, ...patch } } }))} />
+          <Texts kind={entity.kind} form={text} languages={offered} onChange={(l, patch) => draft.edit((f) => ({ ...f, text: { ...f.text, [l]: { ...f.text[l]!, ...patch } } }))} />
           {p.children?.(entity)}
         </div>
         <aside className="grid min-w-0 gap-6">
@@ -825,18 +825,24 @@ function Names({ names, languages, language, onLanguage, kind, onKind, text, onT
   );
 }
 
-function Texts({ form, languages, onChange: set }: { form: Record<string, Text>; languages: readonly string[]; onChange: (language: string, patch: Partial<Text>) => void }) {
+function Texts({ kind, form, languages, onChange: set }: { kind: string; form: Record<string, Text>; languages: readonly string[]; onChange: (language: string, patch: Partial<Text>) => void }) {
   const { t } = useMessages();
   const id = useId();
   const languageName = useLanguageName();
+  const isRail = kind === "rail";
+  const sortHelpId = `${id}-sort-help`;
   return (
-    <Section title={t("entityEditor.text")} ckui="entity-text">
+    <Section
+      title={t("entityEditor.text")}
+      ckui="entity-text"
+      note={isRail ? <span id={sortHelpId}>{t("entityEditor.railSortKeyHint", { members: t("memberships.members") })}</span> : undefined}
+    >
       {/* One row per language: its description beside the key it sorts by. */}
       <div className="grid gap-3">
         <div aria-hidden className="hidden gap-3 text-xs font-medium text-muted-foreground md:grid md:grid-cols-[6rem_minmax(0,1fr)_11rem]">
           <span />
           <span>{t("entityEditor.description")}</span>
-          <span>{t("entityEditor.sortKey")}</span>
+          <span>{t(isRail ? "entityEditor.railSortKey" : "entityEditor.sortKey")}</span>
         </div>
         {languages.map((l) => (
           <div key={l} role="group" aria-labelledby={`${id}-${l}-l`} className="grid gap-2 md:grid-cols-[6rem_minmax(0,1fr)_11rem] md:items-start md:gap-3" data-language={l}>
@@ -852,15 +858,23 @@ function Texts({ form, languages, onChange: set }: { form: Record<string, Text>;
               value={form[l]?.description ?? ""}
               onChange={(e) => set(l, { description: e.target.value })}
             />
-            <Input
-              id={`${id}-${l}-s`}
-              className="h-8"
-              lang={l}
-              placeholder={t("entityEditor.sortKey")}
-              aria-label={t("entityEditor.sortKeyIn", { language: languageName(l) })}
-              value={form[l]?.sort_key ?? ""}
-              onChange={(e) => set(l, { sort_key: e.target.value })}
-            />
+            <div className="grid min-w-0 gap-1.5">
+              {isRail && (
+                <Label htmlFor={`${id}-${l}-s`} className="md:sr-only">
+                  {t("entityEditor.railSortKeyIn", { language: languageName(l) })}
+                </Label>
+              )}
+              <Input
+                id={`${id}-${l}-s`}
+                className="h-8"
+                lang={l}
+                placeholder={t(isRail ? "entityEditor.railSortKeyPlaceholder" : "entityEditor.sortKey")}
+                aria-label={isRail ? undefined : t("entityEditor.sortKeyIn", { language: languageName(l) })}
+                aria-describedby={isRail ? sortHelpId : undefined}
+                value={form[l]?.sort_key ?? ""}
+                onChange={(e) => set(l, { sort_key: e.target.value })}
+              />
+            </div>
           </div>
         ))}
       </div>
