@@ -207,6 +207,10 @@ func (s *Service) runChunk(ctx context.Context, run *batchRun, sec section, from
 			run.fail(sec.name, i, external, err)
 			continue
 		}
+		if g, ok := in.(entities.ImportEntity); ok && r.entityMerged[string(g.ID)] != "" {
+			skipRecords(run.res, sec.name, 1)
+			continue
+		}
 		ready = append(ready, pending{index: i, external: external, in: in, ids: r.minted})
 	}
 	if sec.first != nil {
@@ -501,6 +505,7 @@ type resolver struct {
 	contentKind    map[string]string
 	versionContent map[string]string
 	entityKind     map[string]string
+	entityMerged   map[string]string
 	comments       map[string]bool
 }
 
@@ -543,6 +548,7 @@ func (r *resolver) own(entity, external, given string, createdAt *time.Time) (st
 
 // ref is the id a reference names.
 func (r *resolver) ref(entity string, ref importer.Ref) (string, error) {
+	id := ref.ID
 	switch {
 	case ref.ID != "" && ref.ExternalID != "":
 		return "", fmt.Errorf("%w: a %s reference names an id or an external_id, not both", errInvalid, entity)
@@ -554,20 +560,24 @@ func (r *resolver) ref(entity string, ref importer.Ref) (string, error) {
 		if err := contentref.ValidateID(ref.ID); err != nil {
 			return "", fmt.Errorf("%w: %s id: %v", errInvalid, entity, err)
 		}
-		return ref.ID, nil
 	case ref.ExternalID != "":
 		k := extKey{entity, ref.ExternalID}
 		if r.collect {
 			r.keys = append(r.keys, k)
 			return "", nil
 		}
-		id, ok := r.known[k]
+		var ok bool
+		id, ok = r.known[k]
 		if !ok {
 			return "", fmt.Errorf("%w: %s %s is not imported", errNotFound, entity, ref.ExternalID)
 		}
-		return id, nil
+	default:
+		return "", fmt.Errorf("%w: a %s reference names an id or an external_id", errInvalid, entity)
 	}
-	return "", fmt.Errorf("%w: a %s reference names an id or an external_id", errInvalid, entity)
+	if entity == importer.RecordEntity && r.entityMerged[id] != "" {
+		id = r.entityMerged[id]
+	}
+	return id, nil
 }
 
 // load reads the chunk's external ids, then the kinds and contents of the
@@ -603,6 +613,7 @@ func (r *resolver) load(ctx context.Context, tx pgx.Tx) error {
 		ids = append(ids, id)
 	}
 	r.contentKind, r.versionContent, r.entityKind, r.comments = map[string]string{}, map[string]string{}, map[string]string{}, map[string]bool{}
+	r.entityMerged = map[string]string{}
 	if len(ids) == 0 {
 		return nil
 	}
@@ -613,17 +624,17 @@ func (r *resolver) load(ctx context.Context, tx pgx.Tx) error {
 			uuids = append(uuids, id)
 		}
 	}
-	rows, err := tx.Query(ctx, `SELECT 'c', id, kind FROM `+r.s.qs+`.content_items WHERE tenant_id = $1 AND id = ANY($2)
- UNION ALL SELECT 'v', id, content_id FROM `+r.s.qs+`.content_versions WHERE tenant_id = $1 AND id = ANY($2)
- UNION ALL SELECT 'g', id, kind FROM `+r.s.qs+`.content_entities WHERE tenant_id = $1 AND id = ANY($2)
- UNION ALL SELECT 'm', id::text, '' FROM `+r.s.qs+`.content_comments WHERE tenant_id = $1 AND id = ANY($3::uuid[])`, r.s.o.Tenant, ids, uuids)
+	rows, err := tx.Query(ctx, `SELECT 'c', id, kind, '', '' FROM `+r.s.qs+`.content_items WHERE tenant_id = $1 AND id = ANY($2)
+ UNION ALL SELECT 'v', id, content_id, '', '' FROM `+r.s.qs+`.content_versions WHERE tenant_id = $1 AND id = ANY($2)
+ UNION ALL SELECT 'g', id, kind, state, coalesce(merged_into, '') FROM `+r.s.qs+`.content_entities WHERE tenant_id = $1 AND id = ANY($2)
+ UNION ALL SELECT 'm', id::text, '', '', '' FROM `+r.s.qs+`.content_comments WHERE tenant_id = $1 AND id = ANY($3::uuid[])`, r.s.o.Tenant, ids, uuids)
 	if err != nil {
 		return err
 	}
 	defer rows.Close()
 	for rows.Next() {
-		var t, id, v string
-		if err := rows.Scan(&t, &id, &v); err != nil {
+		var t, id, v, state, mergedInto string
+		if err := rows.Scan(&t, &id, &v, &state, &mergedInto); err != nil {
 			return err
 		}
 		switch t {
@@ -633,6 +644,10 @@ func (r *resolver) load(ctx context.Context, tx pgx.Tx) error {
 			r.versionContent[id] = v
 		case "g":
 			r.entityKind[id] = v
+			if state == string(entities.StateMerged) {
+				r.entityMerged[id] = mergedInto
+				r.entityKind[mergedInto] = v
+			}
 		case "m":
 			r.comments[id] = true
 		}
