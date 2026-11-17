@@ -4,11 +4,69 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/authkit/iam"
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/entities"
+	"github.com/open-rails/contentkit/importer"
 	"github.com/open-rails/contentkit/kinds"
 )
+
+func TestImportMergedEntityMemberships(t *testing.T) {
+	w := newWorld(t, func(cfg *ck.Config) {
+		cfg.Content.EntityKinds["collection"] = kinds.EntityKind{Route: "collections"}
+		article := cfg.Content.Kinds["article"]
+		article.Entities = []string{"collection"}
+		cfg.Content.Kinds["article"] = article
+	})
+	a := w.apps[0]
+	admin, ctx := a.engine.Client(), t.Context()
+	batch := importer.Batch{Source: "merged-memberships", Entities: []importer.EntityRecord{
+		{ExternalID: "a", Kind: "collection", Slug: "legacy-a", Names: []entities.Name{{Language: "en", Kind: "name", Name: "Legacy A"}}},
+		{ExternalID: "b", Kind: "collection", Slug: "survivor-b", Names: []entities.Name{{Language: "en", Kind: "name", Name: "Survivor B"}}},
+	}, Contents: []importer.ContentRecord{{ExternalID: "content", Kind: "article", State: "draft"}},
+		Memberships: []importer.MembershipSet{{Content: importer.Ref{ExternalID: "content"}, Kinds: []string{"collection"},
+			Memberships: []importer.MembershipRecord{{Entity: importer.Ref{ExternalID: "a"}}}}},
+	}
+	initial, err := admin.PostImport(ctx, batch)
+	must(t, err)
+	if len(initial.Failed) != 0 || initial.Written[importer.SectionEntities] != 2 || initial.Written[importer.SectionContents] != 1 || initial.Written[importer.SectionMemberships] != 1 {
+		t.Fatalf("initial import: %+v", initial)
+	}
+	from, into := initial.IDs[importer.RecordEntity]["a"], initial.IDs[importer.RecordEntity]["b"]
+	contentID := initial.IDs[importer.RecordContent]["content"]
+	_, err = admin.PostEntityMerge(ctx, from, entities.MergeInput{Into: entities.EntityID(into)})
+	must(t, err)
+	before, err := admin.GetEntity(ctx, into, ck.GetEntityQuery{})
+	must(t, err)
+	batch.Entities = batch.Entities[:1]
+	batch.Contents = nil
+	// Direct and external references to either identity collapse onto B.
+	batch.Memberships[0].Memberships = append(batch.Memberships[0].Memberships,
+		importer.MembershipRecord{Entity: importer.Ref{ID: from}},
+		importer.MembershipRecord{Entity: importer.Ref{ExternalID: "b"}})
+	result, err := admin.PostImport(ctx, batch)
+	must(t, err)
+	if len(result.Failed) != 0 || result.Skipped[importer.SectionEntities] != 1 || result.Written[importer.SectionEntities] != 0 || result.Written[importer.SectionMemberships] != 1 {
+		t.Fatalf("replayed import: %+v", result)
+	}
+	memberships, err := admin.GetContentEntities(ctx, contentID, ck.GetContentEntitiesQuery{})
+	must(t, err)
+	if len(memberships.Memberships) != 1 || memberships.Memberships[0].EntityID != entities.EntityID(into) {
+		t.Fatalf("replayed memberships: %+v", memberships)
+	}
+	after, err := admin.GetEntity(ctx, into, ck.GetEntityQuery{})
+	must(t, err)
+	if after.Slug != before.Slug || !reflect.DeepEqual(after.Names, before.Names) || after.Revision != before.Revision {
+		t.Fatalf("replay changed survivor: before %+v; after %+v", before, after)
+	}
+	var state, mergedInto string
+	must(t, w.pool.QueryRow(ctx, `SELECT state, merged_into FROM `+pgx.Identifier{w.schema, "content_entities"}.Sanitize()+
+		` WHERE tenant_id=$1 AND id=$2`, a.cfg.Scope.AppID.String(), from).Scan(&state, &mergedInto))
+	if state != string(entities.StateMerged) || mergedInto != into {
+		t.Fatalf("replay changed merged entity: state=%s merged_into=%s", state, mergedInto)
+	}
+}
 
 // Ordinary associations remain immediate, ordered and scoped after removing
 // scheduled collection membership. No background engine is started here.
