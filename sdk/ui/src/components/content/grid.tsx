@@ -90,7 +90,7 @@ export function cardGridLayout(layout?: CardGridLayout): { className: string; st
 
 /** A list carries exact selection-wide counts when the API was asked for them. */
 type SummaryList = UseList<Card> & { summary?: ListingSummary };
-type GridProps = CardListProps & { list: SummaryList; render: string; filterKinds?: readonly string[]; filterLanguage?: string; horizontal?: boolean; searchQuery?: string; queryID?: string; ranker?: string; positionOffset?: number; settledEmpty?: boolean };
+type GridProps = CardListProps & { list: SummaryList; render: string; filterKinds?: readonly string[]; filterLanguage?: string; horizontal?: boolean; searchQuery?: string; queryID?: string; ranker?: string; positionOffset?: number; settledEmpty?: boolean; onExpandLocked?: () => void };
 
 /** A list's cards and summary controls share one responsive, animated grid. */
 export function CardGrid(p: GridProps) {
@@ -105,7 +105,7 @@ export function CardGrid(p: GridProps) {
   return <CardGridBody key={session.key} {...p} />;
 }
 
-function CardGridBody({ list, render, filterKinds, filterLanguage, horizontal, searchQuery, queryID, ranker, positionOffset = 0, settledEmpty, ...p }: GridProps) {
+function CardGridBody({ list, render, filterKinds, filterLanguage, horizontal, searchQuery, queryID, ranker, positionOffset = 0, settledEmpty, onExpandLocked, ...p }: GridProps) {
   const m = useMessages();
   const { t } = m;
   const { kinds } = useKinds({ client: p.client });
@@ -231,7 +231,9 @@ function CardGridBody({ list, render, filterKinds, filterLanguage, horizontal, s
                 label={premiumLabel}
                 onClick={(event) => {
                   prepare(event.detail === 0);
-                  setExpanded(true);
+                  // Numbered pages refetch every content instead of revealing this page's.
+                  if (onExpandLocked) onExpandLocked();
+                  else setExpanded(true);
                 }}
               />
             ) : (

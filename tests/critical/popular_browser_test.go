@@ -13,6 +13,8 @@ import (
 	"time"
 
 	ck "github.com/open-rails/contentkit"
+	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/kinds"
 )
 
@@ -38,6 +40,17 @@ func TestPreparedPopularityBrowser(t *testing.T) {
 	a.server = mountEngine(t, a.engine)
 	first := publishedArticle(t, a, "Daily Alpha")
 	second := publishedArticle(t, a, "Daily Beta")
+	// Two locked articles: collapsed numbered pages page over the open two.
+	for _, title := range []string{"Daily Gamma", "Daily Delta"} {
+		item := publishedArticle(t, a, title)
+		_, err = a.engine.Client().PatchContentVersion(t.Context(), item.ID, item.Versions[0].ID, catalog.VersionInput{Access: &access.Rule{Level: access.TierLevel, Tiers: []string{"gold"}}})
+		must(t, err)
+		waitForWithin(t, 45*time.Second, func() bool {
+			wakeDuePublicationJobs(t, a)
+			current, err := a.client("").GetContent(t.Context(), item.ID, ck.GetContentQuery{})
+			return err == nil && !current.Decision.Allowed
+		})
+	}
 	// Publishing starts River. Stop it before installing this read-only
 	// prepared snapshot so its startup refresh cannot race the fixture rows.
 	a.server.Close()
