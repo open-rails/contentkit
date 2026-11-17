@@ -30,6 +30,32 @@ try {
   const cutoff = await page.evaluate(({ before, until }) => window.popular.cutoff(before, until), fixture);
   assert.equal(cutoff.status, 400);
   assert.equal(cutoff.details?.available_from, fixture.from);
+  queries.length = 0;
+  await page.evaluate(() => window.popular.paged());
+  const tile = page.getByRole("button", { name: "Show 2 locked items" });
+  await tile.waitFor();
+  const pages = () => page.locator("[data-ckui=pagination]").first().getByRole("button", { name: /^Page / }).allTextContents();
+  assert.deepEqual(await pages(), ["1", "2"], "collapsed pages counted locked articles");
+  assert.equal(await page.locator("[data-item]").count(), 1);
+  assert(queries.some(q => q.get("mode") === "hide" && q.get("page") === "1"), "collapsed pages did not list open articles only");
+  await page.getByRole("button", { name: "Page 2", exact: true }).first().click();
+  await page.waitForFunction(() => document.querySelectorAll("[data-item]").length === 1 && document.querySelector("[aria-current=page]")?.textContent === "2");
+  await tile.waitFor();
+  await tile.click();
+  await page.waitForFunction(() => document.querySelector("[data-ckui=pagination]")?.querySelectorAll("button[aria-label^='Page ']").length === 4);
+  assert.equal(await page.locator("[aria-current=page]").first().textContent(), "1", "opening the tile kept a later page");
+  assert(queries.some(q => q.get("mode") === "lock" && q.get("page") === "1"), "opened pages did not list every article");
+  assert.equal(await tile.count(), 0);
+
+  // The declared window first: once its section shows, the kinds are loaded for the undeclared one.
+  queries.length = 0;
+  await page.evaluate(() => window.popular.posts("readers-week"));
+  await page.locator("[data-ckui=post-list-sidebar] h2", { hasText: "Trending" }).waitFor();
+  assert(queries.some(q => q.get("sort") === "popular:readers-week"), "post list skipped a declared trending window");
+  await page.evaluate(() => window.popular.posts("30d"));
+  await page.waitForFunction(() => !document.querySelector("[data-ckui=post-list-sidebar]")?.textContent?.includes("Trending"));
+  await page.waitForLoadState("networkidle");
+  assert(!queries.some(q => q.get("sort") === "popular:30d"), "post list asked for an undeclared trending window");
   assert.deepEqual(errors, []);
   console.log(JSON.stringify({ scenario: "CK-J07-S20", status: "passed" }));
 } finally {

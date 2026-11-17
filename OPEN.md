@@ -1,6 +1,6 @@
 # Open release candidate
 
-None.
+`rc/0.138.16`: rail sorting in the entity editor, with clearer rail wording in every locale.
 
 Feature pull requests target the open release candidate, never `master`. A release candidate's first commit names its
 `rc/<version>` branch and purpose here; its last commit before it merges into `master` resets this file. So on `master`, and

@@ -1,6 +1,7 @@
 import { useMemo, useRef, useState, type ReactNode } from "react";
 import type { Card } from "../../client/generated/wire.js";
 import type { HistoryQuery } from "../../client/discovery.js";
+import { formatDuration } from "../../client/gallery.js";
 import { useMessages } from "../../i18n/context.js";
 import { useHistory } from "../../react/discovery.js";
 import { useKinds } from "../../react/entities.js";
@@ -88,7 +89,7 @@ export function ContentHistory({ query = {}, heading, ...p }: CardListProps & { 
   );
 }
 
-/** When the reader last read or watched it, and how far: pages for a reader, minutes for a player. */
+/** When the reader last read or watched it, and how far: pages for a reader, time for a player. */
 function HistoryProgress({ card, presentation }: { card: Card; presentation?: string }) {
   const m = useMessages();
   const v = card.viewer;
@@ -98,7 +99,7 @@ function HistoryProgress({ card, presentation }: { card: Card; presentation?: st
     v.progress_max > 0 && presentation === "reader"
       ? m.plural("contents.pageProgress", v.progress_max, { progress: done })
       : v.progress_max > 0 && presentation === "player"
-        ? m.plural("contents.minuteProgress", Math.max(1, Math.round(v.progress_max / 60)), { progress: Math.round(done / 60) })
+        ? `${formatDuration(done)} / ${formatDuration(v.progress_max)}`
         : null;
   if (!v.last_read_at && !amount) return null;
   return (

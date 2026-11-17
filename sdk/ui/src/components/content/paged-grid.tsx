@@ -3,7 +3,7 @@ import { eventId } from "../../client/beacons.js";
 import { useMemo, useRef, useState } from "react";
 import type { ContentQuery, SearchQuery } from "../../client/discovery.js";
 import { useMessages } from "../../i18n/context.js";
-import { useContentsPage, useSearchPage, type UseContentsPage } from "../../react/discovery.js";
+import { useContentsPage, useLockedCount, useSearchPage, type UseContentsPage } from "../../react/discovery.js";
 import { ContentKitUiRoot } from "../../scope.js";
 import { CardGrid, cardListMode, SearchEntities, type CardListProps, type SearchResultsProps } from "./grid.js";
 import { Pagination } from "./pagination.js";
@@ -32,9 +32,9 @@ function NumberedCards({
   render,
   filterKinds,
   filterLanguage,
-  searchQuery, queryID, ranker, settledEmpty,
+  searchQuery, queryID, ranker, settledEmpty, onExpandLocked,
   ...p
-}: CardListProps & { result: UseContentsPage; page: number; setPage: (page: number) => void; render: string; filterKinds?: readonly string[]; filterLanguage?: string; searchQuery?: string; queryID?: string; ranker?: string; settledEmpty?: boolean }) {
+}: CardListProps & { result: UseContentsPage; page: number; setPage: (page: number) => void; render: string; filterKinds?: readonly string[]; filterLanguage?: string; searchQuery?: string; queryID?: string; ranker?: string; settledEmpty?: boolean; onExpandLocked?: () => void }) {
   const top = useRef<HTMLDivElement>(null);
   const size = p.pageSize ?? NUMBERED_PAGE_SIZE;
   const total = result.summary?.total ?? 0;
@@ -56,28 +56,45 @@ function NumberedCards({
       <div ref={top} className="grid scroll-mt-20 gap-4">
         {controls(false)}
         <CardGrid {...p} className={undefined} list={list} render={render} filterKinds={filterKinds} filterLanguage={filterLanguage}
-          positionOffset={(page - 1) * size} searchQuery={searchQuery} queryID={queryID} ranker={ranker} settledEmpty={settledEmpty} />
+          positionOffset={(page - 1) * size} searchQuery={searchQuery} queryID={queryID} ranker={ranker} settledEmpty={settledEmpty} onExpandLocked={onExpandLocked} />
       </div>
       {list.items.length > 0 && controls(true)}
     </ContentKitUiRoot>
   );
 }
 
-/** ContentGrid's numbered pages: each page with the selection total. */
+/**
+ * ContentGrid's numbered pages: each page with the selection total. Collapsed,
+ * the pages hold only the open contents and the tile counts the locked ones;
+ * opening it lists every content from page 1.
+ */
 export function PagedContentGrid({ query, locked = "show", ...p }: CardListProps & { query: ContentQuery }) {
   const { page: _page, cursor: _cursor, ...base } = query;
+  const key = JSON.stringify(base);
+  const [opened, setOpened] = useState<string>();
+  const collapsed = locked === "collapse" && opened !== key;
   const q = useMemo<ContentQuery>(
-    () => ({ ...base, summary: true, limit: base.limit ?? p.pageSize ?? NUMBERED_PAGE_SIZE, mode: cardListMode(locked, base.mode) }),
+    () => ({ ...base, summary: true, limit: base.limit ?? p.pageSize ?? NUMBERED_PAGE_SIZE, mode: collapsed ? "hide" : cardListMode(locked, base.mode) }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [JSON.stringify(base), p.pageSize, locked],
+    [key, p.pageSize, locked, collapsed],
   );
   const [page, setPage] = usePage(p, q);
-  const result = useContentsPage(q, page, { client: p.client });
+  const listed = useContentsPage(q, page, { client: p.client });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const { count } = useLockedCount(useMemo(() => (collapsed ? base : null), [key, collapsed]), { client: p.client });
+  const result = useMemo(
+    () => (collapsed && listed.summary ? { ...listed, summary: { ...listed.summary, locked_count: count ?? 0 } } : listed),
+    [collapsed, listed, count],
+  );
   return (
     <NumberedCards
       {...p}
       pageSize={q.limit}
-      locked={locked}
+      locked={collapsed ? "collapse" : locked === "collapse" ? "show" : locked}
+      onExpandLocked={collapsed ? () => {
+        setOpened(key);
+        if (page !== 1) setPage(1);
+      } : undefined}
       result={result}
       page={page}
       setPage={setPage}
