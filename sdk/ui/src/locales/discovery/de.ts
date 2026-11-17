@@ -54,8 +54,6 @@ export const discovery: typeof en = {
     watchedAgo: "Angesehen {time}",
     pageProgress_one: "{progress} / {count} Seite",
     pageProgress_other: "{progress} / {count} Seiten",
-    minuteProgress_one: "{progress} / {count} Min.",
-    minuteProgress_other: "{progress} / {count} Min.",
     notInLanguage: "Nicht auf {language} verfügbar, angezeigt wird {shown}.",
     search: "Suche",
     searchPlaceholder: "Suchen…",
