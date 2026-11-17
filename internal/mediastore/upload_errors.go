@@ -50,6 +50,8 @@ func AsUploadError(err error) (*media.UploadError, bool) {
 		return &media.UploadError{Code: media.CodeNotFound, Message: "no such media kind"}, true
 	case errors.Is(err, contentref.ErrInvalidID):
 		return &media.UploadError{Code: media.CodeInvalid, Message: "the id must be a canonical lowercase UUIDv7"}, true
+	case errors.Is(err, ErrInvalidAccountID):
+		return &media.UploadError{Code: media.CodeInvalid, Message: "the account id must be a canonical lowercase UUID"}, true
 	case errors.Is(err, media.ErrFolderNotEmpty):
 		return &media.UploadError{Code: media.CodeConflict, Message: "the item's folder already holds files"}, true
 	case errors.Is(err, ErrAllocationRetired):

@@ -1354,6 +1354,24 @@
       ]
     },
     {
+      "id": "CK-J12-S05",
+      "journey": "CK-J12",
+      "behavior": "An account's avatar is keyed by its auth subject: an imported account's fixed UUIDv5 is written, processed, read and served like a new account's, while content ids stay UUIDv7",
+      "status": "verified",
+      "evidence": [
+        "An AuthKit account imported with a UUIDv5 id signs in and uploads its avatar through the Go client and through the shipped TypeScript client; the real worker processes it, reads list the rendition in the account's folder and the gateway serves it. The shipped client learns the account kind from the content model; a client that has not read it reads /kinds once (cancellable) before its first media request. It refuses a content kind's UUIDv5 and the nil UUID before any media request, and the server refuses a content kind's UUIDv5 with 400.",
+        "An orphan sweep with Delete asks the host about the account's avatar folder and keeps it; account erasure (AnonymizeAccount) removes the avatar files and the gateway then answers 404.",
+        "Without the server change both uploads are refused (400 invalid_request, UUIDv7) and AnonymizeAccount fails for the account; without the worker's folder change the sweep never asks about the folder and deletes it; without the client change the shipped client throws \"content id must be a canonical UUIDv7\" before any request."
+      ],
+      "cases": [
+        "TestImportedAccountAvatar/go_client_writes_and_reads",
+        "TestImportedAccountAvatar/shipped_typescript_client_writes_and_reads",
+        "TestImportedAccountAvatar/content_ids_stay_uuidv7",
+        "TestImportedAccountAvatar/orphan_sweep_keeps_an_existing_account",
+        "TestImportedAccountAvatar/account_erasure_removes_the_avatar"
+      ]
+    },
+    {
       "id": "CK-J13-S01",
       "journey": "CK-J13",
       "behavior": "Private exact-file grant refuses a sibling file or another item",
