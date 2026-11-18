@@ -263,6 +263,7 @@ export const admin: typeof en = {
     drop: "Dateien hier ablegen, oder",
     add: "Dateien hinzufügen",
     unfinished: "Unvollständige Uploads",
+    refused: "Nicht hinzugefügt, falscher Dateityp: {names}",
     unfinishedHint: "Füge dieselbe Datei erneut hinzu, um dort weiterzumachen, wo es aufgehört hat.",
     forget: "Vergessen",
     summary: "{done} von {total} hochgeladen",

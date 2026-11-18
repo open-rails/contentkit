@@ -71,6 +71,14 @@ export function acceptOf(rules: readonly UploadRule[]): string | undefined {
   return [...types, ...exts].join(",");
 }
 
+/** Whether a file matches an input's accept (".ext", "type/*" or "type/sub", comma-separated); no accept takes any file. */
+export function acceptsFile(accept: string | undefined, file: { name: string; type: string }): boolean {
+  const tokens = (accept ?? "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+  const name = file.name.toLowerCase();
+  const type = file.type.toLowerCase();
+  return !tokens.length || tokens.some((t) => (t.startsWith(".") ? name.endsWith(t) : t.endsWith("/*") ? type.startsWith(t.slice(0, -1)) : type === t));
+}
+
 export interface Screened {
   /** Files to upload, each with its rule (typed by extension when needed). */
   accepted: { file: File; rule: UploadRule }[];

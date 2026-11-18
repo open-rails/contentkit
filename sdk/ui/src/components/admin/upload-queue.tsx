@@ -4,6 +4,7 @@ import type { ContentKitClient } from "../../client/client.js";
 import { toContentKitError, type ContentKitError } from "../../client/errors.js";
 import type { CommitBody, FileInfo, RefBody } from "../../client/generated/wire.js";
 import { samePath, type Progress, type UploadState } from "../../client/media/client.js";
+import { acceptsFile } from "../../client/media/rules.js";
 import { useMessages } from "../../i18n/context.js";
 import { megabytes } from "../../i18n/messages.js";
 import { useFlowClient } from "../../react/admin.js";
@@ -122,6 +123,8 @@ function Queue({ client, createItem, path = "source", target: place, accept, con
   const [entries, setEntries] = useState<Entry[]>([]);
   const [waiting, setWaiting] = useState<Saved[]>(() => Object.values(readSaved(storageKey)));
   const [over, setOver] = useState(false);
+  // Dropped files skip the picker's accept.
+  const [refused, setRefused] = useState<string[]>([]);
   const input = useRef<HTMLInputElement>(null);
   const controllers = useRef(new Map<string, AbortController>());
   const latest = useRef({ onUploaded, place });
@@ -223,11 +226,17 @@ function Queue({ client, createItem, path = "source", target: place, accept, con
   const add = (files: Iterable<File>) => {
     const saved = readSaved(storageKey);
     const added: Entry[] = [];
+    const wrong: string[] = [];
     for (const file of files) {
+      if (!acceptsFile(accept, file)) {
+        wrong.push(file.name);
+        continue;
+      }
       const key = fingerprint(file);
       if (entries.some((e) => e.key === key && e.status !== "done") || added.some((e) => e.key === key)) continue;
       added.push({ id: `u${++seq}`, file, key, status: "queued", createItem, ref: saved[key]?.ref, resumed: !!saved[key] });
     }
+    setRefused(wrong);
     if (!added.length) return;
     setWaiting((w) => w.filter((s) => !added.some((a) => a.file.name === s.name && a.file.size === s.size)));
     setEntries((es) => [...es, ...added]);
@@ -286,6 +295,7 @@ function Queue({ client, createItem, path = "source", target: place, accept, con
           }}
         />
       </div>
+      {refused.length > 0 && <ErrorLine className="break-all">{t("uploadQueue.refused", { names: refused.join(", ") })}</ErrorLine>}
       {waiting.length > 0 && (
         <div className="grid gap-2 rounded-lg border border-border p-3" data-ckui="upload-waiting" role="status">
           <p className="font-medium">{t("uploadQueue.unfinished")}</p>

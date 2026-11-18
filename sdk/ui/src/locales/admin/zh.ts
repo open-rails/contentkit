@@ -263,6 +263,7 @@ export const admin: typeof en = {
     drop: "将文件拖到这里，或",
     add: "添加文件",
     unfinished: "未完成的上传",
+    refused: "未添加（文件类型不符）：{names}",
     unfinishedHint: "再次添加同一文件即可从中断处继续。",
     forget: "忘记",
     summary: "已上传 {done}/{total}",
