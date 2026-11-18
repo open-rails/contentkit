@@ -230,10 +230,11 @@ func (j *Jobs) uploadBytes(ctx context.Context, prefix string) (int64, error) {
 }
 
 // parseFolder guards every job's prefix: exactly an item folder,
-// "{ns}/{kind}/{id}/" or a version's "{ns}/{kind}/{id}/{version}/".
+// "{ns}/{kind}/{id}/" or a version's "{ns}/{kind}/{id}/{version}/". The id is
+// any canonical UUID here; Registry.Item then requires the kind's own.
 func parseFolder(prefix string) (contentref.ContentRef, error) {
 	k, ok := layout.ParseFolder(prefix)
-	if !ok || contentref.ValidateID(k.ID) != nil || k.Version != "" && contentref.ValidateID(k.Version) != nil {
+	if !ok || !canonicalUUID(k.ID) || k.Version != "" && contentref.ValidateID(k.Version) != nil {
 		return contentref.ContentRef{}, fmt.Errorf("media: invalid folder prefix %q", prefix)
 	}
 	return contentref.New(k.Namespace, k.Kind, k.ID).WithVersion(k.Version), nil

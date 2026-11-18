@@ -116,6 +116,11 @@ check("sameItem", () => {
 check("checkRef", () => {
   assert.doesNotThrow(() => sdk.checkRef(ref)); assert.doesNotThrow(() => sdk.checkRef(undefined));
   assert.throws(() => sdk.checkRef({ id: "../../another-item" }), error => error.code === "invalid_request");
+  const accounts = new Set(["user"]), imported = "6d7289a0-5b6f-59b1-9518-692b3a9d83b8";
+  assert.doesNotThrow(() => sdk.checkRef({ kind: "user", id: imported }, accounts)); assert.doesNotThrow(() => sdk.checkRef({ kind: "user", id: uuid }, accounts));
+  assert.throws(() => sdk.checkRef({ kind: "gallery", id: imported }, accounts), error => error.code === "invalid_request" && error.message.includes("UUIDv7"));
+  assert.throws(() => sdk.checkRef({ kind: "user", id: imported }), error => error.code === "invalid_request");
+  for (const bad of [imported.toUpperCase(), "00000000-0000-0000-0000-000000000000", "../../another-item"]) assert.throws(() => sdk.checkRef({ kind: "user", id: bad }, accounts), error => error.code === "invalid_request" && error.message.includes("account id"));
 });
 const rules = [{ path: "pages/{name}", types: ["image/png"], max_bytes: 3, max: 2 }, { path: "pages/cover", types: ["image/png"], max_bytes: 3, max: 1 }];
 check("uploadRules", () => {

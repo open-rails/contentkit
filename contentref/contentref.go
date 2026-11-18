@@ -11,7 +11,8 @@ import (
 // ContentRef identifies host-owned content: the work (a gallery, a video, a
 // listing) or, when ContentVersionID is set, one selectable version of it. The
 // host owns the meaning of ContentKind and the ids; ContentKit stores them
-// opaquely, except that ContentID must be a canonical UUIDv7 (ValidateID). A
+// opaquely, except that ContentID must be a canonical UUIDv7 (ValidateID); an
+// account kind's media item takes the account's id, any canonical UUID. A
 // language is never part of the reference.
 type ContentRef struct {
 	TenantID         string  `json:"tenant_id"`
