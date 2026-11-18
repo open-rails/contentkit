@@ -10449,6 +10449,17 @@
       ]
     },
     {
+      "id": "ts:acceptsFile",
+      "name": "acceptsFile",
+      "status": "verified",
+      "cases": [
+        "TestShippedTypeScriptValues/acceptsFile"
+      ],
+      "evidence": [
+        "The shipped JavaScript export is invoked with independent positive and negative value vectors; its exact named report is required and checked for omissions and duplicates."
+      ]
+    },
+    {
       "id": "go:Client.WatchMedia",
       "name": "Client.WatchMedia",
       "status": "verified",
@@ -10510,7 +10521,7 @@
         "TestMediaSSEUpload"
       ],
       "evidence": [
-        "Executed by the real25-image upload/browser and authenticated processing stream journey: transfer bytes, incremental loaded thumbnails, editor reopen, durable completion, scope refusals and fresh authentication after expiry. The shipped browser facade delegates through its actual MediaApi transport; no progress mock or polling fallback is present.",
+        "Executed by the real25-image upload/browser and authenticated processing stream journey: a dropped file the box does not accept is refused with an alert and makes no draft, transfer bytes, incremental loaded thumbnails, editor reopen, durable completion, scope refusals and fresh authentication after expiry. The shipped browser facade delegates through its actual MediaApi transport; no progress mock or polling fallback is present.",
         "Focused execution passed127.081s on the combined source with the fixed AuthKit verifier. The strict final gate reruns these exact cases."
       ]
     },

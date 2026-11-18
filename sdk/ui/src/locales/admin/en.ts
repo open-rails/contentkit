@@ -262,6 +262,7 @@ export const admin = {
     drop: "Drop files here, or",
     add: "Add files",
     unfinished: "Unfinished uploads",
+    refused: "Not added, wrong file type: {names}",
     unfinishedHint: "Add the same file again to continue where it stopped.",
     forget: "Forget",
     summary: "{done} of {total} uploaded",

@@ -195,6 +195,22 @@ check("isPending", () => {
   assert.equal(sdk.isPending({ status: "processing" }), true); assert.equal(sdk.isPending({ status: "processing", pages: [] }), false);
   assert.equal(sdk.isPending({ status: "processing", url: "ready" }), false); assert.equal(sdk.isPending(null), false);
 });
+check("acceptsFile", () => {
+  const zipOnly = ".zip,application/zip";
+  assert.equal(sdk.acceptsFile(zipOnly, { name: "Pages.ZIP", type: "" }), true);
+  assert.equal(sdk.acceptsFile(zipOnly, { name: "pages", type: "application/zip" }), true);
+  assert.equal(sdk.acceptsFile(zipOnly, { name: "pages.zip", type: "application/x-zip-compressed" }), true);
+  assert.equal(sdk.acceptsFile(zipOnly, { name: "page-01.jpg", type: "image/jpeg" }), false);
+  assert.equal(sdk.acceptsFile(zipOnly, { name: "zip", type: "application/zipx" }), false);
+  assert.equal(sdk.acceptsFile("video/*", { name: "clip.mp4", type: "video/mp4" }), true);
+  assert.equal(sdk.acceptsFile("video/*", { name: "Episode.MKV", type: "" }), true);
+  assert.equal(sdk.acceptsFile("video/*", { name: "clip.mov", type: "" }), true);
+  assert.equal(sdk.acceptsFile("video/*", { name: "notes.txt", type: "" }), false);
+  assert.equal(sdk.acceptsFile("video/*", { name: "mkv", type: "" }), false);
+  assert.equal(sdk.acceptsFile("video/*", { name: "poster.png", type: "image/png" }), false);
+  assert.equal(sdk.acceptsFile(undefined, { name: "any.bin", type: "" }), true);
+  assert.equal(sdk.acceptsFile(" , ", { name: "any.bin", type: "" }), true);
+});
 
 const results = [];
 for (const [name, run] of checks) {
