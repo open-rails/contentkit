@@ -24,7 +24,7 @@ export interface UploadQueueProps extends AdminFlowProps {
   target?: (ref: RefBody, file: File, signal: AbortSignal) => Promise<{ path: string; type?: string }>;
   /** Opens a file's item: an Open button once it has one. */
   onOpen?: (ref: RefBody) => void;
-  /** The file picker's accept, e.g. "video/*". */
+  /** The file picker's accept, e.g. "video/*"; added files that do not match it are refused. */
   accept?: string;
   /** Files uploading at once. Default 2. */
   concurrency?: number;
@@ -123,7 +123,6 @@ function Queue({ client, createItem, path = "source", target: place, accept, con
   const [entries, setEntries] = useState<Entry[]>([]);
   const [waiting, setWaiting] = useState<Saved[]>(() => Object.values(readSaved(storageKey)));
   const [over, setOver] = useState(false);
-  // Dropped files skip the picker's accept.
   const [refused, setRefused] = useState<string[]>([]);
   const input = useRef<HTMLInputElement>(null);
   const controllers = useRef(new Map<string, AbortController>());

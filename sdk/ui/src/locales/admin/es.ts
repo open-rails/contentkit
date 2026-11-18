@@ -263,7 +263,7 @@ export const admin: typeof en = {
     drop: "Suelta archivos aquí, o",
     add: "Añadir archivos",
     unfinished: "Subidas sin terminar",
-    refused: "No se añadió, tipo de archivo incorrecto: {names}",
+    refused: "No se añadieron, tipo de archivo incorrecto: {names}",
     unfinishedHint: "Añade el mismo archivo para continuar donde se detuvo.",
     forget: "Olvidar",
     summary: "{done} de {total} subidos",
