@@ -263,6 +263,7 @@ export const admin: typeof en = {
     drop: "여기에 파일을 놓거나",
     add: "파일 추가",
     unfinished: "완료되지 않은 업로드",
+    refused: "추가되지 않음(잘못된 파일 형식): {names}",
     unfinishedHint: "같은 파일을 다시 추가하면 멈춘 곳부터 이어집니다.",
     forget: "삭제",
     summary: "{total}개 중 {done}개 업로드됨",
