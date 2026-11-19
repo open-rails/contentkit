@@ -848,7 +848,12 @@ func (m *Manifests) recoverAttemptLocked(ctx context.Context, item Item, operati
 			return cur, true, m.finishCommit(ctx, item, *commit, true, cur)
 		}
 		if etag != commit.ETag {
-			return nil, false, ErrManifestConflict
+			if errors.Is(err, ErrNotFound) {
+				return nil, false, ErrManifestConflict
+			}
+			// The old precondition can no longer succeed, and this version
+			// carries no receipt for the admitted attempt.
+			return nil, false, m.finishCommit(ctx, item, *commit, false, nil)
 		}
 		if err := m.journal.checkReceipt(ctx, item, cur.Receipt); err != nil {
 			return nil, false, err
@@ -901,6 +906,7 @@ func (m *Manifests) finishCommit(ctx context.Context, item Item, commit manifest
 
 // CompleteCommit finishes the exact mutation admitted with an ingest job.
 // Its operation ID survives retries; no unrelated-folder recovery scan is used.
+// An absent mutation is finished too: ingest continues from current media.
 func (m *Manifests) CompleteCommit(ctx context.Context, ref contentref.ContentRef, operation string) error {
 	id, err := uuid.Parse(operation)
 	if err != nil || id == uuid.Nil {
@@ -923,19 +929,24 @@ func (m *Manifests) CompleteCommit(ctx context.Context, ref contentref.ContentRe
 		return err
 	}
 	jr := m.journal.forTenant(ref.TenantID)
+	var applied bool
 	if err := pgx.BeginFunc(ctx, jr.pool, func(tx pgx.Tx) error {
 		c, err := jr.load(ctx, tx, ref.TenantID, id)
 		if err != nil {
 			return err
 		}
-		if !c.Ref.Equal(ref) || c.Folder != item.Prefix() || c.State != "applied" {
+		if !c.Ref.Equal(ref) || c.Folder != item.Prefix() || !c.terminal() {
 			return ErrCommitIdentity
 		}
+		applied = c.State == "applied"
 		return nil
 	}); err != nil {
 		return err
 	}
-	return m.notifyCommit(ctx, manifestCommit{ID: id, Ref: ref})
+	if applied {
+		return m.notifyCommit(ctx, manifestCommit{ID: id, Ref: ref})
+	}
+	return nil
 }
 
 // notifyCommit is a direct, idempotent callback owned by the request or ingest

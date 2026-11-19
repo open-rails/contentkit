@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"strings"
 	"sync"
@@ -12,6 +13,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/open-rails/contentkit/internal/pglock"
 	"github.com/open-rails/contentkit/internal/versionstore"
@@ -268,6 +271,52 @@ func TestAdvisoryLockSession(t *testing.T) {
 		}
 	})
 
+	t.Run("CK279_refused_connections_are_contention", func(t *testing.T) {
+		ctx := t.Context()
+		admin, _ := process(t)
+		role := "ck_lock_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+		identifier := pgx.Identifier{role}.Sanitize()
+		_, err := admin.Exec(ctx, "CREATE ROLE "+identifier+" LOGIN PASSWORD 'critical-lock-only' CONNECTION LIMIT 1")
+		must(t, err)
+		t.Cleanup(func() { _, err := admin.Exec(context.Background(), "DROP ROLE "+identifier); must(t, err) })
+		cfg, err := pgxpool.ParseConfig(dsn)
+		must(t, err)
+		cfg.ConnConfig.User, cfg.ConnConfig.Password = role, "critical-lock-only"
+		pool, err := pgxpool.NewWithConfig(ctx, cfg)
+		must(t, err)
+		t.Cleanup(pool.Close)
+		assertRefused := func(key string) {
+			t.Helper()
+			release, ok, err := pglock.Acquire(ctx, pool, key, true)
+			if release != nil {
+				defer release()
+			}
+			var pe *pgconn.PgError
+			if ok || release != nil || !errors.Is(err, pglock.ErrContended) || !errors.As(err, &pe) || pe.Code != "53300" {
+				t.Fatalf("connection refusal: ok=%v err=%v", ok, err)
+			}
+		}
+		// Occupy the role's only connection before its shared lock session exists.
+		occupied, err := pgx.ConnectConfig(ctx, cfg.ConnConfig)
+		must(t, err)
+		defer occupied.Close(context.Background())
+		assertRefused(prefix + "refused-shared")
+		must(t, occupied.Close(ctx))
+		// The shared session now consumes the slot. Re-entering its held key
+		// must use a dedicated waiter, whose connection is refused as well.
+		held, ok, err := pglock.Acquire(ctx, pool, prefix+"refused-waiter", true)
+		must(t, err)
+		if !ok {
+			t.Fatal("initial lock was not acquired")
+		}
+		defer held()
+		t.Cleanup(func() {
+			_, err := admin.Exec(context.Background(), `SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE usename=$1`, role)
+			must(t, err)
+		})
+		assertRefused(prefix + "refused-waiter")
+	})
+
 	t.Run("CK279_source_lock_partial_acquisition_releases_on_panic", func(t *testing.T) {
 		ctx := t.Context()
 		a, name := process(t)
@@ -306,4 +355,27 @@ func TestAdvisoryLockSession(t *testing.T) {
 		release()
 	})
 
+}
+
+// Dial failures retain pgconn's wrapped cause through the shared connect path.
+func TestAdvisoryLockConnectErrors(t *testing.T) {
+	for i, code := range []string{"53300", "53000", "53100", "53200", "53400", "28P01", "57P03", "08006", "53999"} {
+		t.Run(code, func(t *testing.T) {
+			cause := &pgconn.PgError{Code: code, Message: "owned connection refusal"}
+			cfg, err := pgxpool.ParseConfig("postgres://critical@127.0.0.1:1/critical?sslmode=disable")
+			must(t, err)
+			cfg.ConnConfig.DialFunc = func(context.Context, string, string) (net.Conn, error) { return nil, cause }
+			pool, err := pgxpool.NewWithConfig(t.Context(), cfg)
+			must(t, err)
+			defer pool.Close()
+			release, ok, err := pglock.Acquire(t.Context(), pool, uuid.NewString(), true)
+			if release != nil {
+				defer release()
+			}
+			want := i < 5
+			if ok || release != nil || !errors.Is(err, cause) || errors.Is(err, pglock.ErrContended) != want {
+				t.Fatalf("classification: ok=%v err=%v; want contention=%v", ok, err, want)
+			}
+		})
+	}
 }
