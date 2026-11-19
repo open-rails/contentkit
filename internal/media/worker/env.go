@@ -70,7 +70,7 @@ func StoreFromEnv() (*mediaS3.Store, error) {
 //	MEDIA_WORKER_ENCODER         auto (default: per codec NVENC if a probe encode works, else CPU), cpu or nvenc
 //	MEDIA_WORKER_CONCURRENCY     image/video derivative jobs per process (default 1)
 //	MEDIA_WORKER_INGEST_CONCURRENCY  ingest jobs per process (default 2)
-//	MEDIA_WORKER_PAGE_GROUP      rendered images per manifest edit and progress report (default 1; e.g. 32 for bulk imports; retries use 1)
+//	MEDIA_WORKER_PAGE_GROUP      rendered images per manifest edit and progress report (default 1; e.g. 32 for bulk imports; retries keep grouping)
 //	MEDIA_WORKER_MAX_PIXELS      decoded pixels per image source, all frames together (default 100000000)
 //	MEDIA_WORKER_SHUTDOWN_GRACE  time running jobs get on SIGTERM before cancel (default 30s)
 //	MEDIA_WORKER_VIDEO_SLICE     time a derivative job keeps encoding its own video before yielding, e.g. 20m; ends when its video becomes playable (default 0: after every chunk; at most half the job timeout)
