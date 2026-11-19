@@ -197,6 +197,73 @@ func (m *Manifests) EditExisting(ctx context.Context, ref contentref.ContentRef,
 	return m.edit(ctx, ref, true, bound{}, fn)
 }
 
+// EditExistingWithOutputs checks rendered objects before taking the folder
+// lock. The callback's there checks again only when an allocation is no longer
+// live (cleanup retires allocations before DELETE), or the key was not checked.
+// Objects in permanent allocations are immutable and have no bucket expiry.
+func (m *Manifests) EditExistingWithOutputs(ctx context.Context, ref contentref.ContentRef, keys []string, fn func(*Manifest, func(string) (bool, error)) error) (*Manifest, error) {
+	item, err := m.reg.Item(ref)
+	if err != nil {
+		return nil, err
+	}
+	keys = slices.Clone(keys)
+	slices.Sort(keys)
+	keys = slices.Compact(keys)
+	checked := make([]error, len(keys))
+	var workers sync.WaitGroup
+	for worker := 0; worker < min(8, len(keys)); worker++ {
+		workers.Go(func() {
+			for i := worker; i < len(keys); i += 8 {
+				_, checked[i] = m.store.Head(ctx, keys[i])
+			}
+		})
+	}
+	workers.Wait()
+	return m.EditExisting(ctx, ref, func(cur *Manifest) error {
+		live := map[string]bool{}
+		if len(keys) > 0 {
+			j := m.journal.forTenant(ref.TenantID)
+			rows, err := j.pool.Query(ctx, `SELECT object_key FROM `+j.allocations+`
+WHERE tenant_id=$1 AND folder_prefix=$2 AND object_key=ANY($3::text[])
+AND incarnation=$4 AND retired_at IS NULL AND NOT starts_with(object_key,$5)`, ref.TenantID, item.Prefix(), keys, cur.Incarnation, item.TempPrefix())
+			if err != nil {
+				return err
+			}
+			for rows.Next() {
+				var key string
+				if err := rows.Scan(&key); err != nil {
+					rows.Close()
+					return err
+				}
+				live[key] = true
+			}
+			rows.Close()
+			if err := rows.Err(); err != nil {
+				return err
+			}
+		}
+		// Non-version public generations are owned by their reservation rather
+		// than the private allocation table. Cleanup preserves current names.
+		for _, name := range item.Kind().PublicKept(cur) {
+			live[item.PublicPrefix()+name] = true
+		}
+		there := func(key string) (bool, error) {
+			i, found := slices.BinarySearch(keys, key)
+			var err error
+			if found && live[key] {
+				err = checked[i]
+			} else {
+				_, err = m.store.Head(ctx, key)
+			}
+			if errors.Is(err, ErrNotFound) {
+				return false, nil
+			}
+			return err == nil, err
+		}
+		return fn(cur, there)
+	})
+}
+
 // editLimit is where commits and worker records stop; lifecycle tombstones
 // and the Full/Deficit flags retain headroom so they always fit.
 const editLimit = media.MaxManifestBytes - editHeadroom
