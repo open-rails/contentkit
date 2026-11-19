@@ -437,8 +437,11 @@ type Result struct {
 	Written map[string]int `json:"written"`
 	// Skipped counts records an engine without the capability leaves out:
 	// signals without a signal plane.
-	Skipped map[string]int  `json:"skipped,omitempty"`
-	Failed  []RecordFailure `json:"failed"`
+	Skipped map[string]int `json:"skipped,omitempty"`
+	// Merged counts records of entities merged into another: accepted, not
+	// written; references to them resolve to the survivor.
+	Merged map[string]int  `json:"merged,omitempty"`
+	Failed []RecordFailure `json:"failed"`
 	// IDs maps each written record's external id to its id, by entity.
 	IDs map[string]map[string]string `json:"ids"`
 	// Recounted is how many queued targets the batch's Recount recounted.
