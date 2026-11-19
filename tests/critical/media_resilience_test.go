@@ -688,6 +688,181 @@ func TestMediaConcurrentRevision(t *testing.T) {
 	})
 }
 
+// Recovery runs against real conditional S3 writes and the durable quota/job rows.
+func TestMediaPreparedCommitRecovery(t *testing.T) {
+	for _, profile := range []string{"conflicting-put", "frozen-conflict", "matching-receipt", "equal-etag", "missing-existing"} {
+		t.Run(profile, func(t *testing.T) {
+			m := newResilientMedia(t, func(c *ck.Config) { c.Content.Channels.Uploads.QuotaBytes = 1 << 20 })
+			owner, credential := m.person(t, 0)
+			authtest.GrantRole(t, m.tenant[0], m.app.group, iam.UserSubject(owner.ID), m.writer)
+			client := m.app.client(credential)
+			ref := galleryRef(t, client, "Prepared commit recovery")
+			_, err := client.PostMediaUploadCommit(t.Context(), media.CommitBody{Ref: ref, OperationID: uuid.NewString(), Ops: []media.Op{stageFile(t, client, ref, "pages/kept.png", imageBytes(t))}})
+			must(t, err)
+			target, err := m.config.Kinds.VersionRef(ref.Kind, ref.ID, ref.Version)
+			must(t, err)
+			item, err := m.config.Kinds.Item(target)
+			must(t, err)
+			body, object, err := m.storage.store.Get(t.Context(), item.ManifestKey(), media.GetOptions{})
+			must(t, err)
+			baseline, err := io.ReadAll(body)
+			body.Close()
+			must(t, err)
+			usage := func() int64 {
+				var used int64
+				must(t, m.pool.QueryRow(t.Context(), `SELECT used_bytes FROM `+pgx.Identifier{m.schema, "content_media_usage"}.Sanitize()+` WHERE tenant_id=$1 AND owner_id=$2`, target.TenantID, string(owner.ID)).Scan(&used))
+				return used
+			}
+			before := usage()
+			batch := media.CommitBody{Ref: ref, OperationID: uuid.NewString(), Ops: []media.Op{stageFile(t, client, ref, "pages/new.png", imageBytes(t))}}
+			hold := m.wire.pause(t, func(r *http.Request) bool {
+				return r.Method == http.MethodPut && strings.Contains(r.URL.Path, "manifest.json")
+			})
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			done := make(chan error, 1)
+			go func() { _, err := client.PostMediaUploadCommit(ctx, batch); done <- err }()
+			var delayed heldMediaRequest
+			select {
+			case delayed = <-hold.arrived:
+			case <-time.After(10 * time.Second):
+				t.Fatal("prepared write did not reach S3")
+			}
+			charged := usage()
+			if charged <= before || delayed.header.Get("If-Match") == "" {
+				t.Fatalf("write was not prepared with quota and an ETag: before=%d charged=%d", before, charged)
+			}
+			absent := profile == "conflicting-put" || profile == "frozen-conflict"
+			if absent || profile == "matching-receipt" {
+				replacement := delayed.body
+				if absent {
+					current, err := mediastore.DecodeManifest(baseline)
+					must(t, err)
+					current.Meta = map[string]any{"revision": "unrelated"}
+					replacement, err = json.Marshal(current)
+					must(t, err)
+				}
+				_, err = m.storage.store.Put(t.Context(), item.ManifestKey(), bytes.NewReader(replacement), int64(len(replacement)), media.PutOptions{IfMatch: object.ETag, ContentType: "application/gzip", Metadata: object.Metadata})
+				must(t, err)
+			}
+			if profile == "conflicting-put" {
+				hold.unblock() // MinIO refuses the stale If-Match with 412.
+				select {
+				case err := <-done:
+					requireError(t, err, http.StatusServiceUnavailable, media.CodeUnavailable)
+				case <-time.After(10 * time.Second):
+					t.Fatal("conflicting request did not return its retryable outcome")
+				}
+			} else {
+				cancel()
+				select {
+				case err := <-done:
+					if err == nil {
+						t.Fatal("abandoned request succeeded")
+					}
+				case <-time.After(10 * time.Second):
+					t.Fatal("abandoned request did not return")
+				}
+				select {
+				case <-hold.canceled:
+				case <-time.After(10 * time.Second):
+					t.Fatal("abandoned storage write stayed live")
+				}
+			}
+			queue, err := workqueue.New(m.pool, m.config.Kinds, m.config.Schema)
+			must(t, err)
+			journal, err := mediastore.NewPGJournal(m.pool, m.schema, queue)
+			must(t, err)
+			manifests, err := mediastore.NewManifests(m.storage.store, m.config.Kinds, mediastore.ManifestOptions{Locker: mediastore.PGLocker(m.pool), Journal: journal})
+			must(t, err)
+			if profile == "missing-existing" {
+				must(t, m.storage.store.Delete(t.Context(), item.ManifestKey()))
+				if err := manifests.Recover(t.Context(), target); !errors.Is(err, mediastore.ErrManifestConflict) {
+					t.Fatalf("missing expected manifest changed recovery semantics: %v", err)
+				}
+				_, err := m.storage.store.Put(t.Context(), item.ManifestKey(), bytes.NewReader(baseline), int64(len(baseline)), media.PutOptions{IfNoneMatch: "*", ContentType: "application/gzip", Metadata: object.Metadata})
+				must(t, err)
+			}
+			storedBefore, err := m.storage.store.Head(t.Context(), item.ManifestKey())
+			must(t, err)
+			for range 2 {
+				must(t, manifests.CompleteCommit(t.Context(), target, batch.OperationID))
+				var state string
+				must(t, m.pool.QueryRow(t.Context(), `SELECT state FROM `+pgx.Identifier{m.schema, "content_media_commits"}.Sanitize()+` WHERE tenant_id=$1 AND operation_id=$2`, target.TenantID, batch.OperationID).Scan(&state))
+				want, used := "applied", charged
+				if absent {
+					want, used = "absent", before
+				}
+				if state != want || usage() != used {
+					t.Fatalf("settlement: state=%s usage=%d; want %s/%d", state, usage(), want, used)
+				}
+			}
+			storedAfter, err := m.storage.store.Head(t.Context(), item.ManifestKey())
+			must(t, err)
+			if (absent || profile == "matching-receipt") && storedAfter.ETag != storedBefore.ETag {
+				t.Fatal("receipt/conflict recovery unexpectedly rewrote the manifest")
+			}
+			if profile == "equal-etag" || profile == "missing-existing" {
+				body, _, err := m.storage.store.Get(t.Context(), item.ManifestKey(), media.GetOptions{})
+				must(t, err)
+				replayed, err := io.ReadAll(body)
+				body.Close()
+				must(t, err)
+				if !bytes.Equal(replayed, delayed.body) {
+					t.Fatal("equal-ETag recovery did not PUT the admitted bytes")
+				}
+			}
+			current, _, err := manifests.Get(t.Context(), target)
+			must(t, err)
+			if absent {
+				if current.Meta["revision"] != "unrelated" || current.Find("pages/new.png") >= 0 {
+					t.Fatal("absent attempt replaced unrelated manifest")
+				}
+			} else {
+				if current.Receipt == nil || current.Receipt.Operation != batch.OperationID || current.Find("pages/new.png") < 0 {
+					t.Fatal("applied recovery lost its receipt or files")
+				}
+			}
+			// A new admission must get past the formerly frozen folder index.
+			_, err = client.PostMediaUploadCommit(t.Context(), media.CommitBody{Ref: ref, OperationID: uuid.NewString(), Ops: []media.Op{{Op: media.OpMeta, Meta: map[string]any{"next": true}}}})
+			must(t, err)
+			riverQueue := m.queue(t)
+			jobs, err := riverQueue.JobList(t.Context(), river.NewJobListParams().Kinds((workqueue.IngestArgs{}).Kind()))
+			must(t, err)
+			var admitted int64
+			for _, job := range jobs.Jobs {
+				var args workqueue.IngestArgs
+				must(t, json.Unmarshal(job.EncodedArgs, &args))
+				if args.Commit == batch.OperationID {
+					admitted = job.ID
+				}
+			}
+			if admitted == 0 {
+				t.Fatal("no real ingest job owns the admitted commit")
+			}
+			m.start(t)
+			waitFor(t, func() bool {
+				job, err := riverQueue.JobGet(t.Context(), admitted)
+				must(t, err)
+				return job.State == rivertype.JobStateCompleted
+			})
+			ready := awaitMediaReady(t, client, ref)
+			if absent {
+				requireMediaPaths(t, ready, "pages/kept.png", "reader/kept.webp")
+			} else {
+				requireMediaPaths(t, ready, "pages/kept.png", "reader/kept.webp", "pages/new.png", "reader/new.webp")
+			}
+			if absent {
+				// The next authorized retry can reopen the absent operation.
+				_, err = client.PostMediaUploadCommit(t.Context(), batch)
+				must(t, err)
+				ready = awaitMediaReady(t, client, ref)
+				requireMediaPaths(t, ready, "pages/kept.png", "reader/kept.webp", "pages/new.png", "reader/new.webp")
+			}
+		})
+	}
+}
+
 type mediaChildConfig struct {
 	Kinds                                                                  media.Config
 	Schema, ContentSchema, HostSchema, Endpoint, Bucket, Ready, AfterImage string

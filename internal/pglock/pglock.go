@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -100,7 +101,7 @@ func (s *session) try(key string) (*pgx.Conn, bool, error) {
 		conn, err := pgx.ConnectConfig(connectCtx, s.cfg)
 		cancel()
 		if err != nil {
-			return nil, false, err
+			return nil, false, connectError(err)
 		}
 		s.conn = conn
 		go s.keepAlive(conn)
@@ -190,7 +191,7 @@ func waitFor(ctx context.Context, cfg *pgx.ConnConfig, key string) (release func
 		if errors.Is(waitCtx.Err(), context.DeadlineExceeded) {
 			err = errors.Join(ErrContended, err)
 		}
-		return nil, false, err
+		return nil, false, connectError(err)
 	}
 	closeConn := func() {
 		ctx, cancel := context.WithTimeout(context.Background(), connectTimeout)
@@ -229,4 +230,16 @@ func waitFor(ctx context.Context, cfg *pgx.ConnConfig, key string) (release func
 			closeConn()
 		})
 	}, true, nil
+}
+
+// Resource refusals leave acquisition to the caller's existing retry path.
+func connectError(err error) error {
+	var pe *pgconn.PgError
+	if errors.As(err, &pe) {
+		switch pe.Code {
+		case "53300", "53000", "53100", "53200", "53400":
+			return errors.Join(ErrContended, err)
+		}
+	}
+	return err
 }
