@@ -7068,7 +7068,7 @@
       "id": "CK-API-166",
       "method": "POST",
       "path": "/v1/import",
-      "selection": "partial-security-reply-counts-import-recounts-and-merged-entities; other functionality deferred P1",
+      "selection": "partial-security-reply-counts-import-recounts-and-merged-entity-aliases; other functionality deferred P1",
       "status": "verified",
       "cases": [
         "TestHTTPAuthenticationMatrix/CK-API-166_POST_/v1/import/malformed_credential",
@@ -7108,9 +7108,9 @@
       "security_evidence": "credential gate and app-key boundary only; no route-specific functional or mutation no-effect approval; executed in integrated-f052-aggregate",
       "evidence": [
         "Selected phase1 credential failures, foreign app-key binding, declared staff permission gate when applicable, HEAD inheritance and no protected body disclosure. Positive functionality and deeper route-specific profiles remain P1.",
-        "Merged entity replay reports merged.entities=1 with no skipped or failed records, leaves the tombstone and survivor unchanged, and redirects direct and external memberships to the survivor. IDs remain limited to written records."
+        "Merged entity replay reports merged.entities=1 with no skipped or failed records, leaves the tombstone and survivor unchanged, and redirects direct and external memberships to the survivor. IDs remain limited to written records. Re-sent aliases follow single and successive merges without rewriting stored aliases, count as written, and still conflict on unrelated targets while valid neighbors succeed."
       ],
-      "qualified_scope": "phase1 security, scoped reply-count concurrency, one recount per fallback chunk, imported comment-like lock order, deferred recounts, bad records failed alone or found by halving, and merged entity replay; not full route functionality"
+      "qualified_scope": "phase1 security, scoped reply-count concurrency, one recount per fallback chunk, imported comment-like lock order, deferred recounts, bad records failed alone or found by halving, and merged entity and alias replay; not full route functionality"
     },
     {
       "id": "CK-API-167",
@@ -7933,7 +7933,7 @@
         "TestImportMergedEntityMemberships"
       ],
       "evidence": [
-        "Go client decodes merged entity replay as accepted without writing: merged.entities=1, skipped and failed empty, and no ID for the unwritten entity. Real PostgreSQL checks preserve the full tombstone and survivor and resolve memberships to the survivor."
+        "Go client decodes merged entity replay as accepted without writing: merged.entities=1, skipped and failed empty, and no ID for the unwritten entity. Real PostgreSQL checks preserve the full tombstone and survivor and resolve memberships to the survivor. Unchanged aliases count as written through successive merges, preserve their stored codes, and reject unrelated targets without failing valid neighbors."
       ]
     },
     {
