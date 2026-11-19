@@ -1221,6 +1221,7 @@
       "status": "verified",
       "evidence": [
         "Actual storage refusal, database settlement abort and resource failure stay observable; retry/regeneration recovers durable state without pretending prior completion.",
+        "Real PostgreSQL/MinIO recovery covers a stale prepared PUT refused with 412 and a frozen attempt facing unrelated bytes: both settle absent, refund once, free the folder for its next edit, let the admitted ingest and derivative work finish, and permit the same authorized operation to retry. Matching receipts keep their object unchanged and charge once; equal ETags replay the admitted bytes. A missing expected manifest still conflicts. The affected local run passed 42 named cases in 102.207s; this is not full-suite qualification.",
         "Focused local race checks cover exhausted HLS, MP4, subtitle and poster work, early image failure, regeneration with unchanged completed outputs/chunks, and video shutdown/resume. This is not full-suite qualification.",
         "Signed media child282aa358; combined race85.683s, restored browser positive19.270s and real migration9.836s. Final integrated run remains required."
       ],
@@ -1231,6 +1232,11 @@
         "TestMediaFailureRecovery/CK-J11-S06/resource-failure-is-visible-and-regeneration-recovers",
         "TestMediaFailureRecovery/CK-J11-S06/staged-placement-failure-regenerates",
         "TestMediaFailureRecovery/CK-J11-S06/storage-refusal",
+        "TestMediaPreparedCommitRecovery/conflicting-put",
+        "TestMediaPreparedCommitRecovery/frozen-conflict",
+        "TestMediaPreparedCommitRecovery/matching-receipt",
+        "TestMediaPreparedCommitRecovery/equal-etag",
+        "TestMediaPreparedCommitRecovery/missing-existing",
                 "TestMediaVideoFailureRecovery/video",
         "TestMediaVideoFailureRecovery/mp4",
         "TestMediaVideoFailureRecovery/subtitle",
@@ -1292,14 +1298,17 @@
       "behavior": "Uncontended advisory locks share one session per process; contended keys stay exclusive, other processes are excluded, and a cancelled waiter keeps its process's other locks",
       "status": "verified",
       "evidence": [
-        "Sixteen workers each holding their own key while nesting three more are never seen on more than one session in pg_locks; the per-lock connections before this change showed 18 at once. Sixteen workers contending on one key never overlap. A second pool cannot take a held key, a cancelled waiter leaves its process's other lock held, a waiter in another process acquires the key once it is released, and a terminated session is replaced on the next lock."
+        "Sixteen workers each holding their own key while nesting three more are never seen on more than one session in pg_locks; the per-lock connections before this change showed 18 at once. Sixteen workers contending on one key never overlap. A second pool cannot take a held key, a cancelled waiter leaves its process's other lock held, a waiter in another process acquires the key once it is released, and a terminated session is replaced on the next lock.",
+        "A real PostgreSQL role with CONNECTION LIMIT 1 refuses both shared-session and dedicated-waiter connections with SQLSTATE 53300; both return ErrContended while retaining the PgError. Unit dial failures cover all five resource codes and preserve unrelated errors. These cases passed in the affected local recovery run; original-source overlays fail the new recovery and refusal regressions."
       ],
       "cases": [
         "TestAdvisoryLockSession",
         "TestAdvisoryLockSession/CK-J11-S10_uncontended_nested_locks_share_one_connection",
         "TestAdvisoryLockSession/CK-J11-S10_a_contended_key_is_held_by_one_worker_at_a_time",
         "TestAdvisoryLockSession/CK-J11-S10_a_lost_session_reconnects_for_the_next_lock",
-        "TestAdvisoryLockSession/CK-J11-S10_locks_exclude_other_processes_and_survive_a_cancelled_waiter"
+        "TestAdvisoryLockSession/CK-J11-S10_locks_exclude_other_processes_and_survive_a_cancelled_waiter",
+        "TestAdvisoryLockSession/CK279_refused_connections_are_contention",
+        "TestAdvisoryLockConnectErrors"
       ]
     },
     {
@@ -7059,7 +7068,7 @@
       "id": "CK-API-166",
       "method": "POST",
       "path": "/v1/import",
-      "selection": "partial-security-reply-counts-import-recounts-and-merged-entities; other functionality deferred P1",
+      "selection": "partial-security-reply-counts-import-recounts-and-merged-entity-aliases; other functionality deferred P1",
       "status": "verified",
       "cases": [
         "TestHTTPAuthenticationMatrix/CK-API-166_POST_/v1/import/malformed_credential",
@@ -7099,9 +7108,9 @@
       "security_evidence": "credential gate and app-key boundary only; no route-specific functional or mutation no-effect approval; executed in integrated-f052-aggregate",
       "evidence": [
         "Selected phase1 credential failures, foreign app-key binding, declared staff permission gate when applicable, HEAD inheritance and no protected body disclosure. Positive functionality and deeper route-specific profiles remain P1.",
-        "Merged entity replay reports merged.entities=1 with no skipped or failed records, leaves the tombstone and survivor unchanged, and redirects direct and external memberships to the survivor. IDs remain limited to written records."
+        "Merged entity replay reports merged.entities=1 with no skipped or failed records, leaves the tombstone and survivor unchanged, and redirects direct and external memberships to the survivor. IDs remain limited to written records. Re-sent aliases follow single and successive merges without rewriting stored aliases, count as written, and still conflict on unrelated targets while valid neighbors succeed."
       ],
-      "qualified_scope": "phase1 security, scoped reply-count concurrency, one recount per fallback chunk, imported comment-like lock order, deferred recounts, bad records failed alone or found by halving, and merged entity replay; not full route functionality"
+      "qualified_scope": "phase1 security, scoped reply-count concurrency, one recount per fallback chunk, imported comment-like lock order, deferred recounts, bad records failed alone or found by halving, and merged entity and alias replay; not full route functionality"
     },
     {
       "id": "CK-API-167",
@@ -7924,7 +7933,7 @@
         "TestImportMergedEntityMemberships"
       ],
       "evidence": [
-        "Go client decodes merged entity replay as accepted without writing: merged.entities=1, skipped and failed empty, and no ID for the unwritten entity. Real PostgreSQL checks preserve the full tombstone and survivor and resolve memberships to the survivor."
+        "Go client decodes merged entity replay as accepted without writing: merged.entities=1, skipped and failed empty, and no ID for the unwritten entity. Real PostgreSQL checks preserve the full tombstone and survivor and resolve memberships to the survivor. Unchanged aliases count as written through successive merges, preserve their stored codes, and reject unrelated targets without failing valid neighbors."
       ]
     },
     {

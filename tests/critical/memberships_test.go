@@ -2,6 +2,7 @@ package critical_test
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
@@ -24,17 +25,26 @@ func TestImportMergedEntityMemberships(t *testing.T) {
 	batch := importer.Batch{Source: "merged-memberships", Entities: []importer.EntityRecord{
 		{ExternalID: "a", Kind: "collection", Slug: "legacy-a", Names: []entities.Name{{Language: "en", Kind: "name", Name: "Legacy A"}}},
 		{ExternalID: "b", Kind: "collection", Slug: "survivor-b", Names: []entities.Name{{Language: "en", Kind: "name", Name: "Survivor B"}}},
+		{ExternalID: "c", Kind: "collection", Slug: "unrelated-c", Names: []entities.Name{{Language: "en", Kind: "name", Name: "Unrelated C"}}},
 	}, Contents: []importer.ContentRecord{{ExternalID: "content", Kind: "article", State: "draft"}},
+		Aliases: []importer.AliasRecord{
+			{Kind: "collection", Key: "a", Target: importer.TargetRef{Entity: &importer.Ref{ExternalID: "a"}}},
+			{Kind: "collection", Key: "c", Target: importer.TargetRef{Entity: &importer.Ref{ExternalID: "c"}}},
+		},
 		Memberships: []importer.MembershipSet{{Content: importer.Ref{ExternalID: "content"}, Kinds: []string{"collection"},
 			Memberships: []importer.MembershipRecord{{Entity: importer.Ref{ExternalID: "a"}}}}},
 	}
 	initial, err := admin.PostImport(ctx, batch)
 	must(t, err)
-	if len(initial.Failed) != 0 || len(initial.Skipped) != 0 || len(initial.Merged) != 0 || initial.Written[importer.SectionEntities] != 2 || initial.Written[importer.SectionContents] != 1 || initial.Written[importer.SectionMemberships] != 1 {
+	if len(initial.Failed) != 0 || len(initial.Skipped) != 0 || len(initial.Merged) != 0 || initial.Written[importer.SectionEntities] != 3 || initial.Written[importer.SectionContents] != 1 || initial.Written[importer.SectionMemberships] != 1 || initial.Written[importer.SectionAliases] != 2 {
 		t.Fatalf("initial import: %+v", initial)
 	}
 	from, into := initial.IDs[importer.RecordEntity]["a"], initial.IDs[importer.RecordEntity]["b"]
 	contentID := initial.IDs[importer.RecordContent]["content"]
+	aliasesSQL := `SELECT jsonb_agg(to_jsonb(a) ORDER BY legacy_key)::text FROM ` + pgx.Identifier{w.schema, "content_code_aliases"}.Sanitize() +
+		` a WHERE tenant_id=$1 AND source=$2`
+	var aliasesBefore string
+	must(t, w.pool.QueryRow(ctx, aliasesSQL, a.cfg.Scope.AppID.String(), batch.Source).Scan(&aliasesBefore))
 	_, err = admin.PostEntityMerge(ctx, from, entities.MergeInput{Into: entities.EntityID(into)})
 	must(t, err)
 	before, err := admin.GetEntity(ctx, into, ck.GetEntityQuery{})
@@ -45,13 +55,14 @@ func TestImportMergedEntityMemberships(t *testing.T) {
 	must(t, w.pool.QueryRow(ctx, tombstoneSQL, a.cfg.Scope.AppID.String(), from).Scan(&tombstoneBefore))
 	batch.Entities = batch.Entities[:1]
 	batch.Contents = nil
+	batch.Aliases = batch.Aliases[:1]
 	// Direct and external references to either identity collapse onto B.
 	batch.Memberships[0].Memberships = append(batch.Memberships[0].Memberships,
 		importer.MembershipRecord{Entity: importer.Ref{ID: from}},
 		importer.MembershipRecord{Entity: importer.Ref{ExternalID: "b"}})
 	result, err := admin.PostImport(ctx, batch)
 	must(t, err)
-	if len(result.Failed) != 0 || len(result.Skipped) != 0 || !reflect.DeepEqual(result.Merged, map[string]int{importer.SectionEntities: 1}) || result.Written[importer.SectionEntities] != 0 || result.Written[importer.SectionMemberships] != 1 {
+	if len(result.Failed) != 0 || len(result.Skipped) != 0 || !reflect.DeepEqual(result.Merged, map[string]int{importer.SectionEntities: 1}) || result.Written[importer.SectionEntities] != 0 || result.Written[importer.SectionMemberships] != 1 || result.Written[importer.SectionAliases] != 1 {
 		t.Fatalf("replayed import: %+v", result)
 	}
 	if len(result.IDs[importer.RecordEntity]) != 0 {
@@ -77,6 +88,36 @@ func TestImportMergedEntityMemberships(t *testing.T) {
 	must(t, w.pool.QueryRow(ctx, tombstoneSQL, a.cfg.Scope.AppID.String(), from).Scan(&tombstoneAfter))
 	if tombstoneAfter != tombstoneBefore {
 		t.Fatalf("replay changed tombstone: before %s; after %s", tombstoneBefore, tombstoneAfter)
+	}
+	// Replaying A's alias also works after a second merge: code
+	// redirects are flattened, while aliases keep their original codes.
+	_, err = admin.PostEntityMerge(ctx, into, entities.MergeInput{Into: entities.EntityID(initial.IDs[importer.RecordEntity]["c"])})
+	must(t, err)
+	replay := importer.Batch{Source: batch.Source, Aliases: batch.Aliases}
+	result, err = admin.PostImport(ctx, replay)
+	must(t, err)
+	if len(result.Failed) != 0 || len(result.Skipped) != 0 || len(result.Merged) != 0 || result.Written[importer.SectionAliases] != 1 {
+		t.Fatalf("alias replay after second merge: %+v", result)
+	}
+	// The content is unrelated to the entity merge chain, so the existing
+	// alias must still conflict, without moving it or rejecting its neighbor.
+	replay.Aliases = []importer.AliasRecord{
+		{Kind: "collection", Key: "c", Target: importer.TargetRef{Entity: &importer.Ref{ExternalID: "c"}}},
+		{Kind: "collection", Key: "a", Target: importer.TargetRef{Content: &importer.Ref{ExternalID: "content"}}},
+	}
+	result, err = admin.PostImport(ctx, replay)
+	must(t, err)
+	if len(result.Failed) != 1 || len(result.Skipped) != 0 || len(result.Merged) != 0 || result.Written[importer.SectionAliases] != 1 {
+		t.Fatalf("unrelated alias target: %+v", result)
+	}
+	failure := result.Failed[0]
+	if failure.Section != importer.SectionAliases || failure.Index != 1 || failure.ExternalID != "a" || failure.Code != "conflict" || !strings.Contains(failure.Error, "1 aliases already name other records") {
+		t.Fatalf("unrelated alias conflict: %+v", failure)
+	}
+	var aliasesAfter string
+	must(t, w.pool.QueryRow(ctx, aliasesSQL, a.cfg.Scope.AppID.String(), batch.Source).Scan(&aliasesAfter))
+	if aliasesAfter != aliasesBefore {
+		t.Fatalf("merge or replay changed aliases: before %s; after %s", aliasesBefore, aliasesAfter)
 	}
 }
 

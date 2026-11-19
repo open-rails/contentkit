@@ -82,9 +82,9 @@ func ValidAlias(source, kind, key string) error {
 }
 
 // PutAliases records aliases in the caller's transaction. An alias is
-// written once: repeating it is a no-op, pointing it at another target (or
-// locator) is ErrConflict, a target without a code ErrNotFound; roll back on
-// any error.
+// written once: repeating it, including after its target is merged, is a no-op.
+// Pointing it at another target (or locator) is ErrConflict, a target without
+// a code ErrNotFound; roll back on any error.
 func PutAliases(ctx context.Context, q Querier, qs, tenant string, aliases []Alias) error {
 	if len(aliases) == 0 {
 		return nil
@@ -140,7 +140,9 @@ func PutAliases(ctx context.Context, q Querier, qs, tenant string, aliases []Ali
 	clash := fmt.Sprintf(`WITH r AS (%[2]s)
 SELECT (SELECT count(*) FROM (SELECT 1 FROM r GROUP BY source, legacy_kind, legacy_key HAVING count(DISTINCT (code, locator)) > 1) d)
  + (SELECT count(*) FROM r JOIN %[1]s.content_code_aliases a ON a.tenant_id = $1 AND a.source = r.source AND a.legacy_kind = r.legacy_kind
-   AND a.legacy_key = r.legacy_key AND (a.code IS DISTINCT FROM r.code OR a.locator IS DISTINCT FROM r.locator))`, qs, resolved)
+   AND a.legacy_key = r.legacy_key
+   JOIN %[1]s.content_codes c ON c.tenant_id = a.tenant_id AND c.code = a.code
+   WHERE (a.code IS DISTINCT FROM r.code AND c.merged_into IS DISTINCT FROM r.code) OR a.locator IS DISTINCT FROM r.locator)`, qs, resolved)
 	conflicting, err := count(clash)
 	if err != nil {
 		return err
