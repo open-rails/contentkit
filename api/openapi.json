@@ -18420,6 +18420,12 @@
               "type": "integer"
             }
           },
+          "merged": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer"
+            }
+          },
           "failed": {
             "type": "array",
             "items": {

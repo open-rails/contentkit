@@ -7059,7 +7059,7 @@
       "id": "CK-API-166",
       "method": "POST",
       "path": "/v1/import",
-      "selection": "partial-security-reply-counts-and-import-recounts; other functionality deferred P1",
+      "selection": "partial-security-reply-counts-import-recounts-and-merged-entities; other functionality deferred P1",
       "status": "verified",
       "cases": [
         "TestHTTPAuthenticationMatrix/CK-API-166_POST_/v1/import/malformed_credential",
@@ -7083,7 +7083,8 @@
         "TestImportLegacyReadingRemoval",
         "TestDeferredRecountKeepsRequeuedTarget",
         "TestImportIsolatesBadRecords",
-        "TestImportSingleRecordRetry"
+        "TestImportSingleRecordRetry",
+        "TestImportMergedEntityMemberships"
       ],
       "implemented_security_cases": [
         "TestHTTPAuthenticationMatrix/CK-API-166_POST_/v1/import/malformed_credential",
@@ -7097,9 +7098,10 @@
       "remaining": "P1: positive/function-specific error and deeper target profiles, as declared in the approved inventory.",
       "security_evidence": "credential gate and app-key boundary only; no route-specific functional or mutation no-effect approval; executed in integrated-f052-aggregate",
       "evidence": [
-        "Selected phase1 credential failures, foreign app-key binding, declared staff permission gate when applicable, HEAD inheritance and no protected body disclosure. Positive functionality and deeper route-specific profiles remain P1."
+        "Selected phase1 credential failures, foreign app-key binding, declared staff permission gate when applicable, HEAD inheritance and no protected body disclosure. Positive functionality and deeper route-specific profiles remain P1.",
+        "Merged entity replay reports merged.entities=1 with no skipped or failed records, leaves the tombstone and survivor unchanged, and redirects direct and external memberships to the survivor. IDs remain limited to written records."
       ],
-      "qualified_scope": "phase1 security, scoped reply-count concurrency, one recount per fallback chunk, imported comment-like lock order, deferred recounts, and bad records failed alone or found by halving; not full route functionality"
+      "qualified_scope": "phase1 security, scoped reply-count concurrency, one recount per fallback chunk, imported comment-like lock order, deferred recounts, bad records failed alone or found by halving, and merged entity replay; not full route functionality"
     },
     {
       "id": "CK-API-167",
@@ -7912,6 +7914,17 @@
       "evidence": [
         "Both transports agree and assert literal2200 maximum and all anonymous permissions false.",
         "Independently reviewed executable contract mapping; prior matching real-service race receipts are retained with the test rebuild. The strict gate must execute every exact case again on the combined media source before release qualification."
+      ]
+    },
+    {
+      "id": "go:Client.PostImport",
+      "name": "Client.PostImport",
+      "status": "verified",
+      "cases": [
+        "TestImportMergedEntityMemberships"
+      ],
+      "evidence": [
+        "Go client decodes merged entity replay as accepted without writing: merged.entities=1, skipped and failed empty, and no ID for the unwritten entity. Real PostgreSQL checks preserve the full tombstone and survivor and resolve memberships to the survivor."
       ]
     },
     {

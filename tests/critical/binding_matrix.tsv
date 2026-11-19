@@ -1,6 +1,7 @@
 id	language	surface	name	source	selection
 go:Client.GetKinds	go	Go generated Client route	Client.GetKinds	client_gen.go	included-critical
 go:Client.GetConfig	go	Go generated Client route	Client.GetConfig	client_gen.go	included-critical
+go:Client.PostImport	go	Go generated Client route	Client.PostImport	client_gen.go	included-critical merged entity replay
 go:Client.PostCommentHold	go	Go generated Client route	Client.PostCommentHold	client_gen.go	included-critical
 go:Client.PostCommentRelease	go	Go generated Client route	Client.PostCommentRelease	client_gen.go	included-critical
 go:Client.GetCommentBans	go	Go generated Client route	Client.GetCommentBans	client_gen.go	included-critical

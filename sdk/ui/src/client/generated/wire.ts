@@ -1802,6 +1802,7 @@ export interface Restored {
 export interface Result {
   written: Record<string, number>;
   skipped?: Record<string, number>;
+  merged?: Record<string, number>;
   failed: RecordFailure[];
   ids: Record<string, Record<string, string>>;
   recounted?: number;
