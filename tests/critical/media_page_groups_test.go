@@ -81,15 +81,88 @@ func TestMediaPageGroups(t *testing.T) {
 		awaitMediaReady(t, g.client, g.ref)
 	})
 
-	t.Run("a_retried_job_records_each_page_on_its_own_with_grouping_on", func(t *testing.T) {
-		g := newPageGroups(t, m, "Retried with grouping on", landscapePages(t, 5, 70))
+	t.Run("a_retried_job_records_in_groups", func(t *testing.T) {
+		g := newPageGroups(t, m, "Retried with grouping on", landscapePages(t, 40, 70))
 		before := g.manifestEdits(t)
 		must(t, g.processor(t, mediaimage.Config{Workers: 2, GroupSize: 32, GroupWait: time.Minute}).Process(g.job(t.Context()), mediastore.ProcessJob{Ref: g.target, Retry: true}))
-		if edits := g.manifestEdits(t) - before; edits != 5 {
-			t.Fatalf("a retry took %d manifest edits for 5 pages; it records each on its own", edits)
+		if edits := g.manifestEdits(t) - before; edits != 2 {
+			t.Fatalf("a retry took %d manifest edits for 40 pages; groups of 32 take 2", edits)
 		}
-		if _, readers := g.readers(t); len(readers) != 5 {
-			t.Fatalf("%d of 5 pages recorded their reader output", len(readers))
+		if _, readers := g.readers(t); len(readers) != 40 {
+			t.Fatalf("%d of 40 pages recorded their reader output", len(readers))
+		}
+	})
+
+	t.Run("new_outputs_are_checked_before_the_group_lock", func(t *testing.T) {
+		m := newResilientMedia(t, func(c *ck.Config) {
+			c.Media.Kinds[0].Uploads[0].Max = 32
+			c.Media.Kinds[0].Private = append(c.Media.Kinds[0].Private,
+				media.Private{Name: "thumb", From: "pages/{name}", To: "thumb/{name}.webp", Image: &media.Image{Width: 16}},
+				media.Private{Name: "low", From: "pages/{name}", To: "low/{name}.webp", Image: &media.Image{Width: 32}})
+		})
+		g := newPageGroups(t, m, "Checks outside the lock", landscapePages(t, 32, 71))
+		must(t, g.processor(t, mediaimage.Config{Workers: 2, GroupSize: 32, GroupWait: time.Minute}).Process(g.job(t.Context()), mediastore.ProcessJob{Ref: g.target}))
+		if g.store.lockedHeads != 0 || len(g.store.checked) != 96 {
+			t.Fatalf("output HEADs: %d keys checked, %d under the lock", len(g.store.checked), g.store.lockedHeads)
+		}
+		for key, heads := range g.store.checked {
+			if heads != 1 {
+				t.Errorf("%s checked %d times, want once before locking", key, heads)
+			}
+		}
+	})
+
+	t.Run("publication_names_are_checked_before_the_group_lock", func(t *testing.T) {
+		pages := landscapePages(t, 3, 73)
+		pages = append(pages, pageSource{path: "cover", data: imageBytes(t)})
+		g := newPageGroups(t, m, "Publication checks outside the lock", pages)
+		must(t, g.processor(t, mediaimage.Config{Workers: 1, GroupSize: 32, GroupWait: time.Minute}).Process(g.job(t.Context()), mediastore.ProcessJob{Ref: g.target}))
+		if g.store.lockedHeads != 0 || len(g.store.checked) != 5 {
+			t.Fatalf("3 private and 2 public outputs: %d keys checked, %d HEADs under lock", len(g.store.checked), g.store.lockedHeads)
+		}
+		snapshot, _ := g.readers(t)
+		cover, _ := snapshot.Get("cover.png")
+		pub, ok := cover.Publication("cover")
+		if !ok || !pub.Ready() {
+			t.Fatalf("cover was not published: %+v", cover)
+		}
+	})
+
+	t.Run("cleanup_between_check_and_edit_does_not_adopt_a_missing_output", func(t *testing.T) {
+		g := newPageGroups(t, m, "Cleanup after preflight", landscapePages(t, 5, 72))
+		var removed string
+		g.store.beforeLock = func() {
+			removed = g.store.written()[0]
+			blob, ok := g.item.BlobRef(removed)
+			if !ok {
+				t.Fatal("output is not a blob")
+			}
+			must(t, g.manifests.DropUnreferenced(g.job(t.Context()), g.target, mediastore.Unreferenced{Blobs: []string{blob}}))
+			// Retirement and deletion are separate cleanup steps. Deliver the
+			// exact retired key's DELETE before the worker acquires its lock.
+			must(t, m.storage.store.Delete(t.Context(), removed))
+			if _, err := m.storage.store.Head(t.Context(), removed); !errors.Is(err, mediastore.ErrNotFound) {
+				t.Fatalf("cleanup left output in place: %v", err)
+			}
+		}
+		before := g.manifestEdits(t)
+		must(t, g.processor(t, mediaimage.Config{Workers: 1, GroupSize: 32, GroupWait: time.Minute}).Process(g.job(t.Context()), mediastore.ProcessJob{Ref: g.target}))
+		if removed == "" || g.store.lockedHeads != 1 || g.store.checked[removed] != 2 {
+			t.Fatalf("retired output %q: %d locked HEADs, checks=%v", removed, g.store.lockedHeads, g.store.checked)
+		}
+		if edits := g.manifestEdits(t) - before; edits != 2 {
+			t.Fatalf("cleanup took %d edits; want one group and one regenerated page", edits)
+		}
+		_, readers := g.readers(t)
+		if len(readers) != 5 {
+			t.Fatalf("cleanup left %d readers, want 5", len(readers))
+		}
+		for _, f := range readers {
+			key, err := g.item.Blob(f.Blob)
+			must(t, err)
+			if key == removed {
+				t.Fatal("adopted the missing output")
+			}
 		}
 	})
 
@@ -146,24 +219,26 @@ func TestMediaPageGroups(t *testing.T) {
 		}
 	})
 
-	t.Run("an_unrenderable_page_fails_alone_in_its_group", func(t *testing.T) {
-		pages := landscapePages(t, 6, 10)
-		pages[3].data = pageImage(t, 400, 400, 13)
-		g := newPageGroups(t, m, "One page over the pixel limit", pages)
-		before := g.manifestEdits(t)
-		must(t, g.processor(t, mediaimage.Config{Workers: 2, GroupSize: 32, GroupWait: time.Minute, MaxPixels: 100_000}).Process(g.job(t.Context()), mediastore.ProcessJob{Ref: g.target}))
-		if edits := g.manifestEdits(t) - before; edits != 1 {
-			t.Fatalf("one group took %d manifest edits", edits)
-		}
-		snapshot, readers := g.readers(t)
-		bad, _ := snapshot.Get(pages[3].path)
-		if failure := bad.Fail(); failure == nil || failure.Code != media.CodeImageTooLarge {
-			t.Fatalf("oversized page failure = %+v", failure)
-		}
-		if _, ok := readers[pages[3].path]; ok || len(readers) != 5 {
-			t.Fatalf("the rest of the group was not kept: %d readers", len(readers))
-		}
-	})
+	for _, retry := range []bool{false, true} {
+		t.Run(fmt.Sprintf("an_unrenderable_page_fails_alone/retry=%t", retry), func(t *testing.T) {
+			pages := landscapePages(t, 6, 10)
+			pages[3].data = pageImage(t, 400, 400, 13)
+			g := newPageGroups(t, m, "One page over the pixel limit", pages)
+			before := g.manifestEdits(t)
+			must(t, g.processor(t, mediaimage.Config{Workers: 2, GroupSize: 32, GroupWait: time.Minute, MaxPixels: 100_000}).Process(g.job(t.Context()), mediastore.ProcessJob{Ref: g.target, Retry: retry}))
+			if edits := g.manifestEdits(t) - before; edits != 1 {
+				t.Fatalf("one group took %d manifest edits", edits)
+			}
+			snapshot, readers := g.readers(t)
+			bad, _ := snapshot.Get(pages[3].path)
+			if failure := bad.Fail(); failure == nil || failure.Code != media.CodeImageTooLarge {
+				t.Fatalf("oversized page failure = %+v", failure)
+			}
+			if _, ok := readers[pages[3].path]; ok || len(readers) != 5 {
+				t.Fatalf("the rest of the group was not kept: %d readers", len(readers))
+			}
+		})
+	}
 
 	t.Run("a_page_replaced_while_its_group_renders_keeps_no_stale_output", func(t *testing.T) {
 		pages := landscapePages(t, 5, 20)
@@ -262,6 +337,31 @@ WHERE tenant_id=$1 AND folder_prefix=$2 AND object_key=ANY($3) AND retired_at IS
 			if slices.Contains(unrecorded, key) {
 				t.Fatalf("retry recorded the cancelled run's output %s", key)
 			}
+		}
+	})
+
+	t.Run("a_cancelled_retry_keeps_finished_pages_in_a_group", func(t *testing.T) {
+		pages := landscapePages(t, 6, 74)
+		g := newPageGroups(t, m, "Retry cancellation preserves completed pages", pages)
+		g.store.holdRead(g.blobKey(t, pages[5].path))
+		before := g.manifestEdits(t)
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		done := make(chan error, 1)
+		processor := g.processor(t, mediaimage.Config{Workers: 1, GroupSize: 32, GroupWait: time.Minute})
+		go func() { done <- processor.Process(g.job(ctx), mediastore.ProcessJob{Ref: g.target, Retry: true}) }()
+		g.store.awaitHeld(t)
+		cancel()
+		if err := <-done; err == nil {
+			t.Fatal("cancelled retry reported success")
+		}
+		if edits := g.manifestEdits(t) - before; edits != 1 {
+			t.Fatalf("finished pages took %d edits, want one group", edits)
+		}
+		snapshot, readers := g.readers(t)
+		last, _ := snapshot.Get(pages[5].path)
+		if len(readers) != 5 || last.Fail() != nil {
+			t.Fatalf("retry lost finished pages or failed its pending page: readers=%d pending=%+v", len(readers), last)
 		}
 	})
 
@@ -532,7 +632,7 @@ func newPageGroups(t *testing.T, m *resilientMedia, title string, pages []pageSo
 	must(t, err)
 	journal, err := mediastore.NewPGJournal(m.pool, m.schema, nil)
 	must(t, err)
-	g.manifests, err = mediastore.NewManifests(g.store, m.config.Kinds, mediastore.ManifestOptions{Locker: mediastore.PGLocker(m.pool), Journal: journal})
+	g.manifests, err = mediastore.NewManifests(g.store, m.config.Kinds, mediastore.ManifestOptions{Locker: &pageLocker{Locker: mediastore.PGLocker(m.pool), store: g.store}, Journal: journal})
 	must(t, err)
 	ops := make([]media.Op, len(pages))
 	for i, page := range pages {
@@ -680,14 +780,18 @@ func (g *pageGroups) pad(t *testing.T, size int64) {
 // recorded.
 type pageStore struct {
 	media.Store
-	mu      sync.Mutex
-	hold    string
-	held    chan struct{}
-	release chan struct{}
-	outputs []string
-	refuse  string // a source; the next output written after it is read is refused
-	arm     bool
-	refused string
+	mu          sync.Mutex
+	hold        string
+	held        chan struct{}
+	release     chan struct{}
+	outputs     []string
+	refuse      string // a source; the next output written after it is read is refused
+	arm         bool
+	refused     string
+	locked      int
+	lockedHeads int
+	checked     map[string]int
+	beforeLock  func()
 }
 
 var errOutputRefused = errors.New("test bucket refuses this output")
@@ -703,6 +807,15 @@ func (s *pageStore) refuseOutputOf(source string) {
 func (s *pageStore) Head(ctx context.Context, key string) (media.Object, error) {
 	s.mu.Lock()
 	refused := s.refused != "" && key == s.refused
+	if slices.Contains(s.outputs, key) {
+		if s.checked == nil {
+			s.checked = map[string]int{}
+		}
+		s.checked[key]++
+		if s.locked > 0 {
+			s.lockedHeads++
+		}
+	}
 	s.mu.Unlock()
 	if refused {
 		return media.Object{}, errOutputRefused
@@ -770,4 +883,37 @@ func (s *pageStore) Put(ctx context.Context, key string, body io.Reader, size in
 		s.mu.Unlock()
 	}
 	return object, err
+}
+
+// pageLocker observes output HEADs during real PostgreSQL lock holds and can
+// run cleanup after preflight but before the recording edit acquires its lock.
+type pageLocker struct {
+	mediastore.Locker
+	store *pageStore
+}
+
+func (l *pageLocker) Lock(ctx context.Context, key string) (func(), error) {
+	s := l.store
+	s.mu.Lock()
+	var before func()
+	if len(s.checked) > 0 {
+		before, s.beforeLock = s.beforeLock, nil
+	}
+	s.mu.Unlock()
+	if before != nil {
+		before()
+	}
+	unlock, err := l.Locker.Lock(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	s.mu.Lock()
+	s.locked++
+	s.mu.Unlock()
+	return func() {
+		s.mu.Lock()
+		s.locked--
+		s.mu.Unlock()
+		unlock()
+	}, nil
 }

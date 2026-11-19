@@ -15,6 +15,7 @@ import { EntitiesClient } from "./entities.js";
 import { StatsClient } from "./stats.js";
 import { VersionsClient } from "./versions.js";
 import { Http, type ContentKitChange, type ContentKitModule, type HttpOptions } from "./http.js";
+import { learnAccountKinds } from "./media/api.js";
 import { MediaClient, type ContentFolders, type MediaOptions } from "./media/client.js";
 import { call } from "./route.js";
 import { ReaderPreferencesClient } from "./reader-preferences.js";
@@ -105,7 +106,11 @@ export function createContentKitClient(options: ContentKitClientOptions): Conten
     preferences: new ReaderPreferencesClient(h),
     guestHistory: guestReadingHistory(h.mount("discovery")),
     config: (signal) => call(h, "GET", "/config", { signal }),
-    kinds: (signal) => call(h, "GET", "/kinds", { signal }),
+    kinds: (signal) =>
+      call(h, "GET", "/kinds", { signal }).then((model: ContentModel) => {
+        learnAccountKinds(h, model);
+        return model;
+      }),
     import: (batch) => call(h, "POST", "/import", { body: batch }),
     url: (module, ref) => h.mount(module, ref),
     setReadScope: (scope) => h.setReadScope(scope),

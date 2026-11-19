@@ -116,6 +116,11 @@ check("sameItem", () => {
 check("checkRef", () => {
   assert.doesNotThrow(() => sdk.checkRef(ref)); assert.doesNotThrow(() => sdk.checkRef(undefined));
   assert.throws(() => sdk.checkRef({ id: "../../another-item" }), error => error.code === "invalid_request");
+  const accounts = new Set(["user"]), imported = "6d7289a0-5b6f-59b1-9518-692b3a9d83b8";
+  assert.doesNotThrow(() => sdk.checkRef({ kind: "user", id: imported }, accounts)); assert.doesNotThrow(() => sdk.checkRef({ kind: "user", id: uuid }, accounts));
+  assert.throws(() => sdk.checkRef({ kind: "gallery", id: imported }, accounts), error => error.code === "invalid_request" && error.message.includes("UUIDv7"));
+  assert.throws(() => sdk.checkRef({ kind: "user", id: imported }), error => error.code === "invalid_request");
+  for (const bad of [imported.toUpperCase(), "00000000-0000-0000-0000-000000000000", "../../another-item"]) assert.throws(() => sdk.checkRef({ kind: "user", id: bad }, accounts), error => error.code === "invalid_request" && error.message.includes("account id"));
 });
 const rules = [{ path: "pages/{name}", types: ["image/png"], max_bytes: 3, max: 2 }, { path: "pages/cover", types: ["image/png"], max_bytes: 3, max: 1 }];
 check("uploadRules", () => {
@@ -189,6 +194,22 @@ check("publicRenditions", () => {
 check("isPending", () => {
   assert.equal(sdk.isPending({ status: "processing" }), true); assert.equal(sdk.isPending({ status: "processing", pages: [] }), false);
   assert.equal(sdk.isPending({ status: "processing", url: "ready" }), false); assert.equal(sdk.isPending(null), false);
+});
+check("acceptsFile", () => {
+  const zipOnly = ".zip,application/zip";
+  assert.equal(sdk.acceptsFile(zipOnly, { name: "Pages.ZIP", type: "" }), true);
+  assert.equal(sdk.acceptsFile(zipOnly, { name: "pages", type: "application/zip" }), true);
+  assert.equal(sdk.acceptsFile(zipOnly, { name: "pages.zip", type: "application/x-zip-compressed" }), true);
+  assert.equal(sdk.acceptsFile(zipOnly, { name: "page-01.jpg", type: "image/jpeg" }), false);
+  assert.equal(sdk.acceptsFile(zipOnly, { name: "zip", type: "application/zipx" }), false);
+  assert.equal(sdk.acceptsFile("video/*", { name: "clip.mp4", type: "video/mp4" }), true);
+  assert.equal(sdk.acceptsFile("video/*", { name: "Episode.MKV", type: "" }), true);
+  assert.equal(sdk.acceptsFile("video/*", { name: "clip.mov", type: "" }), true);
+  assert.equal(sdk.acceptsFile("video/*", { name: "notes.txt", type: "" }), false);
+  assert.equal(sdk.acceptsFile("video/*", { name: "mkv", type: "" }), false);
+  assert.equal(sdk.acceptsFile("video/*", { name: "poster.png", type: "image/png" }), false);
+  assert.equal(sdk.acceptsFile(undefined, { name: "any.bin", type: "" }), true);
+  assert.equal(sdk.acceptsFile(" , ", { name: "any.bin", type: "" }), true);
 });
 
 const results = [];

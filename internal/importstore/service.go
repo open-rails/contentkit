@@ -208,7 +208,10 @@ func (s *Service) runChunk(ctx context.Context, run *batchRun, sec section, from
 			continue
 		}
 		if g, ok := in.(entities.ImportEntity); ok && r.entityMerged[string(g.ID)] != "" {
-			skipRecords(run.res, sec.name, 1)
+			if run.res.Merged == nil {
+				run.res.Merged = map[string]int{}
+			}
+			run.res.Merged[sec.name]++
 			continue
 		}
 		ready = append(ready, pending{index: i, external: external, in: in, ids: r.minted})

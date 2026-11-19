@@ -47,8 +47,8 @@ type Config struct {
 	TempDir             string // zip scratch; default os.TempDir()
 	// Each rendered source is recorded and reported on its own (GroupSize 1,
 	// the default). Above 1, one manifest edit records GroupSize of them, or
-	// those finished within GroupWait (default 5s) of the group's first; a
-	// retried job (ProcessJob.Retry) still records each on its own.
+	// those finished within GroupWait (default 5s) of the group's first,
+	// including on retried jobs.
 	GroupSize int
 	GroupWait time.Duration
 }
@@ -147,8 +147,8 @@ func (p *Processor) Process(ctx context.Context, job mediastore.ProcessJob) erro
 		} else {
 			forceZips = false
 		}
-		if len(todo) > 0 && p.c.GroupSize > 1 && !job.Retry {
-			err = p.renderInGroups(ctx, item, m, todo)
+		if len(todo) > 0 && p.c.GroupSize > 1 {
+			err = p.renderInGroups(ctx, item, m, todo, job.Retry)
 		} else if len(todo) > 0 {
 			err = p.renderEach(ctx, item, m, todo)
 		} else {
@@ -333,7 +333,9 @@ func (p *Processor) renderEach(ctx context.Context, item mediastore.Item, m *med
 // group is reported, so progress still shows while a large gallery costs a
 // few dozen manifest edits rather than one per page. A source that failed to
 // render, or finished after a group failed, is left for the job's retry.
-func (p *Processor) renderInGroups(ctx context.Context, item mediastore.Item, m *mediastore.Manifest, todo []work) error {
+// On a retry, completed sources are recorded even after cancellation or another
+// group's failure, just as renderEach preserves them for FailPending.
+func (p *Processor) renderInGroups(ctx context.Context, item mediastore.Item, m *mediastore.Manifest, todo []work, retry bool) error {
 	type rendered struct {
 		done
 		err error
@@ -366,9 +368,17 @@ func (p *Processor) renderInGroups(ctx context.Context, item mediastore.Item, m 
 	)
 	flush := func() {
 		if len(group) > 0 {
-			if err = p.record(ctx, item, group, nil, nil); err == nil {
-				err = mediastore.CompleteProcessing(ctx, p.c.Manifests, item.Ref(), nil)
+			recordCtx := ctx
+			cancel := func() {}
+			if retry {
+				recordCtx, cancel = context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 			}
+			groupErr := p.record(recordCtx, item, group, nil, nil)
+			if groupErr == nil {
+				groupErr = mediastore.CompleteProcessing(recordCtx, p.c.Manifests, item.Ref(), nil)
+			}
+			cancel()
+			err = errors.Join(err, groupErr)
 		}
 		group, due = nil, nil
 	}
@@ -379,7 +389,7 @@ func (p *Processor) renderInGroups(ctx context.Context, item mediastore.Item, m 
 			case !ok:
 				open = false
 				flush()
-			case r.err != nil || err != nil:
+			case r.err != nil || err != nil && !retry:
 				lost = append(lost, r.written...)
 			default:
 				group = append(group, r.done)
@@ -435,15 +445,35 @@ func (p *Processor) record(ctx context.Context, item mediastore.Item, results []
 	if err := ctx.Err(); err != nil {
 		return p.joinDropIfGone(ctx, item, err, written)
 	}
+	var keys []string
+	for _, d := range results {
+		if d.err != nil {
+			continue
+		}
+		for _, pr := range d.private {
+			key, _ := item.Blob(d.outputs[pr.Name].Blob)
+			keys = append(keys, key)
+		}
+		for _, pub := range d.publications {
+			for i := range pub.Names {
+				key, err := item.PublicationKey(pub, i)
+				if err != nil {
+					return err
+				}
+				keys = append(keys, key)
+			}
+		}
+	}
+	for _, f := range zipped {
+		key, _ := item.Blob(f.Blob)
+		keys = append(keys, key)
+	}
 	var orphaned []string
 	k := item.Kind()
-	_, err := p.c.Manifests.EditExisting(ctx, item.Ref(), func(cur *mediastore.Manifest) error {
+	_, err := p.c.Manifests.EditExistingWithOutputs(ctx, item.Ref(), keys, func(cur *mediastore.Manifest, exists func(string) (bool, error)) error {
 		orphaned = orphaned[:0]
-		// A blob this edit newly references may have been swept or taken
-		// down before it took the folder lock (one shared with an upload
-		// removed meanwhile, too): there reports it still in place. What is
-		// missing is not recorded, and the next pass makes it again; the
-		// rest of the pass is kept.
+		// Already referenced blobs remain protected by the current manifest.
+		// New outputs use the pre-lock checks while their allocations stay live.
 		present := map[string]bool{}
 		for _, b := range cur.Blobs() {
 			present[b] = true
@@ -453,12 +483,12 @@ func (p *Processor) record(ctx context.Context, item mediastore.Item, results []
 				return ok, nil
 			}
 			key, _ := item.Blob(blob)
-			_, err := p.c.Store.Head(ctx, key)
-			if err != nil && !errors.Is(err, mediastore.ErrNotFound) {
+			ok, err := exists(key)
+			if err != nil {
 				return false, fmt.Errorf("media/image: output %s: %w", key, err)
 			}
-			present[blob] = err == nil
-			return err == nil, nil
+			present[blob] = ok
+			return ok, nil
 		}
 		var gone []string // outputs of uploads removed or replaced meanwhile, and of zips that bundled them
 		analysisCapacity := k.PageAnalysisCapacity(cur)
@@ -529,11 +559,11 @@ func (p *Processor) record(ctx context.Context, item mediastore.Item, results []
 				present := true
 				for i := range pub.Names {
 					key, _ := item.PublicationKey(pub, i)
-					if _, err := p.c.Store.Head(ctx, key); errors.Is(err, mediastore.ErrNotFound) {
-						present = false
-					} else if err != nil {
+					ok, err := exists(key)
+					if err != nil {
 						return err
 					}
+					present = present && ok
 				}
 				if present {
 					pub.State = media.PublicationReady

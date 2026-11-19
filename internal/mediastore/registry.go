@@ -15,6 +15,9 @@ import (
 
 var ErrUnknownKind = errors.New("media: unknown kind")
 
+// ErrInvalidAccountID is an Account kind's id that is not a canonical UUID.
+var ErrInvalidAccountID = errors.New("media: an account id must be a canonical lowercase UUID")
+
 // maxWidth bounds a public width.
 const maxWidth = 8192
 
@@ -163,9 +166,11 @@ type Item struct {
 	prefix string
 }
 
-// Item validates ref: a registered kind, its namespace and a UUIDv7 id. A
-// Versions kind's ref names a version (a UUIDv7): a content has no item of
-// its own; any other kind's has no version.
+// Item validates ref: a registered kind, its namespace and a UUIDv7 id, or
+// for an Account kind any canonical UUID (accounts keep their auth subject,
+// such as an imported account's fixed UUIDv5). A Versions kind's ref names a
+// version (a UUIDv7): a content has no item of its own; any other kind's has
+// no version.
 func (r *Registry) Item(ref contentref.ContentRef) (Item, error) {
 	k, err := r.Kind(ref.ContentKind)
 	if err != nil {
@@ -174,7 +179,11 @@ func (r *Registry) Item(ref contentref.ContentRef) (Item, error) {
 	if ref.TenantID != k.ns {
 		return Item{}, fmt.Errorf("media: invalid ref %s: kind %q lives in namespace %q", ref, k.Name, k.ns)
 	}
-	if err := contentref.ValidateID(ref.ContentID); err != nil {
+	if k.Account {
+		if !canonicalUUID(ref.ContentID) {
+			return Item{}, fmt.Errorf("media: invalid ref %s: %w", ref, ErrInvalidAccountID)
+		}
+	} else if err := contentref.ValidateID(ref.ContentID); err != nil {
 		return Item{}, fmt.Errorf("media: invalid ref %s: %w", ref, err)
 	}
 	version := ref.Version()
@@ -331,4 +340,26 @@ func (k *RegisteredKind) nestedPrefix(id, version string) string {
 		return k.scope.Prefix(k.Name, id, version)
 	}
 	return layout.Prefix(k.ns, k.Name, id, version)
+}
+
+// canonicalUUID accepts lowercase hyphenated UUID text of any version, except
+// the nil UUID.
+func canonicalUUID(s string) bool {
+	if len(s) != 36 || s == "00000000-0000-0000-0000-000000000000" {
+		return false
+	}
+	for i := 0; i < 36; i++ {
+		c := s[i]
+		switch i {
+		case 8, 13, 18, 23:
+			if c != '-' {
+				return false
+			}
+		default:
+			if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+				return false
+			}
+		}
+	}
+	return true
 }

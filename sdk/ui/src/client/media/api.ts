@@ -4,6 +4,7 @@ import type {
   CommitBody,
   CommitReply,
   CompleteReply,
+  ContentModel,
   PartsBody,
   PartsReply,
   PresetRule,
@@ -13,7 +14,18 @@ import type {
   RefBody,
   TicketBody,
 } from "../generated/wire.js";
-import { checkRef } from "./ref.js";
+import { aborted, throwIfAborted } from "../errors.js";
+import { call } from "../route.js";
+import { checkRef, isAccountId, isContentId } from "./ref.js";
+
+// The kinds keyed by account per client transport: the content model's `avatars`.
+const accountKinds = new WeakMap<Http, ReadonlySet<string>>();
+const modelReads = new WeakMap<Http, Promise<void>>();
+
+/** Records the account kinds of a content model the client read. */
+export function learnAccountKinds(http: Http, model: ContentModel) {
+  accountKinds.set(http, new Set(model.avatars ? [model.avatars.kind] : []));
+}
 
 /** What a read returns (Reader.Read's ReadOptions). */
 export interface ReadOptions {
@@ -68,6 +80,7 @@ export class MediaApi {
     if (o.download) q.set("download", "1");
     if (o.editor) q.set("editor", "1");
     const s = q.toString();
+    await this.check(ref, signal);
     return this.http.request<ReadResult>(this.itemURL(ref) + (s ? "?" + s : ""), { signal });
   }
 
@@ -75,6 +88,7 @@ export class MediaApi {
   async watch(ref: RefBody, receive: (update: MediaProgress) => void | Promise<void>, signal: AbortSignal, after = "") {
     const query = new URLSearchParams({ status: "1" });
     if (after) query.set("after", after);
+    await this.check(ref, signal);
     const response = await this.http.request<Response>(`${this.itemURL(ref)}?${query}`, { signal, stream: true, guestPreferences: false });
     await readProgress(response, receive, signal);
   }
@@ -84,15 +98,49 @@ export class MediaApi {
     return this.http.request<PresetRule[]>(`${this.http.mount("media")}/presets`, { signal });
   }
 
-  /** The item under the read API: `{media}/{kind}/{id}`, a version's at `…/versions/{version}`. */
+  /**
+   * The item under the read API: `{media}/{kind}/{id}`, a version's at `…/versions/{version}`.
+   * An account ref whose id is not a UUIDv7 passes once the client has read the content model.
+   */
   itemURL(ref: RefBody): string {
-    checkRef(ref);
+    checkRef(ref, accountKinds.get(this.http));
     const item = `${this.http.mount("media", ref)}/${encodeURIComponent(ref.kind)}/${encodeURIComponent(ref.id)}`;
     return ref.version ? `${item}/versions/${encodeURIComponent(ref.version)}` : item;
   }
 
   private async post<T>(ref: RefBody, path: string, body: object, signal?: AbortSignal) {
-    checkRef(ref);
+    await this.check(ref, signal);
     return this.http.request<T>(this.http.mount("upload", ref) + path, { body, signal });
   }
+
+  // An id only an account kind takes needs the content model: a client that
+  // has not read it reads /kinds once, before any media request.
+  private async check(ref: RefBody, signal?: AbortSignal) {
+    if (!isContentId(ref.id) && isAccountId(ref.id) && !accountKinds.has(this.http)) {
+      let read = modelReads.get(this.http);
+      if (!read) {
+        read = call(this.http, "GET", "/kinds").then(
+          (model: ContentModel) => learnAccountKinds(this.http, model),
+          (e: unknown) => {
+            modelReads.delete(this.http);
+            throw e;
+          },
+        );
+        modelReads.set(this.http, read);
+      }
+      await until(read, signal);
+    }
+    checkRef(ref, accountKinds.get(this.http));
+  }
+}
+
+// p, unless the caller cancels first; other callers keep waiting for p.
+function until<T>(p: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return p;
+  throwIfAborted(signal);
+  return new Promise<T>((resolve, reject) => {
+    const stop = () => reject(aborted(signal));
+    signal.addEventListener("abort", stop, { once: true });
+    p.then(resolve, reject).finally(() => signal.removeEventListener("abort", stop));
+  });
 }

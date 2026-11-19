@@ -82,6 +82,7 @@ export {
 export { ItemUploadQueue, type ItemStatus, type QueueItem, type QueueOptions, type QueueSnapshot } from "./media/queue.js";
 export {
   acceptOf,
+  acceptsFile,
   defaultImage,
   stableImage,
   filesFor,

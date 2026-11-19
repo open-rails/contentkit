@@ -1,6 +1,7 @@
 id	language	surface	name	source	selection
 go:Client.GetKinds	go	Go generated Client route	Client.GetKinds	client_gen.go	included-critical
 go:Client.GetConfig	go	Go generated Client route	Client.GetConfig	client_gen.go	included-critical
+go:Client.PostImport	go	Go generated Client route	Client.PostImport	client_gen.go	included-critical merged entity replay
 go:Client.PostCommentHold	go	Go generated Client route	Client.PostCommentHold	client_gen.go	included-critical
 go:Client.PostCommentRelease	go	Go generated Client route	Client.PostCommentRelease	client_gen.go	included-critical
 go:Client.GetCommentBans	go	Go generated Client route	Client.GetCommentBans	client_gen.go	included-critical
@@ -211,6 +212,7 @@ ts:refreshable	ts	TS exported function	refreshable	sdk/ui/src/client/playback.ts
 ts:publicURL	ts	TS exported function	publicURL	sdk/ui/src/client/public.ts	included-critical public-value vector
 ts:publicRenditions	ts	TS exported function	publicRenditions	sdk/ui/src/client/public.ts	included-critical public-value vector
 ts:isPending	ts	TS exported function	isPending	sdk/ui/src/client/versions.ts	included-critical public-value vector
+ts:acceptsFile	ts	TS exported function	acceptsFile	sdk/ui/src/client/media/rules.ts	included-critical public-value vector
 go:Client.WatchMedia	go	Go Client streaming method	Client.WatchMedia	client_media_progress.go	included-critical media247 streaming/UI acceptance
 go:Engine.AccountMediaEvents	go	Go Engine retained account log	Engine.AccountMediaEvents	account_media.go	included-critical media247 streaming/UI acceptance
 ts:MediaApi.watch	ts	TS client streaming method	MediaApi.watch	sdk/ui/src/client/media/api.ts	included-critical media247 streaming/UI acceptance

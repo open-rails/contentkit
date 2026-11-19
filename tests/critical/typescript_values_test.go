@@ -18,7 +18,7 @@ func TestShippedTypeScriptValues(t *testing.T) {
 		Error  string `json:"error"`
 	}
 	must(t, json.Unmarshal(output, &results))
-	want := []string{"imageRef", "imageRefs", "allowsEntityScope", "isContentKitError", "toContentKitError", "transportFailure", "readContentKitError", "failureError", "ContentKitError.refusal", "ContentKitError.isLimit", "ContentKitError.isCeiling", "ContentKitError.blocksQueue", "ContentKitError.transient", "sha256Hex", "isContentId", "itemKey", "sameItem", "checkRef", "uploadRules", "ruleFor", "filesFor", "screenFiles", "uniqueName", "chunkOffsets", "mergeReads", "isProcessing", "processing", "statusKind", "expiryDelay", "refreshable", "publicURL", "publicRenditions", "isPending"}
+	want := []string{"imageRef", "imageRefs", "allowsEntityScope", "isContentKitError", "toContentKitError", "transportFailure", "readContentKitError", "failureError", "ContentKitError.refusal", "ContentKitError.isLimit", "ContentKitError.isCeiling", "ContentKitError.blocksQueue", "ContentKitError.transient", "sha256Hex", "isContentId", "itemKey", "sameItem", "checkRef", "uploadRules", "ruleFor", "filesFor", "screenFiles", "uniqueName", "chunkOffsets", "mergeReads", "isProcessing", "processing", "statusKind", "expiryDelay", "refreshable", "publicURL", "publicRenditions", "isPending", "acceptsFile"}
 	if len(results) != len(want) {
 		t.Fatalf("public value report omitted or added selected cases: got%d want%d", len(results), len(want))
 	}

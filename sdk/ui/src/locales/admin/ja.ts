@@ -263,6 +263,7 @@ export const admin: typeof en = {
     drop: "ここにファイルをドロップ、または",
     add: "ファイルを追加",
     unfinished: "未完了のアップロード",
+    refused: "追加されていません（ファイル形式が違います）: {names}",
     unfinishedHint: "同じファイルをもう一度追加すると、止まったところから続きます。",
     forget: "破棄",
     summary: "{total} 件中 {done} 件アップロード済み",

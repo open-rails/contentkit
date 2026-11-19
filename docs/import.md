@@ -69,8 +69,11 @@ that fails is alone, so the result lists only the records that failed
 Fix the cause and send them, or the whole batch, again. A batch holds at
 most 20,000 records.
 
-Signals are skipped without a signal plane; `skipped` counts them. Products
-and prices are managed through OpenRails, not the ContentKit import.
+Signals are skipped without a signal plane; `skipped` counts them. Re-sent
+records of merged entities are accepted without writing and counted in
+`merged`, not `skipped`. References resolve to the survivor; `ids` still
+reports only written records. Products and prices are managed through
+OpenRails, not the ContentKit import.
 
 ## After an import
 

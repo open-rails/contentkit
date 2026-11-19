@@ -304,7 +304,6 @@ export class MediaClient {
 
   /** The read API: the item's files under prefix in manifest order, with signed URLs for what this viewer may have. */
   async read(ref: RefBody, o: ReadOptions & { signal?: AbortSignal } = {}): Promise<ReadResult> {
-    this.api.itemURL(ref); // a bad ref fails at once
     return this.retry(() => this.api.read(ref, o, o.signal), o.signal);
   }
 

@@ -30,7 +30,7 @@ func TestImportMergedEntityMemberships(t *testing.T) {
 	}
 	initial, err := admin.PostImport(ctx, batch)
 	must(t, err)
-	if len(initial.Failed) != 0 || initial.Written[importer.SectionEntities] != 2 || initial.Written[importer.SectionContents] != 1 || initial.Written[importer.SectionMemberships] != 1 {
+	if len(initial.Failed) != 0 || len(initial.Skipped) != 0 || len(initial.Merged) != 0 || initial.Written[importer.SectionEntities] != 2 || initial.Written[importer.SectionContents] != 1 || initial.Written[importer.SectionMemberships] != 1 {
 		t.Fatalf("initial import: %+v", initial)
 	}
 	from, into := initial.IDs[importer.RecordEntity]["a"], initial.IDs[importer.RecordEntity]["b"]
@@ -39,6 +39,10 @@ func TestImportMergedEntityMemberships(t *testing.T) {
 	must(t, err)
 	before, err := admin.GetEntity(ctx, into, ck.GetEntityQuery{})
 	must(t, err)
+	tombstoneSQL := `SELECT to_jsonb(e)::text FROM ` + pgx.Identifier{w.schema, "content_entities"}.Sanitize() +
+		` e WHERE tenant_id=$1 AND id=$2`
+	var tombstoneBefore string
+	must(t, w.pool.QueryRow(ctx, tombstoneSQL, a.cfg.Scope.AppID.String(), from).Scan(&tombstoneBefore))
 	batch.Entities = batch.Entities[:1]
 	batch.Contents = nil
 	// Direct and external references to either identity collapse onto B.
@@ -47,8 +51,11 @@ func TestImportMergedEntityMemberships(t *testing.T) {
 		importer.MembershipRecord{Entity: importer.Ref{ExternalID: "b"}})
 	result, err := admin.PostImport(ctx, batch)
 	must(t, err)
-	if len(result.Failed) != 0 || result.Skipped[importer.SectionEntities] != 1 || result.Written[importer.SectionEntities] != 0 || result.Written[importer.SectionMemberships] != 1 {
+	if len(result.Failed) != 0 || len(result.Skipped) != 0 || !reflect.DeepEqual(result.Merged, map[string]int{importer.SectionEntities: 1}) || result.Written[importer.SectionEntities] != 0 || result.Written[importer.SectionMemberships] != 1 {
 		t.Fatalf("replayed import: %+v", result)
+	}
+	if len(result.IDs[importer.RecordEntity]) != 0 {
+		t.Fatalf("unwritten merged entity reported an id: %+v", result.IDs)
 	}
 	memberships, err := admin.GetContentEntities(ctx, contentID, ck.GetContentEntitiesQuery{})
 	must(t, err)
@@ -65,6 +72,11 @@ func TestImportMergedEntityMemberships(t *testing.T) {
 		` WHERE tenant_id=$1 AND id=$2`, a.cfg.Scope.AppID.String(), from).Scan(&state, &mergedInto))
 	if state != string(entities.StateMerged) || mergedInto != into {
 		t.Fatalf("replay changed merged entity: state=%s merged_into=%s", state, mergedInto)
+	}
+	var tombstoneAfter string
+	must(t, w.pool.QueryRow(ctx, tombstoneSQL, a.cfg.Scope.AppID.String(), from).Scan(&tombstoneAfter))
+	if tombstoneAfter != tombstoneBefore {
+		t.Fatalf("replay changed tombstone: before %s; after %s", tombstoneBefore, tombstoneAfter)
 	}
 }
 
