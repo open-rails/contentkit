@@ -171,6 +171,18 @@ func (rt *Runtime) ScreenVotes(ctx context.Context, tx pgx.Tx, in []content.Impo
 	for _, i := range stray {
 		errs[i] = fmt.Errorf("%w: option %s of a multiple-choice poll", ErrNotFound, in[i].OptionID)
 	}
+
+	// Lock the whole screened chunk before write savepoints. If a write
+	// fails and is split, successful halves still hold their poll locks.
+	polls := make(map[string]bool, len(asks))
+	for _, a := range asks {
+		if errs[a.I] == nil {
+			polls[a.PollID] = true
+		}
+	}
+	if err := rt.lockPollQuestions(ctx, tx, slices.Collect(maps.Keys(polls))); err != nil {
+		return nil, err
+	}
 	return errs, nil
 }
 
@@ -1089,8 +1101,7 @@ func (rt *Runtime) ImportVotes(ctx context.Context, tx pgx.Tx, in []content.Impo
 	s := rt.store
 	// Match live voting's question lock before inspecting options. Stable order
 	// prevents multi-poll imports from locking the same questions in reverse.
-	if _, err := tx.Exec(ctx, `SELECT 1 FROM `+s.t.pollQuestions+`
- WHERE tenant_id = $1 AND id = ANY($2::uuid[]) ORDER BY id FOR SHARE`, rt.tenant, slices.Collect(maps.Keys(polls))); err != nil {
+	if err := rt.lockPollQuestions(ctx, tx, slices.Collect(maps.Keys(polls))); err != nil {
 		return err
 	}
 	all, err := json.Marshal(append(slices.Clone(byUser), byIP...))
@@ -1131,6 +1142,15 @@ func (rt *Runtime) ImportVotes(ctx context.Context, tx pgx.Tx, in []content.Impo
 	return rt.settle(ctx, tx, later, Recounts{polls: polls})
 }
 
+func (rt *Runtime) lockPollQuestions(ctx context.Context, tx pgx.Tx, ids []string) error {
+	if len(ids) == 0 {
+		return nil
+	}
+	_, err := tx.Exec(ctx, `SELECT 1 FROM `+rt.store.t.pollQuestions+`
+ WHERE tenant_id = $1 AND id = ANY($2::uuid[]) ORDER BY id FOR SHARE`, rt.tenant, ids)
+	return err
+}
+
 // recountVotes sets the polls' options' vote counts to their votes.
 func (rt *Runtime) recountVotes(ctx context.Context, tx pgx.Tx, polls map[string]bool) error {
 	if len(polls) == 0 {
@@ -1141,7 +1161,7 @@ func (rt *Runtime) recountVotes(ctx context.Context, tx pgx.Tx, polls map[string
 	// Questions lock before their options, as votes and poll imports lock
 	// them. The options lock in their own statement, so the recount's
 	// snapshot includes the live votes it waited for.
-	if _, err := tx.Exec(ctx, `SELECT 1 FROM `+s.t.pollQuestions+` WHERE tenant_id = $2 AND id = ANY($1::uuid[]) ORDER BY id FOR SHARE`, ids, rt.tenant); err != nil {
+	if err := rt.lockPollQuestions(ctx, tx, ids); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(ctx, `SELECT 1 FROM `+s.t.pollOptions+` WHERE tenant_id = $2 AND question_id = ANY($1::uuid[]) ORDER BY id FOR NO KEY UPDATE`, ids, rt.tenant); err != nil {
