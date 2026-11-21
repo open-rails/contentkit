@@ -163,6 +163,18 @@ WHERE tenant_id=$1 AND operation_id=$2`, item.Ref().TenantID, intent.ID)
 	return err
 }
 
+// privateDeletions keeps public-area blobs immediate even though the journal
+// records their exact keys in Private alongside non-public allocations.
+func (e journalEffects) privateDeletions(now time.Time) []string {
+	if e.Deletion || !e.CleanupAt.After(now) {
+		return e.Private
+	}
+	return slices.DeleteFunc(slices.Clone(e.Private), func(key string) bool {
+		parsed, ok := layout.Parse(key)
+		return ok && parsed.Area != layout.AreaPublic
+	})
+}
+
 // repeatDeletion never lists the folder again. A final late-upload pass can
 // safely run after reset because these physical names are permanently retired.
 func (j *Jobs) repeatDeletion(ctx context.Context, item Item, operation uuid.UUID) error {
@@ -200,6 +212,7 @@ func (j *Jobs) repeatDeletion(ctx context.Context, item Item, operation uuid.UUI
 	c.Effects.Public = slices.DeleteFunc(slices.Clone(c.Effects.Public), func(key string) bool {
 		return kept[layout.AreaPublic+"/"+strings.TrimPrefix(key, item.PublicPrefix())]
 	})
+	c.Effects.Private = c.Effects.privateDeletions(j.cfg.Now())
 	for _, key := range c.Effects.Private {
 		parsed, ok := layout.Parse(key)
 		if ok && kept[parsed.Area+"/"+parsed.Name] {

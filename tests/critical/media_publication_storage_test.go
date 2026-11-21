@@ -168,25 +168,13 @@ func TestPublicationStorage(t *testing.T) {
 	}
 	preparedKey, err := item.Blob(prepared)
 	must(t, err)
-	store.deleteFailure = preparedKey
-	if _, err := manifests.Promote(t.Context(), target, operation); err == nil {
-		t.Fatal("publication completed despite failed internal-source removal")
-	}
-	unfinished, _, err := manifests.Get(t.Context(), target)
-	must(t, err)
-	for _, delivery := range unfinished.Deliveries {
-		if delivery.ID == operation && (!delivery.Adopted || delivery.Ready) {
-			t.Fatal("failed move did not retain adopted-but-incomplete state")
-		}
-	}
 	finished, err := manifests.Promote(t.Context(), target, operation)
 	must(t, err)
 	if !finished.Ready || store.calls != len(inputs) {
 		t.Fatalf("resume recopied a verified destination: ready=%v calls=%d", finished.Ready, store.calls)
 	}
-	if _, err := storage.store.Head(t.Context(), preparedKey); !errors.Is(err, mediastore.ErrNotFound) {
-		t.Fatalf("completed move retained an unreferenced internal source: %v", err)
-	}
+	_, err = storage.store.Head(t.Context(), preparedKey)
+	must(t, err)
 	unchanged := uuid.NewString()
 	_, err = manifests.PreparePromotion(t.Context(), target, unchanged, []mediastore.Promotion{
 		{Source: finished.Files[0].Blob, Area: layout.AreaPrivate},
@@ -233,7 +221,7 @@ func TestPublicationStorage(t *testing.T) {
 	if _, err := manifests.PreparePromotion(t.Context(), target, operation, inputs); !errors.Is(err, mediastore.ErrDeliveryWithdrawn) {
 		t.Fatalf("compacted operation was allowed to publish again: %v", err)
 	}
-	get(finished.Files[0].Blob, itemToken, http.StatusNotFound)
+	get(finished.Files[0].Blob, itemToken, http.StatusOK)
 	get(moved.Files[0].Blob, itemToken, http.StatusNotFound)
 	_, err = manifests.Promote(t.Context(), target, operation)
 	if !errors.Is(err, mediastore.ErrDeliveryWithdrawn) {
@@ -268,6 +256,19 @@ func TestPublicationStorage(t *testing.T) {
 	if _, err := storage.store.PresignEditorGet(t.Context(), originalKey, 6*time.Minute); err == nil {
 		t.Fatal("editor preview accepted a lifetime beyond five minutes")
 	}
+	_, jobs := newPurgeJobs(t, w, a, store)
+	w.clock.set(time.Now().Add(8 * 24 * time.Hour))
+	store.deleteFailure = preparedKey
+	if _, err := jobs.PurgeRetired(t.Context(), 100); err == nil {
+		t.Fatal("late cleanup ignored a failed internal-source removal")
+	}
+	w.clock.set(w.clock.now().Add(time.Second))
+	_, err = jobs.PurgeRetired(t.Context(), 100)
+	must(t, err)
+	if _, err := storage.store.Head(t.Context(), preparedKey); !errors.Is(err, mediastore.ErrNotFound) {
+		t.Fatalf("late cleanup retained the unreferenced internal source: %v", err)
+	}
+	get(finished.Files[0].Blob, itemToken, http.StatusNotFound)
 }
 
 // These probes wrap the real lock and S3 store to schedule an edit precisely
