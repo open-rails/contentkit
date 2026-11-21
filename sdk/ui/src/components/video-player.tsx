@@ -39,6 +39,7 @@ import { RenditionImg } from "./rendition-img.js";
 import { publicRenditions, type PublicPreset } from "../client/public.js";
 import type { EncodeProgress as Progress } from "../client/generated/wire.js";
 import { EncodeProgress } from "./encode-progress.js";
+import { EndScreen, type PlayerEndScreen } from "./player-end-screen.js";
 import { Button } from "#ckui/ui/button";
 import { Captions, ControlButton, SeekBar, SeekFlash, SettingsMenu, Spinner, VolumeControl, clock, playerButtonClass, type MenuSection, type SeekFlashState } from "./player-controls.js";
 
@@ -150,6 +151,8 @@ export interface VideoPlayerProps extends Omit<HlsPlayerOptions, "src"> {
   onMiniPlayer?: (handoff: PlayerHandoff) => void;
   /** A control-bar slot for the host's downloads. */
   renderDownloads?: (ctx: PlayerSlotContext) => ReactNode;
+  /** What follows when playback ends (the next episode, related videos), in place of Replay; the controls stay above it. */
+  endScreen?: PlayerEndScreen;
   /** Host entries in the settings menu, after its own. */
   menuItems?: readonly PlayerMenuItem[];
   crossOrigin?: "anonymous" | "use-credentials";
@@ -221,6 +224,7 @@ export function VideoPlayer({
   onTheaterChange,
   onMiniPlayer,
   renderDownloads,
+  endScreen,
   menuItems,
   crossOrigin,
   label,
@@ -681,11 +685,15 @@ export function VideoPlayer({
           ) : null}
         </>
       )}
-      {started && !error && media.ended && (
-        <BigButton label={t("player.replay")} onClick={toggle}>
-          <HugeiconsIcon icon={Refresh01Icon} className="size-7" strokeWidth={1.75} />
-        </BigButton>
-      )}
+      {started && !error && media.ended &&
+        (endScreen ? (
+          // A next item that arrives after the end starts its own countdown.
+          <EndScreen key={`${endScreen.next?.href}|${endScreen.countdown}`} screen={endScreen} onReplay={toggle} />
+        ) : (
+          <BigButton label={t("player.replay")} onClick={toggle}>
+            <HugeiconsIcon icon={Refresh01Icon} className="size-7" strokeWidth={1.75} />
+          </BigButton>
+        ))}
       <Captions cues={live ? cues : []} bottom={controlsShown && !below ? "4.75rem" : "1.25rem"} />
       {started && busy && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
