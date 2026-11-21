@@ -221,7 +221,7 @@ func TestPublicationStorage(t *testing.T) {
 	if _, err := manifests.PreparePromotion(t.Context(), target, operation, inputs); !errors.Is(err, mediastore.ErrDeliveryWithdrawn) {
 		t.Fatalf("compacted operation was allowed to publish again: %v", err)
 	}
-	get(finished.Files[0].Blob, itemToken, http.StatusOK)
+	get(finished.Files[0].Blob, itemToken, http.StatusNotFound)
 	get(moved.Files[0].Blob, itemToken, http.StatusNotFound)
 	_, err = manifests.Promote(t.Context(), target, operation)
 	if !errors.Is(err, mediastore.ErrDeliveryWithdrawn) {

@@ -73,6 +73,7 @@ type journalEffects struct {
 	CleanupAt     time.Time         `json:"cleanup_at,omitempty"`
 	CleanupDelete bool              `json:"cleanup_delete,omitempty"` // repeat this operation's exact retired targets
 	Deletion      bool              `json:"deletion,omitempty"`       // explicit purge may fence an unreadable root without decoding it
+	Withdrawal    bool              `json:"withdrawal,omitempty"`     // delivery withdrawal removes retired bytes immediately
 	Erasure       bool              `json:"erasure,omitempty"`        // permanent lifecycle; a version's catalog purge owns retries
 	Cleanup       bool              `json:"cleanup,omitempty"`        // allocation retirement, no manifest PUT
 	Allocate      []string          `json:"allocate,omitempty"`       // physical names owned before a producer sends bytes

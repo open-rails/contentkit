@@ -157,8 +157,15 @@ func TestInternalArea(t *testing.T) {
 			}
 			assertImage(t, rendition.URL, rendition.W, rendition.H)
 		}
+		_, err = m.store.Head(ctx, page)
+		must(t, err)
+		_, jobs := newPurgeJobs(t, w, a, m.store)
+		defer w.clock.set(w.clock.now())
+		w.clock.set(time.Now().Add(8 * 24 * time.Hour))
+		_, err = jobs.PurgeRetired(ctx, 100)
+		must(t, err)
 		if _, err := m.store.Head(ctx, page); !errors.Is(err, mediastore.ErrNotFound) {
-			t.Fatalf("release kept the copied internal/ source: %v", err)
+			t.Fatalf("late cleanup retained the unreferenced internal/ source: %v", err)
 		}
 	})
 	t.Run("public_presets_show_registered_renditions_without_signing_secrets", func(t *testing.T) {

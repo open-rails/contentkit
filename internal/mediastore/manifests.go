@@ -427,7 +427,7 @@ func (m *Manifests) cleanupLocked(ctx context.Context, item Item, publicOnly boo
 		return errors.New("media: public cleanup cannot alter private allocation ownership")
 	}
 	if len(effects.Allocate) > 0 {
-		effects.CleanupAt = time.Now().Add(m.cleanupGrace)
+		effects.CleanupAt = time.Now().Add(m.cleanupGrace).Truncate(time.Microsecond)
 	}
 	m.scheduleRetirement(item, &effects)
 	// The projection is asserted before any DELETE: a file it names is never
@@ -488,6 +488,7 @@ func (m *Manifests) scheduleRetirement(item Item, effects *journalEffects) {
 	if len(effects.Public) > 0 || slices.ContainsFunc(effects.Private, func(key string) bool { return !strings.HasPrefix(key, item.TempPrefix()) }) {
 		effects.CleanupAt = effects.CleanupAt.Add(m.lateUploadWindow)
 	}
+	effects.CleanupAt = effects.CleanupAt.Truncate(time.Microsecond)
 }
 
 // unreferenced selects exact targets while the caller holds the folder lock.
