@@ -33,6 +33,7 @@ export {
   type VideoPlayerProps,
 } from "./components/video-player.js";
 export { VideoMiniPlayer, type VideoMiniPlayerProps } from "./components/video-mini-player.js";
+export type { PlayerEndItem, PlayerEndScreen } from "./components/player-end-screen.js";
 export { playerButtonClass } from "./components/player-controls.js";
 export { AvatarUpload, CoverUpload, type SlotUploadProps } from "./components/slot-upload.js";
 export { MediaFolderEditor, describeRules, type MediaFolderEditorHandle, type MediaFolderEditorProps } from "./components/media-folder-editor.js";

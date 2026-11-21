@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/open-rails/contentkit/contentref"
@@ -427,7 +428,7 @@ func (m *Manifests) WithdrawPromotion(ctx context.Context, ref contentref.Conten
 		return err
 	}
 	retirement := uuid.NewSHA1(id, []byte("withdraw-delivery-pins"))
-	mutation := &manifestMutation{commit: manifestCommit{ID: retirement, Fingerprint: sha256.Sum256([]byte(operation))}}
+	mutation := &manifestMutation{commit: manifestCommit{ID: retirement, Fingerprint: sha256.Sum256([]byte(operation))}, effects: journalEffects{Withdrawal: true}}
 	ctx = context.WithValue(ctx, synchronousMutationOwnerKey{}, true)
 	_, err = m.editOperation(ctx, ref, true, bound{}, mutation, func(current *Manifest) error {
 		d := current.delivery(operation)
@@ -459,9 +460,9 @@ func (m *Manifests) deliveryWithdrawn(ctx context.Context, item Item, operation 
 }
 
 // completeRetirement executes the same exact-key intent as the existing purge
-// owner. Publication withdrawal cannot wait for its periodic late-write sweep.
-// The retained intent still lets that sweep catch delayed writes afterward.
+// owner. Withdrawals and public-area keys are removed immediately; other
+// non-public allocations wait for the retained intent's late-write deadline.
 func (m *Manifests) completeRetirement(ctx context.Context, item Item, operation uuid.UUID) error {
-	jobs := &Jobs{cfg: JobsConfig{Store: m.store, Registry: m.reg, Locker: m.locker, Journal: m.journal}, manifests: m}
+	jobs := &Jobs{cfg: JobsConfig{Store: m.store, Registry: m.reg, Locker: m.locker, Journal: m.journal, Now: time.Now}, manifests: m}
 	return jobs.repeatDeletion(ctx, item, operation)
 }

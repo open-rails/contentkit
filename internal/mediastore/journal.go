@@ -73,6 +73,7 @@ type journalEffects struct {
 	CleanupAt     time.Time         `json:"cleanup_at,omitempty"`
 	CleanupDelete bool              `json:"cleanup_delete,omitempty"` // repeat this operation's exact retired targets
 	Deletion      bool              `json:"deletion,omitempty"`       // explicit purge may fence an unreadable root without decoding it
+	Withdrawal    bool              `json:"withdrawal,omitempty"`     // delivery withdrawal removes retired bytes immediately
 	Erasure       bool              `json:"erasure,omitempty"`        // permanent lifecycle; a version's catalog purge owns retries
 	Cleanup       bool              `json:"cleanup,omitempty"`        // allocation retirement, no manifest PUT
 	Allocate      []string          `json:"allocate,omitempty"`       // physical names owned before a producer sends bytes
@@ -147,7 +148,7 @@ WHERE tenant_id = $1 AND folder_prefix = $2 AND object_key = ANY($3::text[]) AND
 			return err
 		}
 		due := effects.CleanupAt
-		if len(effects.Private)+len(effects.Public) > 0 {
+		if len(effects.Public)+len(effects.privateDeletions(time.Now())) > 0 || effects.Deletion {
 			due = time.Now()
 		}
 		if !due.IsZero() {
@@ -506,7 +507,7 @@ func (j *PGJournal) finish(ctx context.Context, c manifestCommit, applied bool, 
 					operations = []uuid.UUID{found.ID}
 				}
 				due := found.Effects.CleanupAt
-				if len(found.Effects.Public)+len(found.Effects.Private) > 0 {
+				if len(found.Effects.Public)+len(found.Effects.privateDeletions(time.Now())) > 0 || found.Effects.Deletion {
 					due = time.Now()
 				}
 				if err := j.scheduleCleanupTx(ctx, tx, found.Ref, found.Folder, due, operations, false); err != nil {
