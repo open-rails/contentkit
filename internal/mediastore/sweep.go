@@ -135,7 +135,7 @@ func (j *Jobs) sweep(ctx context.Context, prefix string) (SweepResult, []uuid.UU
 			if _, live := protected[key]; live {
 				// One bounded follow-up catches a PUT that was already issued
 				// when this allocation was retired, including absent objects.
-				effects.CleanupAt = now.Add(j.cfg.LateUploadWindow)
+				effects.CleanupAt = now.Add(j.cfg.LateUploadWindow).Truncate(time.Microsecond)
 				effects.CleanupDelete = true
 				break
 			}
