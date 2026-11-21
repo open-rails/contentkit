@@ -432,6 +432,104 @@ func TestMediaPurgeClosesSweepRevision(t *testing.T) {
 	}
 }
 
+func TestMediaPrivateRetirementDeadline(t *testing.T) {
+	for _, area := range []string{layout.AreaInternal, layout.AreaOriginals} {
+		t.Run(area, func(t *testing.T) {
+			for _, scenario := range []string{"replay", "referenced", "sweep"} {
+				t.Run(scenario, func(t *testing.T) {
+					w := newWorld(t)
+					a := w.apps[0]
+					m := attachMedia(t, w, a)
+					registry, jobs := newPurgeJobs(t, w, a, m.store)
+					ref := galleryRef(t, a.engine.Client(), "Retirement deadline")
+					target, err := registry.VersionRef(ref.Kind, ref.ID, ref.Version)
+					must(t, err)
+					item, err := registry.Item(target)
+					must(t, err)
+					body := []byte("retained allocation")
+					sum := sha256.Sum256(body)
+					blobs, err := jobs.Manifests().NewBlobs(t.Context(), target, area, [][]byte{sum[:]})
+					must(t, err)
+					key, err := item.Blob(blobs[0])
+					must(t, err)
+					_, err = m.store.Put(t.Context(), key, bytes.NewReader(body), int64(len(body)), media.PutOptions{})
+					must(t, err)
+					publicBlobs, err := jobs.Manifests().NewBlobs(t.Context(), target, layout.AreaPublic, [][]byte{sum[:]})
+					must(t, err)
+					publicBlob, err := item.Blob(publicBlobs[0])
+					must(t, err)
+					_, err = m.store.Put(t.Context(), publicBlob, bytes.NewReader(body), int64(len(body)), media.PutOptions{})
+					must(t, err)
+					public, err := item.Public("retired.webp")
+					must(t, err)
+					_, err = m.store.Put(t.Context(), public, bytes.NewReader(body), int64(len(body)), media.PutOptions{})
+					must(t, err)
+					if scenario == "sweep" {
+						w.clock.set(w.clock.now().Add(25 * time.Hour))
+						_, err = jobs.Sweep(t.Context(), target)
+						must(t, err)
+					} else {
+						must(t, jobs.Manifests().DropUnreferenced(t.Context(), target, mediastore.Unreferenced{Blobs: append(slices.Clone(blobs), publicBlobs...), Public: []string{public}}))
+					}
+					commits := pgx.Identifier{w.schema, "content_media_commits"}.Sanitize()
+					cleanup := pgx.Identifier{w.schema, "content_media_cleanup"}.Sanitize()
+					var operation uuid.UUID
+					var deadline time.Time
+					must(t, w.pool.QueryRow(t.Context(), `SELECT operation_id,(effects->>'cleanup_at')::timestamptz FROM `+commits+` WHERE tenant_id=$1 AND folder_prefix=$2 AND effects->'private' @> jsonb_build_array($3::text)`, target.TenantID, item.Prefix(), key).Scan(&operation, &deadline))
+					// An older obligation can bring this folder due before the receipt.
+					_, err = w.pool.Exec(t.Context(), `UPDATE `+cleanup+` SET due_at=$3 WHERE tenant_id=$1 AND folder_prefix=$2`, target.TenantID, item.Prefix(), w.clock.now())
+					must(t, err)
+					processed, err := jobs.PurgeRetired(t.Context(), 1)
+					must(t, err)
+					if processed != 1 {
+						t.Fatalf("purge attempted %d folders, want 1", processed)
+					}
+					_, err = m.store.Head(t.Context(), key)
+					must(t, err)
+					if _, err := m.store.Head(t.Context(), publicBlob); !errors.Is(err, mediastore.ErrNotFound) {
+						t.Fatalf("public-area blob survived immediate cleanup: %v", err)
+					}
+					var due time.Time
+					var pending bool
+					must(t, w.pool.QueryRow(t.Context(), `SELECT due_at,$3=ANY(deletion_operations) FROM `+cleanup+` WHERE tenant_id=$1 AND folder_prefix=$2`, target.TenantID, item.Prefix(), operation).Scan(&due, &pending))
+					if !pending || due.Before(deadline) {
+						t.Fatalf("receipt did not wait for its deadline: pending=%v due=%s deadline=%s", pending, due, deadline)
+					}
+					if scenario != "sweep" {
+						if _, err := m.store.Head(t.Context(), public); !errors.Is(err, mediastore.ErrNotFound) {
+							t.Fatalf("public name survived immediate cleanup: %v", err)
+						}
+					}
+					if scenario == "referenced" {
+						current, etag, err := jobs.Manifests().Get(t.Context(), target)
+						must(t, err)
+						current.Files = []media.File{{Path: "reader/one.webp", Blob: blobs[0], Type: "image/webp", Size: int64(len(body))}}
+						late, err := json.Marshal(current)
+						must(t, err)
+						// Reproduce a late manifest write without adopting a retired allocation.
+						_, err = m.store.Put(t.Context(), item.ManifestKey(), bytes.NewReader(late), int64(len(late)), media.PutOptions{IfMatch: etag})
+						must(t, err)
+					}
+					w.clock.set(due)
+					_, err = jobs.PurgeRetired(t.Context(), 1)
+					if scenario == "referenced" {
+						if err == nil || !strings.Contains(err.Error(), "retired allocation is still referenced") {
+							t.Fatalf("referenced allocation cleanup: %v", err)
+						}
+						_, err = m.store.Head(t.Context(), key)
+						must(t, err)
+					} else {
+						must(t, err)
+						if _, err := m.store.Head(t.Context(), key); !errors.Is(err, mediastore.ErrNotFound) {
+							t.Fatalf("allocation survived its cleanup deadline: %v", err)
+						}
+					}
+				})
+			}
+		})
+	}
+}
+
 type purgeDeleteHook struct {
 	media.Store
 	beforeDelete func(context.Context, string) error

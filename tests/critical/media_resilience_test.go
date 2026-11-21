@@ -67,6 +67,45 @@ type mediaRequestHold struct {
 	once              sync.Once
 }
 
+func TestS3PutRetries(t *testing.T) {
+	for _, condition := range []string{"IfMatch", "IfNoneMatch", "unconditional"} {
+		t.Run(condition, func(t *testing.T) {
+			var requests atomic.Int64
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, _ = io.Copy(io.Discard, r.Body)
+				if requests.Add(1) == 1 {
+					w.Header().Set("Content-Type", "application/xml")
+					w.WriteHeader(http.StatusServiceUnavailable)
+					_, _ = io.WriteString(w, `<Error><Code>ServiceUnavailable</Code></Error>`)
+					return
+				}
+				w.Header().Set("ETag", `"written"`)
+			}))
+			defer server.Close()
+			store, err := medias3.New(medias3.Config{Bucket: "retry-test", Endpoint: server.URL, AccessKeyID: "test", SecretAccessKey: "test", UsePathStyle: true})
+			must(t, err)
+			var options media.PutOptions
+			switch condition {
+			case "IfMatch":
+				options.IfMatch = `"previous"`
+			case "IfNoneMatch":
+				options.IfNoneMatch = "*"
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+			defer cancel()
+			_, err = store.Put(ctx, "manifest.json", strings.NewReader("body"), 4, options)
+			if condition == "unconditional" {
+				must(t, err)
+				if requests.Load() != 2 {
+					t.Fatalf("unconditional PUT sent %d requests, want 2", requests.Load())
+				}
+			} else if err == nil || requests.Load() != 1 {
+				t.Fatalf("conditional PUT sent %d requests with error %v, want one failed request", requests.Load(), err)
+			}
+		})
+	}
+}
+
 func (h *mediaRequestHold) unblock() { h.once.Do(func() { close(h.release) }) }
 
 func newMediaWire(t *testing.T) *mediaWire {

@@ -362,6 +362,7 @@ FROM `+jr.table+` WHERE tenant_id=$1 AND operation_id=ANY($2)`, item.Ref().Tenan
 		c.Effects.Public = slices.DeleteFunc(c.Effects.Public, func(key string) bool {
 			return kept[layout.AreaPublic+"/"+strings.TrimPrefix(key, item.PublicPrefix())]
 		})
+		c.Effects.Private = c.Effects.privateDeletions(started)
 		referenced := false
 		for _, key := range c.Effects.Private {
 			if parsed, ok := layout.Parse(key); ok && kept[parsed.Area+"/"+parsed.Name] {

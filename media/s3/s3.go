@@ -173,7 +173,12 @@ func (s *Store) Put(ctx context.Context, key string, body io.Reader, size int64,
 	if o.ChecksumSHA256 != nil {
 		in.ChecksumSHA256 = aws.String(base64.StdEncoding.EncodeToString(o.ChecksumSHA256))
 	}
-	out, err := s.client.PutObject(ctx, in)
+	var opts []func(*s3.Options)
+	if o.IfMatch != "" || o.IfNoneMatch != "" {
+		// A retry can race its own unanswered write; manifest receipts own recovery.
+		opts = append(opts, func(so *s3.Options) { so.Retryer = aws.NopRetryer{} })
+	}
+	out, err := s.client.PutObject(ctx, in, opts...)
 	if err != nil {
 		return media.Object{}, mapErr("put", key, err)
 	}

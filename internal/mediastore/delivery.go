@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/open-rails/contentkit/contentref"
@@ -459,9 +460,9 @@ func (m *Manifests) deliveryWithdrawn(ctx context.Context, item Item, operation 
 }
 
 // completeRetirement executes the same exact-key intent as the existing purge
-// owner. Publication withdrawal cannot wait for its periodic late-write sweep.
-// The retained intent still lets that sweep catch delayed writes afterward.
+// owner. Public-area keys are removed immediately; non-public allocations wait
+// for the retained intent's late-write deadline.
 func (m *Manifests) completeRetirement(ctx context.Context, item Item, operation uuid.UUID) error {
-	jobs := &Jobs{cfg: JobsConfig{Store: m.store, Registry: m.reg, Locker: m.locker, Journal: m.journal}, manifests: m}
+	jobs := &Jobs{cfg: JobsConfig{Store: m.store, Registry: m.reg, Locker: m.locker, Journal: m.journal, Now: time.Now}, manifests: m}
 	return jobs.repeatDeletion(ctx, item, operation)
 }
