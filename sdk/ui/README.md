@@ -562,7 +562,7 @@ fullscreen and a mini player.
   onMiniPlayer={setHandoff}
   renderDownloads={({ className, container }) => <Downloads className={className} container={container} />}
   menuItems={[{ label: "Version", value, options, onChange }, { label: "Report a problem", onSelect }]}
-  renderEnded={({ replay }) => <NextEpisode onReplay={replay} />} // in place of Replay, also in fullscreen
+  endScreen={{ next, countdown: 10, related, onSelect: (item) => navigate(item.href) }} // in place of Replay
 />
 {handoff && <VideoMiniPlayer handoff={handoff} loader={contentkit.media.hls} onExpand={openWatchPage} onClose={() => setHandoff(null)} />}
 ```

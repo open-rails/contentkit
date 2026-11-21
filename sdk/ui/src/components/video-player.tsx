@@ -39,6 +39,7 @@ import { RenditionImg } from "./rendition-img.js";
 import { publicRenditions, type PublicPreset } from "../client/public.js";
 import type { EncodeProgress as Progress } from "../client/generated/wire.js";
 import { EncodeProgress } from "./encode-progress.js";
+import { EndScreen, type PlayerEndScreen } from "./player-end-screen.js";
 import { Button } from "#ckui/ui/button";
 import { Captions, ControlButton, SeekBar, SeekFlash, SettingsMenu, Spinner, VolumeControl, clock, playerButtonClass, type MenuSection, type SeekFlashState } from "./player-controls.js";
 
@@ -103,11 +104,6 @@ export interface PlayerSlotContext {
   className: string;
 }
 
-/** What a host end screen gets: the slot context and a replay from the start. */
-export interface PlayerEndContext extends PlayerSlotContext {
-  replay: () => void;
-}
-
 export interface VideoPlayerProps extends Omit<HlsPlayerOptions, "src"> {
   /** The ladder's HLS folder (client.media.hlsBase: {media}/{kind}/{id}/hls/{dir}): master.m3u8 and sprite.vtt resolve under it. */
   base?: string | null;
@@ -155,8 +151,8 @@ export interface VideoPlayerProps extends Omit<HlsPlayerOptions, "src"> {
   onMiniPlayer?: (handoff: PlayerHandoff) => void;
   /** A control-bar slot for the host's downloads. */
   renderDownloads?: (ctx: PlayerSlotContext) => ReactNode;
-  /** The host's screen when playback ends (e.g. the next episode), over the picture in place of Replay; the controls stay above it. */
-  renderEnded?: (ctx: PlayerEndContext) => ReactNode;
+  /** What follows when playback ends (the next episode, related videos), in place of Replay; the controls stay above it. */
+  endScreen?: PlayerEndScreen;
   /** Host entries in the settings menu, after its own. */
   menuItems?: readonly PlayerMenuItem[];
   crossOrigin?: "anonymous" | "use-credentials";
@@ -228,7 +224,7 @@ export function VideoPlayer({
   onTheaterChange,
   onMiniPlayer,
   renderDownloads,
-  renderEnded,
+  endScreen,
   menuItems,
   crossOrigin,
   label,
@@ -690,10 +686,9 @@ export function VideoPlayer({
         </>
       )}
       {started && !error && media.ended &&
-        (renderEnded ? (
-          <div data-ckui="ended" className="absolute inset-0 z-[7]">
-            {renderEnded({ container: portal, className: playerButtonClass, replay: toggle })}
-          </div>
+        (endScreen ? (
+          // A next item that arrives after the end starts its own countdown.
+          <EndScreen key={`${endScreen.next?.href}|${endScreen.countdown}`} screen={endScreen} onReplay={toggle} />
         ) : (
           <BigButton label={t("player.replay")} onClick={toggle}>
             <HugeiconsIcon icon={Refresh01Icon} className="size-7" strokeWidth={1.75} />
