@@ -26,6 +26,7 @@ export {
   SpriteFrame,
   VideoPlayer,
   qualityLabel,
+  type PlayerEndContext,
   type PlayerEvent,
   type PlayerHandoff,
   type PlayerMenuItem,

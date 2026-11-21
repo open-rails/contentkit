@@ -103,6 +103,11 @@ export interface PlayerSlotContext {
   className: string;
 }
 
+/** What a host end screen gets: the slot context and a replay from the start. */
+export interface PlayerEndContext extends PlayerSlotContext {
+  replay: () => void;
+}
+
 export interface VideoPlayerProps extends Omit<HlsPlayerOptions, "src"> {
   /** The ladder's HLS folder (client.media.hlsBase: {media}/{kind}/{id}/hls/{dir}): master.m3u8 and sprite.vtt resolve under it. */
   base?: string | null;
@@ -150,6 +155,8 @@ export interface VideoPlayerProps extends Omit<HlsPlayerOptions, "src"> {
   onMiniPlayer?: (handoff: PlayerHandoff) => void;
   /** A control-bar slot for the host's downloads. */
   renderDownloads?: (ctx: PlayerSlotContext) => ReactNode;
+  /** The host's screen when playback ends (e.g. the next episode), over the picture in place of Replay; the controls stay above it. */
+  renderEnded?: (ctx: PlayerEndContext) => ReactNode;
   /** Host entries in the settings menu, after its own. */
   menuItems?: readonly PlayerMenuItem[];
   crossOrigin?: "anonymous" | "use-credentials";
@@ -221,6 +228,7 @@ export function VideoPlayer({
   onTheaterChange,
   onMiniPlayer,
   renderDownloads,
+  renderEnded,
   menuItems,
   crossOrigin,
   label,
@@ -681,11 +689,16 @@ export function VideoPlayer({
           ) : null}
         </>
       )}
-      {started && !error && media.ended && (
-        <BigButton label={t("player.replay")} onClick={toggle}>
-          <HugeiconsIcon icon={Refresh01Icon} className="size-7" strokeWidth={1.75} />
-        </BigButton>
-      )}
+      {started && !error && media.ended &&
+        (renderEnded ? (
+          <div data-ckui="ended" className="absolute inset-0 z-[7]">
+            {renderEnded({ container: portal, className: playerButtonClass, replay: toggle })}
+          </div>
+        ) : (
+          <BigButton label={t("player.replay")} onClick={toggle}>
+            <HugeiconsIcon icon={Refresh01Icon} className="size-7" strokeWidth={1.75} />
+          </BigButton>
+        ))}
       <Captions cues={live ? cues : []} bottom={controlsShown && !below ? "4.75rem" : "1.25rem"} />
       {started && busy && (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center">
