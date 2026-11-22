@@ -1,6 +1,6 @@
 # Open release candidate
 
-None.
+`rc/0.138.22` removes the duplicate Premium cover label on video cards that already show the gold star.
 
 Feature pull requests target the open release candidate, never `master`. A release candidate's first commit names its
 `rc/<version>` branch and purpose here; its last commit before it merges into `master` resets this file. So on `master`, and
