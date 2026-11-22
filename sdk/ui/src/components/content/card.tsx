@@ -230,6 +230,8 @@ export function ContentCard({ card, client, href, onOpen, shape = "portrait", as
   const open = useCallback(() => onOpen?.(card), [onOpen, card]);
   const onClick = useLink(url, open);
   const lock = lockLabel(m, card.access, tiers, labels);
+  const premiumVideo = card.kind === "video" && card.access.level === "tier" && card.access.tiers?.includes("premium");
+  const showCoverLock = showLockBadge && !(premiumVideo && loadMedia && decorate);
   const st = cardStatus(card);
   const dim = dimDisliked && st.disliked;
   const v = card.version;
@@ -328,7 +330,7 @@ export function ContentCard({ card, client, href, onOpen, shape = "portrait", as
             /> : <span className="block size-full bg-muted" aria-hidden />}
           </div>
           {loadMedia && v.hls && <HoverPreview item={{ kind: card.kind, id: card.id, version: v.id }} dir={v.hls} duration={v.duration_ms ? v.duration_ms / 1000 : undefined} target={article} />}
-          {showLockBadge && lock && (
+          {showCoverLock && lock && (
             <span className="absolute top-2 left-2 inline-flex items-center gap-1 rounded-md bg-background/85 px-1.5 py-0.5 text-xs font-medium text-foreground shadow-sm" data-ckui="card-lock">
               <HugeiconsIcon icon={LockIcon} strokeWidth={2} className="size-3.5" aria-hidden />
               {lock}
