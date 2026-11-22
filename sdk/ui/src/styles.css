@@ -211,8 +211,13 @@
   [data-ckui="post-body"] :is(p, ul, ol, blockquote, pre) {
     margin-block: 0 1.4em;
   }
-  /* Quill writes a blank line as <p><br></p>; it would add to the paragraph gap. */
+  /* Quill writes a blank line as <p><br></p>. The paragraph gap already stands
+     for the first one; any more add one line each. */
   [data-ckui="post-body"] .ql-editor > p:has(> br:only-child) {
+    margin-block: 0;
+  }
+  [data-ckui="post-body"] .ql-editor > p:has(> br:only-child):first-child,
+  [data-ckui="post-body"] .ql-editor > :not(p:has(> br:only-child)) + p:has(> br:only-child) {
     display: none;
   }
   [data-ckui="post-body"] :is(h1, h2, h3, h4, h5, h6) {
