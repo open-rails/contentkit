@@ -425,7 +425,6 @@ export const admin: typeof en = {
     deleteBody: "Betroffene Besucher sehen die Website oder die Inhalte sofort wieder. Der Verlauf bleibt erhalten.",
     newestShown: "Die neuesten {shown} von {total} Regeln.",
     wholeSite: "Ganze Website",
-    deletedTarget: "(gelöscht)",
     andMore: "und {count} weitere",
     hidesContents: "Blendet aus: {names}",
     hidesTags: "Blendet alles mit diesen Tags aus: {names}",

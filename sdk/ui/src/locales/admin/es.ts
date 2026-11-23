@@ -425,7 +425,6 @@ export const admin: typeof en = {
     deleteBody: "Los visitantes afectados vuelven a ver el sitio o el contenido de inmediato. Su historial se conserva.",
     newestShown: "Se muestran las {shown} más recientes de {total} reglas.",
     wholeSite: "Todo el sitio",
-    deletedTarget: "(eliminado)",
     andMore: "y {count} más",
     hidesContents: "Oculta: {names}",
     hidesTags: "Oculta todo lo etiquetado con: {names}",

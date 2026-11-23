@@ -110,17 +110,20 @@ func (rt *Runtime) validateLocationRule(ctx context.Context, tx pgx.Tx, in *cont
 	if utf8.RuneCountInString(in.Note) > 2000 {
 		return badRequest("note exceeds 2000 characters")
 	}
-	if in.ContentIDs == nil {
-		in.ContentIDs = []string{}
-	}
-	if in.EntityIDs == nil {
-		in.EntityIDs = []string{}
-	}
+	in.ContentIDs = dedup(in.ContentIDs)
+	in.EntityIDs = dedup(in.EntityIDs)
+	in.Domains = dedup(in.Domains)
+	slices.Sort(in.ContentIDs)
+	slices.Sort(in.EntityIDs)
+	slices.Sort(in.Domains)
 	return nil
 }
 
 func (rt *Runtime) locationSelect() string {
-	return `SELECT r.id,r.target,r.content_ids,r.entity_ids,r.domains,r.enabled,r.note,r.created_by,r.created_at,r.updated_by,r.updated_at,
+	return `SELECT r.id,r.target,
+ ARRAY(SELECT c.content_id FROM ` + rt.locationTable("rule_contents") + ` c WHERE c.tenant_id=r.tenant_id AND c.rule_id=r.id ORDER BY c.content_id),
+ ARRAY(SELECT e.entity_id FROM ` + rt.locationTable("rule_entities") + ` e WHERE e.tenant_id=r.tenant_id AND e.rule_id=r.id ORDER BY e.entity_id),
+ ARRAY(SELECT d.domain FROM ` + rt.locationTable("rule_domains") + ` d WHERE d.tenant_id=r.tenant_id AND d.rule_id=r.id ORDER BY d.domain),r.enabled,r.note,r.created_by,r.created_at,r.updated_by,r.updated_at,
  coalesce((SELECT jsonb_agg(jsonb_strip_nulls(jsonb_build_object('country',e.country,'subdivision',e.subdivision,'network',e.network::text)) ORDER BY e.position) FROM ` + rt.locationTable("rule_entries") + ` e WHERE e.tenant_id=r.tenant_id AND e.rule_id=r.id),'[]'::jsonb)
  FROM ` + rt.locationTable("rules") + ` r`
 }
@@ -133,16 +136,18 @@ func scanLocationRule(row pgx.Row) (content.LocationRule, error) {
 	}
 	return r, err
 }
-func (rt *Runtime) locationRule(ctx context.Context, tx pgx.Tx, id string, lock bool) (content.LocationRule, error) {
-	suffix := ""
-	if lock {
-		suffix = " FOR UPDATE OF r"
-	}
-	r, err := scanLocationRule(tx.QueryRow(ctx, rt.locationSelect()+` WHERE r.tenant_id=$1 AND r.id=$2`+suffix, rt.tenant, id))
+func (rt *Runtime) locationRule(ctx context.Context, tx pgx.Tx, id string) (content.LocationRule, error) {
+	// Lock before reading child rows so a waiting patch sees the prior save's
+	// committed targets, domains and entries in a fresh READ COMMITTED snapshot.
+	var lockedID string
+	err := tx.QueryRow(ctx, `SELECT id FROM `+rt.locationTable("rules")+` WHERE tenant_id=$1 AND id=$2 FOR UPDATE`, rt.tenant, id).Scan(&lockedID)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return r, ErrNotFound
+		return content.LocationRule{}, ErrNotFound
 	}
-	return r, err
+	if err != nil {
+		return content.LocationRule{}, err
+	}
+	return scanLocationRule(tx.QueryRow(ctx, rt.locationSelect()+` WHERE r.tenant_id=$1 AND r.id=$2`, rt.tenant, id))
 }
 func (rt *Runtime) locationRules(ctx context.Context, limit, offset int) (content.LocationRulePage, error) {
 	page := content.LocationRulePage{Items: []content.LocationRule{}, Domains: []string{}}
@@ -260,9 +265,9 @@ func (rt *Runtime) locationTargets(ctx context.Context, q querier, rules []conte
 			ids, targets = r.EntityIDs, entities
 		}
 		for _, id := range ids {
-			target := targets[id]
-			target.ID = id
-			r.Targets = append(r.Targets, target)
+			if target, ok := targets[id]; ok {
+				r.Targets = append(r.Targets, target)
+			}
 		}
 	}
 	return nil
@@ -282,7 +287,7 @@ func (rt *Runtime) saveLocationRule(ctx context.Context, by, id string, in *cont
 	}
 	action := "create"
 	if id != "" {
-		r, err = rt.locationRule(ctx, tx, id, true)
+		r, err = rt.locationRule(ctx, tx, id)
 		if err != nil {
 			return r, err
 		}
@@ -330,11 +335,27 @@ func (rt *Runtime) saveLocationRule(ctx context.Context, by, id string, in *cont
 		if err = rt.validateLocationRule(ctx, tx, &r.LocationRuleInput); err != nil {
 			return r, err
 		}
-		err = tx.QueryRow(ctx, `INSERT INTO `+rt.locationTable("rules")+` (tenant_id,id,target,content_ids,entity_ids,domains,enabled,note,created_by,updated_by)
- VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$9) ON CONFLICT (tenant_id,id) DO UPDATE SET target=EXCLUDED.target,content_ids=EXCLUDED.content_ids,entity_ids=EXCLUDED.entity_ids,domains=EXCLUDED.domains,enabled=EXCLUDED.enabled,note=EXCLUDED.note,updated_by=EXCLUDED.updated_by,updated_at=now()
- RETURNING created_by,created_at,updated_by,updated_at`, rt.tenant, r.ID, r.Target, r.ContentIDs, r.EntityIDs, r.Domains, r.Enabled, r.Note, by).Scan(&r.CreatedBy, &r.CreatedAt, &r.UpdatedBy, &r.UpdatedAt)
+		err = tx.QueryRow(ctx, `INSERT INTO `+rt.locationTable("rules")+` (tenant_id,id,target,enabled,note,created_by,updated_by)
+ VALUES ($1,$2,$3,$4,$5,$6,$6) ON CONFLICT (tenant_id,id) DO UPDATE SET target=EXCLUDED.target,enabled=EXCLUDED.enabled,note=EXCLUDED.note,updated_by=EXCLUDED.updated_by,updated_at=now()
+ RETURNING created_by,created_at,updated_by,updated_at`, rt.tenant, r.ID, r.Target, r.Enabled, r.Note, by).Scan(&r.CreatedBy, &r.CreatedAt, &r.UpdatedBy, &r.UpdatedAt)
 		if err != nil {
 			return r, err
+		}
+		for _, rows := range []struct {
+			table, column string
+			values        []string
+		}{
+			{"rule_domains", "domain", r.Domains},
+			{"rule_contents", "content_id", r.ContentIDs},
+			{"rule_entities", "entity_id", r.EntityIDs},
+		} {
+			table := rt.locationTable(rows.table)
+			if _, err = tx.Exec(ctx, `DELETE FROM `+table+` WHERE tenant_id=$1 AND rule_id=$2`, rt.tenant, r.ID); err != nil {
+				return r, err
+			}
+			if _, err = tx.Exec(ctx, `INSERT INTO `+table+` (tenant_id,rule_id,`+rows.column+`) SELECT $1,$2,value FROM unnest($3::text[]) value`, rt.tenant, r.ID, rows.values); err != nil {
+				return r, err
+			}
 		}
 		if _, err = tx.Exec(ctx, `DELETE FROM `+rt.locationTable("rule_entries")+` WHERE tenant_id=$1 AND rule_id=$2`, rt.tenant, r.ID); err != nil {
 			return r, err

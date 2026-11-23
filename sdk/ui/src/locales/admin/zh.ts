@@ -425,7 +425,6 @@ export const admin: typeof en = {
     deleteBody: "受影响的访客会立即重新看到网站或内容。历史记录会保留。",
     newestShown: "显示 {total} 条规则中最新的 {shown} 条。",
     wholeSite: "整个网站",
-    deletedTarget: "（已删除）",
     andMore: "等另外 {count} 项",
     hidesContents: "隐藏：{names}",
     hidesTags: "隐藏带有以下标签的所有内容：{names}",

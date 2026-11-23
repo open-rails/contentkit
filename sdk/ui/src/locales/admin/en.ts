@@ -424,7 +424,6 @@ export const admin = {
     deleteBody: "Visitors it covers can see the site or content again straight away. Its history is kept.",
     newestShown: "Showing the newest {shown} of {total} rules.",
     wholeSite: "Whole site",
-    deletedTarget: "(deleted)",
     andMore: "and {count} more",
     hidesContents: "Hides: {names}",
     hidesTags: "Hides everything tagged: {names}",

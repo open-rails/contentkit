@@ -99,8 +99,8 @@ function useEntryName(): (e: LocationEntry) => string {
 }
 
 const entryKey = (e: LocationEntry) => e.country ?? e.subdivision ?? e.network ?? "";
-/** A target's title or name; empty once it was deleted. */
-const targetLabel = (t: LocationRuleTarget) => t.title || t.name;
+/** A target's title or name, else its id. */
+const targetLabel = (t: LocationRuleTarget) => t.title || t.name || t.id;
 
 function Rules({ client, onError }: { client: ContentKitClient; onError?: AdminFlowProps["onError"] }) {
   const m = useMessages();
@@ -204,7 +204,7 @@ function Rules({ client, onError }: { client: ContentKitClient; onError?: AdminF
 
 function RuleTargetSummary({ rule, t }: { rule: LocationRule; t: Translator["t"] }) {
   if (rule.target === "site") return <>{t("locationRules.wholeSite")}</>;
-  const names = rule.targets.map((x) => targetLabel(x) || t("locationRules.deletedTarget"));
+  const names = rule.targets.map((x) => targetLabel(x));
   const shown = names.slice(0, 5).join(", ");
   const more = names.length > 5 ? ` ${t("locationRules.andMore", { count: names.length - 5 })}` : "";
   return <>{t(rule.target === "content" ? "locationRules.hidesContents" : "locationRules.hidesTags", { names: shown + more })}</>;
@@ -295,7 +295,7 @@ function RuleDialog({ rule, domains: offered, client, onError, onClose, onSave }
   const save = useAction("rules.save", onError);
   const [entries, setEntries] = useState<LocationEntry[]>(rule?.locations ?? []);
   const [target, setTarget] = useState<Target>((rule?.target as Target) ?? "site");
-  const [picked, setPicked] = useState<Picked[]>(() => (rule?.targets ?? []).map((x) => ({ id: x.id, label: targetLabel(x) || t("locationRules.deletedTarget") })));
+  const [picked, setPicked] = useState<Picked[]>(() => (rule?.targets ?? []).map((x) => ({ id: x.id, label: targetLabel(x) })));
   const [domains, setDomains] = useState<string[]>(rule?.domains ?? offered.slice(0, 1));
   const [enabled, setEnabled] = useState(rule?.enabled ?? true);
   const [note, setNote] = useState(rule?.note ?? "");
