@@ -458,7 +458,8 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
           const at = versionSchedule || publishAt;
           const published = await guarded(() => client.contents.publish(content.id, at ? new Date(at).toISOString() : undefined));
           settlePublication({ at: published.publish_at ? localInput(new Date(published.publish_at)) : "" });
-        } else ed.reload();
+        }
+        ed.reload();
         history.clear();
       }
       setNotice(t(publish ? "contentManager.publishedNotice" : "pollEditor.saved"));
@@ -791,7 +792,7 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
                     there is nothing to unpublish yet. */}
                 {version?.state === "published" && item?.state === "published" && (
                   <Button variant="outline" disabled={actions.pending} onClick={() => void actions.run(async () => {
-                    if (unsaved && !(await confirm({ title: t("contentManager.unpublish"), description: t("readerEditor.discardBeforeUnpublish"), confirm: t("contentManager.unpublish") }))) return false;
+                    if (!(await confirm({ title: t("contentManager.unpublish"), description: t(versions.some((v) => v.id !== version.id && v.state === "published") ? (unsaved ? "readerEditor.discardBeforeUnpublish" : "readerEditor.confirmUnpublish") : (unsaved ? "readerEditor.discardBeforeUnpublishLast" : "readerEditor.confirmUnpublishLast")), confirm: t("contentManager.unpublish") }))) return false;
                     await client.contents.updateVersion(item!.id, version.id, { state: "draft" });
                     if (current()) { discardLocalEdits(); ed.reload(); }
                     return true;
