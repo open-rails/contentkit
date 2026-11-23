@@ -14,7 +14,6 @@ import { Button } from "#ckui/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "#ckui/ui/dialog";
 import { Input } from "#ckui/ui/input";
 import { Label } from "#ckui/ui/label";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "#ckui/ui/select";
 import { Switch } from "#ckui/ui/switch";
 import { Textarea } from "#ckui/ui/textarea";
 import { ErrorLine, formatDate, useAction } from "../social/parts.js";
@@ -45,7 +44,6 @@ export function LocationRuleManager({ client: own, baseUrl, auth, guard, appeara
 }
 
 type Target = "site" | "content" | "entities";
-type EntryType = "country" | "subdivision" | "network";
 /** A picked content or entity, with what to call it. */
 type Picked = { id: string; label: string };
 
@@ -61,6 +59,16 @@ const US_STATES: readonly [string, string][] = [
   ["WA", "Washington"], ["WV", "West Virginia"], ["WI", "Wisconsin"], ["WY", "Wyoming"],
 ];
 const STATE_NAMES = new Map(US_STATES.map(([code, name]) => [`US-${code}`, name]));
+// ISO 3166-1 alpha-2 codes of every country and territory; names come from Intl in the admin's language.
+const COUNTRIES = (
+  "AD AE AF AG AI AL AM AO AQ AR AS AT AU AW AX AZ BA BB BD BE BF BG BH BI BJ BL BM BN BO BQ BR BS BT BV BW BY BZ CA CC CD CF CG CH CI CK CL CM CN CO CR CU CV CW CX CY CZ " +
+  "DE DJ DK DM DO DZ EC EE EG EH ER ES ET FI FJ FK FM FO FR GA GB GD GE GF GG GH GI GL GM GN GP GQ GR GS GT GU GW GY HK HM HN HR HT HU ID IE IL IM IN IO IQ IR IS IT JE JM JO JP " +
+  "KE KG KH KI KM KN KP KR KW KY KZ LA LB LC LI LK LR LS LT LU LV LY MA MC MD ME MF MG MH MK ML MM MN MO MP MQ MR MS MT MU MV MW MX MY MZ NA NC NE NF NG NI NL NO NP NR NU NZ " +
+  "OM PA PE PF PG PH PK PL PM PN PR PS PT PW PY QA RE RO RS RU RW SA SB SC SD SE SG SH SI SJ SK SL SM SN SO SR SS ST SV SX SY SZ TC TD TF TG TH TJ TK TL TM TN TO TR TT TV TW TZ " +
+  "UA UG UM US UY UZ VA VC VE VG VI VN VU WF WS YE YT ZA ZM ZW"
+).split(" ");
+/** One choosable place: a country, or a US state. */
+type Place = { entry: LocationEntry; name: string; detail: string; search: string };
 const ACTIONS = {
   create: "locationRules.action_create",
   update: "locationRules.action_update",
@@ -98,6 +106,21 @@ function useEntryName(): (e: LocationEntry) => string {
   };
 }
 
+/** Every country and US state, by name in the admin's language, for the place picker. */
+function usePlaces(): Place[] {
+  const country = useCountryName();
+  return useMemo(() => {
+    const us = country("US");
+    const fold = (v: string) => v.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+    const countries = COUNTRIES.map((code) => {
+      const name = country(code);
+      return { entry: { country: code }, name, detail: code, search: fold(`${name} ${code}`) };
+    });
+    const states = US_STATES.map(([code, name]) => ({ entry: { subdivision: `US-${code}` }, name, detail: us, search: fold(`${name} ${code} us-${code} ${us}`) }));
+    return [...countries.sort((a, b) => a.name.localeCompare(b.name)), ...states];
+  }, [country]);
+}
+
 const entryKey = (e: LocationEntry) => e.country ?? e.subdivision ?? e.network ?? "";
 /** A target's title or name, else its id. */
 const targetLabel = (t: LocationRuleTarget) => t.title || t.name || t.id;
@@ -111,10 +134,23 @@ function Rules({ client, onError }: { client: ContentKitClient; onError?: AdminF
   const { confirm, dialog } = useConfirm();
   const entryName = useEntryName();
   const [editing, setEditing] = useState<LocationRule | "new" | null>(null);
-  const [history, setHistory] = useState<LocationRule | null>(null);
+  const [history, setHistory] = useState<LocationRule | "all" | null>(null);
+  const [show, setShow] = useState<"all" | "on" | "off">("all");
   if (access.loading) return <Rows />;
   if (!access.allowed.locations) return <NoAccess>{t("locationRules.noAccess")}</NoAccess>;
 
+  // A whole-site rule turns visitors away entirely, so switching one on is confirmed.
+  const confirmSite = (locations: LocationEntry[]) =>
+    confirm({
+      title: t("locationRules.siteOnTitle"),
+      description: t("locationRules.siteOnBody", { places: locations.map(entryName).join(", ") }),
+      confirm: t("locationRules.siteOnConfirm"),
+    });
+  const toggle = async (r: LocationRule, on: boolean) => {
+    if (on && r.target === "site" && !(await confirmSite(r.locations))) return;
+    await save.run(() => rules.update(r.id, { enabled: on }));
+  };
+  const shown = rules.rules.filter((r) => show === "all" || r.enabled === (show === "on"));
   const remove = async (r: LocationRule) => {
     if (await confirm({ title: t("locationRules.deleteTitle"), description: t("locationRules.deleteBody"), confirm: t("locationRules.delete") })) {
       await save.run(() => rules.remove(r.id));
@@ -127,12 +163,17 @@ function Rules({ client, onError }: { client: ContentKitClient; onError?: AdminF
           <PageHeading className="text-xl font-semibold tracking-tight">{t("locationRules.title")}</PageHeading>
           <p className="text-muted-foreground">{t("locationRules.intro")}</p>
         </div>
-        <Button size="sm" disabled={rules.loading} onClick={() => setEditing("new")}>
-          <HugeiconsIcon icon={Add01Icon} strokeWidth={2} data-icon="inline-start" />
-          {t("locationRules.new")}
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button size="sm" variant="outline" onClick={() => setHistory("all")}>
+            {t("locationRules.allHistory")}
+          </Button>
+          <Button size="sm" disabled={rules.loading} onClick={() => setEditing("new")}>
+            <HugeiconsIcon icon={Add01Icon} strokeWidth={2} data-icon="inline-start" />
+            {t("locationRules.new")}
+          </Button>
+        </div>
       </div>
-      <CheckAddress client={client} />
+      <CheckAddress client={client} rules={rules.rules} onEdit={setEditing} />
       <ErrorLine error={save.error} />
       {rules.loading && !rules.rules.length ? (
         <Rows />
@@ -142,14 +183,26 @@ function Rules({ client, onError }: { client: ContentKitClient; onError?: AdminF
         <p className="text-muted-foreground">{t("locationRules.empty")}</p>
       ) : (
         <>
-          <ul className="grid divide-y divide-border rounded-lg border border-border" aria-busy={rules.loading}>
-            {rules.rules.map((r) => (
+          <div className="flex">
+            <Segmented
+              label={t("locationRules.show")}
+              options={(["all", "on", "off"] as const).map((key) => ({
+                key,
+                label: t(key === "all" ? "locationRules.showAll" : key === "on" ? "locationRules.on" : "locationRules.off"),
+                pressed: show === key,
+                onSelect: () => setShow(key),
+              }))}
+            />
+          </div>
+          {!shown.length && <p className="text-muted-foreground">{t("locationRules.noneShown")}</p>}
+          <ul className={cn("grid divide-y divide-border rounded-lg border border-border", !shown.length && "hidden")} aria-busy={rules.loading}>
+            {shown.map((r) => (
               <li key={r.id} className="grid gap-2 p-3 sm:grid-cols-[auto_minmax(0,1fr)_auto] sm:items-start sm:gap-3" data-ckui="location-rule" data-enabled={r.enabled}>
                 <Switch
                   checked={r.enabled}
                   disabled={save.pending}
                   aria-label={t(r.enabled ? "locationRules.switchOff" : "locationRules.switchOn")}
-                  onCheckedChange={(on) => void save.run(() => rules.update(r.id, { enabled: on }))}
+                  onCheckedChange={(on) => void toggle(r, on)}
                   className="mt-0.5"
                 />
                 <div className={cn("grid min-w-0 gap-1", !r.enabled && "text-muted-foreground")}>
@@ -193,10 +246,14 @@ function Rules({ client, onError }: { client: ContentKitClient; onError?: AdminF
           client={client}
           onError={onError}
           onClose={() => setEditing(null)}
-          onSave={(input) => (editing === "new" ? rules.create(input) : rules.update(editing.id, input))}
+          onSave={async (input) => {
+            const switchingOn = input.enabled && input.target === "site" && (editing === "new" || !editing.enabled || editing.target !== "site");
+            if (switchingOn && !(await confirmSite(input.locations))) return null;
+            return editing === "new" ? rules.create(input) : rules.update(editing.id, input);
+          }}
         />
       )}
-      {history && <HistoryDialog rule={history} client={client} onClose={() => setHistory(null)} />}
+      {history && <HistoryDialog rule={history === "all" ? undefined : history} client={client} onClose={() => setHistory(null)} />}
       {dialog}
     </div>
   );
@@ -204,14 +261,14 @@ function Rules({ client, onError }: { client: ContentKitClient; onError?: AdminF
 
 function RuleTargetSummary({ rule, t }: { rule: LocationRule; t: Translator["t"] }) {
   if (rule.target === "site") return <>{t("locationRules.wholeSite")}</>;
-  const names = rule.targets.map((x) => targetLabel(x));
+  const names = (rule.targets ?? []).map((x) => targetLabel(x));
   const shown = names.slice(0, 5).join(", ");
   const more = names.length > 5 ? ` ${t("locationRules.andMore", { count: names.length - 5 })}` : "";
   return <>{t(rule.target === "content" ? "locationRules.hidesContents" : "locationRules.hidesTags", { names: shown + more })}</>;
 }
 
-/** Where an address resolves and what covers it, per domain. */
-function CheckAddress({ client }: { client: ContentKitClient }) {
+/** Where an address resolves, and which rules cover it on each domain, with a way to open them. */
+function CheckAddress({ client, rules, onEdit }: { client: ContentKitClient; rules: LocationRule[]; onEdit: (r: LocationRule) => void }) {
   const { t } = useMessages();
   const ids = useId();
   const entryName = useEntryName();
@@ -234,9 +291,11 @@ function CheckAddress({ client }: { client: ContentKitClient }) {
       setPending(false);
     }
   };
-  const place = result && (result.location.subdivision
-    ? entryName({ subdivision: result.location.subdivision })
-    : result.location.country ? country(result.location.country) : "");
+  const l = result?.location;
+  const countryName = l?.country ? country(l.country) : "";
+  // The lookup names the region ("Lagos"); a code is only the fallback.
+  const region = l?.subdivision ? l.subdivision_name || STATE_NAMES.get(l.subdivision) || l.subdivision : "";
+  const place = region ? `${region}, ${countryName}` : countryName;
   return (
     <section className="grid gap-2 rounded-lg border border-border p-3" aria-labelledby={`${ids}-title`} data-ckui="location-check">
       <h3 id={`${ids}-title`} className="font-medium">
@@ -261,15 +320,30 @@ function CheckAddress({ client }: { client: ContentKitClient }) {
       {result && (
         <div className="grid gap-1" role="status">
           <p>{place ? t("locationRules.resolvesTo", { place }) : t("locationRules.unknownPlace")}</p>
-          <ul className="grid gap-0.5 text-muted-foreground">
+          <ul className="grid gap-1.5 text-muted-foreground">
             {Object.entries(result.domains).map(([domain, matches]) => (
-              <li key={domain}>
-                <span className="font-medium text-foreground">{domain}</span>:{" "}
-                {!matches.length
-                  ? t("locationRules.noRuleApplies")
-                  : matches.some((x) => x.target === "site")
-                    ? t("locationRules.siteBlocked")
-                    : t("locationRules.someHidden", { count: matches.length })}
+              <li key={domain} className="grid gap-1">
+                <p>
+                  <span className="font-medium text-foreground">{domain}</span>:{" "}
+                  {!matches.length
+                    ? t("locationRules.noRuleApplies")
+                    : matches.some((x) => x.target === "site")
+                      ? t("locationRules.siteBlocked")
+                      : t("locationRules.someHidden", { count: matches.length })}
+                </p>
+                {matches.map((x) => {
+                  const r = rules.find((r) => r.id === x.rule_id);
+                  return r ? (
+                    <div key={x.rule_id} className="flex flex-wrap items-center gap-2 pl-3">
+                      <span className="min-w-0 break-words">
+                        {r.locations.map(entryName).join(" · ")} — <RuleTargetSummary rule={r} t={t} />
+                      </span>
+                      <Button size="xs" variant="outline" onClick={() => onEdit(r)}>
+                        {t("locationRules.edit")}
+                      </Button>
+                    </div>
+                  ) : null;
+                })}
               </li>
             ))}
           </ul>
@@ -285,7 +359,8 @@ interface RuleDialogProps {
   client: ContentKitClient;
   onError?: AdminFlowProps["onError"];
   onClose: () => void;
-  onSave: (input: LocationRuleInput) => Promise<LocationRule>;
+  /** Null when the admin backed out of a confirmation. */
+  onSave: (input: LocationRuleInput) => Promise<LocationRule | null>;
 }
 
 function RuleDialog({ rule, domains: offered, client, onError, onClose, onSave }: RuleDialogProps) {
@@ -350,7 +425,10 @@ function RuleDialog({ rule, domains: offered, client, onError, onClose, onSave }
                 ))}
               </ul>
             )}
-            <AddEntry onAdd={(e) => !entries.some((x) => entryKey(x) === entryKey(e)) && setEntries([...entries, e])} />
+            <AddEntry
+              entries={entries}
+              onToggle={(e) => setEntries(entries.some((x) => entryKey(x) === entryKey(e)) ? entries.filter((x) => entryKey(x) !== entryKey(e)) : [...entries, e])}
+            />
           </fieldset>
 
           <fieldset className="grid gap-2">
@@ -441,80 +519,136 @@ function RuleDialog({ rule, domains: offered, client, onError, onClose, onSave }
   );
 }
 
-/** A country code, a US state or an address range, added one at a time. */
-function AddEntry({ onAdd }: { onAdd: (e: LocationEntry) => void }) {
+/** Countries and US states from a searchable list, several at once; or an address range. */
+function AddEntry({ entries, onToggle }: { entries: LocationEntry[]; onToggle: (e: LocationEntry) => void }) {
   const { t } = useMessages();
   const ids = useId();
-  const country = useCountryName();
-  const [type, setType] = useState<EntryType>("subdivision");
-  const [value, setValue] = useState("");
-  const code = value.trim().toUpperCase();
-  const ready = type === "country" ? /^[A-Z]{2}$/.test(code) && country(code) !== code : type === "subdivision" ? STATE_NAMES.has(value) : value.trim() !== "";
-  const add = () => {
-    if (!ready) return;
-    onAdd(type === "country" ? { country: code } : type === "subdivision" ? { subdivision: value } : { network: value.trim() });
-    setValue("");
+  const [type, setType] = useState<"place" | "network">("place");
+  const [network, setNetwork] = useState("");
+  const addNetwork = () => {
+    const v = network.trim();
+    if (!v) return;
+    if (!entries.some((x) => x.network === v)) onToggle({ network: v });
+    setNetwork("");
   };
   return (
     <div className="grid gap-2">
       <div className="flex">
-      <Segmented
-        label={t("locationRules.placeType")}
-        options={(["subdivision", "country", "network"] as const).map((key) => ({
-          key,
-          label: t(key === "subdivision" ? "locationRules.usState" : key === "country" ? "locationRules.country" : "locationRules.network"),
-          pressed: type === key,
-          onSelect: () => {
-            setType(key);
-            setValue("");
-          },
-        }))}
-      />
+        <Segmented
+          label={t("locationRules.placeType")}
+          options={(["place", "network"] as const).map((key) => ({
+            key,
+            label: t(key === "place" ? "locationRules.countryOrState" : "locationRules.network"),
+            pressed: type === key,
+            onSelect: () => setType(key),
+          }))}
+        />
       </div>
-      <div className="flex flex-wrap items-end gap-2">
-        {type === "subdivision" ? (
+      {type === "place" ? (
+        <PlacePicker selected={entries} onToggle={onToggle} />
+      ) : (
+        <div className="flex flex-wrap items-end gap-2">
           <div className="grid min-w-48 flex-1 gap-1.5">
-            <Label htmlFor={`${ids}-state`} className="sr-only">
-              {t("locationRules.usState")}
-            </Label>
-            <Select value={value} onValueChange={(v) => setValue(String(v ?? ""))}>
-              <SelectTrigger id={`${ids}-state`} className="w-full">
-                <SelectValue>{(v: string) => (v ? STATE_NAMES.get(v) : t("locationRules.pickState"))}</SelectValue>
-              </SelectTrigger>
-              <SelectContent>
-                {US_STATES.map(([code, name]) => (
-                  <SelectItem key={code} value={`US-${code}`}>
-                    {name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </div>
-        ) : (
-          <div className="grid min-w-48 flex-1 gap-1.5">
-            <Label htmlFor={`${ids}-value`} className="sr-only">
-              {t(type === "country" ? "locationRules.country" : "locationRules.network")}
+            <Label htmlFor={`${ids}-network`} className="sr-only">
+              {t("locationRules.network")}
             </Label>
             <Input
-              id={`${ids}-value`}
-              value={value}
-              maxLength={type === "country" ? 2 : 64}
-              placeholder={type === "country" ? t("locationRules.countryPlaceholder") : "203.0.113.0/24"}
-              onChange={(e) => setValue(e.target.value)}
+              id={`${ids}-network`}
+              value={network}
+              maxLength={64}
+              placeholder="203.0.113.0/24"
+              onChange={(e) => setNetwork(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === "Enter") {
                   e.preventDefault();
-                  add();
+                  addNetwork();
                 }
               }}
             />
           </div>
-        )}
-        <Button type="button" variant="outline" disabled={!ready} onClick={add}>
-          {t("locationRules.addPlace")}
-        </Button>
-      </div>
-      {type === "country" && code.length === 2 && <p className="text-muted-foreground">{country(code) !== code ? country(code) : t("locationRules.unknownCountry")}</p>}
+          <Button type="button" variant="outline" disabled={!network.trim()} onClick={addNetwork}>
+            {t("locationRules.addPlace")}
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** A combobox over every country and US state; choosing one toggles it and keeps the list open. */
+function PlacePicker({ selected, onToggle }: { selected: LocationEntry[]; onToggle: (e: LocationEntry) => void }) {
+  const { t } = useMessages();
+  const id = useId();
+  const places = usePlaces();
+  const [text, setText] = useState("");
+  const [focused, setFocused] = useState(false);
+  const [active, setActive] = useState(0);
+  const q = text.normalize("NFKD").replace(/[\u0300-\u036f]/g, "").trim().toLowerCase();
+  const results = useMemo(() => {
+    if (!q) return [];
+    const starts = places.filter((p) => p.search.startsWith(q) || p.name.toLowerCase().startsWith(q));
+    const rest = places.filter((p) => !starts.includes(p) && p.search.includes(q));
+    return [...starts, ...rest].slice(0, 10);
+  }, [places, q]);
+  useEffect(() => setActive(0), [q]);
+  const isSelected = (p: Place) => selected.some((x) => entryKey(x) === entryKey(p.entry));
+  const open = focused && results.length > 0;
+  return (
+    <div className="relative grid gap-1">
+      <Input
+        role="combobox"
+        aria-label={t("locationRules.findPlace")}
+        aria-expanded={open}
+        aria-controls={`${id}-list`}
+        aria-activedescendant={open ? `${id}-${active}` : undefined}
+        aria-autocomplete="list"
+        autoComplete="off"
+        value={text}
+        placeholder={t("locationRules.findPlace")}
+        onFocus={() => setFocused(true)}
+        onBlur={() => setFocused(false)}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => {
+          if (!open) return;
+          if (e.key === "ArrowDown") {
+            e.preventDefault();
+            setActive((a) => Math.min(results.length - 1, a + 1));
+          } else if (e.key === "ArrowUp") {
+            e.preventDefault();
+            setActive((a) => Math.max(0, a - 1));
+          } else if (e.key === "Enter") {
+            e.preventDefault();
+            onToggle(results[active]!.entry);
+          } else if (e.key === "Escape") setText("");
+        }}
+      />
+      {open && (
+        <ul id={`${id}-list`} role="listbox" aria-multiselectable aria-label={t("locationRules.findPlace")} className="absolute top-full z-10 mt-1 grid max-h-72 w-full overflow-y-auto rounded-md border border-border bg-popover text-popover-foreground shadow-md">
+          {results.map((p, i) => (
+            <li
+              key={entryKey(p.entry)}
+              id={`${id}-${i}`}
+              role="option"
+              aria-selected={isSelected(p)}
+              className={cn("flex cursor-pointer items-baseline justify-between gap-3 px-3 py-1.5", i === active && "bg-accent text-accent-foreground")}
+              onMouseEnter={() => setActive(i)}
+              onMouseDown={(e) => {
+                e.preventDefault();
+                onToggle(p.entry);
+              }}
+            >
+              <span className="min-w-0 truncate">
+                <span className={cn("mr-2 inline-block w-3", !isSelected(p) && "invisible")} aria-hidden>
+                  ✓
+                </span>
+                {p.name}
+              </span>
+              <span className="shrink-0 text-xs text-muted-foreground">{p.detail}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {focused && q && !results.length && <p className="text-muted-foreground">{t("locationRules.noMatches")}</p>}
     </div>
   );
 }
@@ -609,7 +743,20 @@ function TargetPicker({ client, contents, exclude, label, onPick }: { client: Co
   );
 }
 
-function HistoryDialog({ rule, client, onClose }: { rule: LocationRule; client: ContentKitClient; onClose: () => void }) {
+/** The fields an admin sees change between two versions of a rule. */
+function changes(t: Translator["t"], entryName: (e: LocationEntry) => string, now: LocationRule, before?: LocationRule): string[] {
+  if (!before) return [];
+  const out: string[] = [];
+  const places = (r: LocationRule) => r.locations.map(entryName).join(", ");
+  if (places(now) !== places(before)) out.push(t("locationRules.changedWhere", { from: places(before), to: places(now) }));
+  const ids = (r: LocationRule) => `${r.target}:${[...r.content_ids, ...r.entity_ids].sort().join(",")}`;
+  if (ids(now) !== ids(before)) out.push(t("locationRules.changedWhat"));
+  if (now.domains.join(",") !== before.domains.join(",")) out.push(t("locationRules.changedDomains", { from: before.domains.join(", "), to: now.domains.join(", ") }));
+  if (now.note !== before.note) out.push(t("locationRules.changedNote"));
+  return out;
+}
+
+function HistoryDialog({ rule, client, onClose }: { rule?: LocationRule; client: ContentKitClient; onClose: () => void }) {
   const m = useMessages();
   const { t } = m;
   const entryName = useEntryName();
@@ -618,36 +765,47 @@ function HistoryDialog({ rule, client, onClose }: { rule: LocationRule; client: 
   useEffect(() => {
     const ctl = new AbortController();
     client.moderation
-      .locationRuleHistory(rule.id, { limit: 100 }, ctl.signal)
+      .locationRuleHistory(rule?.id, { limit: 100 }, ctl.signal)
       .then((page) => setItems(page.items))
       .catch((e) => !ctl.signal.aborted && setError(e as ContentKitError));
     return () => ctl.abort();
-  }, [client, rule.id]);
+  }, [client, rule?.id]);
+  const list = items ?? [];
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-lg" data-ckui="location-rule-history">
         <DialogHeader>
-          <DialogTitle>{t("locationRules.historyTitle")}</DialogTitle>
-          <DialogDescription>{rule.locations.map(entryName).join(" · ")}</DialogDescription>
+          <DialogTitle>{t(rule ? "locationRules.historyTitle" : "locationRules.allHistoryTitle")}</DialogTitle>
+          <DialogDescription>{rule ? rule.locations.map(entryName).join(" · ") : t("locationRules.allHistoryHint")}</DialogDescription>
         </DialogHeader>
         <ErrorLine error={error} />
         {!items && !error ? (
           <Rows count={2} />
+        ) : !list.length ? (
+          <p className="text-sm text-muted-foreground">{t("locationRules.noHistory")}</p>
         ) : (
           <ol className="grid gap-3 text-sm">
-            {(items ?? []).map((h) => {
+            {list.map((h, i) => {
               const was = h.snapshot as unknown as LocationRule;
+              // Newest first: the previous version of this rule is the next entry for it.
+              const before = list.slice(i + 1).find((x) => x.rule_id === h.rule_id)?.snapshot as unknown as LocationRule | undefined;
+              const diff = h.action === "update" ? changes(t, entryName, was, before) : [];
               return (
                 <li key={h.id} className="grid gap-0.5 border-l-2 border-border pl-3">
                   <p>
                     <span className="font-medium">{t(ACTIONS[h.action as keyof typeof ACTIONS] ?? ACTIONS.update)}</span>{" "}
                     <span className="text-muted-foreground">{t("locationRules.byAt", { actor: h.actor_name || h.actor, date: formatDate(m, h.at) })}</span>
                   </p>
-                  {h.action !== "delete" && was?.locations && (
-                    <p className="text-muted-foreground break-words">
-                      {was.locations.map(entryName).join(" · ")} · {was.domains.join(", ")} · {t(was.enabled ? "locationRules.on" : "locationRules.off")}
+                  {was?.locations && (
+                    <p className="break-words text-muted-foreground">
+                      {was.locations.map(entryName).join(" · ")} · <RuleTargetSummary rule={was} t={t} /> · {was.domains.join(", ")}
                     </p>
                   )}
+                  {diff.map((d) => (
+                    <p key={d} className="break-words">
+                      {d}
+                    </p>
+                  ))}
                 </li>
               );
             })}
