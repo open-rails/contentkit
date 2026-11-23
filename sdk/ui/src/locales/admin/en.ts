@@ -10,6 +10,9 @@ export const admin = {
   readerEditor: {
     deleteVersionHelp: "Only this version will be deleted. If it is the last version, the gallery is also hidden. Deleted content can be restored for 30 days. Unsaved changes will be discarded.",
     discardBeforeUnpublish: "Unpublish only this version and discard unsaved changes? Other versions stay published.",
+    confirmUnpublish: "Unpublish this version? Readers can no longer open it until you publish it again. Other versions stay published.",
+    confirmUnpublishLast: "Unpublish it? It disappears from the site until you publish it again.",
+    discardBeforeUnpublishLast: "Unpublish it and discard unsaved changes? It disappears from the site until you publish it again.",
     titlesHint: "The original title is shared. The display title belongs to this language version.",
     originalTitle: "Original title",
     displayTitle: "Display title ({language})",
