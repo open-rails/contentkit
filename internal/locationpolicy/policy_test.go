@@ -201,6 +201,9 @@ func TestResolveFromPostgres(t *testing.T) {
 	if _, err := tx.Exec(t.Context(), "SET LOCAL search_path TO "+quoted); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := tx.Exec(t.Context(), `CREATE TABLE content_items (tenant_id text,id text,PRIMARY KEY (tenant_id,id)); CREATE TABLE content_entities (tenant_id text,id text,PRIMARY KEY (tenant_id,id))`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := tx.Exec(t.Context(), string(migration)); err != nil {
 		t.Fatal(err)
 	}
@@ -215,7 +218,7 @@ func TestResolveFromPostgres(t *testing.T) {
 		country, subdivision, network string
 		contents, tags                []string
 	}{
-		{"country", "tenant", "main", "content", true, "US", "", "", []string{"country-item"}, []string{}},
+		{"country", "tenant", "main", "content", true, "US", "", "", []string{"country-item", "second-country-item"}, []string{}},
 		{"subdivision", "tenant", "main", "entities", true, "", "US-TX", "", []string{}, []string{"tag"}},
 		{"address", "tenant", "main", "content", true, "", "", "203.0.113.45/32", []string{"address-item"}, []string{}},
 		{"network", "tenant", "main", "content", true, "", "", "203.0.113.0/24", []string{"network-item"}, []string{}},
@@ -223,21 +226,42 @@ func TestResolveFromPostgres(t *testing.T) {
 		{"domain", "tenant", "other", "site", true, "US", "", "", []string{}, []string{}},
 		{"foreign", "other", "main", "site", true, "US", "", "", []string{}, []string{}},
 	} {
-		_, err := pool.Exec(t.Context(), `INSERT INTO `+rules+` (tenant_id,id,target,content_ids,entity_ids,domains,enabled,created_by,updated_by) VALUES ($1,$2,$3,$4,$5,ARRAY[$6],$7,'staff','staff')`, r.tenant, r.id, r.target, r.contents, r.tags, r.domain, r.enabled)
+		_, err := pool.Exec(t.Context(), `INSERT INTO `+rules+` (tenant_id,id,target,enabled,created_by,updated_by) VALUES ($1,$2,$3,$4,'staff','staff')`, r.tenant, r.id, r.target, r.enabled)
 		if err != nil {
 			t.Fatal(err)
+		}
+		_, err = pool.Exec(t.Context(), `INSERT INTO `+quoted+`.content_location_rule_domains (tenant_id,rule_id,domain) VALUES ($1,$2,$3)`, r.tenant, r.id, r.domain)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, target := range []struct {
+			table, column, parent string
+			ids                   []string
+		}{
+			{"content_location_rule_contents", "content_id", "content_items", r.contents},
+			{"content_location_rule_entities", "entity_id", "content_entities", r.tags},
+		} {
+			if _, err := pool.Exec(t.Context(), `INSERT INTO `+quoted+`.`+target.parent+` SELECT $1,unnest($2::text[]) ON CONFLICT DO NOTHING`, r.tenant, target.ids); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := pool.Exec(t.Context(), `INSERT INTO `+quoted+`.`+target.table+` (tenant_id,rule_id,`+target.column+`) SELECT $1,$2,unnest($3::text[])`, r.tenant, r.id, target.ids); err != nil {
+				t.Fatal(err)
+			}
 		}
 		_, err = pool.Exec(t.Context(), `INSERT INTO `+entries+` (tenant_id,rule_id,position,country,subdivision,network) VALUES ($1,$2,0,nullif($3,''),nullif($4,''),nullif($5,'')::cidr)`, r.tenant, r.id, r.country, r.subdivision, r.network)
 		if err != nil {
 			t.Fatal(err)
 		}
 	}
+	if _, err := pool.Exec(t.Context(), `INSERT INTO `+quoted+`.content_location_rule_domains VALUES ('tenant','country','another'); INSERT INTO `+entries+` (tenant_id,rule_id,position,country) VALUES ('tenant','country',1,'US')`); err != nil {
+		t.Fatal(err)
+	}
 	ctx := WithLocation(t.Context(), content.VisitorLocation{Country: "US", Subdivision: "US-TX"})
 	b, err := Resolve(ctx, pool, schema, "tenant", "main", "203.0.113.45")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if b.Site || len(b.Matches) != 4 || b.Allows("country-item", nil) || b.Allows("address-item", nil) || b.Allows("network-item", nil) || b.Allows("uncovered", []string{"tag"}) || !b.Allows("uncovered", nil) {
+	if b.Site || len(b.Matches) != 4 || b.Allows("country-item", nil) || b.Allows("second-country-item", nil) || b.Allows("address-item", nil) || b.Allows("network-item", nil) || b.Allows("uncovered", []string{"tag"}) || !b.Allows("uncovered", nil) {
 		t.Fatalf("incorrect enabled/domain/tenant matching: %+v", b)
 	}
 	pred, args := b.SQL("f", "location")
@@ -285,6 +309,16 @@ func TestResolveFromPostgres(t *testing.T) {
 	}
 	if !next.Site {
 		t.Fatal("next request did not see enabled rule")
+	}
+	if _, err := pool.Exec(ctx, `DELETE FROM `+quoted+`.content_items WHERE tenant_id='tenant'; DELETE FROM `+quoted+`.content_entities WHERE tenant_id='tenant'; UPDATE `+rules+` SET enabled=false WHERE target='site'`); err != nil {
+		t.Fatal(err)
+	}
+	next, err = Resolve(ctx, pool, schema, "tenant", "main", "203.0.113.45")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !next.Empty() || len(next.Matches) != 0 {
+		t.Fatalf("rules without targets still matched: %+v", next)
 	}
 	_, err = pool.Exec(ctx, `DELETE FROM `+rules+` WHERE tenant_id='tenant'`)
 	if err != nil {

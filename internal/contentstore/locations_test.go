@@ -75,14 +75,11 @@ func TestLocationRulesFromPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tx.Exec(t.Context(), string(migration)); err != nil {
-		t.Fatal(err)
-	}
 	if _, err := tx.Exec(t.Context(), `
-CREATE TABLE content_items (tenant_id text,id text,kind text,state text);
+CREATE TABLE content_items (tenant_id text,id text,kind text,state text,PRIMARY KEY (tenant_id,id));
 CREATE TABLE content_versions (tenant_id text,id text,content_id text,state text,position int);
 CREATE TABLE content_version_text (tenant_id text,version_id text,language text,title text);
-CREATE TABLE content_entities (tenant_id text,id text,kind text,state text);
+CREATE TABLE content_entities (tenant_id text,id text,kind text,state text,PRIMARY KEY (tenant_id,id));
 CREATE TABLE content_entity_names (tenant_id text,entity_id text,language text,kind text,name text);
 CREATE TABLE content_erased_subjects (tenant_id text,actor_id text);
 INSERT INTO content_items VALUES ('tenant','one','article','draft'),('tenant','two','gallery','draft'),('tenant','deleted','article','deleted'),('other','foreign','article','draft');
@@ -90,10 +87,23 @@ INSERT INTO content_versions VALUES ('tenant','v-de','one','draft',0),('tenant',
 INSERT INTO content_version_text VALUES ('tenant','v-de','de','German'),('tenant','v-en','en','English'),('tenant','fallback','de','Fallback'),('tenant','removed','en','Deleted version'),('other','v-foreign','en','Foreign title');
 INSERT INTO content_entities VALUES ('tenant','tag','tag','active'),('tenant','deleted-tag','tag','deleted'),('other','foreign-tag','tag','active');
 INSERT INTO content_entity_names VALUES ('tenant','tag','de','name','German tag'),('tenant','tag','en','name','English tag'),('tenant','tag','en','alias','Alias'),('other','tag','en','name','Foreign tag');
-INSERT INTO content_location_rules (tenant_id,id,target,content_ids,entity_ids,domains,enabled,created_by,updated_by) VALUES
-('tenant','first','content',ARRAY['two','one','deleted','missing','foreign'],'{}',ARRAY['z'],true,'staff','staff'),
-('tenant','second','content',ARRAY['one'],'{}',ARRAY['z'],true,'staff','staff'),
-('tenant','third','entities','{}',ARRAY['tag','deleted-tag','missing-tag','foreign-tag'],ARRAY['z'],true,'staff','staff');`); err != nil {
+`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(t.Context(), string(migration)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(t.Context(), `
+INSERT INTO content_location_rules (tenant_id,id,target,enabled,created_by,updated_by) VALUES
+('tenant','first','content',true,'staff','staff'),
+('tenant','second','content',true,'staff','staff'),
+('tenant','third','entities',true,'staff','staff');
+INSERT INTO content_location_rule_entries (tenant_id,rule_id,position,country) VALUES ('tenant','first',0,'GB'),('tenant','second',0,'GB'),('tenant','third',0,'GB');
+INSERT INTO content_location_rule_domains VALUES ('tenant','first','z'),('tenant','second','z'),('tenant','third','z');
+INSERT INTO content_location_rule_contents VALUES ('tenant','first','two'),('tenant','first','one'),('tenant','first','deleted'),('tenant','second','one');
+INSERT INTO content_location_rule_entities VALUES ('tenant','third','tag'),('tenant','third','deleted-tag');
+DELETE FROM content_items WHERE tenant_id='tenant' AND id='deleted';
+DELETE FROM content_entities WHERE tenant_id='tenant' AND id='deleted-tag';`); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(t.Context()); err != nil {
@@ -110,13 +120,16 @@ INSERT INTO content_location_rules (tenant_id,id,target,content_ids,entity_ids,d
 		t.Fatalf("page: %+v", page)
 	}
 	want := map[string][]content.LocationRuleTarget{
-		"first":  {{ID: "two", Kind: "gallery", Title: "Fallback"}, {ID: "one", Kind: "article", Title: "English"}, {ID: "deleted"}, {ID: "missing"}, {ID: "foreign"}},
+		"first":  {{ID: "one", Kind: "article", Title: "English"}, {ID: "two", Kind: "gallery", Title: "Fallback"}},
 		"second": {{ID: "one", Kind: "article", Title: "English"}},
-		"third":  {{ID: "tag", Kind: "tag", Name: "English tag"}, {ID: "deleted-tag"}, {ID: "missing-tag"}, {ID: "foreign-tag"}},
+		"third":  {{ID: "tag", Kind: "tag", Name: "English tag"}},
 	}
 	for _, r := range page.Items {
 		if r.UpdatedByName != "" {
 			t.Fatalf("name without directory: %+v", r)
+		}
+		if !slices.Equal(r.Domains, []string{"z"}) {
+			t.Fatalf("rule domains: %+v", r)
 		}
 		if !reflect.DeepEqual(r.Targets, want[r.ID]) {
 			t.Fatalf("rule %s targets: %+v, want %+v", r.ID, r.Targets, want[r.ID])
@@ -159,9 +172,49 @@ INSERT INTO content_location_rules (tenant_id,id,target,content_ids,entity_ids,d
 			t.Fatalf("rule name: %+v", r)
 		}
 	}
+	for _, tc := range []struct {
+		name, target, message string
+		contents, entities    []string
+	}{
+		{"site-content", "site", "site target has no content or entity ids", []string{"one"}, nil},
+		{"site-entity", "site", "site target has no content or entity ids", nil, []string{"tag"}},
+		{"empty-content", "content", "content target needs content ids only", nil, nil},
+		{"mixed-content", "content", "content target needs content ids only", []string{"one"}, []string{"tag"}},
+		{"empty-entities", "entities", "entities target needs entity ids only", nil, nil},
+		{"mixed-entities", "entities", "entities target needs entity ids only", []string{"one"}, []string{"tag"}},
+		{"unknown-target", "unknown", "target must be site, content or entities", nil, nil},
+		{"foreign-content", "content", "target ids must exist in this tenant", []string{"foreign"}, nil},
+		{"foreign-entity", "entities", "target ids must exist in this tenant", nil, []string{"foreign-tag"}},
+		{"missing-content", "content", "target ids must exist in this tenant", []string{"missing"}, nil},
+		{"missing-entity", "entities", "target ids must exist in this tenant", nil, []string{"missing"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := rt.saveLocationRule(ctx, "staff", "", &content.LocationRuleInput{Locations: []content.LocationEntry{{Country: "GB"}}, Target: tc.target, ContentIDs: tc.contents, EntityIDs: tc.entities, Domains: []string{"z"}}, nil, false)
+			if err == nil || err.Error() != tc.message {
+				t.Fatalf("save error: %v, want %q", err, tc.message)
+			}
+		})
+	}
+	siteTarget := "site"
+	if _, err := rt.saveLocationRule(ctx, "staff", "first", nil, &content.LocationRuleUpdate{Target: &siteTarget}, false); err == nil || err.Error() != "site target has no content or entity ids" {
+		t.Fatalf("invalid patch: %v", err)
+	}
+	unchanged, err := rt.locationRules(ctx, 100, 0)
+	if err != nil || unchanged.Total != 3 {
+		t.Fatalf("invalid saves changed rules: %+v, err=%v", unchanged, err)
+	}
+	for _, r := range unchanged.Items {
+		if r.ID == "first" && (r.Target != "content" || !slices.Equal(r.ContentIDs, []string{"one", "two"})) {
+			t.Fatalf("invalid patch changed rule: %+v", r)
+		}
+	}
+	failedHistory, err := rt.locationHistory(ctx, "", 100, 0)
+	if err != nil || failedHistory.Total != 0 {
+		t.Fatalf("invalid saves wrote history: %+v, err=%v", failedHistory, err)
+	}
 	// Mutation responses use the same labels; snapshots retain the old shape.
 	lookupCalls = 0
-	created, err := rt.saveLocationRule(ctx, "staff", "", &content.LocationRuleInput{Locations: []content.LocationEntry{{Country: "GB"}}, Target: "content", ContentIDs: []string{"one", "two"}, Domains: []string{"z"}}, nil, false)
+	created, err := rt.saveLocationRule(ctx, "staff", "", &content.LocationRuleInput{Locations: []content.LocationEntry{{Country: "GB"}}, Target: "content", ContentIDs: []string{"two", "one", "one"}, Domains: []string{"z", "a", "z"}, Enabled: true}, nil, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,6 +224,13 @@ INSERT INTO content_location_rules (tenant_id,id,target,content_ids,entity_ids,d
 	}
 	if created.UpdatedByName != "Staff Name" || lookupCalls != 1 {
 		t.Fatalf("create name: %+v, calls=%d", created, lookupCalls)
+	}
+	if !slices.Equal(created.ContentIDs, []string{"one", "two"}) || !slices.Equal(created.Domains, []string{"a", "z"}) {
+		t.Fatalf("create sets: %+v", created)
+	}
+	var domainRows int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM `+qs+`.content_location_rule_domains WHERE tenant_id='tenant' AND rule_id=$1`, created.ID).Scan(&domainRows); err != nil || domainRows != 2 {
+		t.Fatalf("domain rows: %d, err=%v", domainRows, err)
 	}
 	entityIDs, contentIDs, target := []string{"tag"}, []string{}, "entities"
 	lookupCalls = 0
@@ -253,6 +313,86 @@ INSERT INTO content_location_rules (tenant_id,id,target,content_ids,entity_ids,d
 				t.Fatalf("list and history directory calls: %d", lookupCalls)
 			}
 		})
+	}
+	// A patch that waits for a prior writer must read its committed child rows.
+	writer, err := pgx.Connect(ctx, dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer writer.Close(context.Background())
+	prior, err := writer.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer prior.Rollback(context.Background())
+	if _, err := prior.Exec(ctx, `SELECT id FROM `+qs+`.content_location_rules WHERE tenant_id='tenant' AND id='first' FOR UPDATE`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := prior.Exec(ctx, `DELETE FROM `+qs+`.content_location_rule_contents WHERE tenant_id='tenant' AND rule_id='first' AND content_id='one'`); err != nil {
+		t.Fatal(err)
+	}
+	var patchPID int
+	if err := pool.QueryRow(ctx, `SELECT pg_backend_pid()`).Scan(&patchPID); err != nil {
+		t.Fatal(err)
+	}
+	patchCtx, cancelPatch := context.WithTimeout(ctx, 10*time.Second)
+	defer cancelPatch()
+	patchDone := make(chan error, 1)
+	go func() {
+		note := "after concurrent target update"
+		r, err := rt.saveLocationRule(patchCtx, "staff", "first", nil, &content.LocationRuleUpdate{Note: &note}, false)
+		if err == nil && !slices.Equal(r.ContentIDs, []string{"two"}) {
+			err = fmt.Errorf("waiting patch restored stale targets: %v", r.ContentIDs)
+		}
+		patchDone <- err
+	}()
+	for {
+		var waiting bool
+		if err := prior.QueryRow(patchCtx, `SELECT cardinality(pg_blocking_pids($1))>0`, patchPID).Scan(&waiting); err != nil {
+			t.Fatal(err)
+		}
+		if waiting {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err := prior.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-patchDone; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `DELETE FROM `+qs+`.content_items WHERE tenant_id='tenant'; DELETE FROM `+qs+`.content_entities WHERE tenant_id='tenant'`); err != nil {
+		t.Fatal(err)
+	}
+	page, err = rt.locationRules(ctx, 100, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.Total != 4 {
+		t.Fatalf("target deletion removed rules: %+v", page)
+	}
+	for _, r := range page.Items {
+		if !r.Enabled || r.ContentIDs == nil || r.EntityIDs == nil || r.Targets == nil || len(r.ContentIDs)+len(r.EntityIDs)+len(r.Targets) != 0 {
+			t.Fatalf("target deletion left ids or labels: %+v", r)
+		}
+	}
+	afterCascade, err := rt.locationHistory(ctx, created.ID, 100, 0)
+	if err != nil || afterCascade.Total != history.Total || !reflect.DeepEqual(afterCascade.Items[0].Snapshot, history.Items[0].Snapshot) || !reflect.DeepEqual(afterCascade.Items[1].Snapshot, history.Items[1].Snapshot) {
+		t.Fatalf("cascade changed history: %+v, err=%v", afterCascade, err)
+	}
+	if _, err := rt.saveLocationRule(ctx, "staff", created.ID, nil, nil, true); err != nil {
+		t.Fatal(err)
+	}
+	for _, table := range []string{"rule_contents", "rule_entities", "rule_domains", "rule_entries"} {
+		var n int
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM `+rt.locationTable(table)+` WHERE tenant_id='tenant' AND rule_id=$1`, created.ID).Scan(&n); err != nil || n != 0 {
+			t.Fatalf("rule deletion left %s rows: %d, err=%v", table, n, err)
+		}
+	}
+	afterDelete, err := rt.locationHistory(ctx, created.ID, 100, 0)
+	if err != nil || afterDelete.Total != 3 || afterDelete.Items[0].Action != "delete" {
+		t.Fatalf("rule deletion lost history: %+v, err=%v", afterDelete, err)
 	}
 	rt.cfg.ContentFilters.Domains = nil
 	page, err = rt.locationRules(ctx, 100, 100)

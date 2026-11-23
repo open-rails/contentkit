@@ -45,8 +45,7 @@ type LocationRule struct {
 	UpdatedAt     time.Time            `json:"updated_at"`
 }
 
-// LocationRuleTarget names a content item or entity. Missing targets retain
-// their ID with an empty kind and title/name.
+// LocationRuleTarget names an existing content item or entity.
 type LocationRuleTarget struct {
 	ID    string `json:"id"`
 	Kind  string `json:"kind"`
