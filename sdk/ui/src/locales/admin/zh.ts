@@ -13,6 +13,8 @@ export const admin: typeof en = {
     deleteVersionHelp: "仅删除此版本。如果这是最后一个版本，图库也会隐藏。删除的内容可在30天内恢复。未保存的更改将被放弃。",
     discardBeforeUnpublish: "仅取消发布此版本并放弃未保存的更改？其他版本仍保持发布。",
     confirmUnpublish: "取消发布此版本？再次发布之前，读者将无法打开它。其他版本仍保持发布。",
+    confirmUnpublishLast: "取消发布？再次发布之前，它将从网站上消失。",
+    discardBeforeUnpublishLast: "取消发布并放弃未保存的更改？再次发布之前，它将从网站上消失。",
     titlesHint: "原始标题为所有版本共用，显示标题属于此语言版本。",
     originalTitle: "原始标题",
     displayTitle: "显示标题（{language}）",

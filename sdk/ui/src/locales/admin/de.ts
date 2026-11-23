@@ -13,6 +13,8 @@ export const admin: typeof en = {
     deleteVersionHelp: "Nur diese Version wird gelöscht. Ist sie die letzte, wird auch die Galerie ausgeblendet. Gelöschte Inhalte können 30 Tage lang wiederhergestellt werden. Ungespeicherte Änderungen werden verworfen.",
     discardBeforeUnpublish: "Nur diese Version zurückziehen und ungespeicherte Änderungen verwerfen? Andere Versionen bleiben veröffentlicht.",
     confirmUnpublish: "Diese Version zurückziehen? Leser können sie erst wieder öffnen, wenn du sie erneut veröffentlichst. Andere Versionen bleiben veröffentlicht.",
+    confirmUnpublishLast: "Zurückziehen? Es verschwindet von der Seite, bis du es erneut veröffentlichst.",
+    discardBeforeUnpublishLast: "Zurückziehen und ungespeicherte Änderungen verwerfen? Es verschwindet von der Seite, bis du es erneut veröffentlichst.",
     titlesHint: "Der Originaltitel ist gemeinsam. Der Anzeigetitel gehört zu dieser Sprachversion.",
     originalTitle: "Originaltitel",
     displayTitle: "Anzeigetitel ({language})",

@@ -13,6 +13,8 @@ export const admin: typeof en = {
     deleteVersionHelp: "이 버전만 삭제됩니다. 마지막 버전이면 갤러리도 숨겨집니다. 삭제한 콘텐츠는 30일 동안 복원할 수 있습니다. 저장하지 않은 변경 사항은 버려집니다.",
     discardBeforeUnpublish: "이 버전만 게시 취소하고 저장하지 않은 변경 사항을 버릴까요? 다른 버전은 계속 공개됩니다.",
     confirmUnpublish: "이 버전을 게시 취소할까요? 다시 게시할 때까지 독자가 열 수 없습니다. 다른 버전은 계속 공개됩니다.",
+    confirmUnpublishLast: "게시 취소할까요? 다시 게시할 때까지 사이트에서 사라집니다.",
+    discardBeforeUnpublishLast: "게시 취소하고 저장하지 않은 변경 사항을 버릴까요? 다시 게시할 때까지 사이트에서 사라집니다.",
     titlesHint: "원제는 공통입니다. 표시 제목은 이 언어 버전에 속합니다.",
     originalTitle: "원제",
     displayTitle: "표시 제목 ({language})",

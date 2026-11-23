@@ -792,7 +792,7 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
                     there is nothing to unpublish yet. */}
                 {version?.state === "published" && item?.state === "published" && (
                   <Button variant="outline" disabled={actions.pending} onClick={() => void actions.run(async () => {
-                    if (!(await confirm({ title: t("contentManager.unpublish"), description: t(unsaved ? "readerEditor.discardBeforeUnpublish" : "readerEditor.confirmUnpublish"), confirm: t("contentManager.unpublish") }))) return false;
+                    if (!(await confirm({ title: t("contentManager.unpublish"), description: t(versions.some((v) => v.id !== version.id && v.state === "published") ? (unsaved ? "readerEditor.discardBeforeUnpublish" : "readerEditor.confirmUnpublish") : (unsaved ? "readerEditor.discardBeforeUnpublishLast" : "readerEditor.confirmUnpublishLast")), confirm: t("contentManager.unpublish") }))) return false;
                     await client.contents.updateVersion(item!.id, version.id, { state: "draft" });
                     if (current()) { discardLocalEdits(); ed.reload(); }
                     return true;
