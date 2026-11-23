@@ -5,6 +5,7 @@ import (
 	"expvar"
 	"fmt"
 	"log/slog"
+	"math"
 	"time"
 
 	"github.com/open-rails/contentkit/access"
@@ -15,8 +16,9 @@ import (
 
 // Limits are per-actor interaction limits: an actor is its user id, or its
 // IP when anonymous. Every attempt spends one, so undoing (unfavorite,
-// neutral) costs the same as doing; a comment spends only once it passes the
-// local refusals, while every comment request spends from commentAttempts. A nil field takes its default; an action
+// neutral) costs the same as doing. A comment spends only once it passes
+// the local refusals; every comment request is also capped at 30 a minute,
+// or at Comment's own rate per minute when that is higher. A nil field takes its default; an action
 // with several rates must pass all of them.
 type Limits struct {
 	Comment         []content.Rate // default 5 per 5 minutes and 20 per hour
@@ -69,6 +71,7 @@ func newLimiters(l Limits, tenant string, log *slog.Logger) (map[content.Action]
 	if l.Redis == nil {
 		log.Info("content interaction limits are per process (no Limits.Redis): assuming a single replica")
 	}
+	set[actionCommentAttempt] = attemptRates(set[content.ActionComment])
 	out := make(map[content.Action]*ratelimit.Limiter, len(defaultLimits))
 	for a, def := range defaultLimits {
 		rates := set[a]
@@ -87,6 +90,20 @@ func newLimiters(l Limits, tenant string, log *slog.Logger) (map[content.Action]
 		out[a] = lim
 	}
 	return out, nil
+}
+
+// attemptRates is commentAttempts, raised to the comment rates' highest
+// count per minute so a host's own comment limit is never undercut.
+func attemptRates(comment []content.Rate) []content.Rate {
+	n := commentAttempts[0].Count
+	for _, r := range comment {
+		if r.Per > 0 {
+			if perMinute := int(math.Ceil(float64(r.Count) * float64(time.Minute) / float64(r.Per))); perMinute > n {
+				n = perMinute
+			}
+		}
+	}
+	return []content.Rate{{Count: n, Per: time.Minute}}
 }
 
 // limit spends one of actor's a allowance: per subject, and per invoker
