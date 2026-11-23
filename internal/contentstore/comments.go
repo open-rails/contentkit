@@ -96,6 +96,10 @@ func (c *comments) create(ctx context.Context, actor access.Actor, target conten
 	if err != nil {
 		return content.Comment{}, err
 	}
+	// Spent once the comment passed every local refusal, before screening.
+	if err := c.rt.limit(ctx, content.ActionComment, actor); err != nil {
+		return content.Comment{}, err
+	}
 	sc, err := c.rt.screen(ctx, content.ModerationInput{Actor: actor, Ref: ref, Kind: content.KindComment, Text: clean})
 	if err != nil {
 		return content.Comment{}, err
@@ -616,6 +620,9 @@ func (c *comments) edit(ctx context.Context, actor access.Actor, cid, rawBody st
 	if err != nil {
 		return content.Comment{}, err
 	}
+	if err := c.rt.limit(ctx, content.ActionComment, actor); err != nil {
+		return content.Comment{}, err
+	}
 	sc, err := c.rt.screen(ctx, content.ModerationInput{SubjectID: deref(target.ownerID), Actor: actor, Ref: target.ref, Kind: content.KindComment, ItemID: cid, Text: clean})
 	if err != nil {
 		return content.Comment{}, err
@@ -1010,7 +1017,7 @@ func (c *comments) handleCreate(typ content.TargetType) http.HandlerFunc {
 		actor := c.rt.actor(req.Context())
 		err := participant(actor, c.rt.anonymous.Comments)
 		if err == nil {
-			err = c.rt.limit(req.Context(), content.ActionComment, actor)
+			err = c.rt.limit(req.Context(), actionCommentAttempt, actor)
 		}
 		var target contentref.ContentRef
 		if err == nil {
@@ -1038,7 +1045,7 @@ func (c *comments) handleCreate(typ content.TargetType) http.HandlerFunc {
 
 func (c *comments) handleEdit(w http.ResponseWriter, req *http.Request) {
 	actor := c.rt.actor(req.Context())
-	if err := c.rt.limit(req.Context(), content.ActionComment, actor); err != nil {
+	if err := c.rt.limit(req.Context(), actionCommentAttempt, actor); err != nil {
 		writeErr(w, err)
 		return
 	}
