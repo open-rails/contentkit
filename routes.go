@@ -169,6 +169,10 @@ func (e *Engine) dispatch(prefix string, modules map[httpapi.Module]http.Handler
 			return
 		}
 		// One billing read per request, whatever the module.
-		h.ServeHTTP(w, r.WithContext(entitlement.WithMemo(r.Context())))
+		spec, matched := httpapi.Match(r.Method, path)
+		reader := matched && (r.Method == http.MethodGet || r.Method == http.MethodHead) &&
+			spec.Auth != httpapi.Staff && spec.Auth != httpapi.Editor &&
+			spec.Path != "/manage" && !strings.HasPrefix(spec.Path, "/manage/")
+		e.locationRequest(h, reader).ServeHTTP(w, r.WithContext(entitlement.WithMemo(r.Context())))
 	})
 }

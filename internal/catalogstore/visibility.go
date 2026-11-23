@@ -17,6 +17,7 @@ import (
 	"github.com/open-rails/contentkit/internal/domainpolicy"
 	entitlement "github.com/open-rails/contentkit/internal/entitlement"
 	"github.com/open-rails/contentkit/internal/gate"
+	"github.com/open-rails/contentkit/internal/locationpolicy"
 	"github.com/open-rails/contentkit/internal/readerprefs"
 	"github.com/open-rails/contentkit/internal/resolve"
 	"github.com/open-rails/contentkit/kinds"
@@ -42,6 +43,7 @@ type Viewer struct {
 	management     bool
 	filter         *entitlement.Filter
 	policies       domainpolicy.Policies
+	locations      locationpolicy.Block
 	hidden         map[string][]string
 	editorEntities []string
 	// asked are owner entities whose editorship this request already checked.
@@ -52,7 +54,7 @@ type Viewer struct {
 // (one billing read, fail-closed when unavailable), the site's required entities
 // and the viewer's content filters (config defaults merged with their own).
 func (s *Store) Viewer(ctx context.Context, o catalog.ViewerOptions) (*Viewer, error) {
-	v := &Viewer{s: s, actor: o.Actor, language: o.Language, mode: o.Mode, now: s.now()}
+	v := &Viewer{s: s, actor: o.Actor, language: o.Language, mode: o.Mode, now: s.now(), management: resolve.EditorRead(ctx)}
 	if v.mode == "" {
 		v.mode = access.Lock
 	}
@@ -92,6 +94,12 @@ func (s *Store) Viewer(ctx context.Context, o catalog.ViewerOptions) (*Viewer, e
 	v.policies, err = domainpolicy.Resolve(ctx, s.pool, s.t.entities, s.tenant, v.domain, s.cfg.ContentFilters.AppliesTo)
 	if err != nil {
 		return nil, err
+	}
+	if !v.management {
+		v.locations, err = locationpolicy.Resolve(ctx, s.pool, s.schema, s.tenant, locationpolicy.DomainName(v.domain.Name), o.Actor.IP)
+		if err != nil {
+			return nil, err
+		}
 	}
 	allowed := map[string]bool{}
 	for _, p := range v.policies {
@@ -250,6 +258,13 @@ func (v *Viewer) listed(alias string, language bool) (string, pgx.NamedArgs) {
 	}
 	live := f("live_from") + " <= @cv_now::timestamptz"
 	scope, scopeArgs := v.policies.SQL(alias, "cv_domain")
+	if !v.management {
+		location, locationArgs := v.locations.SQL(alias, "cv_location")
+		scope = "(" + scope + " AND " + location + ")"
+		for k, a := range locationArgs {
+			args[k] = a
+		}
+	}
 	for k, a := range scopeArgs {
 		args[k] = a
 	}
@@ -303,6 +318,11 @@ func (v *Viewer) privileged(alias string) string {
 // pgx named args prefixed ci_.
 func (v *Viewer) Indexable(alias string) (string, pgx.NamedArgs) {
 	scope, args := v.policies.SQL(alias, "ci_domain")
+	location, locationArgs := v.locations.SQL(alias, "ci_location")
+	scope = "(" + scope + " AND " + location + ")"
+	for k, a := range locationArgs {
+		args[k] = a
+	}
 	args["ci_now"] = v.now
 	return "(NOT " + alias + ".deleted AND " + alias + ".live_from <= @ci_now::timestamptz AND " + scope + " AND " + v.channelReady(alias) + ")", args
 }
@@ -322,7 +342,9 @@ type facetRow struct {
 
 func (v *Viewer) live(r facetRow) bool { return r.liveFrom != nil && !r.liveFrom.After(v.now) }
 
-func (v *Viewer) inScope(r facetRow) bool { return v.policies.Allows(r.kind, r.entityIDs) }
+func (v *Viewer) inScope(r facetRow) bool {
+	return (v.management || v.locations.Allows(r.contentID, r.entityIDs)) && v.policies.Allows(r.kind, r.entityIDs)
+}
 
 // itemView is the rule's verdict on one content item for the viewer.
 type itemView struct {
@@ -369,6 +391,9 @@ func (v *Viewer) decide(ctx context.Context, ids []string, every bool) (map[stri
 		if r.rule, err = effectiveRule(crule, vrule); err != nil {
 			rows.Close()
 			return nil, fmt.Errorf("catalog: version %s: %w", r.versionID, err)
+		}
+		if !v.management && !v.locations.Allows(r.contentID, r.entityIDs) {
+			continue
 		}
 		r.rule = r.rule.Previewed(s.cfg.Kinds[r.kind])
 		byID[r.contentID] = append(byID[r.contentID], r)

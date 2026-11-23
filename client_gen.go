@@ -934,6 +934,124 @@ func (c *Client) DeleteModerationIpBans(ctx context.Context, body []string) erro
 	return c.call(ctx, http.MethodDelete, "/v1/moderation/ip-bans", nil, body, nil)
 }
 
+// GetModerationLocationRulesQuery is the query of GetModerationLocationRules.
+type GetModerationLocationRulesQuery struct {
+	// page size: 20 by default, at most 100
+	Limit int
+	// items to skip
+	Offset int
+}
+
+func (q GetModerationLocationRulesQuery) values() url.Values {
+	v := url.Values{}
+	if q.Limit != 0 {
+		v.Set("limit", fmt.Sprint(q.Limit))
+	}
+	if q.Offset != 0 {
+		v.Set("offset", fmt.Sprint(q.Offset))
+	}
+	return v
+}
+
+// GetModerationLocationRules is GET /v1/moderation/location-rules (staff). Lists location rules, newest first.
+func (c *Client) GetModerationLocationRules(ctx context.Context, q GetModerationLocationRulesQuery) (content.LocationRulePage, error) {
+	var out content.LocationRulePage
+	err := c.call(ctx, http.MethodGet, "/v1/moderation/location-rules", q.values(), nil, &out)
+	return out, err
+}
+
+// PostModerationLocationRules is POST /v1/moderation/location-rules (staff). Creates a location rule and its history snapshot.
+func (c *Client) PostModerationLocationRules(ctx context.Context, body content.LocationRuleInput) (content.LocationRule, error) {
+	var out content.LocationRule
+	err := c.call(ctx, http.MethodPost, "/v1/moderation/location-rules", nil, body, &out)
+	return out, err
+}
+
+// PatchModerationLocationRule is PATCH /v1/moderation/location-rules/{id} (staff). Updates a location rule, including its enabled state.
+func (c *Client) PatchModerationLocationRule(ctx context.Context, id string, body content.LocationRuleUpdate) (content.LocationRule, error) {
+	var out content.LocationRule
+	err := c.call(ctx, http.MethodPatch, expand("/v1/moderation/location-rules/{id}", "{id}", url.PathEscape(id)), nil, body, &out)
+	return out, err
+}
+
+// DeleteModerationLocationRule is DELETE /v1/moderation/location-rules/{id} (staff). Deletes a location rule, retaining its history.
+func (c *Client) DeleteModerationLocationRule(ctx context.Context, id string) error {
+	return c.call(ctx, http.MethodDelete, expand("/v1/moderation/location-rules/{id}", "{id}", url.PathEscape(id)), nil, nil, nil)
+}
+
+// GetModerationLocationRulesHistoryQuery is the query of GetModerationLocationRulesHistory.
+type GetModerationLocationRulesHistoryQuery struct {
+	// page size: 20 by default, at most 100
+	Limit int
+	// items to skip
+	Offset int
+}
+
+func (q GetModerationLocationRulesHistoryQuery) values() url.Values {
+	v := url.Values{}
+	if q.Limit != 0 {
+		v.Set("limit", fmt.Sprint(q.Limit))
+	}
+	if q.Offset != 0 {
+		v.Set("offset", fmt.Sprint(q.Offset))
+	}
+	return v
+}
+
+// GetModerationLocationRulesHistory is GET /v1/moderation/location-rules/history (staff). Lists all location rule history, newest first.
+func (c *Client) GetModerationLocationRulesHistory(ctx context.Context, q GetModerationLocationRulesHistoryQuery) (content.LocationRuleHistoryPage, error) {
+	var out content.LocationRuleHistoryPage
+	err := c.call(ctx, http.MethodGet, "/v1/moderation/location-rules/history", q.values(), nil, &out)
+	return out, err
+}
+
+// GetModerationLocationRuleHistoryQuery is the query of GetModerationLocationRuleHistory.
+type GetModerationLocationRuleHistoryQuery struct {
+	// page size: 20 by default, at most 100
+	Limit int
+	// items to skip
+	Offset int
+}
+
+func (q GetModerationLocationRuleHistoryQuery) values() url.Values {
+	v := url.Values{}
+	if q.Limit != 0 {
+		v.Set("limit", fmt.Sprint(q.Limit))
+	}
+	if q.Offset != 0 {
+		v.Set("offset", fmt.Sprint(q.Offset))
+	}
+	return v
+}
+
+// GetModerationLocationRuleHistory is GET /v1/moderation/location-rules/{id}/history (staff). Lists a rule's history, including after deletion.
+func (c *Client) GetModerationLocationRuleHistory(ctx context.Context, id string, q GetModerationLocationRuleHistoryQuery) (content.LocationRuleHistoryPage, error) {
+	var out content.LocationRuleHistoryPage
+	err := c.call(ctx, http.MethodGet, expand("/v1/moderation/location-rules/{id}/history", "{id}", url.PathEscape(id)), q.values(), nil, &out)
+	return out, err
+}
+
+// GetModerationLocationRulesCheckQuery is the query of GetModerationLocationRulesCheck.
+type GetModerationLocationRulesCheckQuery struct {
+	// IPv4 or IPv6 address
+	Ip string
+}
+
+func (q GetModerationLocationRulesCheckQuery) values() url.Values {
+	v := url.Values{}
+	if q.Ip != "" {
+		v.Set("ip", q.Ip)
+	}
+	return v
+}
+
+// GetModerationLocationRulesCheck is GET /v1/moderation/location-rules/check (staff). Resolves an IP and reports matching enabled rules for each domain.
+func (c *Client) GetModerationLocationRulesCheck(ctx context.Context, q GetModerationLocationRulesCheckQuery) (content.LocationCheck, error) {
+	var out content.LocationCheck
+	err := c.call(ctx, http.MethodGet, "/v1/moderation/location-rules/check", q.values(), nil, &out)
+	return out, err
+}
+
 // PutAccountDeleted is PUT /v1/accounts/{id}/deleted (staff). Marks an account deleted during AuthKit's recovery period, hiding its attribution, or restored. Idempotent.
 func (c *Client) PutAccountDeleted(ctx context.Context, id string, body content.AccountDeleted) error {
 	return c.call(ctx, http.MethodPut, expand("/v1/accounts/{id}/deleted", "{id}", url.PathEscape(id)), nil, body, nil)

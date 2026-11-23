@@ -241,8 +241,8 @@ func (s *Store) compile(opts ListOptions, ids []string) (cardQuery, error) {
 		scope, parent = visibleLink("scope_id"), visibleLink("parent_id")
 	}
 	listed := LiveListed
-	if !opts.IncludeInternal && len(s.boundary) > 0 {
-		boundary, args := s.boundary.SQL("f", "entity_domain")
+	if !opts.IncludeInternal && (len(s.boundary) > 0 || !s.locations.Empty()) {
+		boundary, args := s.publicBoundary("f", "entity_domain")
 		listed += " AND " + boundary
 		maps.Copy(c.args, args)
 	}
@@ -252,7 +252,7 @@ func (s *Store) compile(opts ListOptions, ids []string) (cardQuery, error) {
  AND g.state='active' AND %s AND (@count_language='' OR @count_language::text=ANY(f.languages))%s) cc ON true`,
 		s.table("content_facets"), listed, countKind)
 	eligible, eligibilityJoin := "", ""
-	if (countKind != "" || len(s.boundary) > 0) && !opts.IncludeInternal {
+	if (countKind != "" || len(s.boundary) > 0 || !s.locations.Empty()) && !opts.IncludeInternal {
 		// Eligibility and counts share one facet scan, including owner-only links.
 		// Direct lookups keep the scan within the requested entities' facets.
 		members := ""

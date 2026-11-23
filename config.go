@@ -29,6 +29,8 @@ import (
 
 // Config is the engine's configuration: plain data.
 type Config struct {
+	// GeoIPCityPath optionally names a GeoLite2-City .mmdb file.
+	GeoIPCityPath string `yaml:"geoip_city_path" json:"geoip_city_path"`
 	// Scope is the business and app this engine serves. It is a trusted
 	// deployment binding, not request authorization. Required.
 	Scope    *Scope         `yaml:"scope" json:"scope"`

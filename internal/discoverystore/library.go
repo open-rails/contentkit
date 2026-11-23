@@ -9,6 +9,7 @@ import (
 	discovery "github.com/open-rails/contentkit/discovery"
 	"github.com/open-rails/contentkit/internal/domainpolicy"
 	"github.com/open-rails/contentkit/internal/gate"
+	"github.com/open-rails/contentkit/internal/locationpolicy"
 	"github.com/open-rails/contentkit/kinds"
 )
 
@@ -48,6 +49,16 @@ func (s *Service) Library(ctx context.Context, actor access.Actor, q discovery.L
 		}
 	}
 	scope, args := hard.SQL("f", "library_domain")
+	d, _ := s.o.Kinds.DomainFor(gate.Domain(ctx))
+	block, err := locationpolicy.Resolve(ctx, s.o.Pool, s.o.Schema, s.o.Tenant, locationpolicy.DomainName(d.Name), actor.IP)
+	if err != nil {
+		return page, err
+	}
+	location, more := block.SQL("f", "library_location")
+	scope = "(" + scope + " AND " + location + ")"
+	for k, v := range more {
+		args[k] = v
+	}
 	versionIDs := []string{}
 	versionParents := []string{}
 	for parent, ids := range versions {

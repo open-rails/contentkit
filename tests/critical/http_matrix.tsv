@@ -172,3 +172,10 @@ CK-API-190	GET	/v1/versions	staff	root:content:view-restricted	included-critical
 CK-API-191	GET	/v1/manage/entities/match	staff	root:entities:write	included-critical functionality and security
 CK-API-192	PUT	/v1/accounts/{id}/deleted	staff	root:accounts:lifecycle	included-critical functionality and security
 CK-API-193	POST	/v1/accounts/{id}/anonymize	staff	root:accounts:lifecycle	included-critical functionality and security
+CK-API-194	GET	/v1/moderation/location-rules	staff	root:locations:write	included-critical functionality and security
+CK-API-195	POST	/v1/moderation/location-rules	staff	root:locations:write	included-critical functionality and security
+CK-API-196	PATCH	/v1/moderation/location-rules/{id}	staff	root:locations:write	included-critical functionality and security
+CK-API-197	DELETE	/v1/moderation/location-rules/{id}	staff	root:locations:write	included-critical functionality and security
+CK-API-198	GET	/v1/moderation/location-rules/history	staff	root:locations:write	included-critical functionality and security
+CK-API-199	GET	/v1/moderation/location-rules/{id}/history	staff	root:locations:write	included-critical functionality and security
+CK-API-200	GET	/v1/moderation/location-rules/check	staff	root:locations:write	included-critical functionality and security

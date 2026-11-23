@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"net/netip"
 	"os"
 	"reflect"
 	"sort"
@@ -17,6 +18,7 @@ import (
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
+	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/contenturl"
 	"github.com/open-rails/contentkit/discovery"
@@ -608,6 +610,76 @@ func TestDiscoveryVisibility(t *testing.T) {
 		must(t, err)
 		assertCards(t, recommended, one.ID, two.ID)
 	})
+	t.Run("location_rules_cover_all_visitor_read_paths", func(t *testing.T) {
+		user, token := w.person(t, 0)
+		signed := reader("restricted.invalid", token)
+		store, err := signalstore.NewStore(a.deps.ClickHouse, a.cfg.ClickHouse.Database)
+		must(t, err)
+		for _, item := range []catalog.Content{one, two} {
+			_, err = signed.PostContentFavorite(t.Context(), item.ID, ck.PostContentFavoriteQuery{})
+			must(t, err)
+			receipt := measuredReceipt(t, contentref.NewVersion(a.cfg.Scope.AppID.String(), "article", item.ID, item.Versions[0].ID), signal.Subject{UserID: user.ID}, time.Now().UTC().Add(-time.Minute), 0, 1000)
+			must(t, store.RecordSignals(t.Context(), a.cfg.Scope.AppID.String(), []signal.Signal{receipt}))
+			postComment(t, signed, item.ID, "Location rule comment fixture")
+		}
+		before, err := signed.GetMeHistory(t.Context(), ck.GetMeHistoryQuery{Kind: "article"})
+		must(t, err)
+		assertCards(t, before, one.ID, two.ID)
+		favorites, err := signed.GetMeFavorites(t.Context(), ck.GetMeFavoritesQuery{Kind: "article"})
+		must(t, err)
+		if len(favorites.Items) != 2 {
+			t.Fatal("missing favorite positive controls")
+		}
+		create := func(in content.LocationRuleInput) content.LocationRule {
+			t.Helper()
+			rule, err := admin.PostModerationLocationRules(t.Context(), in)
+			must(t, err)
+			return rule
+		}
+		direct := create(content.LocationRuleInput{Locations: []content.LocationEntry{{Network: "127.0.0.0/8"}}, Target: "content", ContentIDs: []string{one.ID}, Domains: []string{"main"}, Enabled: true})
+		tag := create(content.LocationRuleInput{Locations: []content.LocationEntry{{Network: "127.0.0.0/8"}}, Target: "entities", EntityIDs: []string{string(optional.ID)}, Domains: []string{"main"}, Enabled: true})
+		defer func() {
+			must(t, admin.DeleteModerationLocationRule(t.Context(), direct.ID))
+			must(t, admin.DeleteModerationLocationRule(t.Context(), tag.ID))
+		}()
+		listed, err := public.GetContents(t.Context(), ck.GetContentsQuery{Kind: "article", Mode: "hide"})
+		must(t, err)
+		assertCards(t, listed)
+		found, err := public.GetSearch(t.Context(), ck.GetSearchQuery{Q: "CriticalVis", Kind: "article", Mode: "hide"})
+		must(t, err)
+		assertCards(t, found.ContentPage)
+		_, err = public.GetContentSimilar(t.Context(), one.ID, ck.GetContentSimilarQuery{Kind: "article", Mode: "hide"})
+		requireError(t, err, 404, "not_found")
+		recommended, err := signed.GetRecommendations(t.Context(), ck.GetRecommendationsQuery{Kind: "article", Mode: "hide"})
+		must(t, err)
+		assertCards(t, recommended)
+		history, err := signed.GetMeHistory(t.Context(), ck.GetMeHistoryQuery{Kind: "article"})
+		must(t, err)
+		assertCards(t, history)
+		favorites, err = signed.GetMeFavorites(t.Context(), ck.GetMeFavoritesQuery{Kind: "article"})
+		must(t, err)
+		if len(favorites.Items) != 0 {
+			t.Fatal("favorites exposed covered content")
+		}
+		for _, item := range []catalog.Content{one, two} {
+			_, err = public.GetContent(t.Context(), item.ID, ck.GetContentQuery{})
+			requireError(t, err, 404, "not_found")
+			_, err = signed.GetContentComments(t.Context(), item.ID, ck.GetContentCommentsQuery{})
+			requireError(t, err, 404, "not_found")
+			_, err = admin.GetContent(t.Context(), item.ID, ck.GetContentQuery{})
+			requireError(t, err, 404, "not_found")
+			_, err = public.GetCode(t.Context(), item.Code, ck.GetCodeQuery{})
+			requireError(t, err, 404, "not_found")
+			_, err = admin.GetCode(t.Context(), item.Code, ck.GetCodeQuery{})
+			requireError(t, err, 404, "not_found")
+			_, err = a.engine.VisitorClient(netip.MustParseAddr("203.0.113.45"), "restricted.invalid").GetContent(t.Context(), item.ID, ck.GetContentQuery{})
+			must(t, err)
+		}
+		uncovered, err := a.engine.VisitorClient(netip.MustParseAddr("203.0.113.45"), "restricted.invalid").GetSearch(t.Context(), ck.GetSearchQuery{Q: "CriticalVis", Kind: "article", Mode: "hide"})
+		must(t, err)
+		assertCards(t, uncovered.ContentPage, one.ID, two.ID)
+	})
+
 }
 
 func TestExactVersionVisibility(t *testing.T) {
