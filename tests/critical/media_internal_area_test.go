@@ -2,7 +2,6 @@ package critical_test
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"image"
@@ -15,13 +14,16 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/open-rails/authkit"
+	"github.com/open-rails/authkit/authtest"
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/content"
-	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/catalogstore"
+	"github.com/open-rails/contentkit/internal/media/workqueue"
 	mediastore "github.com/open-rails/contentkit/internal/mediastore"
+	"github.com/open-rails/contentkit/internal/versionstore"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/layout"
 	"github.com/open-rails/contentkit/media/token"
@@ -217,17 +219,29 @@ func TestInternalArea(t *testing.T) {
 		}
 
 		t.Run("location_rule_denies_media_grant", func(t *testing.T) {
-			catalogStore, err := catalogstore.New(ctx, catalogstore.Options{Pool: w.pool, Schema: w.schema, Tenant: a.cfg.Scope.AppID.String(), Kinds: a.cfg.Content, Auth: a.deps.Auth})
+			roles := authkit.NewRoles()
+			roles.Root.Declare(access.Names(access.Permissions()...)...)
+			identity, _ := authtest.New(t, authtest.WithConfig(func(c *authkit.Config) { c.Roles = roles }), authtest.WithDeps(func(d *authkit.Deps) { d.Postgres = w.pool }))
+			catalogStore, err := catalogstore.New(ctx, catalogstore.Options{Pool: w.pool, Schema: w.schema, Tenant: a.cfg.Scope.AppID.String(), Kinds: a.cfg.Content, Auth: identity.Authenticator()})
 			must(t, err)
-			registry, err := mediastore.NewRegistry(config, mediastore.Hooks{Resolver: catalogStore.Resolver(), ReaderManifest: func(ctx context.Context, ref contentref.ContentRef, _ access.Actor) (*mediastore.Manifest, error) {
-				snapshot, _, err := manifests.Get(ctx, ref)
-				return snapshot, err
-			}})
+			t.Cleanup(catalogStore.Close)
+			service, err := versionstore.New(versionstore.Options{Pool: w.pool, Schema: w.schema, Tenant: a.cfg.Scope.AppID.String(), Kinds: a.cfg.Content, Auth: identity.Authenticator(), Resolver: catalogStore.Resolver(), Facets: catalogStore, Now: w.clock.now})
 			must(t, err)
-			reads, err := mediastore.NewManifests(m.store, registry, mediastore.ManifestOptions{Locker: mediastore.PGLocker(w.pool), Journal: journal})
+			registry, err := mediastore.NewRegistry(config, service.Hooks())
 			must(t, err)
-			mediaReader, err := mediastore.NewReader(mediastore.ReaderOptions{Manifests: reads, Delivery: media.Delivery{Mode: media.DeliverURL, SigningKey: m.key}})
+			queue, err := workqueue.New(w.pool, registry, a.cfg.Media.WorkerSchema)
 			must(t, err)
+			journal, err := mediastore.NewPGJournal(w.pool, w.schema, queue)
+			must(t, err)
+			jobs, err := mediastore.NewJobs(mediastore.JobsConfig{Store: m.store, Registry: registry, Locker: mediastore.PGLocker(w.pool), Journal: journal})
+			must(t, err)
+			ring, err := token.NewRing(m.key, nil)
+			must(t, err)
+			uploads, err := mediastore.NewUploads(mediastore.UploadOptions{Store: m.store, Manifests: jobs.Manifests(), Tickets: &ring})
+			must(t, err)
+			mediaReader, err := mediastore.NewReader(mediastore.ReaderOptions{Manifests: jobs.Manifests(), Delivery: media.Delivery{Mode: media.DeliverURL, SigningKey: m.key}})
+			must(t, err)
+			must(t, service.Bind(versionstore.Media{Manifests: jobs.Manifests(), Uploads: uploads, Jobs: jobs, Reader: mediaReader}))
 			target, err := registry.VersionRef(ref.Kind, ref.ID, ref.Version)
 			must(t, err)
 			visitor := access.Actor{Anonymous: true, IP: "203.0.113.45"}

@@ -201,6 +201,7 @@ func TestAdminLocationRules(t *testing.T) {
 		cfg.Content.EntityKinds["tag"] = kinds.EntityKind{Route: "tags"}
 		article := cfg.Content.Kinds["article"]
 		article.Entities = []string{"tag"}
+		article.Versions.Hidden = false
 		cfg.Content.Kinds["article"] = article
 		cfg.Content.ContentFilters = kinds.ContentFilters{AppliesTo: []string{"article"}, Domains: []kinds.Domain{{Name: "main", Hosts: []string{"main.invalid"}}, {Name: "other", Hosts: []string{"other.invalid"}}}}
 	})
@@ -396,7 +397,7 @@ func TestAdminLocationRules(t *testing.T) {
 	}
 	_, err = admin.GetCommentsAdmin(t.Context(), ck.GetCommentsAdminQuery{})
 	must(t, err)
-	_, err = admin.GetModerationHeld(t.Context(), ck.GetModerationHeldQuery{})
+	_, err = admin.GetModerationHeld(t.Context(), ck.GetModerationHeldQuery{Kind: content.KindComment})
 	must(t, err)
 	must(t, admin.DeleteModerationLocationRule(t.Context(), staffRule.ID))
 	_, token := w.person(t, 0)
