@@ -24,9 +24,11 @@ import { ContentCard, type ContentCardProps } from "./card.js";
 import { PagedContentGrid, PagedSearchResults } from "./paged-grid.js";
 import { eventId } from "../../client/beacons.js";
 
-export interface CardListProps extends Omit<ContentCardProps, "card" | "onOpen" | "children" | "className"> {
-  /** Where the list is, for exposures and click attribution: "home", "search", "similar". */
-  /** Home video cards with only inline tags default to compact tags unless `entityStyle` is set. */
+export interface CardListProps extends Omit<ContentCardProps, "card" | "onOpen" | "children" | "className" | "compactVideo"> {
+  /**
+   * Where the list is, for exposures and click attribution: "home", "search", "similar".
+   * Home video cards with only inline tags use the compact layout unless `entityStyle` is set.
+   */
   surface?: string;
   /** Loads the next page as the end nears, instead of a button. */
   infinite?: boolean;
@@ -65,7 +67,8 @@ export interface CardListProps extends Omit<ContentCardProps, "card" | "onOpen" 
 
 const GRID = "grid grid-cols-[repeat(auto-fill,minmax(min(100%,10rem),1fr))] gap-x-4 gap-y-6";
 
-const COMPACT_TAGS = {
+const COMPACT_VIDEO_CARD = {
+  compactVideo: true,
   chips: 2,
   chipOverflow: false,
   chipFit: true,
@@ -278,7 +281,7 @@ function CardGridBody({ list, render, filterKinds, filterLanguage, horizontal, s
                     dimDisliked={p.dimDisliked}
                     {...(p.surface === "home" && entry.card.kind === "video" && p.entityStyle === undefined && p.entityLayout !== "rows" &&
                       (p.entityKinds ?? Object.keys(entry.card.entities)).every((kind) => kind === "tag")
-                      ? COMPACT_TAGS
+                      ? COMPACT_VIDEO_CARD
                       : undefined)}
                     onOpen={() => exposure.click(entry.card.id, entry.position, exposure.href(entry.card.id, entry.position, p.href ? p.href(entry.card) : entry.card.path))}
                   />
