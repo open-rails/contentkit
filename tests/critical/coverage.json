@@ -892,6 +892,23 @@
       ]
     },
     {
+      "id": "CK-J07-S26",
+      "journey": "CK-J07",
+      "behavior": "Admin-managed location rules restrict visitor reads and media by location and domain while administration remains available",
+      "status": "verified",
+      "evidence": [
+        "Admin cases cover all seven location-rule operations, default/configured domains, normalized network and country/subdivision matching, target labels, immediate enable/disable, transactional history/rollback, tenant isolation and administration from a blocked IP.",
+        "Visitor-read coverage refuses covered list/search/similar/recommendations/history/favorites/detail/comments/code reads with uncovered positive controls. The nested real-media case refuses a covered visitor grant while an uncovered visitor still succeeds.",
+        "Reviewed executable contract mapping for ContentKit #285; final combined qualification must execute every selected case. This is not an execution receipt."
+      ],
+      "cases": [
+        "TestAdminLocationRules",
+        "TestAdminLocationRuleDefaultDomains",
+        "TestDiscoveryVisibility/location_rules_cover_all_visitor_read_paths",
+        "TestInternalArea/CK-J09-S01_real_image_upload_produces_a_readable_rendition/location_rule_denies_media_grant"
+      ]
+    },
+    {
       "id": "CK-J08-S01",
       "journey": "CK-J08",
       "behavior": "Deleting one version preserves siblings and parent",
@@ -7897,6 +7914,237 @@
       "evidence": [
         "A remote host anonymizes a purged account idempotently, keeping its contributions.",
         "contentkit#267: focused real-service execution against PostgreSQL; the strict gate must execute every exact case again."
+      ]
+    },
+    {
+      "id": "CK-API-194",
+      "method": "GET",
+      "path": "/v1/moderation/location-rules",
+      "selection": "included-critical functionality and security",
+      "status": "verified",
+      "cases": [
+        "TestAdminLocationRuleDefaultDomains",
+        "TestAdminLocationRules",
+        "TestHTTPAuthenticationMatrix/CK-API-194_GET_/v1/moderation/location-rules/anonymous_protected_operation",
+        "TestHTTPAuthenticationMatrix/CK-API-194_GET_/v1/moderation/location-rules/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-194_GET_/v1/moderation/location-rules/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-194_GET_/v1/moderation/location-rules/inherited_HEAD_credential_gate",
+        "TestHTTPAuthenticationMatrix/CK-API-194_GET_/v1/moderation/location-rules/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-194_GET_/v1/moderation/location-rules/member_without_named_permission",
+        "TestHTTPAuthenticationMatrix/CK-API-194_GET_/v1/moderation/location-rules/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-194_GET_/v1/moderation/location-rules/wrong_issuer"
+      ],
+      "implemented_security_cases": [
+        "TestHTTPAuthenticationMatrix/CK-API-194_GET_/v1/moderation/location-rules/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-194_GET_/v1/moderation/location-rules/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-194_GET_/v1/moderation/location-rules/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-194_GET_/v1/moderation/location-rules/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-194_GET_/v1/moderation/location-rules/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-194_GET_/v1/moderation/location-rules/anonymous_protected_operation",
+        "TestHTTPAuthenticationMatrix/CK-API-194_GET_/v1/moderation/location-rules/inherited_HEAD_credential_gate",
+        "TestHTTPAuthenticationMatrix/CK-API-194_GET_/v1/moderation/location-rules/member_without_named_permission"
+      ],
+      "security_evidence": "Credential gate, app-key boundary and named-permission cases mapped from TestHTTPAuthenticationMatrix; no route-specific mutation no-effect approval or combined execution receipt.",
+      "evidence": [
+        "Rule listing asserts configured/default domains, totals and hydrated content/entity labels, including deleted-target ID fallback and staff access from a blocked IP; anonymous/member reads are refused.",
+        "Reviewed executable contract mapping for ContentKit #285; final combined qualification must execute every selected case. This is not an execution receipt."
+      ]
+    },
+    {
+      "id": "CK-API-195",
+      "method": "POST",
+      "path": "/v1/moderation/location-rules",
+      "selection": "included-critical functionality and security",
+      "status": "verified",
+      "cases": [
+        "TestAdminLocationRuleDefaultDomains",
+        "TestAdminLocationRules",
+        "TestDiscoveryVisibility/location_rules_cover_all_visitor_read_paths",
+        "TestHTTPAuthenticationMatrix/CK-API-195_POST_/v1/moderation/location-rules/anonymous_protected_operation",
+        "TestHTTPAuthenticationMatrix/CK-API-195_POST_/v1/moderation/location-rules/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-195_POST_/v1/moderation/location-rules/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-195_POST_/v1/moderation/location-rules/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-195_POST_/v1/moderation/location-rules/member_without_named_permission",
+        "TestHTTPAuthenticationMatrix/CK-API-195_POST_/v1/moderation/location-rules/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-195_POST_/v1/moderation/location-rules/wrong_issuer",
+        "TestInternalArea/CK-J09-S01_real_image_upload_produces_a_readable_rendition/location_rule_denies_media_grant"
+      ],
+      "implemented_security_cases": [
+        "TestHTTPAuthenticationMatrix/CK-API-195_POST_/v1/moderation/location-rules/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-195_POST_/v1/moderation/location-rules/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-195_POST_/v1/moderation/location-rules/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-195_POST_/v1/moderation/location-rules/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-195_POST_/v1/moderation/location-rules/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-195_POST_/v1/moderation/location-rules/anonymous_protected_operation",
+        "TestHTTPAuthenticationMatrix/CK-API-195_POST_/v1/moderation/location-rules/member_without_named_permission"
+      ],
+      "security_evidence": "Credential gate, app-key boundary and named-permission cases mapped from TestHTTPAuthenticationMatrix; no route-specific mutation no-effect approval or combined execution receipt.",
+      "evidence": [
+        "Creation asserts normalized networks, actor/timestamp and target labels, default domains, country/subdivision site blocking and tenant/domain isolation; invalid inputs refuse and a failed history insert rolls back the rule. Discovery and media cases create rules and assert covered refusals with uncovered positive controls.",
+        "Reviewed executable contract mapping for ContentKit #285; final combined qualification must execute every selected case. This is not an execution receipt."
+      ]
+    },
+    {
+      "id": "CK-API-196",
+      "method": "PATCH",
+      "path": "/v1/moderation/location-rules/{id}",
+      "selection": "included-critical functionality and security",
+      "status": "verified",
+      "cases": [
+        "TestAdminLocationRules",
+        "TestHTTPAuthenticationMatrix/CK-API-196_PATCH_/v1/moderation/location-rules/{id}/anonymous_protected_operation",
+        "TestHTTPAuthenticationMatrix/CK-API-196_PATCH_/v1/moderation/location-rules/{id}/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-196_PATCH_/v1/moderation/location-rules/{id}/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-196_PATCH_/v1/moderation/location-rules/{id}/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-196_PATCH_/v1/moderation/location-rules/{id}/member_without_named_permission",
+        "TestHTTPAuthenticationMatrix/CK-API-196_PATCH_/v1/moderation/location-rules/{id}/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-196_PATCH_/v1/moderation/location-rules/{id}/wrong_issuer"
+      ],
+      "implemented_security_cases": [
+        "TestHTTPAuthenticationMatrix/CK-API-196_PATCH_/v1/moderation/location-rules/{id}/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-196_PATCH_/v1/moderation/location-rules/{id}/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-196_PATCH_/v1/moderation/location-rules/{id}/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-196_PATCH_/v1/moderation/location-rules/{id}/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-196_PATCH_/v1/moderation/location-rules/{id}/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-196_PATCH_/v1/moderation/location-rules/{id}/anonymous_protected_operation",
+        "TestHTTPAuthenticationMatrix/CK-API-196_PATCH_/v1/moderation/location-rules/{id}/member_without_named_permission"
+      ],
+      "security_evidence": "Credential gate, app-key boundary and named-permission cases mapped from TestHTTPAuthenticationMatrix; no route-specific mutation no-effect approval or combined execution receipt.",
+      "evidence": [
+        "Note updates preserve hydrated targets and record update actions in history; disable/enable changes affect the next visitor read without a TTL, and staff can update targets from a blocked IP.",
+        "Reviewed executable contract mapping for ContentKit #285; final combined qualification must execute every selected case. This is not an execution receipt."
+      ]
+    },
+    {
+      "id": "CK-API-197",
+      "method": "DELETE",
+      "path": "/v1/moderation/location-rules/{id}",
+      "selection": "included-critical functionality and security",
+      "status": "verified",
+      "cases": [
+        "TestAdminLocationRules",
+        "TestDiscoveryVisibility/location_rules_cover_all_visitor_read_paths",
+        "TestHTTPAuthenticationMatrix/CK-API-197_DELETE_/v1/moderation/location-rules/{id}/anonymous_protected_operation",
+        "TestHTTPAuthenticationMatrix/CK-API-197_DELETE_/v1/moderation/location-rules/{id}/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-197_DELETE_/v1/moderation/location-rules/{id}/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-197_DELETE_/v1/moderation/location-rules/{id}/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-197_DELETE_/v1/moderation/location-rules/{id}/member_without_named_permission",
+        "TestHTTPAuthenticationMatrix/CK-API-197_DELETE_/v1/moderation/location-rules/{id}/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-197_DELETE_/v1/moderation/location-rules/{id}/wrong_issuer",
+        "TestInternalArea/CK-J09-S01_real_image_upload_produces_a_readable_rendition/location_rule_denies_media_grant"
+      ],
+      "implemented_security_cases": [
+        "TestHTTPAuthenticationMatrix/CK-API-197_DELETE_/v1/moderation/location-rules/{id}/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-197_DELETE_/v1/moderation/location-rules/{id}/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-197_DELETE_/v1/moderation/location-rules/{id}/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-197_DELETE_/v1/moderation/location-rules/{id}/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-197_DELETE_/v1/moderation/location-rules/{id}/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-197_DELETE_/v1/moderation/location-rules/{id}/anonymous_protected_operation",
+        "TestHTTPAuthenticationMatrix/CK-API-197_DELETE_/v1/moderation/location-rules/{id}/member_without_named_permission"
+      ],
+      "security_evidence": "Credential gate, app-key boundary and named-permission cases mapped from TestHTTPAuthenticationMatrix; no route-specific mutation no-effect approval or combined execution receipt.",
+      "evidence": [
+        "Deletion is asserted in transactional per-rule history and permits subsequent rule lifecycles; discovery and media fixtures delete their created rules during cleanup.",
+        "Reviewed executable contract mapping for ContentKit #285; final combined qualification must execute every selected case. This is not an execution receipt."
+      ]
+    },
+    {
+      "id": "CK-API-198",
+      "method": "GET",
+      "path": "/v1/moderation/location-rules/history",
+      "selection": "included-critical functionality and security",
+      "status": "verified",
+      "cases": [
+        "TestAdminLocationRules",
+        "TestHTTPAuthenticationMatrix/CK-API-198_GET_/v1/moderation/location-rules/history/anonymous_protected_operation",
+        "TestHTTPAuthenticationMatrix/CK-API-198_GET_/v1/moderation/location-rules/history/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-198_GET_/v1/moderation/location-rules/history/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-198_GET_/v1/moderation/location-rules/history/inherited_HEAD_credential_gate",
+        "TestHTTPAuthenticationMatrix/CK-API-198_GET_/v1/moderation/location-rules/history/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-198_GET_/v1/moderation/location-rules/history/member_without_named_permission",
+        "TestHTTPAuthenticationMatrix/CK-API-198_GET_/v1/moderation/location-rules/history/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-198_GET_/v1/moderation/location-rules/history/wrong_issuer"
+      ],
+      "implemented_security_cases": [
+        "TestHTTPAuthenticationMatrix/CK-API-198_GET_/v1/moderation/location-rules/history/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-198_GET_/v1/moderation/location-rules/history/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-198_GET_/v1/moderation/location-rules/history/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-198_GET_/v1/moderation/location-rules/history/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-198_GET_/v1/moderation/location-rules/history/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-198_GET_/v1/moderation/location-rules/history/anonymous_protected_operation",
+        "TestHTTPAuthenticationMatrix/CK-API-198_GET_/v1/moderation/location-rules/history/inherited_HEAD_credential_gate",
+        "TestHTTPAuthenticationMatrix/CK-API-198_GET_/v1/moderation/location-rules/history/member_without_named_permission"
+      ],
+      "security_evidence": "Credential gate, app-key boundary and named-permission cases mapped from TestHTTPAuthenticationMatrix; no route-specific mutation no-effect approval or combined execution receipt.",
+      "evidence": [
+        "Overall history asserts the exact total and limit/offset pagination after create, update, disable, enable and delete operations.",
+        "Reviewed executable contract mapping for ContentKit #285; final combined qualification must execute every selected case. This is not an execution receipt."
+      ]
+    },
+    {
+      "id": "CK-API-199",
+      "method": "GET",
+      "path": "/v1/moderation/location-rules/{id}/history",
+      "selection": "included-critical functionality and security",
+      "status": "verified",
+      "cases": [
+        "TestAdminLocationRules",
+        "TestHTTPAuthenticationMatrix/CK-API-199_GET_/v1/moderation/location-rules/{id}/history/anonymous_protected_operation",
+        "TestHTTPAuthenticationMatrix/CK-API-199_GET_/v1/moderation/location-rules/{id}/history/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-199_GET_/v1/moderation/location-rules/{id}/history/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-199_GET_/v1/moderation/location-rules/{id}/history/inherited_HEAD_credential_gate",
+        "TestHTTPAuthenticationMatrix/CK-API-199_GET_/v1/moderation/location-rules/{id}/history/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-199_GET_/v1/moderation/location-rules/{id}/history/member_without_named_permission",
+        "TestHTTPAuthenticationMatrix/CK-API-199_GET_/v1/moderation/location-rules/{id}/history/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-199_GET_/v1/moderation/location-rules/{id}/history/wrong_issuer"
+      ],
+      "implemented_security_cases": [
+        "TestHTTPAuthenticationMatrix/CK-API-199_GET_/v1/moderation/location-rules/{id}/history/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-199_GET_/v1/moderation/location-rules/{id}/history/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-199_GET_/v1/moderation/location-rules/{id}/history/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-199_GET_/v1/moderation/location-rules/{id}/history/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-199_GET_/v1/moderation/location-rules/{id}/history/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-199_GET_/v1/moderation/location-rules/{id}/history/anonymous_protected_operation",
+        "TestHTTPAuthenticationMatrix/CK-API-199_GET_/v1/moderation/location-rules/{id}/history/inherited_HEAD_credential_gate",
+        "TestHTTPAuthenticationMatrix/CK-API-199_GET_/v1/moderation/location-rules/{id}/history/member_without_named_permission"
+      ],
+      "security_evidence": "Credential gate, app-key boundary and named-permission cases mapped from TestHTTPAuthenticationMatrix; no route-specific mutation no-effect approval or combined execution receipt.",
+      "evidence": [
+        "Per-rule history after deletion asserts the exact create/update/disable/enable/delete sequence, actor, timestamp and snapshot rule ID, and excludes hydrated target labels from stored snapshots.",
+        "Reviewed executable contract mapping for ContentKit #285; final combined qualification must execute every selected case. This is not an execution receipt."
+      ]
+    },
+    {
+      "id": "CK-API-200",
+      "method": "GET",
+      "path": "/v1/moderation/location-rules/check",
+      "selection": "included-critical functionality and security",
+      "status": "verified",
+      "cases": [
+        "TestAdminLocationRules",
+        "TestHTTPAuthenticationMatrix/CK-API-200_GET_/v1/moderation/location-rules/check/anonymous_protected_operation",
+        "TestHTTPAuthenticationMatrix/CK-API-200_GET_/v1/moderation/location-rules/check/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-200_GET_/v1/moderation/location-rules/check/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-200_GET_/v1/moderation/location-rules/check/inherited_HEAD_credential_gate",
+        "TestHTTPAuthenticationMatrix/CK-API-200_GET_/v1/moderation/location-rules/check/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-200_GET_/v1/moderation/location-rules/check/member_without_named_permission",
+        "TestHTTPAuthenticationMatrix/CK-API-200_GET_/v1/moderation/location-rules/check/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-200_GET_/v1/moderation/location-rules/check/wrong_issuer"
+      ],
+      "implemented_security_cases": [
+        "TestHTTPAuthenticationMatrix/CK-API-200_GET_/v1/moderation/location-rules/check/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-200_GET_/v1/moderation/location-rules/check/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-200_GET_/v1/moderation/location-rules/check/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-200_GET_/v1/moderation/location-rules/check/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-200_GET_/v1/moderation/location-rules/check/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-200_GET_/v1/moderation/location-rules/check/anonymous_protected_operation",
+        "TestHTTPAuthenticationMatrix/CK-API-200_GET_/v1/moderation/location-rules/check/inherited_HEAD_credential_gate",
+        "TestHTTPAuthenticationMatrix/CK-API-200_GET_/v1/moderation/location-rules/check/member_without_named_permission"
+      ],
+      "security_evidence": "Credential gate, app-key boundary and named-permission cases mapped from TestHTTPAuthenticationMatrix; no route-specific mutation no-effect approval or combined execution receipt.",
+      "evidence": [
+        "The IP check asserts two matching rules in the selected domain, none in the other domain and an empty country on the network-only lookup.",
+        "Reviewed executable contract mapping for ContentKit #285; final combined qualification must execute every selected case. This is not an execution receipt."
       ]
     }
   ],
