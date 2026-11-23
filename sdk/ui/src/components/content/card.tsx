@@ -1,5 +1,5 @@
 import { entityDisplayName } from "../../client/entity-fields.js";
-import { FavouriteIcon, LockIcon, SparklesIcon, ThumbsUpIcon, Tick02Icon } from "@hugeicons/core-free-icons";
+import { FavouriteIcon, LockIcon, SparklesIcon, ThumbsUpIcon, Tick02Icon, Video01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { ReleaseNotice } from "./release-notice.js";
 import { cn } from "cn";
@@ -12,7 +12,9 @@ import { renewOriginLink } from "../../client/navigation-origin.js";
 import { useLanguageName, useMessages } from "../../i18n/context.js";
 import type { Translator } from "../../i18n/messages.js";
 import { ContentKitContext } from "../../react/context.js";
+import { useEntity } from "../../react/entities.js";
 import { usePresets } from "../../react/public.js";
+import { useNearViewport } from "../../react/viewport.js";
 import { Badge } from "#ckui/ui/badge";
 import { HoverPreview } from "../hover-preview.js";
 import { RenditionImg } from "../rendition-img.js";
@@ -51,6 +53,8 @@ export interface ContentCardProps {
   entityLayout?: "inline" | "rows";
   /** Metadata fields to show; omitted fields keep their defaults. */
   metadata?: CardMetadata;
+  /** Use a single metadata line and try series artwork when the video cover is unavailable. */
+  compactVideo?: boolean;
   /** Show like and favorite totals. Default true. */
   showCounts?: boolean;
   /** Tiers the site sells, so a lock names them; others show as "for sale". */
@@ -220,7 +224,7 @@ function useChipFit(list: HTMLUListElement | null, total: number, chipsKey: stri
 }
 
 /** One content in a listing: cover (a video the reader opens previews over it on hover), title, version, groups, counts, the reader's progress and why it is locked; what its kind's locked view hides is absent. */
-export function ContentCard({ card, client, href, onOpen, shape = "portrait", aspectRatio, titlePosition = "below", loadMedia = true, entityKinds, chips = 3, chipOverflow = false, chipFit = false, filterEntity, entityStyle = "chips", entityLayout = "inline", metadata, showCounts = true, tiers, labels, showChannel = true, channelHref, decorate, cardTitle, showLockBadge = true, status = true, dimDisliked = true, children, className }: ContentCardProps) {
+export function ContentCard({ card, client, href, onOpen, shape = "portrait", aspectRatio, titlePosition = "below", loadMedia = true, entityKinds, chips = 3, chipOverflow = false, chipFit = false, filterEntity, entityStyle = "chips", entityLayout = "inline", metadata, compactVideo = false, showCounts = true, tiers, labels, showChannel = true, channelHref, decorate, cardTitle, showLockBadge = true, status = true, dimDisliked = true, children, className }: ContentCardProps) {
   const m = useMessages();
   const { presets } = usePresets({ client });
   const coverAspect = aspectRatio ?? ratio(presets.find((p) => p.kind === card.kind && p.name === "cover")?.aspect);
@@ -246,11 +250,15 @@ export function ContentCard({ card, client, href, onOpen, shape = "portrait", as
   const selectedTraits = metadata?.traits;
   const traits = selectedTraits === false ? [] : Array.isArray(selectedTraits) ? v.traits.filter((trait) => selectedTraits.includes(trait)) : v.traits;
   const metaEntity = metadata?.entities?.map((kind) => (card.entities[kind] ?? []).filter((entity) => !filterEntity || filterEntity(entity, kind)).map((entity) => ({ ...entity, kind }))[0]).find(Boolean);
+  const entityMeta = metaEntity ? <MetaLink key="group" url={metaEntity.path} name={entityDisplayName(metaEntity)} /> : null;
+  const compactChannel = compactVideo && showChannel ? card.channel : undefined;
   const meta: ReactNode[] = [
+    ...(compactVideo ? [entityMeta, ...traits.map((trait) => labelOf(labels, trait))] : []),
     ...(metadata?.languages === false ? [] : v.languages.map(languageName)),
     metadata?.pages !== false && v.pages ? m.plural("contents.pages", v.pages) : null,
     metadata?.duration !== false && minutes ? m.plural("contents.minutes", minutes) : null,
-    metaEntity ? <MetaLink key="group" url={metaEntity.path} name={entityDisplayName(metaEntity)} /> : null,
+    !compactVideo && entityMeta,
+    compactChannel && <MetaLink key="channel" url={channelHref ? channelHref(compactChannel) : compactChannel.path} name={compactChannel.name || compactChannel.slug} />,
   ].filter(Boolean);
   const title = cardTitle?.(card) || card.title || card.code;
   const entityClassName = cn("flex flex-wrap", entityStyle === "text" ? "gap-x-[0.3em] gap-y-1 [&>li:not(:last-child)]:after:text-muted-foreground [&>li:not(:last-child)]:after:content-[',']" : "gap-1");
@@ -302,7 +310,7 @@ export function ContentCard({ card, client, href, onOpen, shape = "portrait", as
       {fitting ? fittedItems() : entityGroups.flatMap(({ kind, entities, total }) => entityItems(kind, entities, total))}
     </ul>
   ) : null;
-  const metaLine = meta.length > 0 && <p className="line-clamp-2 text-xs break-words text-muted-foreground" data-ckui="card-meta">
+  const metaLine = meta.length > 0 && <p className={cn("text-xs text-muted-foreground", compactVideo ? "truncate" : "line-clamp-2 break-words")} data-ckui="card-meta">
     {meta.map((item, i) => <Fragment key={i}>
       {i > 0 && <><span className="sr-only"> · </span><span className="mx-1.5 mb-px inline-block size-[3px] rounded-full bg-current align-middle" aria-hidden data-ckui="card-meta-dot" /></>}
       {item}
@@ -326,7 +334,9 @@ export function ContentCard({ card, client, href, onOpen, shape = "portrait", as
               skeleton
               loading="lazy"
               className="size-full transition-transform group-hover/card:scale-[1.02]"
-              fallback={<span className="grid size-full place-items-center text-2xl font-semibold text-muted-foreground">{title.charAt(0).toUpperCase()}</span>}
+              fallback={compactVideo
+                ? <VideoCoverFallback entityId={card.entities.series?.[0]?.id ?? card.entities.season?.[0]?.id} client={client} eager={!!card.cover?.length} />
+                : <span className="grid size-full place-items-center text-2xl font-semibold text-muted-foreground">{title.charAt(0).toUpperCase()}</span>}
             /> : <span className="block size-full bg-muted" aria-hidden />}
           </div>
           {loadMedia && v.hls && <HoverPreview item={{ kind: card.kind, id: card.id, version: v.id }} dir={v.hls} duration={v.duration_ms ? v.duration_ms / 1000 : undefined} target={article} />}
@@ -348,15 +358,15 @@ export function ContentCard({ card, client, href, onOpen, shape = "portrait", as
       </div>
       <div className="grid gap-1">
         {titlePosition === "below" && titleLink}
-        {entityStyle === "text" && entityList}
-        {showChannel && card.channel && <ChannelChip channel={card.channel} href={channelHref} loadMedia={loadMedia} />}
-        {traits.length > 0 && <div className="flex flex-wrap gap-1" data-ckui="card-traits">
+        {!compactVideo && entityStyle === "text" && entityList}
+        {!compactVideo && showChannel && card.channel && <ChannelChip channel={card.channel} href={channelHref} loadMedia={loadMedia} />}
+        {!compactVideo && traits.length > 0 && <div className="flex flex-wrap gap-1" data-ckui="card-traits">
           {traits.map((trait) => <Badge key={trait} variant="outline" className="h-auto rounded-md text-sm text-muted-foreground" data-ckui="card-trait" data-trait={trait}>{labelOf(labels, trait)}</Badge>)}
         </div>}
         {metaLine}
         {!card.access.allowed && <ReleaseNotice releases={card.access.releases} />}
         
-        {entityStyle === "chips" && entityList}
+        {(compactVideo || entityStyle === "chips") && entityList}
         {showCounts && (card.counts.favorites !== undefined || card.counts.likes !== undefined) && (
           <p className="flex items-center gap-3 text-xs text-muted-foreground tabular-nums" data-ckui="card-counts">
             {card.counts.favorites !== undefined && (
@@ -378,6 +388,29 @@ export function ContentCard({ card, client, href, onOpen, shape = "portrait", as
         {children}
       </div>
     </article>
+  );
+}
+
+/** Missing covers wait for the viewport. A failed lazy thumbnail has already reached it. */
+function VideoCoverFallback({ entityId, client, eager }: { entityId?: string; client?: ContentKitClient; eager: boolean }) {
+  const [ref, near] = useNearViewport({ eager });
+  const { entity } = useEntity(near ? entityId : undefined, { client });
+  const series = entity?.kind === "series" ? entity : entity?.parent?.kind === "series" ? entity.parent : undefined;
+  return (
+    <span ref={entityId ? ref : undefined} className="absolute inset-0 block">
+      <RenditionImg
+        outputs={series?.cover?.renditions}
+        alt=""
+        fit="cover"
+        loading="lazy"
+        skeleton
+        className="size-full"
+        data-ckui="card-series-cover"
+        fallback={<span className="grid size-full place-items-center text-muted-foreground/70" data-ckui="card-cover-placeholder" aria-hidden>
+          <HugeiconsIcon icon={Video01Icon} strokeWidth={1.5} className="size-8" />
+        </span>}
+      />
+    </span>
   );
 }
 
@@ -409,7 +442,7 @@ function Chip({ url, name, variant = "chips" }: { url?: string; name: string; va
   );
 }
 
-export interface PostCardProps extends Omit<ContentCardProps, "shape" | "aspectRatio" | "titlePosition" | "chips" | "entityKinds" | "filterEntity" | "entityStyle" | "entityLayout" | "metadata" | "cardTitle"> {
+export interface PostCardProps extends Omit<ContentCardProps, "shape" | "aspectRatio" | "titlePosition" | "chips" | "entityKinds" | "filterEntity" | "entityStyle" | "entityLayout" | "metadata" | "compactVideo" | "cardTitle"> {
   /** Above the title: the post's channel or author; default its channel's chip. */
   byline?: ReactNode;
 }
