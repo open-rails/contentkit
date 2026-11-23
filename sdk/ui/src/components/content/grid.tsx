@@ -26,6 +26,7 @@ import { eventId } from "../../client/beacons.js";
 
 export interface CardListProps extends Omit<ContentCardProps, "card" | "onOpen" | "children" | "className"> {
   /** Where the list is, for exposures and click attribution: "home", "search", "similar". */
+  /** Home video cards with only inline tags default to compact tags unless `entityStyle` is set. */
   surface?: string;
   /** Loads the next page as the end nears, instead of a button. */
   infinite?: boolean;
@@ -63,6 +64,14 @@ export interface CardListProps extends Omit<ContentCardProps, "card" | "onOpen" 
 }
 
 const GRID = "grid grid-cols-[repeat(auto-fill,minmax(min(100%,10rem),1fr))] gap-x-4 gap-y-6";
+
+const COMPACT_TAGS = {
+  chips: 2,
+  chipOverflow: false,
+  chipFit: true,
+  entityStyle: "text",
+  className: "ckui-compact-tags",
+} satisfies Partial<ContentCardProps>;
 
 export interface CardGridLayout {
   /** Minimum desktop card width: CSS pixels or a CSS length such as clamp(...). Cards fill the available space. */
@@ -267,6 +276,10 @@ function CardGridBody({ list, render, filterKinds, filterLanguage, horizontal, s
                     showLockBadge={p.showLockBadge}
                     status={p.status}
                     dimDisliked={p.dimDisliked}
+                    {...(p.surface === "home" && entry.card.kind === "video" && p.entityStyle === undefined && p.entityLayout !== "rows" &&
+                      (p.entityKinds ?? Object.keys(entry.card.entities)).every((kind) => kind === "tag")
+                      ? COMPACT_TAGS
+                      : undefined)}
                     onOpen={() => exposure.click(entry.card.id, entry.position, exposure.href(entry.card.id, entry.position, p.href ? p.href(entry.card) : entry.card.path))}
                   />
                 )}
