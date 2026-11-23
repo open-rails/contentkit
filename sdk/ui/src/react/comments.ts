@@ -2,7 +2,7 @@ import { useCallback } from "react";
 import type { ContentKitClient } from "../client/client.js";
 import type { BanScope, Decision, HeldKind, Reaction, Sort, CommentTarget } from "../client/content/types.js";
 import type { ContentKitError } from "../client/errors.js";
-import type { AdminComment, BanInput, BannedWord, BannedWordInput, Comment, CommentBan, CommentStanding, FeedItem, HeldItem, IPBan, IPBanInput, ReactionCounts } from "../client/generated/wire.js";
+import type { AdminComment, BanInput, BannedWord, BannedWordInput, Comment, CommentBan, CommentStanding, FeedItem, HeldItem, IPBan, IPBanInput, LocationRule, LocationRuleInput, LocationRulePage, LocationRuleUpdate, ReactionCounts } from "../client/generated/wire.js";
 import type { Page, ResourceStore } from "./resources.js";
 import { keyOf, offsetPages, useContentScope, useList, useResource, type UseList } from "./use-resource.js";
 
@@ -215,6 +215,31 @@ export function useIPBans(o: { enabled?: boolean; client?: ContentKitClient } = 
   const ban = useCallback((bans: IPBanInput[]) => client.moderation.banIPs(bans), [client]);
   const lift = useCallback((networks: string[]) => client.moderation.liftIPBans(networks), [client]);
   return { bans: r.data ?? [], loading: o.enabled !== false && (r.loading || !r.loaded), error: r.error, reload: r.reload, ban, lift };
+}
+
+export interface UseLocationRules {
+  rules: LocationRule[];
+  total: number;
+  /** The configured domains a rule may name. */
+  domains: string[];
+  loading: boolean;
+  error?: ContentKitError;
+  reload: () => void;
+  create: (rule: LocationRuleInput) => Promise<LocationRule>;
+  update: (id: string, patch: LocationRuleUpdate) => Promise<LocationRule>;
+  remove: (id: string) => Promise<void>;
+}
+
+/** Staff: the newest 100 location rules (root:locations:write); total counts them all. */
+export function useLocationRules(o: { enabled?: boolean; client?: ContentKitClient } = {}): UseLocationRules {
+  const { client, store, scope } = useContentScope(o.client);
+  const r = useResource<LocationRulePage>(store, o.enabled === false ? null : keyOf("moderation-rules", scope, "locations"), { type: "moderation-rules", scope: "locations" }, (signal) =>
+    client.moderation.locationRules({ limit: 100 }, signal),
+  );
+  const create = useCallback((rule: LocationRuleInput) => client.moderation.createLocationRule(rule), [client]);
+  const update = useCallback((id: string, patch: LocationRuleUpdate) => client.moderation.updateLocationRule(id, patch), [client]);
+  const remove = useCallback((id: string) => client.moderation.deleteLocationRule(id), [client]);
+  return { rules: r.data?.items ?? [], total: r.data?.total ?? 0, domains: r.data?.domains ?? [], loading: o.enabled !== false && (r.loading || !r.loaded), error: r.error, reload: r.reload, create, update, remove };
 }
 
 export interface UseGlobalCommentBan {

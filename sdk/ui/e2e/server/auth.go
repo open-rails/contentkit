@@ -46,7 +46,7 @@ var (
 	// roles are what /__test/users additionally hands out.
 	roles = map[string]iam.Role{
 		"staff": appPersona.Role("staff", perm[access.ContentWrite], perm[access.ContentViewRestricted], perm[access.PollsWrite], perm[access.CommentsModerate],
-			perm[access.ModerationReview], perm[access.CommentsBan], perm[access.EntitiesWrite]),
+			perm[access.ModerationReview], perm[access.CommentsBan], perm[access.EntitiesWrite], perm[access.LocationsWrite]),
 		"moderator": appPersona.Role("moderator", perm[access.CommentsModerate], perm[access.ModerationReview], perm[access.CommentsBan]),
 		"editor":    appPersona.Role("editor", perm[access.ContentWrite], perm[access.PollsWrite]),
 	}
