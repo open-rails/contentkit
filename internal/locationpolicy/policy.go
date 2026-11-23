@@ -85,9 +85,18 @@ func Resolve(ctx context.Context, q Querier, schema, tenant, domain, ip string) 
 	addr, _ := netip.ParseAddr(ip)
 	rules := pgx.Identifier{schema, "content_location_rules"}.Sanitize()
 	entries := pgx.Identifier{schema, "content_location_rule_entries"}.Sanitize()
-	rows, err := q.Query(ctx, `SELECT r.id,r.target,r.content_ids,r.entity_ids,coalesce(e.country,''),coalesce(e.subdivision,''),coalesce(e.network::text,'')
- FROM `+rules+` r JOIN `+entries+` e ON e.tenant_id=r.tenant_id AND e.rule_id=r.id
- WHERE r.tenant_id=$1 AND r.enabled AND r.domains @> ARRAY[$2]::text[] ORDER BY r.id,e.position`, tenant, domain)
+	domains := pgx.Identifier{schema, "content_location_rule_domains"}.Sanitize()
+	contents := pgx.Identifier{schema, "content_location_rule_contents"}.Sanitize()
+	entities := pgx.Identifier{schema, "content_location_rule_entities"}.Sanitize()
+	// A rule whose last target was deleted remains listed but covers nothing.
+	rows, err := q.Query(ctx, `SELECT r.id,r.target,coalesce(c.ids,'{}'::text[]),coalesce(t.ids,'{}'::text[]),coalesce(e.country,''),coalesce(e.subdivision,''),coalesce(e.network::text,'')
+ FROM `+rules+` r
+ JOIN `+domains+` d ON d.tenant_id=r.tenant_id AND d.rule_id=r.id AND d.domain=$2
+ JOIN `+entries+` e ON e.tenant_id=r.tenant_id AND e.rule_id=r.id
+ LEFT JOIN LATERAL (SELECT array_agg(c.content_id ORDER BY c.content_id) ids FROM `+contents+` c WHERE c.tenant_id=r.tenant_id AND c.rule_id=r.id) c ON true
+ LEFT JOIN LATERAL (SELECT array_agg(t.entity_id ORDER BY t.entity_id) ids FROM `+entities+` t WHERE t.tenant_id=r.tenant_id AND t.rule_id=r.id) t ON true
+ WHERE r.tenant_id=$1 AND r.enabled AND (r.target='site' OR c.ids IS NOT NULL OR t.ids IS NOT NULL)
+ ORDER BY r.id,e.position`, tenant, domain)
 	if err != nil {
 		return b, err
 	}

@@ -412,21 +412,23 @@ func TestAdminLocationRules(t *testing.T) {
 	invalid.Locations = []content.LocationEntry{{Country: "GB", Network: "203.0.113.45"}}
 	_, err = admin.PostModerationLocationRules(t.Context(), invalid)
 	requireError(t, err, 400, "invalid_request")
-	missingContent := create(content.LocationRuleInput{Locations: []content.LocationEntry{{Country: "GB"}}, Target: "content", ContentIDs: []string{items[2]}, Domains: []string{"main"}})
-	missingEntity := create(content.LocationRuleInput{Locations: []content.LocationEntry{{Country: "GB"}}, Target: "entities", EntityIDs: []string{string(tags[0].ID)}, Domains: []string{"main"}})
-	_, err = w.pool.Exec(t.Context(), `UPDATE `+pgx.Identifier{w.schema, "content_items"}.Sanitize()+` SET state='deleted' WHERE tenant_id=$1 AND id=$2`, a.cfg.Scope.AppID.String(), items[2])
+	missingContent := create(content.LocationRuleInput{Locations: []content.LocationEntry{{Country: "GB"}}, Target: "content", ContentIDs: []string{items[2]}, Domains: []string{"main"}, Enabled: true})
+	missingEntity := create(content.LocationRuleInput{Locations: []content.LocationEntry{{Country: "GB"}}, Target: "entities", EntityIDs: []string{string(tags[0].ID)}, Domains: []string{"main"}, Enabled: true})
+	_, err = w.pool.Exec(t.Context(), `DELETE FROM `+pgx.Identifier{w.schema, "content_items"}.Sanitize()+` WHERE tenant_id=$1 AND id=$2`, a.cfg.Scope.AppID.String(), items[2])
 	must(t, err)
-	_, err = w.pool.Exec(t.Context(), `UPDATE `+pgx.Identifier{w.schema, "content_entities"}.Sanitize()+` SET state='deleted' WHERE tenant_id=$1 AND id=$2`, a.cfg.Scope.AppID.String(), string(tags[0].ID))
+	_, err = w.pool.Exec(t.Context(), `DELETE FROM `+pgx.Identifier{w.schema, "content_entities"}.Sanitize()+` WHERE tenant_id=$1 AND id=$2`, a.cfg.Scope.AppID.String(), string(tags[0].ID))
 	must(t, err)
 	rules, err = admin.GetModerationLocationRules(t.Context(), ck.GetModerationLocationRulesQuery{})
 	must(t, err)
+	if rules.Total != 2 || len(rules.Items) != 2 {
+		t.Fatalf("cascade removed rules: %+v", rules)
+	}
 	for _, r := range rules.Items {
-		wantID := items[2]
-		if r.ID == missingEntity.ID {
-			wantID = string(tags[0].ID)
+		if r.ID != missingContent.ID && r.ID != missingEntity.ID {
+			t.Fatalf("unexpected rule after cascade: %+v", r)
 		}
-		if !reflect.DeepEqual(r.Targets, []content.LocationRuleTarget{{ID: wantID}}) {
-			t.Fatalf("deleted target lost its ID or retained a label: %+v", r)
+		if !r.Enabled || r.ContentIDs == nil || r.EntityIDs == nil || r.Targets == nil || len(r.ContentIDs)+len(r.EntityIDs)+len(r.Targets) != 0 {
+			t.Fatalf("deleted target retained ids or labels: %+v", r)
 		}
 	}
 	must(t, admin.DeleteModerationLocationRule(t.Context(), missingContent.ID))
