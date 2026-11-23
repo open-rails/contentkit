@@ -12,6 +12,7 @@ export const admin: typeof en = {
     savedPublishFailed: "変更を保存しました。公開に失敗しました: {reason}",
     deleteVersionHelp: "このバージョンのみを削除します。最後のバージョンの場合、ギャラリーも非表示になります。削除したコンテンツは30日間復元できます。未保存の変更は破棄されます。",
     discardBeforeUnpublish: "このバージョンのみを非公開にして未保存の変更を破棄しますか？他のバージョンは公開されたままです。",
+    confirmUnpublish: "このバージョンを非公開にしますか？再び公開するまで読者は開けません。他のバージョンは公開されたままです。",
     titlesHint: "原題は共通です。表示タイトルはこの言語バージョン専用です。",
     originalTitle: "原題",
     displayTitle: "表示タイトル（{language}）",

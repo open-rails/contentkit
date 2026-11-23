@@ -12,6 +12,7 @@ export const admin: typeof en = {
     savedPublishFailed: "Cambios guardados. No se pudo publicar: {reason}",
     deleteVersionHelp: "Solo se eliminará esta versión. Si es la última, también se ocultará la galería. El contenido eliminado se puede restaurar durante 30 días. Se descartarán los cambios sin guardar.",
     discardBeforeUnpublish: "¿Retirar solo esta versión y descartar los cambios sin guardar? Las demás seguirán publicadas.",
+    confirmUnpublish: "¿Retirar esta versión? Los lectores no podrán abrirla hasta que la publiques de nuevo. Las demás seguirán publicadas.",
     titlesHint: "El título original es compartido. El título mostrado pertenece a esta versión de idioma.",
     originalTitle: "Título original",
     displayTitle: "Título mostrado ({language})",

@@ -12,6 +12,7 @@ export const admin: typeof en = {
     savedPublishFailed: "Änderungen gespeichert. Veröffentlichung fehlgeschlagen: {reason}",
     deleteVersionHelp: "Nur diese Version wird gelöscht. Ist sie die letzte, wird auch die Galerie ausgeblendet. Gelöschte Inhalte können 30 Tage lang wiederhergestellt werden. Ungespeicherte Änderungen werden verworfen.",
     discardBeforeUnpublish: "Nur diese Version zurückziehen und ungespeicherte Änderungen verwerfen? Andere Versionen bleiben veröffentlicht.",
+    confirmUnpublish: "Diese Version zurückziehen? Leser können sie erst wieder öffnen, wenn du sie erneut veröffentlichst. Andere Versionen bleiben veröffentlicht.",
     titlesHint: "Der Originaltitel ist gemeinsam. Der Anzeigetitel gehört zu dieser Sprachversion.",
     originalTitle: "Originaltitel",
     displayTitle: "Anzeigetitel ({language})",
