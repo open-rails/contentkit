@@ -86,11 +86,14 @@ const (
 	// AccountsLifecycle: deliver AuthKit's account lifecycle (deleted,
 	// restored, purged) to ContentKit over HTTP (a host service).
 	AccountsLifecycle Permission = "root:accounts:lifecycle"
+
+	// LocationsWrite manages location rules and their audit history.
+	LocationsWrite Permission = "root:locations:write"
 )
 
 // Permissions is every application permission; hosts choose which roles hold them.
 func Permissions() []Permission {
-	return []Permission{ContentCreate, ContentEditOwn, ContentWrite, ContentViewRestricted, PollsWrite, CommentsModerate, CommentsBan, ModerationReview, EntitiesWrite, ChannelsWrite, NotificationsPublish, ImportWrite, AvatarsWrite, AccountsLifecycle}
+	return []Permission{ContentCreate, ContentEditOwn, ContentWrite, ContentViewRestricted, PollsWrite, CommentsModerate, CommentsBan, ModerationReview, EntitiesWrite, ChannelsWrite, NotificationsPublish, ImportWrite, AvatarsWrite, AccountsLifecycle, LocationsWrite}
 }
 
 func (p Permission) String() string { return string(p) }

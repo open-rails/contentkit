@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/netip"
 	"strings"
 	"time"
 
@@ -26,6 +27,7 @@ import (
 // Options configures a Runtime. Pool, Schema, Tenant, Auth and Resolver are
 // mandatory; the rest fall back to documented defaults.
 type Options struct {
+	Locate func(context.Context, netip.Addr) content.VisitorLocation
 	// Pool is the host's shared pgx pool; the runtime does not own its lifecycle.
 	Pool *pgxpool.Pool
 	// Schema is ContentKit's schema.
@@ -110,6 +112,7 @@ type Options struct {
 // Runtime is one tenant's embedded content module: shared deps + the module
 // services, exposing one mountable http.Handler.
 type Runtime struct {
+	locate               func(context.Context, netip.Addr) content.VisitorLocation
 	accounts             content.AccountLifecycle
 	notifier             notify.Publisher
 	eraseAccountReceipts func(context.Context, []string) error
@@ -185,6 +188,7 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 	processor := orDefault[content.ContentProcessor](opts.Processor, trimProcessor{})
 	rt := &Runtime{
 		store:           newStore(opts.Pool, opts.Schema, opts.Tenant),
+		locate:          opts.Locate,
 		schema:          opts.Schema,
 		tenant:          opts.Tenant,
 		userInfo:        opts.UserInfo,

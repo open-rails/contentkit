@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strconv"
 	"strings"
@@ -38,6 +39,29 @@ func (e *Engine) Client() *Client {
 		return &Client{hc: &http.Client{Transport: erasureRecoveryTransport{}}, base: inprocessBase}
 	}
 	return &Client{hc: &http.Client{Transport: inprocess{e.inproc}}, base: inprocessBase}
+}
+
+// VisitorClient acts as an anonymous visitor at ip and host. Host selects the
+// configured content-filter domain. No request leaves the process.
+func (e *Engine) VisitorClient(ip netip.Addr, host string) *Client {
+	if e.erasureRecovery {
+		return &Client{hc: &http.Client{Transport: erasureRecoveryTransport{}}, base: inprocessBase}
+	}
+	return &Client{hc: &http.Client{Transport: visitorTransport{e.inproc, ip, host}}, base: inprocessBase}
+}
+
+type visitorTransport struct {
+	h    http.Handler
+	ip   netip.Addr
+	host string
+}
+
+func (t visitorTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	r := req.Clone(req.Context())
+	r.RequestURI = r.URL.RequestURI()
+	r.Host = t.host
+	r.RemoteAddr = netip.AddrPortFrom(t.ip, 0).String()
+	return serveInProcess(t.h, r)
 }
 
 type erasureRecoveryTransport struct{}
@@ -211,16 +235,23 @@ func (t inprocess) RoundTrip(req *http.Request) (*http.Response, error) {
 	}
 	r := req.Clone(gate.AsHost(req.Context()))
 	r.RequestURI, r.RemoteAddr = r.URL.RequestURI(), "127.0.0.1:0"
+	return serveInProcess(t.h, r)
+}
+
+func serveInProcess(h http.Handler, r *http.Request) (*http.Response, error) {
+	if err := r.Context().Err(); err != nil {
+		return nil, err
+	}
 	if r.Body == nil {
 		r.Body = http.NoBody
 	}
-	if req.Header.Get("Accept") == "text/event-stream" {
-		return streamInProcess(t.h, r)
+	if r.Header.Get("Accept") == "text/event-stream" {
+		return streamInProcess(h, r)
 	}
 	w := &recorder{header: http.Header{}, status: http.StatusOK}
-	t.h.ServeHTTP(w, r)
+	h.ServeHTTP(w, r)
 	return &http.Response{Status: http.StatusText(w.status), StatusCode: w.status, Proto: "HTTP/1.1", ProtoMajor: 1, ProtoMinor: 1,
-		Header: w.header, Body: io.NopCloser(&w.body), ContentLength: int64(w.body.Len()), Request: req}, nil
+		Header: w.header, Body: io.NopCloser(&w.body), ContentLength: int64(w.body.Len()), Request: r}, nil
 }
 
 type recorder struct {

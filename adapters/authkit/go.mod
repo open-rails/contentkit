@@ -37,6 +37,8 @@ require (
 	github.com/nyaruka/phonenumbers v1.8.1 // indirect
 	github.com/open-rails/helpers v1.18.0 // indirect
 	github.com/open-rails/migratekit v1.11.2 // indirect
+	github.com/oschwald/geoip2-golang v1.13.0 // indirect
+	github.com/oschwald/maxminddb-golang v1.13.0 // indirect
 	github.com/paulmach/orb v0.12.0 // indirect
 	github.com/philhofer/fwd v1.2.0 // indirect
 	github.com/pierrec/lz4/v4 v4.1.25 // indirect

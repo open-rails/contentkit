@@ -1195,6 +1195,90 @@ export interface ListingSummary {
   truncated?: boolean;
 }
 
+export interface LocationCheck {
+  location: VisitorLocation;
+  domains: Record<string, LocationRuleMatch[]>;
+}
+
+export interface LocationEntry {
+  country?: string;
+  subdivision?: string;
+  network?: string;
+}
+
+export interface LocationRule {
+  locations: LocationEntry[];
+  target: string;
+  content_ids: string[];
+  entity_ids: string[];
+  domains: string[];
+  enabled: boolean;
+  note: string;
+  targets: LocationRuleTarget[];
+  id: string;
+  created_by: string;
+  created_at: string;
+  updated_by: string;
+  updated_by_name: string;
+  updated_at: string;
+}
+
+export interface LocationRuleHistory {
+  id: number;
+  rule_id: string;
+  action: string;
+  actor: string;
+  actor_name: string;
+  at: string;
+  snapshot: unknown;
+}
+
+export interface LocationRuleHistoryPage {
+  items: LocationRuleHistory[];
+  total: number;
+}
+
+export interface LocationRuleInput {
+  locations: LocationEntry[];
+  target: string;
+  content_ids: string[];
+  entity_ids: string[];
+  domains: string[];
+  enabled: boolean;
+  note: string;
+}
+
+export interface LocationRuleMatch {
+  rule_id: string;
+  kind: string;
+  target: string;
+  content_ids: string[];
+  entity_ids: string[];
+}
+
+export interface LocationRulePage {
+  items: LocationRule[];
+  total: number;
+  domains: string[];
+}
+
+export interface LocationRuleTarget {
+  id: string;
+  kind: string;
+  title: string;
+  name: string;
+}
+
+export interface LocationRuleUpdate {
+  locations?: LocationEntry[];
+  target?: string;
+  content_ids?: string[];
+  entity_ids?: string[];
+  domains?: string[];
+  enabled?: boolean;
+  note?: string;
+}
+
 export interface Locked {
   show: string[];
   preview?: Preview;
@@ -2072,6 +2156,13 @@ export interface ViewerState {
   progress_max: number;
   resume?: string;
   last_read_at?: string;
+}
+
+export interface VisitorLocation {
+  country: string;
+  country_name: string;
+  subdivision: string;
+  subdivision_name: string;
 }
 
 export interface VoteRecord {

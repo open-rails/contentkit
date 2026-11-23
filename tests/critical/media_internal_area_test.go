@@ -13,11 +13,17 @@ import (
 	"testing"
 	"time"
 
-	mediastore "github.com/open-rails/contentkit/internal/mediastore"
-
 	"github.com/google/uuid"
+	"github.com/open-rails/authkit"
+	"github.com/open-rails/authkit/authtest"
 	ck "github.com/open-rails/contentkit"
+	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
+	"github.com/open-rails/contentkit/content"
+	"github.com/open-rails/contentkit/internal/catalogstore"
+	"github.com/open-rails/contentkit/internal/media/workqueue"
+	mediastore "github.com/open-rails/contentkit/internal/mediastore"
+	"github.com/open-rails/contentkit/internal/versionstore"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/layout"
 	"github.com/open-rails/contentkit/media/token"
@@ -211,6 +217,47 @@ func TestInternalArea(t *testing.T) {
 		if ready.Access != media.AccessFull || len(ready.Files) != 1 || ready.Files[0].Path != "reader/one.webp" {
 			t.Fatalf("completed reader publication missing: %+v", ready)
 		}
+
+		t.Run("location_rule_denies_media_grant", func(t *testing.T) {
+			roles := authkit.NewRoles()
+			roles.Root.Declare(access.Names(access.Permissions()...)...)
+			identity, _ := authtest.New(t, authtest.WithConfig(func(c *authkit.Config) { c.Roles = roles }), authtest.WithDeps(func(d *authkit.Deps) { d.Postgres = w.pool }))
+			catalogStore, err := catalogstore.New(ctx, catalogstore.Options{Pool: w.pool, Schema: w.schema, Tenant: a.cfg.Scope.AppID.String(), Kinds: a.cfg.Content, Auth: identity.Authenticator()})
+			must(t, err)
+			t.Cleanup(catalogStore.Close)
+			service, err := versionstore.New(versionstore.Options{Pool: w.pool, Schema: w.schema, Tenant: a.cfg.Scope.AppID.String(), Kinds: a.cfg.Content, Auth: identity.Authenticator(), Resolver: catalogStore.Resolver(), Facets: catalogStore, Now: w.clock.now})
+			must(t, err)
+			registry, err := mediastore.NewRegistry(config, service.Hooks())
+			must(t, err)
+			queue, err := workqueue.New(w.pool, registry, a.cfg.Media.WorkerSchema)
+			must(t, err)
+			journal, err := mediastore.NewPGJournal(w.pool, w.schema, queue)
+			must(t, err)
+			jobs, err := mediastore.NewJobs(mediastore.JobsConfig{Store: m.store, Registry: registry, Locker: mediastore.PGLocker(w.pool), Journal: journal})
+			must(t, err)
+			ring, err := token.NewRing(m.key, nil)
+			must(t, err)
+			uploads, err := mediastore.NewUploads(mediastore.UploadOptions{Store: m.store, Manifests: jobs.Manifests(), Tickets: &ring})
+			must(t, err)
+			mediaReader, err := mediastore.NewReader(mediastore.ReaderOptions{Manifests: jobs.Manifests(), Delivery: media.Delivery{Mode: media.DeliverURL, SigningKey: m.key}})
+			must(t, err)
+			must(t, service.Bind(versionstore.Media{Manifests: jobs.Manifests(), Uploads: uploads, Jobs: jobs, Reader: mediaReader}))
+			target, err := registry.VersionRef(ref.Kind, ref.ID, ref.Version)
+			must(t, err)
+			visitor := access.Actor{Anonymous: true, IP: "203.0.113.45"}
+			_, err = mediaReader.Grant(ctx, target, visitor)
+			must(t, err)
+			rule, err := admin.PostModerationLocationRules(ctx, content.LocationRuleInput{Locations: []content.LocationEntry{{Network: "203.0.113.0/24"}}, Target: "content", ContentIDs: []string{ref.ID}, Domains: []string{"main"}, Enabled: true})
+			must(t, err)
+			defer func() { must(t, admin.DeleteModerationLocationRule(ctx, rule.ID)) }()
+			_, err = mediaReader.Grant(ctx, target, visitor)
+			if !errors.Is(err, mediastore.ErrNotVisible) {
+				t.Fatalf("covered media Grant = %v, want ErrNotVisible", err)
+			}
+			visitor.IP = "203.0.114.45"
+			_, err = mediaReader.Grant(ctx, target, visitor)
+			must(t, err)
+		})
 		if len(ready.Public) != 1 || len(ready.Public[0].Renditions) != 2 {
 			t.Fatalf("cover renditions incomplete: %+v", ready.Public)
 		}

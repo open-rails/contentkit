@@ -50,6 +50,7 @@ import (
 	"github.com/open-rails/contentkit/internal/gate"
 	"github.com/open-rails/contentkit/internal/httpapi"
 	"github.com/open-rails/contentkit/internal/hub"
+	"github.com/open-rails/contentkit/internal/locationpolicy"
 	"github.com/open-rails/contentkit/internal/media/workqueue"
 	"github.com/open-rails/contentkit/internal/migrations"
 	"github.com/open-rails/contentkit/kinds"
@@ -74,6 +75,7 @@ type Engine struct {
 	log             *slog.Logger
 	auth            auth.Authenticator
 	gate            *entitlement.Gate
+	geo             *locationpolicy.Geo
 
 	hub      *hub.Hub
 	signals  *signalPlane // nil without ClickHouse
@@ -157,6 +159,9 @@ func newEngine(ctx context.Context, cfg Config, deps Deps, recovery bool) (_ *En
 		}
 	} else if err := e.migrate(ctx); err != nil {
 		return nil, err
+	}
+	if e.geo, err = locationpolicy.Open(cfg.GeoIPCityPath, e.log); err != nil {
+		return nil, fmt.Errorf("contentkit: GeoIP City database: %w", err)
 	}
 	e.signals = e.newSignals(deps)
 	if e.hub, err = hub.New(hub.Config{PG: e.pool, PGSchema: e.schema, Tenant: cfg.Scope.AppID.String(), DefaultLanguage: cfg.Content.Languages[0],
@@ -504,7 +509,7 @@ func (e *Engine) contentOptions(deps Deps) contentstore.Options {
 	}
 	l := in.Limits
 	o := contentstore.Options{
-		Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Scope.AppID.String(), Auth: e.auth, UserInfo: deps.Users, Resolver: interactionTargets{e}, Kinds: e.cfg.Content,
+		Locate: e.geo.Lookup, Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Scope.AppID.String(), Auth: e.auth, UserInfo: deps.Users, Resolver: interactionTargets{e}, Kinds: e.cfg.Content,
 		Processor:             deps.Processor,
 		NotificationPublisher: deps.Notifications,
 		EraseAccountReceipts:  e.eraseAccountReceipts,
@@ -704,6 +709,9 @@ func (e *Engine) Close(ctx context.Context) error {
 		e.signals.close()
 	}
 	var errs []error
+	if e.geo != nil {
+		errs = append(errs, e.geo.Close())
+	}
 	if e.working {
 		if err := e.river.Stop(ctx); err != nil {
 			hard, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)

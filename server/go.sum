@@ -229,6 +229,7 @@ github.com/open-rails/authkit v1.43.0 h1:kOEU+szwrtJVwTyqwdkur7M+T2cvBSBHM+CB2oX
 github.com/open-rails/authkit v1.43.0/go.mod h1:Is+s2qZ7lpVdMbnxi1PPC66tJ10jNqj9ptNyeEQoESc=
 github.com/open-rails/contentkit v0.129.0 h1:ea1EnzKKdpUoEhKNgzU641a3UV5pALGjz1vIsY0lLV8=
 github.com/open-rails/contentkit v0.129.0/go.mod h1:uGQVCDS4m4klkaaJXbWuWqHKygly0vxEMT2hinFSTWQ=
+github.com/open-rails/contentkit v0.135.0/go.mod h1:dBLZgNWLLp2RqgkvA/Z3nGhcJNtL/5I3iDnVySb1XZo=
 github.com/open-rails/contentkit/adapters/authkit v0.12.0 h1:A6VVUU5UhcFiAwzdKEhtBz2Jz52kW29dYMJ7Ch9VJWA=
 github.com/open-rails/contentkit/adapters/authkit v0.12.0/go.mod h1:RS4ztHmxY9nKGCjb+Z67th7+2sXgYLoTmntBNu9so2c=
 github.com/open-rails/contentkit/adapters/authkit v0.14.0/go.mod h1:flJllCbylRMDAD3LnTOuRqch6kEeh1+Vp5IdNN29WiU=
@@ -242,6 +243,10 @@ github.com/open-rails/migratekit v1.11.2 h1:QTtn8i/Yj62SiGv6b7FnQ/mKudSDfLjnlmPS
 github.com/open-rails/migratekit v1.11.2/go.mod h1:ONDMUycRcwAB+eKlPvho6mnNAZf9gf9+yqwCKDRuO9g=
 github.com/open-rails/openrails v0.266.0 h1:jiSflMyYaSw+TSvQ8FdFoPv3AUTUIYZDZdIXSk+09Wk=
 github.com/open-rails/openrails v0.266.0/go.mod h1:RTCLkrEETwfeba36Tpa351XVrLHXemj4shO+Nt/7reM=
+github.com/oschwald/geoip2-golang v1.13.0 h1:Q44/Ldc703pasJeP5V9+aFSZFmBN7DKHbNsSFzQATJI=
+github.com/oschwald/geoip2-golang v1.13.0/go.mod h1:P9zG+54KPEFOliZ29i7SeYZ/GM6tfEL+rgSn03hYuUo=
+github.com/oschwald/maxminddb-golang v1.13.0 h1:R8xBorY71s84yO06NgTmQvqvTvlS/bnYZrrWX1MElnU=
+github.com/oschwald/maxminddb-golang v1.13.0/go.mod h1:BU0z8BfFVhi1LQaonTwwGQlsHUEu9pWNdMfmq4ztm0o=
 github.com/paulmach/orb v0.12.0 h1:z+zOwjmG3MyEEqzv92UN49Lg1JFYx0L9GpGKNVDKk1s=
 github.com/paulmach/orb v0.12.0/go.mod h1:5mULz1xQfs3bmQm63QEJA6lNGujuRafwA5S/EnuLaLU=
 github.com/paulmach/protoscan v0.2.1/go.mod h1:SpcSwydNLrxUGSDvXvO0P7g7AuhJ7lcKfDlhJCDw2gY=

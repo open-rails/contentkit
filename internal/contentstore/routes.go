@@ -17,6 +17,7 @@ func init() {
 	httpapi.Register(httpapi.Content, banRoutes())
 	httpapi.Register(httpapi.Content, moderationRoutes)
 	httpapi.Register(httpapi.Content, ruleRoutes)
+	httpapi.Register(httpapi.Content, locationRoutes)
 	httpapi.Register(httpapi.Content, accountRoutes)
 }
 
@@ -37,6 +38,7 @@ func (rt *Runtime) Handler() http.Handler {
 	httpapi.Mount(mux, g, rt, banRoutes())
 	httpapi.Mount(mux, g, rt, moderationRoutes)
 	httpapi.Mount(mux, g, rt, ruleRoutes)
+	httpapi.Mount(mux, g, rt, locationRoutes)
 	httpapi.Mount(mux, g, rt, accountRoutes)
 	return rt.accessLog(memoized(mux))
 }

@@ -5,4 +5,4 @@ import (
 )
 
 // permissions are the staff permissions content checks (access.Permission).
-var permissions = []access.Permission{access.PollsWrite, access.CommentsModerate, access.CommentsBan, access.ModerationReview}
+var permissions = []access.Permission{access.LocationsWrite, access.PollsWrite, access.CommentsModerate, access.CommentsBan, access.ModerationReview}

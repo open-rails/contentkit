@@ -28,7 +28,7 @@ func (s *Store) coveredKinds() []string {
 }
 
 func (s *Store) counts(ctx context.Context, q Querier, ids []string) (map[entities.EntityID][]entities.Count, error) {
-	boundary, args := s.boundary.SQL("f", "entity_domain")
+	boundary, args := s.publicBoundary("f", "entity_domain")
 	params := pgx.NamedArgs{"tenant": s.tenant, "ids": ids}
 	maps.Copy(params, args)
 	rows, err := q.Query(ctx, fmt.Sprintf(`SELECT g.id, f.kind, l.language, count(DISTINCT f.content_id)::int
