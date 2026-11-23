@@ -1,6 +1,6 @@
 # Open release candidate
 
-None.
+`rc/0.138.25` stops refused comments from using up the comment rate limit and makes the reader editor show a first publish and confirm every unpublish.
 
 Feature pull requests target the open release candidate, never `master`. A release candidate's first commit names its
 `rc/<version>` branch and purpose here; its last commit before it merges into `master` resets this file. So on `master`, and
