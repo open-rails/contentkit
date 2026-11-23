@@ -1679,3 +1679,36 @@ does not consume are unaffected.
 No special ContentKit cleanup option is required. An operator who wants to
 remove queue noise can use River's existing cancellation tools on reviewed
 exact job IDs; empty arguments on the shared queue do not establish app ownership.
+
+### Location rules
+
+Set `Config.GeoIPCityPath` (`geoip_city_path` in YAML/JSON) to a GeoLite2-City
+`.mmdb` file to enable country and subdivision matching. ContentKit opens it at
+construction and checks its modification time at most once a minute. Replace the
+file atomically when updating it. Missing location data leaves country and
+subdivision rules unmatched; IP/CIDR rules work without a database. Lookup misses
+are logged at debug level; the engine has no shared metrics registry.
+
+Declare `access.LocationsWrite` (`root:locations:write`) for staff who manage
+`/v1/moderation/location-rules`. These routes include paginated rules and retained
+history, partial updates (including `enabled`), and `/check?ip=...`, which resolves
+an address and lists matching enabled rules per configured domain. Rule changes
+and their history snapshots commit together. Rules apply to staff content reads
+too; only the location-rule administration routes are exempt.
+
+Host middleware can call `block, blocked, err := ck.SiteBlock(ctx, ip, host)` to
+check whole-site rules before rendering host pages. Handle `err` as a failed
+policy read. When `blocked`, `block` contains the matched country/subdivision
+codes, English names when available, entry kind, and rule ID. This method checks
+whole-site rules; content and tag targets are enforced by ContentKit's read APIs.
+The host remains responsible for its response to a whole-site match.
+
+Use `ck.VisitorClient(ip, host)` for in-process reads on behalf of an anonymous
+visitor. It applies that IP's location rules and the host's content-filter domain.
+`ck.Client()` keeps its host application authority. As with HTTP requests, pass
+the trusted client IP, not an unverified forwarded header. HTTP integrations must
+set `RemoteAddr` after their trusted proxy processing. Each request reads enabled
+rules for its tenant and domain from Postgres; replicas retain no rule cache.
+Catalog totals and the global precomputed entity popularity ordering remain
+aggregate statistics, while returned content and public entity counts are
+filtered for the current visitor.

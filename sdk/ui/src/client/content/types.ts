@@ -34,7 +34,7 @@ export type BanScope = CommentStanding["ban_scopes"][number];
 export type HeldKind = "comment";
 
 /** The moderation rules: banned words or IP bans. */
-export type RuleSet = "words" | "ips";
+export type RuleSet = "words" | "ips" | "locations";
 
 /** A reviewer's decision on a held item. */
 export type Decision = Exclude<ResolveInput["decision"], "review">;

@@ -17,6 +17,7 @@ import (
 	entities "github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/internal/domainpolicy"
 	entitlement "github.com/open-rails/contentkit/internal/entitlement"
+	"github.com/open-rails/contentkit/internal/locationpolicy"
 	"github.com/open-rails/contentkit/internal/search"
 	"github.com/open-rails/contentkit/kinds"
 )
@@ -115,6 +116,7 @@ type Store struct {
 	owned     entities.OwnedContent
 	log       *slog.Logger
 	as        *writer
+	locations locationpolicy.Block
 	boundary  domainpolicy.Policies // request-bound hard catalog rules; management stays unscoped
 }
 

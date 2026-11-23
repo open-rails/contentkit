@@ -20,6 +20,7 @@ import (
 	"github.com/open-rails/contentkit/internal/gate"
 	"github.com/open-rails/contentkit/internal/httpapi"
 	"github.com/open-rails/contentkit/internal/pglock"
+	"github.com/open-rails/contentkit/internal/resolve"
 	urlstore "github.com/open-rails/contentkit/internal/urlstore"
 	versionstore "github.com/open-rails/contentkit/internal/versionstore"
 )
@@ -253,7 +254,11 @@ func (s *Store) viewer(r *http.Request, o catalog.ViewerOptions) (*Viewer, error
 	if o.Language == "" {
 		o.Language = s.requestLanguage(r)
 	}
-	return s.Viewer(r.Context(), o)
+	ctx := r.Context()
+	if (r.Method != http.MethodGet && r.Method != http.MethodHead) || r.URL.Path == "/manage" || strings.HasPrefix(r.URL.Path, "/manage/") {
+		ctx = resolve.WithEditorRead(ctx)
+	}
+	return s.Viewer(ctx, o)
 }
 
 // requestLanguage is the language query parameter, else the first site
