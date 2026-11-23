@@ -7,6 +7,7 @@ import (
 	"net/netip"
 	"os"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -49,7 +50,7 @@ func assertCards(t *testing.T, page discovery.ContentPage, want ...string) {
 	}
 	sort.Strings(got)
 	sort.Strings(want)
-	if !reflect.DeepEqual(got, want) {
+	if !slices.Equal(got, want) {
 		t.Fatalf("visible card IDs = %v; want %v", got, want)
 	}
 }
