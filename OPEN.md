@@ -1,6 +1,6 @@
 # Open release candidate
 
-`rc/0.138.26` stores location rule domains and targets as rows with foreign keys, so deleted content and tags leave their rules.
+None.
 
 Feature pull requests target the open release candidate, never `master`. A release candidate's first commit names its
 `rc/<version>` branch and purpose here; its last commit before it merges into `master` resets this file. So on `master`, and
