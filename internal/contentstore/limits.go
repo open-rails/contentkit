@@ -15,7 +15,8 @@ import (
 
 // Limits are per-actor interaction limits: an actor is its user id, or its
 // IP when anonymous. Every attempt spends one, so undoing (unfavorite,
-// neutral) costs the same as doing. A nil field takes its default; an action
+// neutral) costs the same as doing; a comment spends only once it passes the
+// local refusals, while every comment request spends from commentAttempts. A nil field takes its default; an action
 // with several rates must pass all of them.
 type Limits struct {
 	Comment         []content.Rate // default 5 per 5 minutes and 20 per hour
@@ -33,7 +34,14 @@ type Limits struct {
 	Disabled bool
 }
 
+// actionCommentAttempt caps every comment request, refused or not, so
+// refusals that spend no comment allowance still cannot be flooded.
+const actionCommentAttempt content.Action = "comment_attempt"
+
+var commentAttempts = []content.Rate{{Count: 30, Per: time.Minute}}
+
 var defaultLimits = map[content.Action][]content.Rate{
+	actionCommentAttempt:          commentAttempts,
 	content.ActionComment:         {{Count: 5, Per: 5 * time.Minute}, {Count: 20, Per: time.Hour}},
 	content.ActionCommentReaction: {{Count: 30, Per: time.Minute}},
 	content.ActionReaction:        {{Count: 30, Per: time.Minute}},
@@ -99,6 +107,9 @@ func (rt *Runtime) limit(ctx context.Context, a content.Action, actor access.Act
 		return nil
 	}
 	if ok, wait := l.Allow(ctx, key); !ok {
+		if a == actionCommentAttempt {
+			a = content.ActionComment
+		}
 		return &content.RateLimitError{Action: a, RetryAfter: wait}
 	}
 	return nil

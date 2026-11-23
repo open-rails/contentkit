@@ -1016,6 +1016,9 @@ func (c *comments) handleCreate(typ content.TargetType) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		actor := c.rt.actor(req.Context())
 		err := participant(actor, c.rt.anonymous.Comments)
+		if err == nil {
+			err = c.rt.limit(req.Context(), actionCommentAttempt, actor)
+		}
 		var target contentref.ContentRef
 		if err == nil {
 			target, err = c.rt.target(req, typ)
@@ -1042,6 +1045,10 @@ func (c *comments) handleCreate(typ content.TargetType) http.HandlerFunc {
 
 func (c *comments) handleEdit(w http.ResponseWriter, req *http.Request) {
 	actor := c.rt.actor(req.Context())
+	if err := c.rt.limit(req.Context(), actionCommentAttempt, actor); err != nil {
+		writeErr(w, err)
+		return
+	}
 	var in content.CommentEdit
 	if err := decodeJSON(req, &in); err != nil {
 		writeErr(w, err)

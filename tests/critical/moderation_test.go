@@ -981,6 +981,19 @@ func TestCommentInputLimits(t *testing.T) {
 		_, err = client.PostContentComments(t.Context(), item.ID, content.CommentInput{Body: "No third allowance"}, ck.PostContentCommentsQuery{})
 		requireError(t, err, 429, "rate_limited")
 	})
+	t.Run("refused_comment_floods_hit_the_attempt_cap", func(t *testing.T) {
+		w := newWorld(t, func(cfg *ck.Config) { cfg.Interactions.Limits.Disabled = false })
+		a := w.apps[0]
+		_, token := w.person(t, 0)
+		client := a.client(token)
+		item := publishedArticle(t, a, "Refusal flood")
+		for i := 0; i < 30; i++ {
+			_, err := client.PostContentComments(t.Context(), item.ID, content.CommentInput{Body: " "}, ck.PostContentCommentsQuery{})
+			requireError(t, err, 400, "invalid_request")
+		}
+		_, err := client.PostContentComments(t.Context(), item.ID, content.CommentInput{Body: "Valid but flooded"}, ck.PostContentCommentsQuery{})
+		requireError(t, err, 429, "rate_limited")
+	})
 }
 
 func TestDuplicateComments(t *testing.T) {
