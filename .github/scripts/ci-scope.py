@@ -7,7 +7,8 @@ import re
 import subprocess
 
 SOURCE = ("critical", "scan")
-HEAVY = (*SOURCE, "images")
+# security: govulncheck of every module, with full qualification and dependency changes.
+HEAVY = (*SOURCE, "images", "security")
 # light: build, vet, static guards and generated-file checks, for PRs into a release candidate.
 ALL = (*HEAVY, "light")
 

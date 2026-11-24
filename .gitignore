@@ -1,2 +1,4 @@
 .gocache
-.env
+.env*
+go.work*
+.playwrightmcp

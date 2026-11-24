@@ -8,4 +8,4 @@ concurrency:
   cancel-in-progress: true
 jobs:
   injection-scan:
-    uses: open-rails/helpers/.github/workflows/injection-scan.yml@6201c38329794f36e6b0cc19d850c4c4125451d5
+    uses: open-rails/helpers/.github/workflows/injection-scan.yml@6201c38329794f36e6b0cc19d850c4c4125451d5 # v0.3.0-2-g6201c38
