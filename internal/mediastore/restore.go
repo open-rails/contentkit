@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/uuidv7"
 	media "github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/layout"
 )
@@ -126,7 +127,7 @@ func (j *Jobs) Restore(ctx context.Context, snap Snapshot, o RestoreOptions) (*M
 	}
 	out, err := j.manifests.editOperation(ctx, snap.Ref, false, bound{}, mutation, func(cur *Manifest) error {
 		next := snap.Manifest.Clone()
-		next.Incarnation, next.Deleted, next.Full, next.Deficit = uuid.NewString(), false, false, 0
+		next.Incarnation, next.Deleted, next.Full, next.Deficit = uuidv7.NewString(), false, false, 0
 		if item.Kind().Versions {
 			next.PublicationLayout = 0 // origin retirement must complete before item grants resume
 		}
@@ -175,10 +176,10 @@ func (j *Jobs) Restore(ctx context.Context, snap Snapshot, o RestoreOptions) (*M
 		for i, key := range sources {
 			parsed, _ := layout.Parse(key)
 			area := parsed.Area
-			from, name, to := parsed.Name, layout.StagedPrefix+uuid.NewString(), ""
+			from, name, to := parsed.Name, layout.StagedPrefix+uuidv7.NewString(), ""
 			if parsed.Area != layout.AreaTemp && parsed.Area != layout.AreaTmp {
 				digest, _ := layout.BlobDigest(parsed.Name)
-				name = layout.BlobName(digest, uuid.NewString())
+				name = layout.BlobName(digest, uuidv7.NewString())
 				from = layout.BlobRef(parsed.Area, parsed.Name)
 				if item.Kind().Versions {
 					area = layout.AreaInternal

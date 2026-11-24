@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/uuidv7"
 	"github.com/open-rails/contentkit/media/layout"
 )
 
@@ -85,7 +85,7 @@ func (m *Manifests) newBlobs(ctx context.Context, ref contentref.ContentRef, are
 		if len(sum) != sha256.Size {
 			return nil, errors.New("media: blob digest must be SHA-256")
 		}
-		names[i] = layout.BlobRef(area, layout.BlobName(sum, uuid.NewString()))
+		names[i] = layout.BlobRef(area, layout.BlobName(sum, uuidv7.NewString()))
 		keys[i], _ = item.Blob(names[i])
 	}
 	if len(keys) == 0 {

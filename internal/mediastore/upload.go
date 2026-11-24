@@ -172,7 +172,7 @@ func CallerOperation(id uuid.UUID) uuid.UUID {
 }
 
 // NewStaged is a fresh staged upload name: "u-{uuid}".
-func NewStaged() string { return layout.StagedPrefix + uuid.NewString() }
+func NewStaged() string { return layout.StagedPrefix + uuidv7.NewString() }
 
 // uploadPath is the path to commit for a requested one: its {name} cleaned
 // (or chosen, for a Named upload) and an extension from the type when it

@@ -14,11 +14,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 	mediastore "github.com/open-rails/contentkit/internal/mediastore"
+	"github.com/open-rails/contentkit/internal/uuidv7"
 	"github.com/open-rails/contentkit/media"
 	versions "github.com/open-rails/contentkit/media/versions"
 )
@@ -531,7 +531,7 @@ func (s *Service) RestorePageNotice(ctx context.Context, actor access.Actor, t v
 		ops = append(ops, media.Op{Op: media.OpPut, Path: f.Path, Blob: blob, Edit: f.Edit, Meta: f.Meta, SourceName: pageMeta(f).SourceName})
 	}
 	if len(ops) > 0 {
-		if _, err = s.m.Uploads.Commit(ctx, system, ref, uuid.NewString(), ops); err != nil {
+		if _, err = s.m.Uploads.Commit(ctx, system, ref, uuidv7.NewString(), ops); err != nil {
 			return versions.PageNotices{}, err
 		}
 	}

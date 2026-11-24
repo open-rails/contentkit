@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/open-rails/contentkit/internal/uuidv7"
 	media "github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/layout"
 )
@@ -32,7 +33,7 @@ func (m *Manifests) ensureIncarnation(ctx context.Context, item Item) (*Manifest
 		if err := m.requireFresh(ctx, item); err != nil {
 			return nil, err
 		}
-		cur = &Manifest{V: media.ManifestVersion, Incarnation: uuid.NewString(), Files: []media.File{}}
+		cur = &Manifest{V: media.ManifestVersion, Incarnation: uuidv7.NewString(), Files: []media.File{}}
 		if item.Kind().Versions {
 			cur.PublicationLayout = media.PublicationLayoutVersion
 		}
@@ -236,7 +237,7 @@ func (j *Jobs) resetItem(ctx context.Context, item Item, deletion uuid.UUID) err
 			return errors.New("media: reset requires its settled deletion tombstone")
 		}
 		cur.Deleted = false
-		cur.Incarnation = uuid.NewString()
+		cur.Incarnation = uuidv7.NewString()
 		return nil
 	})
 	return err
