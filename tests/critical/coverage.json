@@ -915,7 +915,7 @@
       "status": "verified",
       "evidence": [
         "On a domain requiring an entity, typeahead omits a tag whose only work is outside the domain; the wide domain suggests it.",
-        "Typeahead and search cards of a tag take their automatic cover from its newest work inside the domain, not the newer one outside it; the wide domain's control picks the newer one.",
+        "Typeahead and search cards of a tag take their automatic cover from its work inside the domain, not the favorited one outside it that the unbound order prefers; the wide domain's control picks the favorited one.",
         "Reviewed executable contract mapping for ContentKit #286; final combined qualification must execute every selected case. This is not an execution receipt."
       ],
       "cases": [
