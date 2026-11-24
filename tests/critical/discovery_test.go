@@ -2,9 +2,12 @@ package critical_test
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"os"
 	"reflect"
 	"slices"
@@ -264,6 +267,132 @@ func TestDiscoveryVisibility(t *testing.T) {
 		if len(control.Entities) != 1 || control.Entities[0].ID != elsewhere.ID {
 			t.Fatalf("wide domain did not offer the tag of its visible work: %+v", control.Entities)
 		}
+	})
+	rawGet := func(t *testing.T, token, path string) (*http.Response, []byte) {
+		t.Helper()
+		request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, a.server.URL+"/content"+path, nil)
+		must(t, err)
+		request.Host = "restricted.invalid"
+		if token != "" {
+			request.Header.Set("Authorization", "Bearer "+token)
+		}
+		response, err := http.DefaultClient.Do(request)
+		must(t, err)
+		defer response.Body.Close()
+		body, err := io.ReadAll(response.Body)
+		must(t, err)
+		return response, body
+	}
+	refused := func(t *testing.T, path string) {
+		t.Helper()
+		response, body := rawGet(t, "", path)
+		if response.StatusCode != http.StatusBadRequest || !strings.Contains(string(body), `"invalid_request"`) {
+			t.Fatalf("%s answered %d, want 400 invalid_request: %s", path, response.StatusCode, body)
+		}
+	}
+	t.Run("CK-J07-S27_typeahead_and_entity_covers_stay_inside_the_read_boundary", func(t *testing.T) {
+		outside, err := public.GetTypeahead(t.Context(), ck.GetTypeaheadQuery{Q: "ElsewhereOnlyNeedle", EntityKinds: []string{"tag"}})
+		must(t, err)
+		if len(outside.Entities) != 0 {
+			t.Fatalf("typeahead suggested a tag whose only work is outside the domain: %+v", outside.Entities)
+		}
+		control, err := wide.GetTypeahead(t.Context(), ck.GetTypeaheadQuery{Q: "ElsewhereOnlyNeedle", EntityKinds: []string{"tag"}})
+		must(t, err)
+		if len(control.Entities) != 1 || control.Entities[0].ID != elsewhere.ID {
+			t.Fatalf("wide domain lost the tag of its visible work: %+v", control.Entities)
+		}
+		// The optional tag's newest work is outside the restricted domain.
+		cover := func(t *testing.T, reader *ck.Client, want string) {
+			t.Helper()
+			suggested, err := reader.GetTypeahead(t.Context(), ck.GetTypeaheadQuery{Q: "ChoiceNeedle", EntityKinds: []string{"tag"}})
+			must(t, err)
+			found, err := reader.GetSearch(t.Context(), ck.GetSearchQuery{Q: "ChoiceNeedle", Kind: "article"})
+			must(t, err)
+			for _, cards := range [][]entities.EntityCard{suggested.Entities, found.Entities} {
+				if len(cards) != 1 || cards[0].ID != optional.ID || cards[0].Cover == nil || cards[0].Cover.ContentID != want {
+					t.Fatalf("optional tag's automatic cover: %+v, want content %s", cards, want)
+				}
+			}
+		}
+		cover(t, public, two.ID)
+		cover(t, wide, excluded.ID)
+	})
+	t.Run("CK-J07-S28_oversized_queries_are_refused_before_retrieval", func(t *testing.T) {
+		for _, q := range []string{
+			strings.Repeat("a", 257),
+			// NFKD spells each as six letters: one 132-letter word.
+			strings.Repeat("\u3316", 22),
+			strings.TrimSpace(strings.Repeat("word ", 17)),
+		} {
+			for _, route := range []string{"/v1/search", "/v1/typeahead"} {
+				refused(t, route+"?q="+url.QueryEscape(q))
+			}
+		}
+		response, body := rawGet(t, "", "/v1/search?q="+url.QueryEscape(strings.TrimSpace(strings.Repeat("CriticalVis ", 16))))
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("a query at the bounds was refused: %d %s", response.StatusCode, body)
+		}
+	})
+	t.Run("CK-J07-S29_malformed_cursors_seeds_and_zones_are_refused", func(t *testing.T) {
+		cursor := func(fields map[string]string) string {
+			raw, err := json.Marshal(fields)
+			must(t, err)
+			return base64.RawURLEncoding.EncodeToString(raw)
+		}
+		for _, path := range []string{
+			"/v1/contents?kind=article&sort=newest&cursor=" + cursor(map[string]string{"s": "newest", "v": "not a time", "id": one.ID}),
+			"/v1/contents?kind=article&sort=most_favorited&cursor=" + cursor(map[string]string{"s": "most_favorited", "v": "1.5", "id": one.ID}),
+			"/v1/contents?kind=article&sort=newest&cursor=" + cursor(map[string]string{"s": "newest", "v": "2026-01-01T00:00:00Z", "id": "not-a-content-id"}),
+			"/v1/contents?kind=article&sort=random&cursor=" + cursor(map[string]string{"s": "random", "v": "0", "id": one.ID, "r": strings.Repeat("f", 64)}),
+			"/v1/contents?kind=article&released_on=2026-11&tz=Local",
+			"/v1/release-dates?kind=article&tz=Local",
+		} {
+			refused(t, path)
+		}
+		first, err := public.GetContents(t.Context(), ck.GetContentsQuery{Kind: "article", Sort: "newest", Limit: 1, Mode: "hide"})
+		must(t, err)
+		if len(first.Contents) != 1 || first.NextCursor == "" {
+			t.Fatalf("first page: %+v", first)
+		}
+		next, err := public.GetContents(t.Context(), ck.GetContentsQuery{Kind: "article", Sort: "newest", Limit: 1, Mode: "hide", Cursor: first.NextCursor})
+		must(t, err)
+		if len(next.Contents) != 1 || next.Contents[0].ID == first.Contents[0].ID {
+			t.Fatalf("a served cursor no longer continues its list: %+v then %+v", first, next)
+		}
+	})
+	t.Run("CK-J07-S30_codes_of_unknown_kinds_resolve_nothing", func(t *testing.T) {
+		_, err := w.pool.Exec(t.Context(), `INSERT INTO `+pgx.Identifier{w.schema, "content_codes"}.Sanitize()+` (tenant_id, code, content_kind, content_id, slug, slugs)
+ VALUES ($1, 'RETRED00Z', 'retired', $2, '', '{}')`, a.cfg.Scope.AppID.String(), uuid.NewString())
+		must(t, err)
+		for _, c := range []*ck.Client{public, admin} {
+			_, err = c.GetCode(t.Context(), "RETRED00Z", ck.GetCodeQuery{})
+			requireError(t, err, http.StatusNotFound, "not_found")
+		}
+		_, err = public.GetCode(t.Context(), one.Code, ck.GetCodeQuery{})
+		must(t, err)
+	})
+	t.Run("CK-J07-S31_json_reads_are_private_unless_declared_and_location_independent", func(t *testing.T) {
+		directive := func(t *testing.T, token, path string, status int, want string) {
+			t.Helper()
+			response, body := rawGet(t, token, path)
+			if response.StatusCode != status || response.Header.Get("Cache-Control") != want {
+				t.Fatalf("%s: %d %q, want %d %q: %s", path, response.StatusCode, response.Header.Get("Cache-Control"), status, want, body)
+			}
+		}
+		_, token := w.person(t, 0)
+		directive(t, "", "/v1/contents/"+one.ID, http.StatusOK, "private, no-store")
+		directive(t, "", "/v1/entities?kind=tag", http.StatusOK, "private, no-store")
+		directive(t, "", "/v1/nowhere", http.StatusNotFound, "private, no-store")
+		directive(t, "", "/v1/kinds", http.StatusOK, "public, max-age=60")
+		directive(t, "", "/v1/catalog/totals?kinds=article", http.StatusOK, "public, max-age=600")
+		directive(t, "", "/v1/catalog/totals?kinds=unconfigured", http.StatusBadRequest, "private, no-store")
+		directive(t, token, "/v1/kinds", http.StatusOK, "private, no-store")
+		site, err := admin.PostModerationLocationRules(t.Context(), content.LocationRuleInput{Locations: []content.LocationEntry{{Network: "198.51.100.0/24"}}, Target: "site", Domains: []string{"main"}, Enabled: true})
+		must(t, err)
+		defer func() { must(t, admin.DeleteModerationLocationRule(t.Context(), site.ID)) }()
+		// The rule covers other visitors: any cached answer would reach them.
+		directive(t, "", "/v1/kinds", http.StatusOK, "private, no-store")
+		directive(t, "", "/v1/catalog/totals?kinds=article", http.StatusOK, "private, no-store")
 	})
 	t.Run("CK-J07-S04_sitemap_calendar_and_totals_apply_domain_scope", func(t *testing.T) {
 		page, err := public.GetSitemapContents(t.Context(), ck.GetSitemapContentsQuery{Kind: "article"})
