@@ -5,6 +5,7 @@ import { toContentKitError, type ContentKitError } from "../../client/errors.js"
 import type { CommitBody, FileInfo, RefBody } from "../../client/generated/wire.js";
 import { samePath, type Progress, type UploadState } from "../../client/media/client.js";
 import { acceptsFile } from "../../client/media/rules.js";
+import { uuidv7 } from "../../client/uuid.js";
 import { useMessages } from "../../i18n/context.js";
 import { megabytes } from "../../i18n/messages.js";
 import { useFlowClient } from "../../react/admin.js";
@@ -164,7 +165,7 @@ function Queue({ client, createItem, path = "source", target: place, accept, con
               throw e;
             }
           });
-          batch = { ref: target, operation_id: crypto.randomUUID(), ops: [{ op: "put", path: up.path, source_name: up.sourceName, blob: up.blob }] };
+          batch = { ref: target, operation_id: uuidv7(), ops: [{ op: "put", path: up.path, source_name: up.sourceName, blob: up.blob }] };
         }
         const commit = batch;
         patch(entry.id, { status: "committing" });

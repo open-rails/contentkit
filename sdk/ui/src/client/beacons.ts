@@ -1,6 +1,7 @@
 import type { ContentKitClient } from "./client.js";
 import { toContentKitError } from "./errors.js";
 import type { ActivityContext, ActivityTarget, ExposureInput, SignalInput } from "./generated/wire.js";
+import { uuidv7 } from "./uuid.js";
 
 export interface BeaconOptions {
   /** A signed-out visitor identity, persistent across this browser's tabs. */
@@ -54,7 +55,11 @@ function serializeKeepalive(send: () => Promise<void>): Promise<void> {
   return pending;
 }
 const SESSION_KEY = "contentkit.visitor.v1";
-export const eventId = () => (typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`);
+const weakId = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+/** A new event, click or render id: a UUIDv7, which the server keeps in its sort keys. */
+export const eventId = () => (typeof crypto !== "undefined" && "getRandomValues" in crypto ? uuidv7() : weakId());
+// A reader session is a bearer identity: random, never dated.
+const sessionId = () => (typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : weakId());
 
 let unstored: string | undefined;
 
@@ -63,11 +68,11 @@ export function readerSession(): string {
   try {
     const kept = localStorage.getItem(SESSION_KEY);
     if (kept) return kept;
-    const made = eventId();
+    const made = sessionId();
     localStorage.setItem(SESSION_KEY, made);
     return made;
   } catch {
-    return (unstored ??= eventId());
+    return (unstored ??= sessionId());
   }
 }
 
