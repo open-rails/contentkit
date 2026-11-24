@@ -1400,7 +1400,8 @@ gates (Auth). No compatibility: the old ports are gone.
 - The separately versioned `adapters/openrails` module now targets OpenRails
   v0.240.0. Its client port takes `CheckEntitlementsParams` with `CustomerID`
   in the request. Custom wrappers must use that signature; embedded hosts
-  pass the client returned by `Engine.MerchantBySlug`.
+  pass the client `Engine.Merchant(id)` returns, the id from
+  `Engine.DeclaredMerchant(slug)`.
 
 ## Media worker schema
 
