@@ -13,8 +13,10 @@ jobs:
     if: github.event.pull_request.draft != true
     runs-on: ubuntu-24.04
     # The worker's build image: libvips and FFmpeg come from the worker's Debian
-    # snapshot. Services and the stores below are reached by name on the job's
-    # network; the runner's Docker socket is mounted in.
+    # snapshot. PostgreSQL and ClickHouse are reached by name on the job's
+    # network; MinIO shares this container's network, so browsers reach storage
+    # on localhost, which they trust as they trust an HTTPS endpoint. The
+    # runner's Docker socket is mounted in.
     container:
       image: golang:1.26.11-trixie@sha256:cff05dd6b81c901f2e8249eb6f91c69a60451d0f12c26bfef08e476a85b32d4d
     # A container job's run steps default to sh; the scripts are bash.
@@ -37,7 +39,7 @@ jobs:
       GOMAXPROCS: '2'
       DEBIAN_FRONTEND: noninteractive
       CONTENTKIT_CRITICAL_PG: postgres://contentkit:contentkit@postgres:5432/critical?sslmode=disable
-      CONTENTKIT_CRITICAL_S3_ENDPOINT: http://critical-minio:9000
+      CONTENTKIT_CRITICAL_S3_ENDPOINT: http://localhost:9000
       CONTENTKIT_CRITICAL_S3_USER: contentkit
       CONTENTKIT_CRITICAL_S3_PASSWORD: contentkit-secret
       CONTENTKIT_CRITICAL_CH_ADDR: critical-clickhouse:9000
@@ -67,9 +69,10 @@ jobs:
         echo "CONTENTKIT_CRITICAL_CH_CA_FILE=$dir/ca.crt" >> "$GITHUB_ENV"
     - name: Start shared object and signal stores
       env:
+        JOB_CONTAINER: ${{ job.container.id }}
         NETWORK: ${{ job.container.network }}
       run: |
-        docker run -d --name critical-minio --network "$NETWORK" \
+        docker run -d --name critical-minio --network "container:$JOB_CONTAINER" \
           -e MINIO_ROOT_USER=contentkit -e MINIO_ROOT_PASSWORD=contentkit-secret \
           cgr.dev/chainguard/minio@sha256:bd014394a80898e68c149f2311fdf8d5a2c2f3bb2c33b9327ae6d02b4b065ae1 server /data
         # The daemon cannot bind-mount this container's paths; copy the config in.
@@ -81,7 +84,7 @@ jobs:
         docker cp "$CONTENTKIT_CRITICAL_CH_TLS_DIR" critical-clickhouse:/etc/clickhouse-server/tls
         docker start critical-clickhouse
         for i in $(seq 1 60); do
-          if curl -fsS http://critical-minio:9000/minio/health/ready >/dev/null &&
+          if curl -fsS http://localhost:9000/minio/health/ready >/dev/null &&
             docker exec critical-clickhouse clickhouse-client --user contentkit --password contentkit -q "SELECT count() FROM system.zookeeper WHERE path = '/'"; then exit 0; fi
           sleep 1
         done
