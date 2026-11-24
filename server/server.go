@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -165,6 +166,13 @@ func New(ctx context.Context, cfg Config, d Deps) (_ *Server, err error) {
 	if err := distinctSchemas(cfg.Engine, ak.Database); err != nil {
 		return nil, err
 	}
+	if ak.HTTP != nil {
+		h := *ak.HTTP
+		if err := authClientIP(&h, cfg.Engine.TrustedProxies); err != nil {
+			return nil, err
+		}
+		ak.HTTP = &h
+	}
 	ak.Roles = serverRoles(cfg.Engine)
 	if s.auth, err = authkit.New(ctx, ak, authkit.Deps{Postgres: d.Postgres, Redis: d.Redis}); err != nil {
 		return nil, fmt.Errorf("server: AuthKit: %w", err)
@@ -266,6 +274,48 @@ func distinctSchemas(engine contentkit.Config, auth authkit.DatabaseConfig) erro
 		}
 	}
 	return nil
+}
+
+// authClientIP gives AuthKit the engine's client-address posture, its one
+// source: engine.trusted_proxies, or the direct peer when there are none.
+// auth.http may only restate those proxies (split out Cloudflare's, whose
+// CF-Connecting-IP AuthKit reads); direct_peer_ip beside a proxy is refused.
+func authClientIP(h *authkit.HTTPConfig, trusted []netip.Prefix) error {
+	own := append(slices.Clone(h.TrustedProxies), h.CloudflareProxies...)
+	switch {
+	case h.DirectPeerIP && (len(trusted) > 0 || len(own) > 0):
+		return errors.New("server: auth.http.direct_peer_ip says no proxy is in front, but a proxy is declared; declare the proxies only in engine.trusted_proxies")
+	case len(own) == 0:
+		h.TrustedProxies = make([]string, len(trusted))
+		for i, p := range trusted {
+			h.TrustedProxies[i] = p.String()
+		}
+		h.DirectPeerIP = len(trusted) == 0
+	case !sameProxies(own, trusted):
+		return errors.New("server: auth.http's proxies differ from engine.trusted_proxies; declare them once, in engine.trusted_proxies")
+	}
+	return nil
+}
+
+func sameProxies(own []string, trusted []netip.Prefix) bool {
+	a := make([]netip.Prefix, 0, len(own))
+	for _, s := range own {
+		p, err := netip.ParsePrefix(strings.TrimSpace(s))
+		if err != nil {
+			return false
+		}
+		a = append(a, p.Masked())
+	}
+	b := make([]netip.Prefix, 0, len(trusted))
+	for _, p := range trusted {
+		b = append(b, p.Masked())
+	}
+	order := func(x, y netip.Prefix) int {
+		return cmp.Or(x.Addr().Compare(y.Addr()), cmp.Compare(x.Bits(), y.Bits()))
+	}
+	slices.SortFunc(a, order)
+	slices.SortFunc(b, order)
+	return slices.Equal(slices.Compact(a), slices.Compact(b))
 }
 
 // secureEndpoint refuses a plain http URL off loopback: the API key would

@@ -22,13 +22,23 @@ import (
 	"github.com/open-rails/contentkit/server"
 )
 
+// standaloneAuth is w's AuthKit configuration for the server, its HTTP
+// declaring no client-IP posture: the server derives it from the engine's.
+func standaloneAuth(t *testing.T, w *world) authkit.Config {
+	t.Helper()
+	var c authkit.Config
+	authtest.Replica(t, w.auth, authtest.WithConfig(func(cfg *authkit.Config) { c = *cfg }))
+	h := *c.HTTP
+	h.DirectPeerIP = false
+	c.HTTP = &h
+	return c
+}
+
 // serveStandalone runs a's app as the standalone server on loopback until the
 // test ends; it returns the server's base URL.
 func serveStandalone(t *testing.T, w *world, a *application, configure func(*server.Config)) string {
 	t.Helper()
-	var authConfig authkit.Config
-	authtest.Replica(t, w.auth, authtest.WithConfig(func(c *authkit.Config) { authConfig = *c }))
-	cfg := server.Config{Engine: a.cfg, Auth: authConfig, Authorization: &server.AuthorizationConfig{Issuer: authtest.Issuer, AppGroupID: a.cfg.Scope.AppID.String()},
+	cfg := server.Config{Engine: a.cfg, Auth: standaloneAuth(t, w), Authorization: &server.AuthorizationConfig{Issuer: authtest.Issuer, AppGroupID: a.cfg.Scope.AppID.String()},
 		Prefix: "/content", DrainDelay: time.Millisecond, ShutdownTimeout: 5 * time.Second}
 	cfg.Engine.Database.SkipMigrations = true
 	if configure != nil {
@@ -284,27 +294,48 @@ func TestStartupRefusesUnsafeTransport(t *testing.T) {
 			t.Fatal("a plain http client sent its request")
 		}
 	})
-	t.Run("CK-J01-S12_the_server_refuses_plain_OpenRails_and_shared_schemas", func(t *testing.T) {
-		var authConfig authkit.Config
-		authtest.Replica(t, w.auth, authtest.WithConfig(func(c *authkit.Config) { authConfig = *c }))
-		build := func(mutate func(*server.Config)) error {
-			cfg, _ := prepared()
-			sc := server.Config{Engine: cfg, Auth: authConfig, Authorization: &server.AuthorizationConfig{Issuer: authtest.Issuer, AppGroupID: cfg.Scope.AppID.String()}}
-			mutate(&sc)
-			s, err := server.New(t.Context(), sc, server.Deps{Postgres: w.pool})
-			if err == nil {
-				must(t, s.Close(context.Background()))
-			}
-			return err
+	authConfig := standaloneAuth(t, w)
+	build := func(t *testing.T, mutate func(*server.Config)) error {
+		cfg, _ := prepared()
+		auth := authConfig
+		h := *auth.HTTP
+		auth.HTTP = &h
+		sc := server.Config{Engine: cfg, Auth: auth, Authorization: &server.AuthorizationConfig{Issuer: authtest.Issuer, AppGroupID: cfg.Scope.AppID.String()}}
+		mutate(&sc)
+		s, err := server.New(t.Context(), sc, server.Deps{Postgres: w.pool})
+		if err == nil {
+			must(t, s.Close(context.Background()))
 		}
-		refused(t, build(func(c *server.Config) {
+		return err
+	}
+	t.Run("CK-J01-S12_the_server_refuses_plain_OpenRails_and_shared_schemas", func(t *testing.T) {
+		refused(t, build(t, func(c *server.Config) {
 			c.OpenRails = server.OpenRailsConfig{BaseURL: "http://openrails.example", APIKey: "merchant-key"}
 		}), "plain http")
-		refused(t, build(func(c *server.Config) { c.Auth.Database.Schema = c.Engine.Database.Schema }), "are both")
-		refused(t, build(func(c *server.Config) { c.Auth.Database.RiverSchema = c.Engine.Database.Schema + "_river" }), "are both")
-		must(t, build(func(c *server.Config) {
+		refused(t, build(t, func(c *server.Config) { c.Auth.Database.Schema = c.Engine.Database.Schema }), "are both")
+		refused(t, build(t, func(c *server.Config) { c.Auth.Database.RiverSchema = c.Engine.Database.Schema + "_river" }), "are both")
+		must(t, build(t, func(c *server.Config) {
 			c.OpenRails = server.OpenRailsConfig{BaseURL: "http://127.0.0.1:1", APIKey: "merchant-key"}
 		}))
+	})
+	t.Run("CK-J01-S14_the_server_gives_AuthKit_the_engine_proxies", func(t *testing.T) {
+		proxies := []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8"), netip.MustParsePrefix("173.245.48.0/20")}
+		refused(t, build(t, func(c *server.Config) {
+			c.Engine.TrustedProxies = proxies
+			c.Auth.HTTP.DirectPeerIP = true
+		}), "direct_peer_ip")
+		refused(t, build(t, func(c *server.Config) { c.Auth.HTTP.TrustedProxies = []string{"10.0.0.0/8"} }), "differ")
+		refused(t, build(t, func(c *server.Config) {
+			c.Engine.TrustedProxies = proxies
+			c.Auth.HTTP.TrustedProxies = []string{"192.168.0.0/16"}
+		}), "differ")
+		must(t, build(t, func(c *server.Config) { c.Engine.TrustedProxies = proxies }))
+		must(t, build(t, func(c *server.Config) {
+			c.Engine.TrustedProxies = proxies
+			c.Auth.HTTP.TrustedProxies = []string{"10.0.0.0/8"}
+			c.Auth.HTTP.CloudflareProxies = []string{"173.245.48.0/20"}
+		}))
+		must(t, build(t, func(c *server.Config) { c.Auth.HTTP.DirectPeerIP = true }))
 	})
 }
 
