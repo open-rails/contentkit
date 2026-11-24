@@ -2988,6 +2988,19 @@
       ]
     },
     {
+      "id": "CK-J01-S15",
+      "journey": "CK-J01",
+      "behavior": "The standalone server gives AuthKit the engine's client-address posture and refuses a contradicting one",
+      "status": "verified",
+      "evidence": [
+        "The server starts with engine.trusted_proxies and no AuthKit posture, with AuthKit's proxies restating them split into Cloudflare's, and with auth.http.direct_peer_ip and no proxy; it refuses direct_peer_ip beside engine proxies and AuthKit proxies that differ from the engine's.",
+        "Fails on the base, which starts with each contradicting posture. Not yet an execution receipt; qualification runs the case."
+      ],
+      "cases": [
+        "TestStartupRefusesUnsafeTransport/CK-J01-S15_the_server_gives_AuthKit_the_engine_proxies"
+      ]
+    },
+    {
       "id": "CK-J31-S05",
       "journey": "CK-J31",
       "behavior": "A remote host delivers account deletion, restore and purge over HTTP",

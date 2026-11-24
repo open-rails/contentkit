@@ -12,7 +12,8 @@
 // secrets:
 //
 //	DATABASE_URL  Postgres (required): ContentKit's, River's and AuthKit's schemas
-//	REDIS_URL     optional: shared rate limits
+//	REDIS_URL     optional: shared rate limits and DPoP replay state; while it
+//	              fails, DPoP proofs are refused
 //	CONTENTKIT_MEDIA_TOKEN_KEY, CONTENTKIT_MEDIA_TOKEN_PREVIOUS_KEY,
 //	CONTENTKIT_S3_ACCESS_KEY_ID, CONTENTKIT_S3_SECRET_ACCESS_KEY,
 //	CONTENTKIT_CLICKHOUSE_PASSWORD, CONTENTKIT_OPENRAILS_API_KEY

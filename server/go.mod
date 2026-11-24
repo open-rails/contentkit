@@ -7,10 +7,10 @@ toolchain go1.26.11
 require (
 	github.com/goccy/go-yaml v1.19.2
 	github.com/jackc/pgx/v5 v5.11.0
-	github.com/open-rails/authkit v1.43.0
+	github.com/open-rails/authkit v1.53.0
 	github.com/open-rails/contentkit v0.135.0
 	github.com/open-rails/contentkit/adapters/openrails v0.11.0
-	github.com/open-rails/helpers v1.18.0
+	github.com/open-rails/helpers v1.19.0
 	github.com/open-rails/openrails v0.266.0
 	github.com/redis/go-redis/v9 v9.23.0
 )
