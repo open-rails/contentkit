@@ -32,15 +32,9 @@ CGO_ENABLED=1 go build -p 1 -o tests/critical/.bin/media-worker ./cmd/media-work
 go test -count=1 -p 1 ./internal/boundaries ./internal/media/image
 # The published server module has no local replacements. Qualify this
 # checkout before its paired root/adapter tags exist, just as Docker does.
-server_mod="$RUNNER_TEMP/contentkit-server.mod"
-cp server/go.mod "$server_mod"
-cp server/go.sum "${server_mod%.mod}.sum"
+server_mod=$(bash .github/scripts/server-modfile.sh)
 (
   cd server
-  go mod edit -modfile="$server_mod" \
-    -replace=github.com/open-rails/contentkit="$GITHUB_WORKSPACE" \
-    -replace=github.com/open-rails/contentkit/adapters/openrails="$GITHUB_WORKSPACE/adapters/openrails" \
-    -replace=github.com/open-rails/contentkit/adapters/authkit="$GITHUB_WORKSPACE/adapters/authkit"
   go build -mod=readonly -modfile="$server_mod" -p 1 ./...
   go vet -mod=readonly -modfile="$server_mod" -p 1 ./...
 )
