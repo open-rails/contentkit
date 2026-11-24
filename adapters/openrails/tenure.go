@@ -10,12 +10,15 @@ import (
 	"github.com/open-rails/openrails/billing"
 )
 
-var _ access.TenureReader = adapter{}
+var (
+	_ access.TenureReader = adapter{}
+	_ tenureClient        = (*openrails.Client)(nil)
+)
 
 // tenureClient is optional so custom billing clients implementing the existing
 // Client contract can keep serving without access-history statistics.
 type tenureClient interface {
-	GetAccessTenure(context.Context, billing.AccessTenureParams, ...openrails.RequestOption) (*billing.AccessTenure, error)
+	GetAccessTenure(context.Context, billing.CustomerID, billing.GetAccessTenureParams) (*billing.AccessTenure, error)
 }
 
 // Tenure reads OpenRails' authoritative aggregate; the adapter does not load
@@ -32,7 +35,7 @@ func (a adapter) Tenure(ctx context.Context, subject string, keys []string, at t
 	out := make(map[string]int64, len(keys))
 	for len(keys) > 0 {
 		n := min(len(keys), billing.MaxEntitlementChecks)
-		page, err := client.GetAccessTenure(ctx, billing.AccessTenureParams{CustomerID: customer, Entitlements: keys[:n], At: at})
+		page, err := client.GetAccessTenure(ctx, customer, billing.GetAccessTenureParams{Entitlements: keys[:n], At: at})
 		if err != nil {
 			return nil, err
 		}

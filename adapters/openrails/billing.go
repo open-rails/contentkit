@@ -1,6 +1,6 @@
 // Package openrails adapts OpenRails to ContentKit: it is the one place that
 // imports both. Billing implements access.Billing over the OpenRails Go
-// client, embedded (Engine.MerchantBySlug) or remote alike.
+// client, embedded (Engine.Merchant) or remote (Remote.Merchant) alike.
 package openrails
 
 import (
@@ -15,7 +15,7 @@ import (
 // Client is the read-only OpenRails entitlement capability ContentKit needs.
 // Products, prices and purchases are managed directly through OpenRails.
 type Client interface {
-	CheckEntitlements(context.Context, billing.CheckEntitlementsParams, ...openrails.RequestOption) (*billing.EntitlementCheck, error)
+	CheckEntitlements(context.Context, billing.CheckEntitlementsParams) (*billing.EntitlementCheck, error)
 }
 
 var _ Client = (*openrails.Client)(nil)

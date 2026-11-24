@@ -19,6 +19,7 @@ import (
 	"github.com/open-rails/authkit/iam"
 	"github.com/open-rails/helpers/deps"
 	"github.com/open-rails/openrails"
+	"github.com/open-rails/openrails/billing"
 	"github.com/redis/go-redis/v9"
 
 	contentkit "github.com/open-rails/contentkit"
@@ -69,6 +70,9 @@ type Config struct {
 // OpenRailsConfig is the OpenRails server holding the site's merchant.
 type OpenRailsConfig struct {
 	BaseURL string `yaml:"base_url"`
+	// MerchantID is the merchant APIKey belongs to; every request checks
+	// the server answered for it. Required with BaseURL.
+	MerchantID billing.MerchantID `yaml:"merchant_id"`
 	// APIKey is the merchant's API key (a secret).
 	APIKey string `yaml:"api_key"`
 }
@@ -102,6 +106,7 @@ type Server struct {
 	log     *slog.Logger
 	engine  *contentkit.Engine
 	auth    *authkit.Client
+	billing *openrails.Remote
 	sup     *deps.Supervisor
 	handler http.Handler
 }
@@ -156,12 +161,21 @@ func New(ctx context.Context, cfg Config, d Deps) (_ *Server, err error) {
 	if err := s.scopedAuthorization(ctx, cfg, ak, &engineDeps); err != nil {
 		return nil, err
 	}
-	if cfg.OpenRails.BaseURL != "" {
-		billing, err := openrails.NewRemoteMerchant(cfg.OpenRails.BaseURL, openrails.RemoteCredential{APIKey: cfg.OpenRails.APIKey})
+	if c := cfg.OpenRails; c.BaseURL != "" {
+		if c.MerchantID.IsZero() {
+			return nil, errors.New("server: OpenRails: merchant_id is required with base_url")
+		}
+		var merchant *openrails.Client
+		if s.billing, err = openrails.NewRemote(c.BaseURL, openrails.RemoteOptions{
+			Credentials: map[billing.MerchantID]openrails.RemoteCredential{c.MerchantID: {APIKey: c.APIKey}},
+			Logger:      s.log,
+		}); err == nil {
+			merchant, err = s.billing.Merchant(c.MerchantID)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("server: OpenRails: %w", err)
 		}
-		engineDeps.Billing = ckopenrails.Billing(billing)
+		engineDeps.Billing = ckopenrails.Billing(merchant)
 	}
 	if cfg.Engine.Media != nil {
 		b := cfg.S3
@@ -280,6 +294,9 @@ func (s *Server) Close(ctx context.Context) error {
 	}
 	if s.auth != nil {
 		errs = append(errs, s.auth.Close(ctx))
+	}
+	if s.billing != nil {
+		errs = append(errs, s.billing.Close(ctx))
 	}
 	return errors.Join(errs...)
 }

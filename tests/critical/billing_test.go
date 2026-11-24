@@ -23,6 +23,7 @@ import (
 	"github.com/open-rails/openrails"
 	openrailshttp "github.com/open-rails/openrails/adapters/http"
 	"github.com/open-rails/openrails/billing"
+	orcatalog "github.com/open-rails/openrails/catalog"
 	"github.com/open-rails/openrails/openrailstest/stripemock"
 )
 
@@ -50,13 +51,11 @@ func attachBilling(t *testing.T, w *world, a *application, configure ...func(*op
 		must(t, err)
 	})
 	cfg := openrails.Config{Database: openrails.DatabaseConfig{Schema: schema, RiverSchema: schema},
-		ProviderWriteMode: openrails.ProviderWritesFull, CatalogReconciliationInterval: "0", ReturnOrigins: []string{"https://critical.invalid"},
-		Merchants: map[string]openrails.MerchantDeclaration{"reader": {DisplayName: "Reader", Issuer: authtest.Issuer, PSPs: map[string]openrails.PSPConfig{
-			"stripe": openrails.StripePSP{AccountID: "acct_ckcritical", Environment: openrails.EnvironmentTest, SecretKey: "sk_test_critical", WebhookSigningSecret: "whsec_critical", PublishableKey: "pk_test_critical"}.PSPConfig(),
-		}}}}
-	merchant := cfg.Merchants["reader"]
-	merchant.CardVault = "stripe"
-	cfg.Merchants["reader"] = merchant
+		ProviderWriteMode: openrails.ProviderWritesFull, ReturnOrigins: []string{"https://critical.invalid"},
+		Merchants: []billing.MerchantDeclaration{{Issuer: authtest.Issuer, MerchantDocument: billing.MerchantDocument{
+			Slug: "reader", DisplayName: "Reader", MerchantSettings: billing.MerchantSettings{CardVault: "stripe"}, PSPs: billing.PSPs{
+				"stripe": openrails.StripePSP{AccountID: "acct_ckcritical", Environment: billing.EnvironmentTest, SecretKey: "sk_test_critical", WebhookSigningSecret: "whsec_critical", PublishableKey: "pk_test_critical"}.PSPConfig(),
+			}}}}}
 	var err error
 	deps := openrails.Deps{Postgres: w.pool, Clock: b.clock, FXTransport: fixedFXWire(t), StripeTransport: b.stripe.Transport(), UserInfo: w.tenant[0].UserInfo()}
 	for _, apply := range configure {
@@ -65,7 +64,9 @@ func attachBilling(t *testing.T, w *world, a *application, configure ...func(*op
 	b.engine, err = openrails.New(t.Context(), cfg, deps)
 	must(t, err)
 	t.Cleanup(func() { must(t, b.engine.Close(context.Background())) })
-	b.merchant, err = b.engine.MerchantBySlug("reader")
+	merchant, err := b.engine.DeclaredMerchant("reader")
+	must(t, err)
+	b.merchant, err = b.engine.Merchant(merchant)
 	must(t, err)
 	mux := http.NewServeMux()
 	must(t, openrailshttp.Mount(mux, b.engine, openrails.Routes{Prefix: "/billing", Auth: w.auth.Authenticator()}))
@@ -104,8 +105,8 @@ func fixedFXWire(t *testing.T) http.RoundTripper {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		base := strings.TrimSuffix(r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:], ".json")
 		rates := map[string]int{}
-		for _, currency := range billing.Currencies() {
-			rates[strings.ToLower(currency.Code)] = 1
+		for _, currency := range orcatalog.Currencies() {
+			rates[strings.ToLower(string(currency.Code))] = 1
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"date": time.Now().UTC().Format(time.DateOnly), base: rates})
