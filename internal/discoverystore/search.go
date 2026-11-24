@@ -229,8 +229,13 @@ func (s *Service) Typeahead(ctx context.Context, o discovery.TypeaheadOptions) (
 	if len(kinds) == 0 {
 		return out, nil
 	}
-	out.Entities, err = s.entityTypeahead(ctx, text, q.display, kinds, limit, &search.Eligibility{SQL: `SELECT 0 AS priority WHERE EXISTS (SELECT 1 FROM ` + s.t.entities +
-		` g WHERE g.tenant_id = sd.tenant_id AND g.id = sd.content_id AND g.kind = sd.content_kind AND g.state = 'active' AND NOT g.internal)`})
+	// An entity is suggested only with a content the reader's listing could
+	// show under the hard policy: the reader's own filters do not hide names.
+	reachable, err := s.compileWithViewer(ctx, o.Reader, Filter{}, q.viewer.WithoutContentFilters())
+	if err != nil {
+		return out, err
+	}
+	out.Entities, err = s.entityTypeahead(ctx, text, q.display, kinds, limit, s.entityMatch(reachable))
 	return out, err
 }
 

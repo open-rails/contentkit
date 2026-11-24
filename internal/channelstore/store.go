@@ -138,7 +138,7 @@ func (s *Store) get(ctx context.Context, id, language string, management bool) (
 			out.Count += count.Count
 		}
 	}
-	out.Entities, err = s.Metadata(ctx, id, language)
+	out.Entities, err = s.metadataOf(ctx, id, language, management)
 	return out, err
 }
 
@@ -208,8 +208,13 @@ func (s *Store) Delete(ctx context.Context, id string) error {
 	return err
 }
 
+// Metadata is an active channel's descriptive entities.
 func (s *Store) Metadata(ctx context.Context, id, language string) ([]entities.EntityCard, error) {
-	ids, err := s.storage.ChannelMetadata(ctx, entities.EntityID(id))
+	return s.metadataOf(ctx, id, language, false)
+}
+
+func (s *Store) metadataOf(ctx context.Context, id, language string, management bool) ([]entities.EntityCard, error) {
+	ids, err := s.storage.ChannelMetadata(ctx, entities.EntityID(id), management)
 	if err != nil {
 		return nil, err
 	}

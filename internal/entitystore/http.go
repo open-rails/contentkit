@@ -277,16 +277,7 @@ func (h handler) listEntities(w http.ResponseWriter, r *http.Request, management
 			return
 		}
 	}
-	store := h.as(r)
-	if !management {
-		var err error
-		store, err = store.ForHost(r.Context(), r.Host)
-		if err != nil {
-			fail(w, err)
-			return
-		}
-	}
-	out, err := store.List(r.Context(), opts)
+	out, err := h.as(r).List(r.Context(), opts)
 	reply(w, http.StatusOK, out, err)
 }
 
@@ -313,12 +304,7 @@ func (h handler) mine(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h handler) detail(w http.ResponseWriter, r *http.Request) {
-	store, err := h.as(r).ForHost(r.Context(), r.Host)
-	if err != nil {
-		fail(w, err)
-		return
-	}
-	d, err := store.Detail(r.Context(), pathID(r), r.URL.Query().Get("language"))
+	d, err := h.as(r).Detail(r.Context(), pathID(r), r.URL.Query().Get("language"))
 	reply(w, http.StatusOK, d, err)
 }
 
@@ -514,7 +500,7 @@ func (s *Store) contentMemberships(ctx context.Context, contentID, language stri
 			return nil
 		})
 	}
-	c, err := s.compile(ListOptions{Language: language, Limit: 200, IncludeInternal: true}, ids)
+	c, err := s.compile(ListOptions{Language: language, Limit: 200, IncludeInternal: true}, ids, readScope{})
 	if err != nil {
 		return out, err
 	}

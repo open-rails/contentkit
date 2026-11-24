@@ -50,7 +50,7 @@ func (e *Engine) locationRequest(next http.Handler, reader bool) http.Handler {
 		if reader {
 			d, _ := e.cfg.Content.DomainFor(r.Host)
 			name := locationpolicy.DomainName(d.Name)
-			block, err := locationpolicy.Resolve(ctx, e.pool, e.schema, e.cfg.Scope.AppID.String(), name, ipText)
+			block, err := locationpolicy.Prime(ctx, e.pool, e.schema, e.cfg.Scope.AppID.String(), name, ipText)
 			if err != nil {
 				e.log.ErrorContext(ctx, "location: read rules", "err", err)
 				fail(w, http.StatusInternalServerError, httpapi.CodeInternal, httpapi.Message(httpapi.CodeInternal), 0)
@@ -60,7 +60,6 @@ func (e *Engine) locationRequest(next http.Handler, reader bool) http.Handler {
 				fail(w, http.StatusNotFound, httpapi.CodeNotFound, httpapi.Message(httpapi.CodeNotFound), 0)
 				return
 			}
-			ctx = locationpolicy.WithBlock(ctx, e.cfg.Scope.AppID.String(), name, block)
 		}
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})

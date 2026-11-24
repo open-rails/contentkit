@@ -203,6 +203,12 @@ func Domain(ctx context.Context) string {
 	return s
 }
 
+// InRequest reports whether ctx is a request the gate admitted.
+func InRequest(ctx context.Context) bool {
+	_, ok := ctx.Value(actorKey{}).(access.Actor)
+	return ok
+}
+
 // Actor is the actor the gate bound to ctx; anonymous when none was.
 func Actor(ctx context.Context) access.Actor {
 	if a, ok := ctx.Value(actorKey{}).(access.Actor); ok {
