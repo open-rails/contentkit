@@ -34,20 +34,12 @@ ContentKit's tables. The body is an `importer.Batch`; its wire types are in
   user or anonymous key, and send the source's last-read time, progress and resume
   selector. Version bookmarks also restore the work's history. These rows restore
   navigation only; they never create measured readers, quality, completions or rank.
-- Imported content is trusted: not screened, approved. Reactions and
-  favorites take fresh preference revisions; `preference_floor` first raises
-  the sequence past a retained signal plane (also the restore step).
-- Import authoring channels through `channels`, separately from descriptive
-  `entities`. A channel names its `auth_scope`, or the batch enables
-  `provision_scopes`. ContentKit calls AuthKit synchronously after committing
-  channel identity; a provider failure is reported for that record. Retry the
-  same external ID to finish without creating another channel or group.
-- Records of erased subjects fail (`erased`).
-- A record gone from the source is deleted only by a `deletes` record
-  (`entity`: content, version, group, channel, comment or poll; `external_id`), never
-  by its absence from a batch. It deletes as the delete route does; one
-  already deleted (or since erased) stays as it is, so re-sending converges.
-  An external id never imported fails `not_found`.
+- A record is the whole truth: a content record's `access` and each version's `state` are required, and a record without them is refused (`invalid`), never defaulted, so a replay cannot drop a paywall. `comments` defaults to the kind's.
+- Imported content is trusted: not screened, approved. Its bodies are not trusted HTML: version bodies run through `Deps.BodySanitizer` (default: every tag stripped) and comment bodies through `Deps.TextProcessor`, as authored ones do. Reactions and favorites take fresh preference revisions; `preference_floor` first raises the sequence past a retained signal plane (also the restore step).
+- Account ids (`user_id`, `owner_user_id`, creators) are stored as an authenticated subject carries them: trimmed, a UUID in its canonical lowercase form. An `ip` is stored canonical, an IPv4-mapped one unmapped; one that is not an address is `invalid`.
+- Import authoring channels through `channels`, separately from descriptive `entities`. A channel's AuthKit group is always its own id: an import never names or moves it. After committing channel identity, ContentKit provisions the group synchronously, or verifies the live one; a provider failure is reported for that record. Retry the same external ID to finish without creating another channel or group.
+- Records naming an erased person (an interaction's author, a content creator, a channel owner) fail (`erased`).
+- A record gone from the source is deleted only by a `deletes` record (`entity`: content, version, group, channel, comment or poll; `external_id`), never by its absence from a batch. It deletes as the delete route does; one already deleted (or since erased) stays as it is, so re-sending converges. An external id this source never imported deletes nothing: the result's `unmapped` lists it (`index`, `entity`, `external_id`), and `written` does not count it.
 - A persistent sync finds those deletes with `POST /v1/import/external-ids`
   (`{source, lists: [{entity, cursor, limit}]}`): per entity, the external ids
   the source's imports hold with their ids and `deleted`, in external id
@@ -150,9 +142,9 @@ Each edition's body resolves inline images only from that edition's uploads.
 | Section | Record | Keys |
 |---|---|---|
 | `entities` | `EntityRecord` | `external_id`, `kind`, `slug`, `scope`, `parent`, `state`, `names`, `text`, `attributes`, `cover_image` / `cover_content`, `avatar`, `code`, times |
-| `channels` | `ChannelRecord` | `external_id`, `slug`, `state`, `names`, `text`, `cover_image` / `cover_content`, `avatar`, `owner_user_id`, `auth_scope`, `code`, times |
-| `contents` | `ContentRecord` | `external_id`, `kind`, `state` (draft, published, deleted), `publish_at`, `published_at`, `deleted_at`, `comments` (open, closed, hidden), `access`, `restrictions`, `attributes`, `channel`, `creators`, `versions`, `code`, times |
-| | `VersionRecord` | `external_id`, `languages`, `traits`, `label`, `state`, times, `access`, `attributes`, `ordinal`, `cover`, `original_title`, `original_language`, `text` |
+| `channels` | `ChannelRecord` | `external_id`, `slug`, `state`, `names`, `text`, `cover_image` / `cover_content`, `avatar`, `owner_user_id`, `code`, times |
+| `contents` | `ContentRecord` | `external_id`, `kind`, `state` (draft, published, deleted), `publish_at`, `published_at`, `deleted_at`, `comments` (open, closed, hidden), `access` (required), `restrictions`, `attributes`, `channel`, `creators`, `versions`, `code`, times |
+| | `VersionRecord` | `external_id`, `languages`, `traits`, `label`, `state` (required), times, `access`, `attributes`, `ordinal`, `cover`, `original_title`, `original_language`, `text` |
 | `memberships` | `MembershipSet` | `content`, `kinds`, `memberships` (`group`, `version`, `role`, `position`, `state`) |
 | `aliases` | `AliasRecord` | `kind`, `key`, `locator`, `target` (content, group) |
 | `comments` | `CommentRecord` | `external_id`, `target` (content, version), `language`, `reply_to`, `user_id` / `anon_name`, `body`, `deleted_at`, times |

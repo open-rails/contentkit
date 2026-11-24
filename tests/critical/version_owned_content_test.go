@@ -226,7 +226,7 @@ func TestVersionOwnedContent(t *testing.T) {
 		blog := create("blog", "zh", "Hidden Chinese", "Body of hidden edition")
 		publish(blog)
 		origin := "原題"
-		batch := importer.Batch{Source: "version-owned-test", Contents: []importer.ContentRecord{{ExternalID: "post", ID: item.ID, Kind: "post", State: catalog.StatePublished, Versions: []importer.VersionRecord{{ExternalID: "zh", ID: zh, Languages: []string{"zh"}, OriginalTitle: &origin, Text: map[string]catalog.VersionText{"zh": {Title: "导入标题", Body: "只属于中文版"}}}}}}}
+		batch := importer.Batch{Source: "version-owned-test", Contents: []importer.ContentRecord{{ExternalID: "post", ID: item.ID, Kind: "post", State: catalog.StatePublished, Access: &item.Access, Versions: []importer.VersionRecord{{ExternalID: "zh", ID: zh, Languages: []string{"zh"}, State: catalog.StatePublished, OriginalTitle: &origin, Text: map[string]catalog.VersionText{"zh": {Title: "导入标题", Body: "只属于中文版"}}}}}}}
 		result, err := admin.PostImport(ctx, batch)
 		must(err)
 		if len(result.Failed) != 0 {

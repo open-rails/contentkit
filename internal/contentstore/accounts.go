@@ -18,6 +18,23 @@ var accountRoutes = []httpapi.Route[*Runtime]{
 		Doc:       "Anonymizes a purged account: keeps its comments and contributions, unlinks it and removes its private data. Idempotent; retry on failure.",
 		Responses: []httpapi.Reply{httpapi.NoContent}},
 		Serve: httpapi.H((*Runtime).handleAnonymizeAccount)},
+	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/accounts/{id}/erasure", Resource: "accounts", Auth: httpapi.Staff, Perm: string(access.AccountsLifecycle),
+		Doc:       "Reads an account's lifecycle in this app: its state, when its erasure was requested and when it completed.",
+		Responses: []httpapi.Reply{httpapi.OK(content.AccountErasure{})}},
+		Serve: httpapi.H((*Runtime).handleAccountErasure)},
+}
+
+func (rt *Runtime) handleAccountErasure(w http.ResponseWriter, req *http.Request) {
+	if rt.accounts == nil {
+		writeErr(w, errors.New("content: account lifecycle is not configured"))
+		return
+	}
+	state, err := rt.accounts.AccountErasure(req.Context(), req.PathValue("id"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, state)
 }
 
 func (rt *Runtime) handleAccountDeleted(w http.ResponseWriter, req *http.Request) {

@@ -229,6 +229,14 @@ VALUES ($1,$2,false) ON CONFLICT (tenant_id,actor_id) DO NOTHING`, rt.tenant, ac
 			`UPDATE ` + s.t.entities + ` SET owner_user_id=NULL WHERE tenant_id=$1 AND owner_user_id=$2`,
 			`UPDATE ` + pgx.Identifier{rt.schema, "content_channel_reposts"}.Sanitize() + ` SET actor_id=NULL WHERE tenant_id=$1 AND actor_id=$2`,
 			`DELETE FROM ` + pgx.Identifier{rt.schema, "content_filter_prefs"}.Sanitize() + ` WHERE tenant_id=$1 AND user_id=$2`,
+			`UPDATE ` + rt.locationTable("rules") + ` SET created_by=CASE WHEN created_by=$2 THEN '' ELSE created_by END,
+ updated_by=CASE WHEN updated_by=$2 THEN '' ELSE updated_by END WHERE tenant_id=$1 AND (created_by=$2 OR updated_by=$2)`,
+			// History keeps what changed and when, not who: the actor and the
+			// snapshot's attribution lose the id.
+			`UPDATE ` + rt.locationTable("rule_history") + ` SET actor=CASE WHEN actor=$2 THEN '' ELSE actor END,
+ snapshot=snapshot || CASE WHEN snapshot->>'created_by'=$2 THEN '{"created_by":""}'::jsonb ELSE '{}'::jsonb END
+  || CASE WHEN snapshot->>'updated_by'=$2 THEN '{"updated_by":"","updated_by_name":""}'::jsonb ELSE '{}'::jsonb END
+ WHERE tenant_id=$1 AND (actor=$2 OR snapshot->>'created_by'=$2 OR snapshot->>'updated_by'=$2)`,
 		} {
 			if _, err := tx.Exec(ctx, q, rt.tenant, actorID); err != nil {
 				return err

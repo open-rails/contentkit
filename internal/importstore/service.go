@@ -207,6 +207,10 @@ func (s *Service) runChunk(ctx context.Context, run *batchRun, sec section, from
 			run.fail(sec.name, i, external, err)
 			continue
 		}
+		if d, ok := in.(deletion); ok && d.id == "" {
+			run.res.Unmapped = append(run.res.Unmapped, importer.UnmappedDelete{Index: i, Entity: d.entity, ExternalID: external})
+			continue
+		}
 		if g, ok := in.(entities.ImportEntity); ok && r.entityMerged[string(g.ID)] != "" {
 			if run.res.Merged == nil {
 				run.res.Merged = map[string]int{}

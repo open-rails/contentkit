@@ -31,10 +31,10 @@ func (s *Store) bound(tx pgx.Tx) *Store {
 // ImportEntities writes entities in q: new ones are inserted, stored ones updated
 // where the import changes them. Codes, search documents and the facets of
 // the content a moved or deleted entity reaches follow. A merged entity is
-// ErrConflict; a taken slug too. An active entity of an auth_scope kind keeps
-// the AuthKit scope it names or has; one with neither is provisioned, by the
-// caller after commit with provision (else ErrInvalid).
-func (s *Store) ImportEntities(ctx context.Context, q pgx.Tx, in []entities.ImportEntity, provision bool) error {
+// ErrConflict; a taken slug too. An auth_scope kind's scope is its own id: an
+// import never names or moves it. The caller provisions or verifies it after
+// commit (FinishChannels). An erased owner is refused (fenceOwners).
+func (s *Store) ImportEntities(ctx context.Context, q pgx.Tx, in []entities.ImportEntity) error {
 	if len(in) == 0 {
 		return nil
 	}
@@ -81,11 +81,20 @@ func (s *Store) ImportEntities(ctx context.Context, q pgx.Tx, in []entities.Impo
 			rows[i].UpdatedAt = *g.CreatedAt
 		}
 	}
-	return mapPGError(s.importEntities(ctx, q, in, ids, rows, names, texts, keep, provision))
+	return mapPGError(s.importEntities(ctx, q, in, ids, rows, names, texts, keep))
 }
 
 func (s *Store) importEntities(ctx context.Context, q pgx.Tx, in []entities.ImportEntity, ids []string, rows []importRow, names map[string][]nameRow,
-	texts map[string][]textRow, keep map[codes.Key]string, provision bool) error {
+	texts map[string][]textRow, keep map[codes.Key]string) error {
+	owners := make([]string, 0, len(rows))
+	for _, r := range rows {
+		if r.OwnerUserID != nil {
+			owners = append(owners, *r.OwnerUserID)
+		}
+	}
+	if err := s.fenceOwners(ctx, q, owners...); err != nil {
+		return err
+	}
 	if err := s.lockHierarchy(ctx, q); err != nil {
 		return err
 	}
@@ -106,9 +115,6 @@ func (s *Store) importEntities(ctx context.Context, q pgx.Tx, in []entities.Impo
 	for i := range rows {
 		r := &rows[i]
 		g, ok := stored[r.ID]
-		if !provision && r.State == string(entities.StateActive) && r.AuthScope == nil && s.cfg.EntityKinds[r.Kind].AuthScope && (!ok || g.AuthScope == "") {
-			return fmt.Errorf("%w: group %s needs its auth_scope, or the import provisions scopes", entities.ErrInvalid, r.ID)
-		}
 		if !ok {
 			continue
 		}
@@ -138,18 +144,18 @@ func (s *Store) importEntities(ctx context.Context, q pgx.Tx, in []entities.Impo
 	// An automatic cover stays while the import selects none.
 	got, err := q.Query(ctx, fmt.Sprintf(`INSERT INTO %s AS g (tenant_id, id, kind, slug, internal, scope_id, parent_id, state, attributes, cover, avatar,
  owner_user_id, auth_scope, created_at, updated_at)
- SELECT $1, r.id, r.kind, r.slug, r.internal, r.scope_id, r.parent_id, r.state, coalesce(r.attributes, '{}'), r.cover, r.avatar, r.owner_user_id, r.auth_scope,
+ SELECT $1, r.id, r.kind, r.slug, r.internal, r.scope_id, r.parent_id, r.state, coalesce(r.attributes, '{}'), r.cover, r.avatar, r.owner_user_id, NULL,
   r.created_at, r.updated_at
  FROM jsonb_to_recordset($2::jsonb) AS r(ordinal int, id text, kind text, slug text, internal boolean, scope_id text, parent_id text, state text, attributes jsonb, cover jsonb,
-  avatar text, owner_user_id text, auth_scope text, created_at timestamptz, updated_at timestamptz)
+  avatar text, owner_user_id text, created_at timestamptz, updated_at timestamptz)
  ORDER BY r.ordinal
  ON CONFLICT (tenant_id, id) DO UPDATE SET slug = EXCLUDED.slug, internal = EXCLUDED.internal, scope_id = EXCLUDED.scope_id, parent_id = EXCLUDED.parent_id, state = EXCLUDED.state,
   attributes = EXCLUDED.attributes, cover = CASE WHEN EXCLUDED.cover IS NULL AND g.cover ? 'auto' THEN g.cover ELSE EXCLUDED.cover END,
-  avatar = EXCLUDED.avatar, owner_user_id = EXCLUDED.owner_user_id, auth_scope = CASE WHEN g.kind='channel' AND g.state IS DISTINCT FROM EXCLUDED.state THEN NULL ELSE coalesce(EXCLUDED.auth_scope,g.auth_scope) END,
+  avatar = EXCLUDED.avatar, owner_user_id = EXCLUDED.owner_user_id, auth_scope = CASE WHEN g.kind='channel' AND g.state IS DISTINCT FROM EXCLUDED.state THEN NULL ELSE g.auth_scope END,
   created_at = EXCLUDED.created_at, updated_at = EXCLUDED.updated_at, revision = g.revision + 1
  WHERE (g.slug, g.internal, g.scope_id, g.parent_id, g.state, g.attributes, g.avatar, g.owner_user_id, g.auth_scope, g.created_at, g.cover)
   IS DISTINCT FROM (EXCLUDED.slug, EXCLUDED.internal, EXCLUDED.scope_id, EXCLUDED.parent_id, EXCLUDED.state, EXCLUDED.attributes, EXCLUDED.avatar, EXCLUDED.owner_user_id,
-  coalesce(EXCLUDED.auth_scope, g.auth_scope), EXCLUDED.created_at, CASE WHEN EXCLUDED.cover IS NULL AND g.cover ? 'auto' THEN g.cover ELSE EXCLUDED.cover END)
+  g.auth_scope, EXCLUDED.created_at, CASE WHEN EXCLUDED.cover IS NULL AND g.cover ? 'auto' THEN g.cover ELSE EXCLUDED.cover END)
  RETURNING g.id`, s.table("content_entities")), s.tenant, string(data))
 	if err != nil {
 		return err
@@ -233,8 +239,8 @@ func (s *Store) importEntities(ctx context.Context, q pgx.Tx, in []entities.Impo
 
 // checkImport validates one entity's own fields against its kind.
 func (s *Store) checkImport(g *entities.ImportEntity) (importRow, error) {
-	if !s.channels && (g.OwnerUserID != "" || g.AuthScope != "") {
-		return importRow{}, fmt.Errorf("%w: metadata has no authoring owner or scope", entities.ErrInvalid)
+	if !s.channels && g.OwnerUserID != "" {
+		return importRow{}, fmt.Errorf("%w: metadata has no authoring owner", entities.ErrInvalid)
 	}
 	kind := strings.TrimSpace(g.Kind)
 	gk, err := s.entityKind(kind)
@@ -256,7 +262,7 @@ func (s *Store) checkImport(g *entities.ImportEntity) (importRow, error) {
 		return importRow{}, fmt.Errorf("%w: state %q is not importable", entities.ErrInvalid, g.State)
 	}
 	row := importRow{entityRow: entityRow{ID: string(g.ID), Kind: kind, Slug: slug, Attributes: g.Attributes,
-		OwnerUserID: optional(g.OwnerUserID), AuthScope: optional(g.AuthScope)}, State: string(g.State)}
+		OwnerUserID: optional(g.OwnerUserID)}, State: string(g.State)}
 	if g.Internal != nil {
 		row.Internal = *g.Internal
 	}

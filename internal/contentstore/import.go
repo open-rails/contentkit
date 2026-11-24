@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	content "github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/subjectfence"
 	"github.com/open-rails/contentkit/internal/versionid"
 	"github.com/open-rails/contentkit/media"
 )
@@ -49,33 +50,9 @@ func stamp(t *time.Time, or time.Time) time.Time {
 	return or
 }
 
-// lockSubjects locks the users' erasure fences in order, as every write by
-// them does, and returns the users locked.
-func (rt *Runtime) lockSubjects(ctx context.Context, tx pgx.Tx, users []string) ([]string, error) {
-	users = slices.Compact(slices.Sorted(slices.Values(slices.DeleteFunc(slices.Clone(users), func(u string) bool { return u == "" }))))
-	if len(users) == 0 {
-		return nil, nil
-	}
-	_, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1 || u, 0)) FROM unnest($2::text[]) AS u ORDER BY u`,
-		rt.schema+"\x1ferasure\x1f"+rt.tenant+"\x1f", users)
-	return users, err
-}
-
 // fenceSubjects locks the users' erasure fences and refuses an erased one.
 func (rt *Runtime) fenceSubjects(ctx context.Context, tx pgx.Tx, users []string) error {
-	users, err := rt.lockSubjects(ctx, tx, users)
-	if err != nil || len(users) == 0 {
-		return err
-	}
-	var erased string
-	if err := tx.QueryRow(ctx, `SELECT coalesce(min(actor_id), '') FROM `+rt.erasedSubjectsTable()+` WHERE tenant_id = $1 AND actor_id = ANY($2)`,
-		rt.tenant, users).Scan(&erased); err != nil {
-		return err
-	}
-	if erased != "" {
-		return fmt.Errorf("%w: %s", ErrSubjectErased, erased)
-	}
-	return nil
+	return subjectfence.Guard(ctx, tx, rt.schema, rt.tenant, users...)
 }
 
 // screen refuses each record check refuses, then each by an erased user,
@@ -88,7 +65,7 @@ func screen[T any](ctx context.Context, tx pgx.Tx, rt *Runtime, in []T, check fu
 			users[i] = strings.TrimSpace(user)
 		}
 	}
-	locked, err := rt.lockSubjects(ctx, tx, users)
+	locked, err := subjectfence.Lock(ctx, tx, rt.schema, rt.tenant, users...)
 	if err != nil || len(locked) == 0 {
 		return errs, err
 	}

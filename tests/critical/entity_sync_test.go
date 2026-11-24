@@ -118,7 +118,7 @@ func TestEntityLifecycleWithoutReconciliation(t *testing.T) {
 		if restored.ChannelID != channel.ID {
 			t.Fatal("restore changed primary channel")
 		}
-		batch := importer.Batch{Source: "direct-channel-import", ProvisionScopes: true, Channels: []importer.ChannelRecord{{ExternalID: "retained", ID: channel.ID, Slug: channel.Slug, OwnerUserID: owner.ID, State: "active"}}}
+		batch := importer.Batch{Source: "direct-channel-import", Channels: []importer.ChannelRecord{{ExternalID: "retained", ID: channel.ID, Slug: channel.Slug, OwnerUserID: owner.ID, State: "active"}}}
 		for range 2 {
 			result, err := a.engine.Client().PostImport(t.Context(), batch)
 			must(t, err)

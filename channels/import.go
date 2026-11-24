@@ -7,7 +7,8 @@ import (
 )
 
 // Import is a channel's explicit imported identity. Source media, public codes
-// and authorization group IDs remain stable. Omitted names/text preserve them.
+// and its authorization group (always its own id) remain stable. Omitted
+// names/text preserve them.
 type Import struct {
 	ID          string
 	Slug        string
@@ -15,7 +16,6 @@ type Import struct {
 	Cover       *entities.Cover
 	Avatar      *entities.Avatar
 	OwnerUserID string
-	AuthScope   string
 	Names       []entities.Name
 	Text        []entities.Text
 	Code        string

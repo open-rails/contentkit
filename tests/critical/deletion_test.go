@@ -5,6 +5,7 @@ import (
 	"time"
 
 	ck "github.com/open-rails/contentkit"
+	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/importer"
 )
@@ -77,7 +78,7 @@ func TestVersionDeletionDerivesParent(t *testing.T) {
 	})
 	t.Run("legacy_parent_restore_does_not_bypass_last_version_deletion", func(t *testing.T) {
 		prior := time.Now().Add(-time.Hour)
-		imported, err := admin.PostImport(t.Context(), importer.Batch{Source: "go-restore-contract", Contents: []importer.ContentRecord{importer.ContentRecord{ExternalID: "historical-parent", Kind: "article", State: "deleted", PublishedAt: &prior, PublishAt: &prior, DeletedAt: &prior, Versions: []importer.VersionRecord{{Languages: []string{"en"}, ExternalID: "historical-parent" + "/version", Text: map[string]catalog.VersionText{"en": {Title: "Historical restore", Body: "Preserved imported manuscript"}}}}}}})
+		imported, err := admin.PostImport(t.Context(), importer.Batch{Source: "go-restore-contract", Contents: []importer.ContentRecord{importer.ContentRecord{ExternalID: "historical-parent", Kind: "article", State: "deleted", Access: &access.Rule{Level: access.Public}, PublishedAt: &prior, PublishAt: &prior, DeletedAt: &prior, Versions: []importer.VersionRecord{{Languages: []string{"en"}, ExternalID: "historical-parent" + "/version", State: catalog.StatePublished, Text: map[string]catalog.VersionText{"en": {Title: "Historical restore", Body: "Preserved imported manuscript"}}}}}}})
 		must(t, err)
 		if len(imported.Failed) != 0 {
 			t.Fatalf("historical import failed: %+v", imported.Failed)

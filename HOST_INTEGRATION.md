@@ -743,6 +743,7 @@ of a remote ContentKit calls the routes instead, as a service holding
 `PUT /v1/accounts/{id}/deleted` with `{"deleted": true|false}`
 (`Client.PutAccountDeleted`) and `POST /v1/accounts/{id}/anonymize`
 (`Client.PostAccountAnonymize`), both 204 and idempotent.
+`GET /v1/accounts/{id}/erasure` (`Client.GetAccountErasure`, Go `Engine.AccountErasure`) reads one account's state in this app (`active`, `deleted`, `purging`, `purged`) with its erasure's `requested_at` and `completed_at`: an erasure is pending while it has the first and not the second.
 This changes author display to `<Deleted>` without deleting interactions.
 Comment responses use the existing `anon_name` shape without a profile or
 account id, so older UI clients display the same label. Ownership remains in
@@ -786,8 +787,7 @@ and moderator provenance remain host responsibilities; this is not a general
 backup-restore or privileged-write policy.
 
 The signal plane follows the [signal-plane contract](#signal-plane-account-deletion).
-A deliberately disabled signal plane is absent, not unfinished. Any
-configured-plane failure returns an error: keep the deletion pending and retry.
+`MigrateClickHouse` records in the account schema that the app has a signal plane (run `MigratePostgres` first). An app whose plane was never provisioned has no signals to erase; once one was, an engine without ClickHouse returns `ErrSignalPlaneRequired` and the deletion stays pending. Any configured-plane failure returns an error: keep the deletion pending and retry.
 
 Content anonymization commits atomically:
 
@@ -798,7 +798,12 @@ Content anonymization commits atomically:
   owned entities and reposts lose the account id;
 - removal of the subject's comment notifications, creator profile, content
   filter preferences and comment bans of them or in their owner scope (bans
-  they set stay, without their id).
+  they set stay, without their id);
+- location rules and their history keep what changed and when, without the subject as creator, updater or actor.
+
+After the avatar erasure, the subject leaves the media journal and quota ledger: commits keep no actor or quota owner of theirs, and their usage, reservations, releases and upload rates go. An avatar's folder path keeps the account id: it is the permanent storage fence that keeps a purged id's avatar unwritable, and its rows are folder bookkeeping, not attribution.
+
+Every writer that stores an account id takes the subject fence and refuses an erased one: comments, reactions, favorites, votes, reposts, content creation (`created_by`) and creators, channel owners, imports naming them (`erased`) and media upload grants. A purged id is never reactivated.
 
 Other tenants and subjects and externally stored media are untouched.
 Every guarded writer takes the subject fence before other source locks.

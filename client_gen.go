@@ -1062,6 +1062,13 @@ func (c *Client) PostAccountAnonymize(ctx context.Context, id string) error {
 	return c.call(ctx, http.MethodPost, expand("/v1/accounts/{id}/anonymize", "{id}", url.PathEscape(id)), nil, nil, nil)
 }
 
+// GetAccountErasure is GET /v1/accounts/{id}/erasure (staff). Reads an account's lifecycle in this app: its state, when its erasure was requested and when it completed.
+func (c *Client) GetAccountErasure(ctx context.Context, id string) (content.AccountErasure, error) {
+	var out content.AccountErasure
+	err := c.call(ctx, http.MethodGet, expand("/v1/accounts/{id}/erasure", "{id}", url.PathEscape(id)), nil, nil, &out)
+	return out, err
+}
+
 // GetEventsQuery is the query of GetEvents.
 type GetEventsQuery struct {
 	// opaque continuation from the previous page

@@ -4457,6 +4457,53 @@
         ]
       }
     },
+    "/v1/accounts/{id}/erasure": {
+      "get": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "Reads an account's lifecycle in this app: its state, when its erasure was requested and when it completed.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountErasure"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "root:accounts:lifecycle",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "auth",
+          "request"
+        ]
+      }
+    },
     "/v1/events": {
       "get": {
         "tags": [
@@ -12837,6 +12884,45 @@
           }
         }
       },
+      "AccountErasure": {
+        "type": "object",
+        "properties": {
+          "account_id": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "requested_at": {
+            "oneOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "completed_at": {
+            "oneOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "account_id",
+          "state",
+          "requested_at",
+          "completed_at"
+        ]
+      },
       "Activity": {
         "type": "object",
         "properties": {
@@ -13347,9 +13433,6 @@
           },
           "preference_floor": {
             "type": "integer"
-          },
-          "provision_scopes": {
-            "type": "boolean"
           },
           "entities": {
             "type": "array",
@@ -13887,9 +13970,6 @@
             "type": "string"
           },
           "owner_user_id": {
-            "type": "string"
-          },
-          "auth_scope": {
             "type": "string"
           },
           "code": {
@@ -14741,7 +14821,14 @@
             "type": "string"
           },
           "access": {
-            "$ref": "#/components/schemas/Rule"
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Rule"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "restrictions": {
             "type": "array",
@@ -19130,6 +19217,12 @@
               "$ref": "#/components/schemas/RecordFailure"
             }
           },
+          "unmapped": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UnmappedDelete"
+            }
+          },
           "ids": {
             "type": "object",
             "additionalProperties": {
@@ -19557,6 +19650,25 @@
         "required": [
           "contents",
           "entities"
+        ]
+      },
+      "UnmappedDelete": {
+        "type": "object",
+        "properties": {
+          "index": {
+            "type": "integer"
+          },
+          "entity": {
+            "type": "string"
+          },
+          "external_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "index",
+          "entity",
+          "external_id"
         ]
       },
       "UploadLimits": {

@@ -29,8 +29,6 @@ func staffOnlyFields(u entities.EntityUpdate) string {
 		return "parent_id"
 	case u.OwnerUserID != nil:
 		return "owner_user_id"
-	case u.AuthScope != nil:
-		return "auth_scope"
 	}
 	return ""
 }
@@ -248,8 +246,8 @@ func (s *Store) CreateEntities(ctx context.Context, inputs []entities.EntityInpu
 	var texts []textRow
 	ids := make([]string, len(inputs))
 	for i, in := range inputs {
-		if !s.channels && (in.OwnerUserID != "" || in.AuthScope != "") {
-			return nil, fmt.Errorf("%w: metadata has no authoring owner or scope", entities.ErrInvalid)
+		if !s.channels && in.OwnerUserID != "" {
+			return nil, fmt.Errorf("%w: metadata has no authoring owner", entities.ErrInvalid)
 		}
 		kind := strings.TrimSpace(in.Kind)
 		gk, err := s.entityKind(kind)
@@ -269,7 +267,7 @@ func (s *Store) CreateEntities(ctx context.Context, inputs []entities.EntityInpu
 			in.OwnerUserID = creator
 		}
 		row := entityRow{Ordinal: i, ID: string(in.ID), Kind: kind, Slug: slug, Internal: in.Internal, Attributes: in.Attributes,
-			OwnerUserID: optional(in.OwnerUserID), AuthScope: optional(in.AuthScope)}
+			OwnerUserID: optional(in.OwnerUserID)}
 		if row.Avatar, err = validateAvatar(in.Avatar); err != nil {
 			return nil, err
 		}
@@ -321,6 +319,15 @@ func (s *Store) CreateEntities(ctx context.Context, inputs []entities.EntityInpu
 			if err := s.lockHierarchy(ctx, q); err != nil {
 				return err
 			}
+		}
+		owners := make([]string, 0, len(rows))
+		for _, r := range rows {
+			if r.OwnerUserID != nil {
+				owners = append(owners, *r.OwnerUserID)
+			}
+		}
+		if err := s.fenceOwners(ctx, q, owners...); err != nil {
+			return err
 		}
 		if err := s.lockOwners(ctx, q, rows); err != nil {
 			return err
@@ -454,8 +461,8 @@ func (s *Store) UpdateEntities(ctx context.Context, updates []entities.EntityUpd
 	}
 	ids := make([]entities.EntityID, len(updates))
 	for i, u := range updates {
-		if !s.channels && (u.OwnerUserID != nil || u.AuthScope != nil) {
-			return nil, fmt.Errorf("%w: metadata has no authoring owner or scope", entities.ErrInvalid)
+		if !s.channels && u.OwnerUserID != nil {
+			return nil, fmt.Errorf("%w: metadata has no authoring owner", entities.ErrInvalid)
 		}
 		ids[i] = u.ID
 	}
@@ -485,8 +492,17 @@ func (s *Store) UpdateEntities(ctx context.Context, updates []entities.EntityUpd
 		}
 	}
 	topology := slices.ContainsFunc(updates, func(u entities.EntityUpdate) bool { return u.ParentID != nil || u.State != nil })
+	var owners []string
+	for _, u := range updates {
+		if u.OwnerUserID != nil {
+			owners = append(owners, *u.OwnerUserID)
+		}
+	}
 	out := make([]entities.Entity, len(updates))
 	err = s.run(ctx, func(q Querier) error {
+		if err := s.fenceOwners(ctx, q, owners...); err != nil {
+			return err
+		}
 		if topology {
 			if err := s.lockHierarchy(ctx, q); err != nil {
 				return err
@@ -735,9 +751,6 @@ func (s *Store) apply(g entities.Entity, u entities.EntityUpdate) (updateRow, bo
 	}
 	if u.OwnerUserID != nil {
 		row.OwnerUserID = optional(*u.OwnerUserID)
-	}
-	if u.AuthScope != nil {
-		row.AuthScope = optional(*u.AuthScope)
 	}
 	if s.channels && u.State != nil && *u.State != g.State {
 		row.AuthScope = nil

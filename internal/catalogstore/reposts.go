@@ -12,6 +12,7 @@ import (
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/gate"
 	"github.com/open-rails/contentkit/internal/httpapi"
+	"github.com/open-rails/contentkit/internal/subjectfence"
 )
 
 // Repost authority is read before opening a transaction: AuthKit may share
@@ -236,19 +237,11 @@ var repostRoutes = []httpapi.Route[*Store]{
 // acquired before content/channel locks so a late accepted request cannot
 // restore attribution after the terminal account event.
 func (s *Store) guardRepostActor(ctx context.Context, tx pgx.Tx, actor access.Actor) error {
-	id := viewerID(actor)
-	if id == "" {
-		return nil
-	}
-	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, s.schema+"\x1ferasure\x1f"+s.tenant+"\x1f"+id); err != nil {
+	if err := subjectfence.Guard(ctx, tx, s.schema, s.tenant, viewerID(actor)); err != nil {
+		if errors.Is(err, subjectfence.ErrErased) {
+			return ErrForbidden
+		}
 		return err
-	}
-	var erased bool
-	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM `+s.qs+`.content_erased_subjects WHERE tenant_id=$1 AND actor_id=$2)`, s.tenant, id).Scan(&erased); err != nil {
-		return err
-	}
-	if erased {
-		return ErrForbidden
 	}
 	return nil
 }
