@@ -36,16 +36,11 @@ and validates their ownership; it creates no tenant, group, account or grant.
   equal to `Scope.TenantID`.
 - `TenantAdminScope`, when supplied, is the `tenant` group with that same
   canonical tenant UUID and ownership.
-- `TenantActors` reads verified live source-account ownership, defaulting to
-  the AuthKit client. It compares that ownership with the target for membership,
-  without creating or looking up a target account by matching contact details.
+- `TenantActors` reads verified live source-account ownership, defaulting to the AuthKit client when `Issuer` is the permission authority. It compares that ownership with the target for membership, without creating or looking up a target account by matching contact details.
 - `Entities` optionally resolves an explicitly verified legacy content-entity
   binding. New applications use deterministic `AppScopes` IDs.
 
-A dedicated legacy identity issuer may still supply `Accounts` with
-`IssuerAccounts`. This explicitly trusts its entire account directory to one
-tenant and must not be used with an issuer shared by unrelated tenants.
-`Accounts` and `TenantActors` are mutually exclusive.
+An `Issuer` other than the permission authority is a foreign account directory. Its users are admitted only with a verified `tenant_id` equal to `Scope.TenantID`, and are the subject they name; a token without that claim, or of another tenant, is refused. Nothing trusts a whole issuer, so one issuer may serve many tenants.
 
 The adapter rechecks live group ownership during authenticated admission and
 before group permission checks. Deleting a binding or recreating its ID under

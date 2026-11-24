@@ -39,7 +39,7 @@ func TestShippedBrowserClient(t *testing.T) {
 	server := httptest.NewServer(mux)
 	defer server.Close()
 
-	scenarios := []string{"CK-J29-S02", "CK-J29-S03", "CK-J29-S04", "CK-J29-S05", "CK-J29-S06", "CK-J09-S01"}
+	scenarios := []string{"CK-J29-S02", "CK-J29-S03", "CK-J29-S04", "CK-J29-S05", "CK-J29-S06", "CK-J09-S01", "CK-J17-S06"}
 	var fixtures []map[string]any
 	for _, scenario := range scenarios {
 		item := publishedArticle(t, a, "Browser "+scenario)

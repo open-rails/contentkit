@@ -184,7 +184,7 @@ func newHarness(ctx context.Context, c config, mediaOrigin string) (_ *harness, 
 		return nil, fmt.Errorf("signal fixture: %w", err)
 	}
 	deps := contentkit.Deps{Postgres: h.pool, Auth: h.auth.Authenticator(), Authorization: policy, Users: h.auth.UserInfo(), Store: h.store,
-		Moderator: moderator{}, BodyProcessor: newPostHTML()}
+		Moderator: moderator{}, BodySanitizer: newPostHTML()}
 	if deps.Scopes, err = ckauth.AppScopes(h.auth, scope); err != nil {
 		return nil, err
 	}

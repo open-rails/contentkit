@@ -271,7 +271,7 @@ func TestPendingChannelScopeHasNoAuthority(t *testing.T) {
 	token := authtest.SignIn(t, a.tenant, owner).AccessToken
 	caller := a.client(token)
 	id := contentref.NewID()
-	batch := importer.Batch{Source: "pending-channel-scope", ProvisionScopes: true, Channels: []importer.ChannelRecord{{ExternalID: "pending", ID: id, Slug: "pending-scope", OwnerUserID: owner.ID}}}
+	batch := importer.Batch{Source: "pending-channel-scope", Channels: []importer.ChannelRecord{{ExternalID: "pending", ID: id, Slug: "pending-scope", OwnerUserID: owner.ID}}}
 	result, err := a.engine.Client().PostImport(t.Context(), batch)
 	if err == nil && len(result.Failed) == 0 {
 		t.Fatal("lost provider acknowledgement was reported as success")

@@ -57,6 +57,16 @@ try {
     assert.equal(await page.getByRole("button",{name:"Add option",exact:true}).isDisabled(),true);
     const stored=await page.evaluate(id=>window.client.polls.get(id),fixture.poll);
     assert.equal(stored.options[0].label,"Summer");assert.equal(stored.options[1].label,"Autumn");assert.equal(stored.total_votes,1);
+  } else if(scenario==="CK-J17-S06") {
+    // Comment bodies are plain text: markup in one renders as its characters.
+    const body='<img src=x onerror="window.ckInjected=1"><b>bold</b>';
+    const posted=await page.evaluate(body=>window.critical.postComment(body),body);
+    assert.equal(posted.body,body,"a comment body is stored as written");
+    await page.evaluate(()=>window.critical.mountComments());
+    const rendered=page.locator(`[data-comment="${posted.id}"]`);
+    await rendered.getByText(body,{exact:true}).waitFor();
+    assert.equal(await rendered.locator("img[onerror], b").count(),0,"a comment body became markup");
+    assert.equal(await page.evaluate(()=>window.ckInjected),undefined,"a comment body ran script");
   } else if(scenario==="CK-J29-S02") {
     assert.match(await page.evaluate(()=>window.critical.binding()),/^[a-f0-9-]{36}$/);
   } else if(scenario==="CK-J29-S03") {

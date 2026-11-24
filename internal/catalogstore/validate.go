@@ -69,7 +69,7 @@ func (s *Store) cleanText(ctx context.Context, language string, t catalog.Versio
 		utf8.RuneCountInString(t.Body) > maxBody || len(t.Aliases) > maxAliases {
 		return t, invalid("text %s exceeds its limits", language)
 	}
-	body, err := s.body.Sanitize(ctx, t.Body)
+	body, err := s.body.SanitizeHTML(ctx, t.Body)
 	if err != nil {
 		return t, err
 	}

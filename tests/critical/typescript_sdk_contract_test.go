@@ -70,7 +70,7 @@ func TestTypeScriptPublicContracts(t *testing.T) {
 		must(t, err)
 		authtest.GrantRole(t, w.tenant[0], a.group, iam.UserSubject(owner.ID), persona.OwnerRole())
 		prior := w.clock.now().Add(-time.Hour)
-		imported, err := a.engine.Client().PostImport(t.Context(), importer.Batch{Source: "typescript-critical", Contents: []importer.ContentRecord{importer.ContentRecord{ExternalID: "historically-deleted", Kind: "article", State: "deleted", PublishedAt: &prior, PublishAt: &prior, DeletedAt: &prior, Versions: []importer.VersionRecord{{Languages: []string{"en"}, ExternalID: "historically-deleted" + "/version", Text: map[string]catalog.VersionText{"en": {Title: "Restorable imported item", Body: "Retained historical body"}}}}}}})
+		imported, err := a.engine.Client().PostImport(t.Context(), importer.Batch{Source: "typescript-critical", Contents: []importer.ContentRecord{importer.ContentRecord{ExternalID: "historically-deleted", Kind: "article", State: "deleted", Access: &access.Rule{Level: access.Public}, PublishedAt: &prior, PublishAt: &prior, DeletedAt: &prior, Versions: []importer.VersionRecord{{Languages: []string{"en"}, ExternalID: "historically-deleted" + "/version", State: catalog.StatePublished, Text: map[string]catalog.VersionText{"en": {Title: "Restorable imported item", Body: "Retained historical body"}}}}}}})
 		must(t, err)
 		if len(imported.Failed) != 0 || imported.Written["contents"] != 1 {
 			t.Fatalf("public import fixture did not preserve independently deleted content: %+v", imported)

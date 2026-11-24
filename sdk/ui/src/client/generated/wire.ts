@@ -24,6 +24,13 @@ export interface AccountDeleted {
   deleted: boolean;
 }
 
+export interface AccountErasure {
+  account_id: string;
+  state: string;
+  requested_at: string | null;
+  completed_at: string | null;
+}
+
 export interface Activity {
   days: ActivityDay[];
   cohorts: string[];
@@ -183,7 +190,6 @@ export interface BannedWordInput {
 export interface Batch {
   source: string;
   preference_floor?: number;
-  provision_scopes?: boolean;
   entities?: EntityRecord[];
   channels?: ChannelRecord[];
   contents?: ContentRecord[];
@@ -324,7 +330,6 @@ export interface ChannelRecord {
   cover_content?: Ref;
   avatar?: string;
   owner_user_id?: string;
-  auth_scope?: string;
   code?: string;
   created_at?: string;
   updated_at?: string;
@@ -1888,6 +1893,7 @@ export interface Result {
   skipped?: Record<string, number>;
   merged?: Record<string, number>;
   failed: RecordFailure[];
+  unmapped?: UnmappedDelete[];
   ids: Record<string, Record<string, string>>;
   recounted?: number;
   recounts_queued?: number;
@@ -2018,6 +2024,12 @@ export interface Typeahead {
   entities: EntityCard[];
 }
 
+export interface UnmappedDelete {
+  index: number;
+  entity: string;
+  external_id: string;
+}
+
 export interface UploadLimits {
   files_per_hour?: number;
   bytes_per_day?: number;
@@ -2101,7 +2113,7 @@ export interface VersionRecord {
   languages: string[];
   traits?: string[];
   label?: string;
-  state?: string;
+  state: string;
   publish_at?: string;
   published_at?: string;
   deleted_at?: string;

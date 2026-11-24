@@ -249,11 +249,18 @@ func (rt *Runtime) ipBans(ctx context.Context) ([]content.IPBan, error) {
 	})
 }
 
-// network parses an address or a CIDR network to its canonical network.
+// network parses an address or a CIDR network to its canonical network. An
+// IPv4-mapped one is its IPv4 network, as addresses are matched unmapped.
 func network(s string) (netip.Prefix, error) {
 	s = strings.TrimSpace(s)
 	if p, err := netip.ParsePrefix(s); err == nil {
-		return p.Masked(), nil
+		if !p.Addr().Is4In6() {
+			return p.Masked(), nil
+		}
+		if p.Bits() < 96 {
+			return netip.Prefix{}, badRequest("network %q mixes IPv4-mapped and IPv6 addresses", s)
+		}
+		return netip.PrefixFrom(p.Addr().Unmap(), p.Bits()-96).Masked(), nil
 	}
 	a, err := netip.ParseAddr(s)
 	if err != nil {

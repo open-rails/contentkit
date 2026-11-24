@@ -169,11 +169,11 @@ func TestAnonymousIPv6Prefix(t *testing.T) {
 	})
 }
 
-// panickingBody is a host BodyProcessor with a bug: it panics on a marked
+// panickingBody is a host BodySanitizer with a bug: it panics on a marked
 // body.
 type panickingBody struct{}
 
-func (panickingBody) Sanitize(_ context.Context, raw string) (string, error) {
+func (panickingBody) SanitizeHTML(_ context.Context, raw string) (string, error) {
 	if strings.Contains(raw, "PANIC") {
 		panic("host body processor bug")
 	}
@@ -185,7 +185,7 @@ func TestFailureContainment(t *testing.T) {
 	a := w.apps[0]
 	cfg, deps := a.cfg, a.deps
 	cfg.Database.SkipMigrations = true
-	deps.BodyProcessor = panickingBody{}
+	deps.BodySanitizer = panickingBody{}
 	engine, err := ck.New(t.Context(), cfg, deps)
 	must(t, err)
 	t.Cleanup(func() { must(t, engine.Close(context.Background())) })

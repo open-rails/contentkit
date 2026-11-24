@@ -11,6 +11,7 @@ import (
 	signalstore "github.com/open-rails/contentkit/internal/signalstore"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
@@ -179,8 +180,11 @@ func MigratePostgres(ctx context.Context, pool *pgxpool.Pool, cfg Config, option
 }
 
 // MigrateClickHouse creates the configured signal database before applying its
-// schema. pool is PostgreSQL's migration-ledger pool, not a ClickHouse runtime
-// connection. It is a no-op when ClickHouse is entirely unconfigured.
+// schema, then records in PostgreSQL that this app has a signal plane: from
+// then on an engine without one keeps account erasures pending
+// (ErrSignalPlaneRequired). pool is PostgreSQL's migration-ledger pool, not a
+// ClickHouse runtime connection; MigratePostgres runs first. It is a no-op when
+// ClickHouse is entirely unconfigured.
 func MigrateClickHouse(ctx context.Context, pool *pgxpool.Pool, cfg Config) error {
 	if ctx == nil {
 		return errors.New("contentkit: migration context is required")
@@ -222,6 +226,26 @@ func MigrateClickHouse(ctx context.Context, pool *pgxpool.Pool, cfg Config) erro
 	}
 	if err := signalstore.CheckSchema(ctx, admin, c.Database); err != nil {
 		return fmt.Errorf("contentkit: validate migrated signal schema: %w", err)
+	}
+	return recordSignalPlane(ctx, pool, cfg)
+}
+
+// recordSignalPlane marks the app's signal plane provisioned. The marker is in
+// the account schema, which a catalog restore leaves in place.
+func recordSignalPlane(ctx context.Context, pool *pgxpool.Pool, cfg Config) error {
+	e := &Engine{cfg: cfg, pool: pool}
+	if err := e.configureStorage(); err != nil {
+		return err
+	}
+	schema, _ := e.accountStorage()
+	_, err := pool.Exec(ctx, `INSERT INTO `+pgx.Identifier{schema, "content_signal_planes"}.Sanitize()+` (tenant_id,app_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
+		e.scope.TenantID.String(), e.scope.AppID.String())
+	var pg *pgconn.PgError
+	if errors.As(err, &pg) && pg.Code == "42P01" {
+		return fmt.Errorf("contentkit: run MigratePostgres before MigrateClickHouse: %w", err)
+	}
+	if err != nil {
+		return fmt.Errorf("contentkit: record the signal plane: %w", err)
 	}
 	return nil
 }

@@ -2,6 +2,7 @@ package entitystore
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"github.com/open-rails/contentkit/access"
 	entities "github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/internal/gate"
+	"github.com/open-rails/contentkit/internal/subjectfence"
 )
 
 // writer is the actor a store writes as (As).
@@ -103,8 +105,8 @@ func (s *Store) creator(ctx context.Context, inputs []entities.EntityInput) (str
 			return "", fmt.Errorf("%w: group kind %q is not configured", entities.ErrInvalid, kind)
 		case gk.Owner != "user":
 			return "", fmt.Errorf("%w: %s groups are the site's", ErrForbidden, kind)
-		case in.ID != "" || in.AuthScope != "" || in.Internal:
-			return "", fmt.Errorf("%w: only staff choose a group's id, auth scope or internal classification", ErrForbidden)
+		case in.ID != "" || in.Internal:
+			return "", fmt.Errorf("%w: only staff choose a group's id or internal classification", ErrForbidden)
 		case in.OwnerUserID != "" && in.OwnerUserID != a.AccountID():
 			return "", fmt.Errorf("%w: a person creates only groups of their own", ErrForbidden)
 		}
@@ -161,6 +163,16 @@ func (s *Store) capped(ctx context.Context, rows []entityRow) ([]ownerKey, error
 	}
 	slices.SortFunc(out, func(a, b ownerKey) int { return strings.Compare(a.kind+"\x00"+a.owner, b.kind+"\x00"+b.owner) })
 	return out, nil
+}
+
+// fenceOwners locks the owners' erasure fences before any entity lock. An
+// erased owner is ErrForbidden, and subjectfence.ErrErased to an import.
+func (s *Store) fenceOwners(ctx context.Context, q Querier, owners ...string) error {
+	err := subjectfence.Guard(ctx, q, s.schema, s.tenant, owners...)
+	if errors.Is(err, subjectfence.ErrErased) {
+		return errors.Join(ErrForbidden, err)
+	}
+	return err
 }
 
 // lockOwners serializes, for the transaction, the writes that may take a
