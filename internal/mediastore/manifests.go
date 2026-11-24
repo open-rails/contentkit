@@ -197,6 +197,26 @@ func (m *Manifests) EditExisting(ctx context.Context, ref contentref.ContentRef,
 	return m.edit(ctx, ref, true, bound{}, fn)
 }
 
+// EditCharged edits ref's existing manifest like EditExisting and charges
+// the change in its upload bytes to charge's owner, against the quota its
+// commit accepted (refused past it with CodeQuota): a worker recording an
+// upload's bytes, such as a grabbed frame, pays as the commit would have.
+// Without an accounted owner it is EditExisting.
+func (m *Manifests) EditCharged(ctx context.Context, ref contentref.ContentRef, charge *media.SourceAdmission, fn func(*Manifest) error) (*Manifest, error) {
+	if charge == nil || !charge.Accounting || charge.Owner == "" {
+		return m.EditExisting(ctx, ref, fn)
+	}
+	mutation := &manifestMutation{commit: manifestCommit{ID: uuid.New(), Fingerprint: sha256.Sum256([]byte("charged-manifest-edit"))}, quota: charge.Quota}
+	return m.editOperation(ctx, ref, true, bound{}, mutation, func(cur *Manifest) error {
+		before := cur.uploadBytes()
+		if err := fn(cur); err != nil {
+			return err
+		}
+		mutation.effects.Settlement = Settlement{Tenant: ref.TenantID, Owner: charge.Owner, Delta: cur.uploadBytes() - before, Enforce: charge.Enforce}
+		return nil
+	})
+}
+
 // EditExistingWithOutputs checks rendered objects before taking the folder
 // lock. The callback's there checks again only when an allocation is no longer
 // live (cleanup retires allocations before DELETE), or the key was not checked.

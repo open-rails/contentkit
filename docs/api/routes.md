@@ -8,13 +8,15 @@ Every route of ContentKit's HTTP API (181). `contentkit.Engine.Routes` returns t
 
 Every error is `{"error", "code", …}`; the codes are at the end.
 
+Every answer is `Cache-Control: private, no-store` unless its route says **Cached**: then a success to an anonymous request without a credential, whose visitor's location rules did not shape it, may be kept by shared caches as stated, varying by the request headers named.
+
 Anonymous readers can send `ContentKit-Reader-Preferences: {"filters":[{"group_id":"configured entity ID","visible":false}]}`. Reads that apply content filters merge these choices over the entrypoint defaults; authenticated accounts always use their saved settings. The header is limited to 8 KiB and 128 configured filters, rejects malformed values and duplicate or unknown IDs, and never grants access. Allow this header in the host's CORS policy. Browser clients should persist choices locally and prune removed filter IDs against `GET /v1/content-filters` without the header. After registration, `POST /v1/me/content-filters/initialize` adopts choices only for its matching `account_id` and only if no settings exist.
 
 ## The site's content model (`/v1`)
 
 | Method | Path | Tier | Request | Response | Description |
 |---|---|---|---|---|---|
-| GET | `/v1/kinds` | open | — | 200 `ContentModel` | The site's content model: languages, tiers, content kinds, entity kinds, whether signals are recorded now and people's avatar preset. Cacheable for a minute. |
+| GET | `/v1/kinds` | open | — | 200 `ContentModel` | The site's content model: languages, tiers, content kinds, entity kinds, whether signals are recorded now and people's avatar preset. **Cached:** `public, max-age=60`. |
 
 ## Content: config, comments, reactions, favorites, polls, bans, moderation (`/v1`)
 
@@ -103,7 +105,7 @@ Anonymous readers can send `ContentKit-Reader-Preferences: {"filters":[{"group_i
 | Method | Path | Tier | Request | Response | Description |
 |---|---|---|---|---|---|
 | GET | `/v1/events` | staff `root:content:view-restricted` | — | 200 `EventPage` | Read this app's immutable catalog events in committed order. Readers save their own cursor; reading acknowledges or deletes nothing. Omitting after starts at the oldest retained event. Event-type filters are bound to the continuation; expired or reset cursors require a current-state resync. Query: `after`, `limit`, `types`, `type`. |
-| GET | `/v1/catalog/totals` | open | — | 200 `Totals` | Each kind's content, in all and per language: how many items an anonymous visitor's listing shows and opens, and how many each tier's holders open. The request's site scope applies. Cacheable for ten minutes. Query: `kinds`, `languages`. |
+| GET | `/v1/catalog/totals` | open | — | 200 `Totals` | Each kind's content, in all and per language: how many items an anonymous visitor's listing shows and opens, and how many each tier's holders open. The request's site scope applies. **Cached:** `public, max-age=600`. Query: `kinds`, `languages`. |
 | GET | `/v1/contents/{id}` | public | — | 200 `Content` | A content item: its text in the viewer's language, live versions with their segments and access, groups and attributes; the body only to viewers who open a version, everyone else its description and the paywall decision. Editors see every version and every language. Query: `language`. |
 | GET | `/v1/versions` | staff `root:content:view-restricted` | — | 200 `VersionStatus[]` | Editions' catalog status by version id, for hosts that keep references to them: content, kind, languages, deletion, live and live_from, in ids' order. A purged edition is absent. No event fires when live_from passes; compare it with the time. Query: `ids`. |
 | GET | `/v1/versions/{vid}` | public | — | 200 `Content` | A version by its globally generated id: returns its parent content detail with only this edition selected, including shared and version-specific entities. The same visibility and access rules apply as on the parent's page; hidden versions never fall back to a sibling. Query: `language`. |
@@ -142,7 +144,7 @@ Anonymous readers can send `ContentKit-Reader-Preferences: {"filters":[{"group_i
 
 | Method | Path | Tier | Request | Response | Description |
 |---|---|---|---|---|---|
-| GET | `/v1/media/presets` | open | — | 200 `PresetRule[]` | Every kind's public preset rules: crop bounds, widths and default images. Current image URLs come from a read's public. |
+| GET | `/v1/media/presets` | open | — | 200 `PresetRule[]` | Every kind's public preset rules: crop bounds, widths and default images. Current image URLs come from a read's public. **Cached:** `public, max-age=300`. |
 | GET | `/v1/media/{kind}/{id}` | public | — | 200 `ReadResult` | Released files under a prefix in manifest order. Offset/limit or repeated path selects which get URLs. Version access covers its private folder. Explicit editor reads can inspect unserved source/prepared files through short-lived storage URLs. Unreadable files are omitted. Query: `prefix`, `path`, `offset`, `limit`, `download`, `editor`, `status`, `after`. |
 | GET | `/v1/media/{kind}/{id}/hls/{path...}` | public | — | 200 `application/vnd.apple.mpegurl`<br>200 `text/vtt` | HLS: {dir}master.m3u8 (a ladder of the read's hls), {path}.m3u8 (a track) or {dir}sprite.vtt (the seek sprite). Query: `audio`, `subs`, `editor`. |
 | GET | `/v1/media/{kind}/{id}/versions/{version}` | public | — | 200 `ReadResult` | A content version's item, read as GET /{kind}/{id} reads any other kind's item. Query: `prefix`, `path`, `offset`, `limit`, `download`, `editor`, `status`, `after`. |
@@ -237,7 +239,7 @@ Anonymous readers can send `ContentKit-Reader-Preferences: {"filters":[{"group_i
 | GET | `/v1/sitemap/entities` | open | — | 200 `SitemapPage` | Pages through the site's public group pages of one kind, by id, for host sitemaps: active groups holding content the site lists, each with the languages that content serves. Query: `kind`, `cursor`, `limit`. |
 | GET | `/v1/stats/activity` | staff `root:content:view-restricted` | — | 200 `Activity` | A content kind's measured readership for every UTC day of the period, newest first: distinct people who read or played it (a visit without reading never counts), split into application-defined cohorts, with their focused active time, from the signal plane. Query: `kind`, `days`. |
 | GET | `/v1/me/stats` | user | — | 200 `MyStats` | The signed-in reader's account statistics: the contents they finished per kind, their comments and the reactions those received, and elapsed access seconds per tier when billing supplies its history. |
-| GET | `/v1/manage/search-suggestions` | public | — | 200 `Typeahead` | Private quick navigation to authorized content/entity editors. Requires a signed-in person or application. Current own titles, names and aliases match literal substrings with prefix bias; includes drafts, held edits and internal entities within management authority. No associated metadata/body matching or public-search fallback. Sections require explicit include flags; forbidden sections are omitted when another section is authorized. Returns lean name targets, with no content body or cover reads. Query: `q`, `content_kinds`, `entity_kinds`, `include_contents`, `include_entities`, `display_language`, `limit`. |
+| GET | `/v1/manage/search-suggestions` | editor `root:content:write` | — | 200 `Typeahead` | Private quick navigation to authorized content/entity editors. Requires a signed-in person or application. Current own titles, names and aliases match literal substrings with prefix bias; includes drafts, held edits and internal entities within management authority. No associated metadata/body matching or public-search fallback. Sections require explicit include flags; forbidden sections are omitted when another section is authorized. Returns lean name targets, with no content body or cover reads. Query: `q`, `content_kinds`, `entity_kinds`, `include_contents`, `include_entities`, `display_language`, `limit`. |
 
 ## Bulk import (`/v1`)
 

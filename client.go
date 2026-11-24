@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/open-rails/contentkit/internal/endpoint"
 	"github.com/open-rails/contentkit/internal/gate"
 )
 
@@ -28,6 +29,7 @@ const inprocessBase = "http://contentkit.inprocess"
 type Client struct {
 	hc   *http.Client
 	base string
+	err  error // a refused base: every call fails with it
 }
 
 // Client is the engine's in-process client, acting as the host itself:
@@ -74,12 +76,24 @@ func (erasureRecoveryTransport) RoundTrip(*http.Request) (*http.Response, error)
 // ("https://example.com/api/contentkit"). hc carries the caller's
 // credentials (its Transport sets Authorization); nil is
 // http.DefaultClient, anonymous.
+//
+// base must be https, or http to a loopback host: a call to another plain
+// http base fails without sending anything. Redirects are never followed, so
+// a credential never leaves base; a 3xx answer is an *Error.
 func NewClient(base string, hc *http.Client) *Client {
 	if hc == nil {
 		hc = http.DefaultClient
 	}
-	return &Client{hc: hc, base: strings.TrimRight(base, "/")}
+	own := *hc
+	own.CheckRedirect = noRedirects
+	c := &Client{hc: &own, base: strings.TrimRight(base, "/")}
+	if _, err := endpoint.Secure(c.base); err != nil {
+		c.err = fmt.Errorf("contentkit: NewClient base: %w", err)
+	}
+	return c
 }
+
+func noRedirects(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 
 // Error is a refused call: the route's status and stable code
 // (docs/api/routes.md) and a message for people.
@@ -144,6 +158,9 @@ func (c *Client) do(ctx context.Context, method, path string, query url.Values, 
 }
 
 func (c *Client) doHeaders(ctx context.Context, method, path string, query url.Values, in any, headers http.Header) (*http.Response, error) {
+	if c.err != nil {
+		return nil, c.err
+	}
 	var body io.Reader
 	if in != nil {
 		b, err := json.Marshal(in)
@@ -249,9 +266,24 @@ func serveInProcess(h http.Handler, r *http.Request) (*http.Response, error) {
 		return streamInProcess(h, r)
 	}
 	w := &recorder{header: http.Header{}, status: http.StatusOK}
-	h.ServeHTTP(w, r)
+	if err := serveRecovered(h, w, r); err != nil {
+		return nil, err
+	}
 	return &http.Response{Status: http.StatusText(w.status), StatusCode: w.status, Proto: "HTTP/1.1", ProtoMajor: 1, ProtoMinor: 1,
 		Header: w.header, Body: io.NopCloser(&w.body), ContentLength: int64(w.body.Len()), Request: r}, nil
+}
+
+// serveRecovered serves r in the caller's goroutine, a panic its error: the
+// routes answer one 500, and an aborted answer (http.ErrAbortHandler) has no
+// connection here to abort.
+func serveRecovered(h http.Handler, w http.ResponseWriter, r *http.Request) (err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			err = fmt.Errorf("contentkit: in-process %s %s: handler panicked: %v", r.Method, r.URL.Path, p)
+		}
+	}()
+	h.ServeHTTP(w, r)
+	return nil
 }
 
 type recorder struct {

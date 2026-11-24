@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/netip"
 	"net/url"
 	"os"
 	"sync"
@@ -163,6 +164,9 @@ func newHarness(ctx context.Context, c config, mediaOrigin string) (_ *harness, 
 		return nil, err
 	}
 	cfg := contentkit.Config{Scope: &scope, Accounts: &contentkit.AccountsConfig{Schema: "e2e_accounts", Avatars: avatars}, Database: contentkit.DatabaseConfig{Schema: schema, RiverSchema: riverSchema}, Content: site(),
+		// Browsers reach the harness over loopback, as a host's proxy would:
+		// a test names a signed-out visitor's address in X-Forwarded-For.
+		TrustedProxies: []netip.Prefix{netip.MustParsePrefix("127.0.0.0/8"), netip.MustParsePrefix("::1/128")},
 		Interactions: contentkit.InteractionsConfig{
 			Anonymous: content.Anonymous{Comments: true, Reactions: true, Votes: true},
 			// The suites test the bound; the default may change.

@@ -239,7 +239,7 @@ func TestInternalArea(t *testing.T) {
 			must(t, err)
 			uploads, err := mediastore.NewUploads(mediastore.UploadOptions{Store: m.store, Manifests: jobs.Manifests(), Tickets: &ring})
 			must(t, err)
-			mediaReader, err := mediastore.NewReader(mediastore.ReaderOptions{Manifests: jobs.Manifests(), Delivery: media.Delivery{Mode: media.DeliverURL, SigningKey: m.key}})
+			mediaReader, err := mediastore.NewReader(mediastore.ReaderOptions{Manifests: jobs.Manifests(), Delivery: media.Delivery{Mode: media.DeliverURL, Keys: deliveryKeys(t, m.key)}})
 			must(t, err)
 			must(t, service.Bind(versionstore.Media{Manifests: jobs.Manifests(), Uploads: uploads, Jobs: jobs, Reader: mediaReader}))
 			target, err := registry.VersionRef(ref.Kind, ref.ID, ref.Version)
@@ -291,4 +291,79 @@ func TestInternalArea(t *testing.T) {
 			}
 		}
 	})
+}
+
+// HostOnly outputs of every kind stay in internal/, which no item token
+// opens: a site kind's HostOnly rendition is prepared there while its served
+// one is in private/, and only editors are signed it.
+func TestHostOnlyOutputsStayInternal(t *testing.T) {
+	w := newWorld(t)
+	a := w.apps[0]
+	m := attachMedia(t, w, a, func(c *ck.Config) {
+		c.Media.Kinds = append(c.Media.Kinds, media.Kind{Name: "siteimage", KeepOriginals: true,
+			Uploads: []media.Upload{{Path: "cover", Types: []string{"image/png"}, MaxBytes: 1 << 20}},
+			Private: []media.Private{
+				{Name: "export", From: "cover", To: "export/cover.webp", HostOnly: true, Image: &media.Image{Width: 32}},
+				{Name: "shown", From: "cover", To: "shown/cover.webp", Image: &media.Image{Width: 32}}}})
+	})
+	admin := a.engine.Client()
+	id, err := uuid.NewV7()
+	must(t, err)
+	ref := media.RefBody{Kind: "siteimage", ID: id.String()}
+	_, err = admin.IngestMedia(t.Context(), http.DefaultClient, ref, uuid.NewString(), []ck.MediaFile{{Path: "cover.png", Type: "image/png", Body: bytes.NewReader(imageBytes(t))}})
+	must(t, err)
+	var read media.ReadResult
+	waitForWithin(t, 45*time.Second, func() bool {
+		read, err = admin.GetMedia(t.Context(), ref.Kind, ref.ID, ck.GetMediaQuery{Editor: true})
+		must(t, err)
+		if read.Status != nil && read.Status.FailureCount != 0 {
+			t.Fatalf("site image processing failed: %+v", read.Status.Failures)
+		}
+		found := 0
+		for _, file := range read.Files {
+			if (file.Path == "export/cover.webp" || file.Path == "shown/cover.webp") && file.URL != "" {
+				found++
+			}
+		}
+		return found == 2
+	})
+	config, err := a.cfg.MediaKinds()
+	must(t, err)
+	registry, err := mediastore.NewRegistry(config, mediastore.Hooks{})
+	must(t, err)
+	journal, err := mediastore.NewPGJournal(w.pool, w.schema, nil)
+	must(t, err)
+	manifests, err := mediastore.NewManifests(m.store, registry, mediastore.ManifestOptions{Locker: mediastore.PGLocker(w.pool), Journal: journal})
+	must(t, err)
+	target, err := registry.VersionRef(ref.Kind, ref.ID, "")
+	must(t, err)
+	item, err := registry.Item(target)
+	must(t, err)
+	manifest, _, err := manifests.Get(t.Context(), target)
+	must(t, err)
+	ring, err := token.NewRing(m.key, nil)
+	must(t, err)
+	itemToken := ring.Sign(strings.TrimSuffix(item.Prefix(), "/"), time.Now().Add(time.Minute))
+	for path, want := range map[string]string{"export/cover.webp": layout.AreaInternal, "shown/cover.webp": layout.AreaPrivate} {
+		file, ok := manifest.Get(path)
+		area, _, valid := layout.SplitBlobRef(file.Blob)
+		if !ok || !valid || area != want {
+			t.Fatalf("%s is at %q, want %s/", path, file.Blob, want)
+		}
+		key, err := item.Blob(file.Blob)
+		must(t, err)
+		response, err := http.Get(m.gateway.URL + layout.URLPrefix + key + "?t=" + url.QueryEscape(itemToken))
+		must(t, err)
+		response.Body.Close()
+		if served := response.StatusCode == http.StatusOK; served != (want == layout.AreaPrivate) {
+			t.Fatalf("item token on %s answered HTTP%d", path, response.StatusCode)
+		}
+	}
+	reader, err := admin.GetMedia(t.Context(), ref.Kind, ref.ID, ck.GetMediaQuery{})
+	must(t, err)
+	for _, file := range reader.Files {
+		if file.Path == "export/cover.webp" {
+			t.Fatal("an ordinary read lists the HostOnly output")
+		}
+	}
 }

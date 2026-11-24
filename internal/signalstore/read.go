@@ -60,6 +60,8 @@ func referenceContext(ctx context.Context, refs []signal.ContentRef) (context.Co
 // progress bar, completed?, resume pointer). References the subject has no
 // signals for are absent.
 func (st *Store) States(ctx context.Context, tenant string, subject signal.Subject, refs []signal.ContentRef) (map[signal.ContentKey]signal.State, error) {
+	ctx, cancel := readContext(ctx)
+	defer cancel()
 	if err := subject.Validate(); err != nil {
 		return nil, err
 	}
@@ -124,6 +126,8 @@ func historyFilter(sb *strings.Builder, args []any, opts signal.HistoryOptions) 
 // History returns the subject's work-level state rows, most recent relevant
 // activity first. Seen statuses use view recency; HistoryAny uses signal recency.
 func (st *Store) History(ctx context.Context, tenant string, subject signal.Subject, opts signal.HistoryOptions) ([]signal.StateRow, error) {
+	ctx, cancel := readContext(ctx)
+	defer cancel()
 	if err := subject.Validate(); err != nil {
 		return nil, err
 	}
@@ -160,6 +164,8 @@ WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s%s`, stateColumns, s
 // SeenIDs returns the subject's seen-set for one content kind: work ids with
 // max_progress > 0. This is the signal-plane half of the unseen anti-join.
 func (st *Store) SeenIDs(ctx context.Context, tenant string, subject signal.Subject, contentKind string) (map[string]struct{}, error) {
+	ctx, cancel := readContext(ctx)
+	defer cancel()
 	if err := subject.Validate(); err != nil {
 		return nil, err
 	}
@@ -188,6 +194,8 @@ WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s AND content_kind = 
 // NegativeIDs returns the works the subject has net-negative canonical
 // feedback for: the exclusion set for recommendations.
 func (st *Store) NegativeIDs(ctx context.Context, tenant string, subject signal.Subject, contentKinds []string) (map[signal.ContentKey]struct{}, error) {
+	ctx, cancel := readContext(ctx)
+	defer cancel()
 	if err := subject.Validate(); err != nil {
 		return nil, err
 	}
@@ -219,6 +227,8 @@ WHERE tenant = ? AND subject_kind = ? AND subject = ? AND %s%s AND net_value < 0
 // TopStates returns the subject's highest-signal works (recommendation
 // seeds): ordered by quality DESC, then recency.
 func (st *Store) TopStates(ctx context.Context, tenant string, subject signal.Subject, opts signal.TopStatesOptions) ([]signal.StateRow, error) {
+	ctx, cancel := readContext(ctx)
+	defer cancel()
 	if err := subject.Validate(); err != nil {
 		return nil, err
 	}
@@ -265,6 +275,8 @@ const finalSettings = "\nSETTINGS do_not_merge_across_partitions_select_final = 
 // engaged with X also engaged with Y". Strength nets subjects whose summed
 // feedback for the candidate is non-negative against those with negative.
 func (st *Store) CoEngaged(ctx context.Context, tenant string, ref signal.ContentRef, opts signal.CoEngagedOptions) ([]signal.CoEngagedHit, error) {
+	ctx, cancel := readContext(ctx)
+	defer cancel()
 	if err := checkRef(tenant, ref); err != nil {
 		return nil, err
 	}
@@ -368,6 +380,8 @@ func scanCoEngaged(rows driver.Rows, tenant string, limit int) ([]signal.CoEngag
 }
 
 func (st *Store) Activity(ctx context.Context, tenant, contentKind string, window signal.Window, cohorts ...signal.ActivityCohort) ([]signal.DayActivity, error) {
+	ctx, cancel := readContext(ctx)
+	defer cancel()
 	if strings.TrimSpace(tenant) == "" || strings.TrimSpace(contentKind) == "" {
 		return nil, fmt.Errorf("signal: tenant and contentKind are required")
 	}

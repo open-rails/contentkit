@@ -16,6 +16,7 @@ import (
 	"github.com/open-rails/contentkit/discovery"
 	"github.com/open-rails/contentkit/entities"
 	importer "github.com/open-rails/contentkit/importer"
+	"github.com/open-rails/contentkit/internal/clientaddr"
 	"github.com/open-rails/contentkit/internal/codes"
 	contentstore "github.com/open-rails/contentkit/internal/contentstore"
 	"github.com/open-rails/contentkit/signal"
@@ -433,23 +434,17 @@ func account(id string) (string, error) {
 	return id, nil
 }
 
-// address is an anonymous record's address as a live anonymous write keys
-// it, so imported and live rows dedupe: its IPv4 address (unmapped), or its
-// IPv6 /64.
+// address is an anonymous record's address keyed as a live anonymous write
+// keys it (clientaddr.Key), so imported and live rows dedupe.
 func address(ip string) (string, error) {
 	ip = strings.TrimSpace(ip)
 	if ip == "" {
 		return "", nil
 	}
-	a, err := netip.ParseAddr(ip)
-	if err != nil || a.Zone() != "" {
+	if a, err := netip.ParseAddr(ip); err != nil || a.Zone() != "" {
 		return "", fmt.Errorf("%w: %q is not an IP address", errInvalid, ip)
 	}
-	if a = a.Unmap(); a.Is4() {
-		return a.String(), nil
-	}
-	p, _ := a.Prefix(64)
-	return p.String(), nil
+	return clientaddr.Key(ip), nil
 }
 
 // subject is a record's canonical user id, or its address when it has none.

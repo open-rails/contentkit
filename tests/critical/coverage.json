@@ -909,6 +909,100 @@
       ]
     },
     {
+      "id": "CK-J07-S27",
+      "journey": "CK-J07",
+      "behavior": "Typeahead suggests only entities with a work inside the read boundary, and entity cards' automatic covers come from such works",
+      "status": "verified",
+      "evidence": [
+        "On a domain requiring an entity, typeahead omits a tag whose only work is outside the domain; the wide domain suggests it.",
+        "Typeahead and search cards of a tag take their automatic cover from its newest work inside the domain, not the newer one outside it; the wide domain's control picks the newer one.",
+        "Reviewed executable contract mapping for ContentKit #286; final combined qualification must execute every selected case. This is not an execution receipt."
+      ],
+      "cases": [
+        "TestDiscoveryVisibility/CK-J07-S27_typeahead_and_entity_covers_stay_inside_the_read_boundary"
+      ]
+    },
+    {
+      "id": "CK-J07-S28",
+      "journey": "CK-J07",
+      "behavior": "Search and typeahead refuse queries beyond the length, word and normalized-word bounds with 400 before retrieval",
+      "status": "verified",
+      "evidence": [
+        "A 257-character query, 22 compatibility characters that normalize to one 132-letter word, and 17 words each answer 400 invalid_request on /search and /typeahead; 16 words still search.",
+        "Reviewed executable contract mapping for ContentKit #286; final combined qualification must execute every selected case. This is not an execution receipt."
+      ],
+      "cases": [
+        "TestDiscoveryVisibility/CK-J07-S28_oversized_queries_are_refused_before_retrieval"
+      ]
+    },
+    {
+      "id": "CK-J07-S29",
+      "journey": "CK-J07",
+      "behavior": "Cursors whose value, id or seed is malformed and the server's Local time zone are refused with 400; a served cursor continues its list",
+      "status": "verified",
+      "evidence": [
+        "Newest and most_favorited cursors with values of another type, a cursor naming no content id, a 64-character random seed, and tz=Local on lists and release dates answer 400 invalid_request.",
+        "A served newest cursor still continues to the next page.",
+        "Reviewed executable contract mapping for ContentKit #286; final combined qualification must execute every selected case. This is not an execution receipt."
+      ],
+      "cases": [
+        "TestDiscoveryVisibility/CK-J07-S29_malformed_cursors_seeds_and_zones_are_refused"
+      ]
+    },
+    {
+      "id": "CK-J07-S30",
+      "journey": "CK-J07",
+      "behavior": "A code of a kind the configuration no longer has resolves nothing",
+      "status": "verified",
+      "evidence": [
+        "A stored code of an unconfigured kind is 404 not_found to visitors and the host; a live content code still resolves.",
+        "Reviewed executable contract mapping for ContentKit #286; final combined qualification must execute every selected case. This is not an execution receipt."
+      ],
+      "cases": [
+        "TestDiscoveryVisibility/CK-J07-S30_codes_of_unknown_kinds_resolve_nothing"
+      ]
+    },
+    {
+      "id": "CK-J07-S31",
+      "journey": "CK-J07",
+      "behavior": "Answers are private, no-store unless their route declares caching; a declared route caches only an anonymous success its visitor's location did not shape",
+      "status": "verified",
+      "evidence": [
+        "Content detail, entity lists and unknown paths answer private, no-store; kinds and totals answer their declared public max-age to anonymous readers.",
+        "A credential, an error answer, or a site location rule on the domain (covering other visitors) turns the declared routes private, no-store.",
+        "Reviewed executable contract mapping for ContentKit #286; final combined qualification must execute every selected case. This is not an execution receipt."
+      ],
+      "cases": [
+        "TestDiscoveryVisibility/CK-J07-S31_json_reads_are_private_unless_declared_and_location_independent"
+      ]
+    },
+    {
+      "id": "CK-J07-S32",
+      "journey": "CK-J07",
+      "behavior": "A location rule targeting a channel covers the content the channel owns, and the channel page's count",
+      "status": "verified",
+      "evidence": [
+        "A covered visitor gets 404 for the channel's post, sees it in no list or channel feed and the channel page counts none; an uncovered visitor still reads it.",
+        "Reviewed executable contract mapping for ContentKit #286; final combined qualification must execute every selected case. This is not an execution receipt."
+      ],
+      "cases": [
+        "TestChannelReadBoundary/CK-J07-S32_channel_targeted_location_rules_cover_its_content"
+      ]
+    },
+    {
+      "id": "CK-J07-S33",
+      "journey": "CK-J07",
+      "behavior": "A deleted channel's descriptive metadata is not public",
+      "status": "verified",
+      "evidence": [
+        "The public channel entities route answers 404 once the channel is deleted; management still reads the channel.",
+        "Reviewed executable contract mapping for ContentKit #286; final combined qualification must execute every selected case. This is not an execution receipt."
+      ],
+      "cases": [
+        "TestChannelReadBoundary/CK-J07-S33_deleted_channel_metadata_is_not_public"
+      ]
+    },
+    {
       "id": "CK-J08-S01",
       "journey": "CK-J08",
       "behavior": "Deleting one version preserves siblings and parent",
@@ -1348,7 +1442,7 @@
       "status": "verified",
       "evidence": [
         "A real two-second H264 clip is encoded by the actual worker; frame ops at a time inside a frame, from another clip with a crop in source pixels, and into a site kind each produce the source's frame a player shows at that time (compared with ffmpeg's decode of the source against the neighbouring frame).",
-        "The API refuses a contributor's frame of a clip it cannot edit (403), a missing or non-video source (404), a time past the end and an unknown kind (400), a destination that takes no PNG (415) and from.kind on copy (400), and writes nothing."
+        "The API refuses a contributor's frame of a clip it cannot edit (403), a missing or non-video source (404), a time past the end and an unknown kind (400), a destination that declares no Frames, a video or a PNG image alike (400), and from.kind on copy (400), and writes nothing."
       ],
       "cases": [
         "TestMediaFramePosters"
@@ -1398,6 +1492,19 @@
       ]
     },
     {
+      "id": "CK-J12-S06",
+      "journey": "CK-J12",
+      "behavior": "Frames count toward their upload's Max and are charged to the commit's quota owner at the still's size, refunded once on removal",
+      "status": "verified",
+      "evidence": [
+        "With the shared usage ledger on, frame ops into a Max 1 stills upload refuse a second still in one commit and in a later one (409 too_many_files) while replacing the one still succeeds; a contributor's poster grabbed by the real worker moves its usage by exactly the still's size (at least 64 KiB), and removing it restores the usage. Added with the media work-bounds change; not yet run in an integrated execution, which full qualification requires."
+      ],
+      "cases": [
+        "TestMediaFramePosters/CK-J12-S06_frames_count_toward_max",
+        "TestMediaFramePosters/CK-J12-S06_a_frame_is_charged_its_still_and_refunded_once"
+      ]
+    },
+    {
       "id": "CK-J13-S01",
       "journey": "CK-J13",
       "behavior": "Private exact-file grant refuses a sibling file or another item",
@@ -1430,12 +1537,14 @@
       "status": "verified",
       "evidence": [
         "Expired tokens refuse. Previous signing keys work only during declared overlap, removed keys cannot leak/cache bytes, and the current key always opens the exact object.",
+        "Through the real engine, a download ticket signed before a rotation transfers after the engine restarts with a new signing key and the old one as previous, a ticket signed after it transfers too, and the old ticket is refused (404) once the previous key is dropped. Added with the media work-bounds change; not yet run in an integrated execution, which full qualification requires.",
         "Reviewed against current public behavior; exact cases passed in integrated/focused race receipts retained with this task. Full qualification still requires every selected contract and one integrated execution."
       ],
       "cases": [
         "TestGatewayCapabilities/CK-J13-S03_expiry_and_key_rotation",
         "TestGatewayCapabilities/CK-J13-S03_expiry_and_key_rotation/overlap",
-        "TestGatewayCapabilities/CK-J13-S03_expiry_and_key_rotation/removed"
+        "TestGatewayCapabilities/CK-J13-S03_expiry_and_key_rotation/removed",
+        "TestDeliveryRotationKeepsTickets"
       ]
     },
     {
@@ -1507,6 +1616,7 @@
       "status": "verified",
       "evidence": [
         "Exact allowed private CORS origin/credentials/cache headers are enforced, a foreign origin is not authorized, public cache policy remains public, and download bytes/filename/disposition/nosniff survive.",
+        "Every private answer adds CDN-Cache-Control: no-store and no public one does; every answer, denials included, carries Referrer-Policy: no-referrer. Added with the media work-bounds change; not yet run in an integrated execution, which full qualification requires.",
         "Reviewed against current public behavior; exact cases passed in integrated/focused race receipts retained with this task. Full qualification still requires every selected contract and one integrated execution."
       ],
       "cases": [
@@ -2628,6 +2738,32 @@
       ]
     },
     {
+      "id": "CK-J02-S40",
+      "journey": "CK-J02",
+      "behavior": "Behind trusted proxies the forwarded client is the visitor; untrusted peers and malformed chains cannot choose it",
+      "status": "verified",
+      "evidence": [
+        "The standalone server trusting loopback applies a whole-site network rule to the client X-Forwarded-For or Forwarded names, right to left past trusted hops, never to an address the client prepends; a malformed chain or both headers are 400 invalid_request. The embedded mount trusting no proxy ignores the header.",
+        "Fails on the base, where every visitor is the proxy's address and no rule matches. Not yet an execution receipt; qualification runs the case."
+      ],
+      "cases": [
+        "TestStandaloneClientAddress/CK-J02-S40_a_trusted_proxy_names_the_client_and_nobody_else_can"
+      ]
+    },
+    {
+      "id": "CK-J02-S41",
+      "journey": "CK-J02",
+      "behavior": "An IPv6 /64 is one anonymous visitor for reactions and limits",
+      "status": "verified",
+      "evidence": [
+        "Anonymous likes from two addresses in one /64 count once and read back as the visitor's own; another /64 counts again; the reaction limit counts the /64, refusing its fourth reaction while another /64 and an IPv4 visitor still react.",
+        "Fails on the base, which keys each IPv6 address on its own. Not yet an execution receipt; qualification runs the case."
+      ],
+      "cases": [
+        "TestAnonymousIPv6Prefix/CK-J02-S41_an_IPv6_64_is_one_anonymous_visitor"
+      ]
+    },
+    {
       "id": "CK-J29-S09",
       "journey": "CK-J29",
       "behavior": "Editor and public detail switch exact independent version content while retaining navigation",
@@ -2681,6 +2817,42 @@
       ],
       "evidence": [
         "Pure readiness table: a required upload counts once attached (pages also once included); staged or encoding reads processing, failed reads failed, absent reads missing. Real worker, S3 and publication: a clip released without its source and a gallery released without pages before the rule are withdrawn by Reconcile (exactly two queued), leave the anonymous listings, read missing to editors with their publications waiting, while the encoded clip and the gallery with pages stay live; the withdrawn clip's version read is 404. A release whose storage copy failed under the old rule keeps its frozen plan; retried after the rule, it waits instead of going live. A clip published without its source never activates a release (not released, no release, no published_at). After its source is uploaded the clip stays unreleased while its encode output is held, then releases; a second Reconcile queues none. Focused local runs passed with the race detector; mutations (keeping a release that lacks its source; readiness ignoring Required; activating a frozen plan that now waits) failed them."
+      ]
+    },
+    {
+      "id": "CK-J09-S33",
+      "journey": "CK-J09",
+      "behavior": "A commit is authorized again under its item's lock: authority revoked while it waited writes nothing",
+      "status": "verified",
+      "evidence": [
+        "A commit through the real journal, S3 and PostgreSQL lock whose upload grant is revoked as it takes the item lock answers 403 forbidden and leaves the manifest as the previous, authorized commit wrote it. Added with the media work-bounds change; not yet run in an integrated execution, which full qualification requires."
+      ],
+      "cases": [
+        "TestCommitReauthorizesUnderLock"
+      ]
+    },
+    {
+      "id": "CK-J09-S34",
+      "journey": "CK-J09",
+      "behavior": "HostOnly outputs of every kind are prepared in internal/, which no item token opens",
+      "status": "verified",
+      "evidence": [
+        "The real worker renders a site kind's HostOnly image into internal/ and its served one into private/: an item token opens only the served one at the gateway, editors are signed both, and an ordinary read lists no HostOnly output. Added with the media work-bounds change; not yet run in an integrated execution, which full qualification requires."
+      ],
+      "cases": [
+        "TestHostOnlyOutputsStayInternal"
+      ]
+    },
+    {
+      "id": "CK-J09-S35",
+      "journey": "CK-J09",
+      "behavior": "ZIP ingestion validates in one streaming pass and extracts pages per batch, so scratch holds the ZIP and one page",
+      "status": "verified",
+      "evidence": [
+        "Twelve uncompressed PNG pages that deflate to a small ZIP are ingested by the real worker into twelve pages while its scratch directory never holds more than the ZIP and two pages. Added with the media work-bounds change; not yet run in an integrated execution, which full qualification requires."
+      ],
+      "cases": [
+        "TestArchiveIngestScratch"
       ]
     },
     {
@@ -2746,6 +2918,60 @@
       ],
       "cases": [
         "TestServingAndWorkingProcesses/CK-J01-S09_api_process_enqueues_and_worker_process_works_jobs"
+      ]
+    },
+    {
+      "id": "CK-J01-S10",
+      "journey": "CK-J01",
+      "behavior": "The standalone server bounds request bodies and header blocks, keeps answers and event streams open past its read timeout, and marks every answer nosniff",
+      "status": "verified",
+      "evidence": [
+        "With a two-second read timeout a stalled request body is answered 400 within it, an 80 KiB header block is 431, a media event stream delivers its ten-second heartbeat, and health, API, unknown-route and unmounted answers carry X-Content-Type-Options: nosniff.",
+        "Fails on the base: the stalled body is never cut, the header block is accepted and no answer is nosniff. Not yet an execution receipt; qualification runs the case."
+      ],
+      "cases": [
+        "TestConfiguredStandaloneParity/CK-J01-S10_the_server_bounds_bodies_and_headers_keeps_streams_open_and_marks_nosniff"
+      ]
+    },
+    {
+      "id": "CK-J01-S11",
+      "journey": "CK-J01",
+      "behavior": "A panic while serving answers 500 internal_error over HTTP and through the in-process client, and serving continues; an empty create is 400",
+      "status": "verified",
+      "evidence": [
+        "A host BodyProcessor that panics makes a create 500 internal_error over HTTP (nosniff JSON) and an *Error through Engine.Client instead of crashing the caller; later creates and reads succeed. An empty or zero POST /v1/contents is 400 invalid_request.",
+        "Fails on the base: the HTTP connection aborts without a body and the in-process panic unwinds into the test. Not yet an execution receipt; qualification runs the cases."
+      ],
+      "cases": [
+        "TestFailureContainment/CK-J01-S11_a_panic_answers_500_over_HTTP_and_in_process_and_serving_continues",
+        "TestFailureContainment/CK-J01-S11_an_empty_create_is_400"
+      ]
+    },
+    {
+      "id": "CK-J01-S12",
+      "journey": "CK-J01",
+      "behavior": "Startup refuses shared queue schemas, plain-HTTP credential endpoints off loopback, IPv4-mapped trusted proxies and ClickHouse TLS it cannot honor",
+      "status": "verified",
+      "evidence": [
+        "The engine refuses River in the catalog or account schema, a mapped trusted-proxy prefix, a ClickHouse CA without TLS and TLS with embedded migrations; MigrateClickHouse refuses TLS; a plain-http media origin is refused; a plain-http Go client base sends nothing. The server refuses a plain-http OpenRails base and AuthKit schemas equal to the engine's, and accepts a loopback OpenRails base.",
+        "Fails on the base, which starts with each of these. Not yet an execution receipt; qualification runs the cases."
+      ],
+      "cases": [
+        "TestStartupRefusesUnsafeTransport/CK-J01-S12_the_engine_refuses_shared_queues_plain_credentials_and_bad_proxies",
+        "TestStartupRefusesUnsafeTransport/CK-J01-S12_the_server_refuses_plain_OpenRails_and_shared_schemas"
+      ]
+    },
+    {
+      "id": "CK-J01-S13",
+      "journey": "CK-J01",
+      "behavior": "Signal reads serving a request carry a deadline and a memory ceiling",
+      "status": "verified",
+      "evidence": [
+        "A public similar read through the configured standalone issues its co-engagement query with max_memory_usage 1 GiB and a max_execution_time from its ten-second deadline, as ClickHouse's own query log records.",
+        "Fails on the base, whose query carries neither. Not yet an execution receipt; qualification runs the case."
+      ],
+      "cases": [
+        "TestConfiguredStandaloneParity/CK-J01-S13_signal_reads_serving_a_request_carry_a_deadline_and_memory_ceiling"
       ]
     },
     {
@@ -7231,7 +7457,8 @@
         "TestHTTPAuthenticationMatrix/CK-API-165_GET_/v1/manage/search-suggestions/inherited_HEAD_credential_gate",
         "TestHTTPAuthenticationMatrix/CK-API-165_GET_/v1/manage/search-suggestions/malformed_credential",
         "TestHTTPAuthenticationMatrix/CK-API-165_GET_/v1/manage/search-suggestions/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-165_GET_/v1/manage/search-suggestions/wrong_issuer"
+        "TestHTTPAuthenticationMatrix/CK-API-165_GET_/v1/manage/search-suggestions/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-165_GET_/v1/manage/search-suggestions/anonymous_protected_operation"
       ],
       "implemented_security_cases": [
         "TestHTTPAuthenticationMatrix/CK-API-165_GET_/v1/manage/search-suggestions/malformed_credential",
@@ -7239,7 +7466,8 @@
         "TestHTTPAuthenticationMatrix/CK-API-165_GET_/v1/manage/search-suggestions/expired_credential",
         "TestHTTPAuthenticationMatrix/CK-API-165_GET_/v1/manage/search-suggestions/wrong_issuer",
         "TestHTTPAuthenticationMatrix/CK-API-165_GET_/v1/manage/search-suggestions/foreign_app_key",
-        "TestHTTPAuthenticationMatrix/CK-API-165_GET_/v1/manage/search-suggestions/inherited_HEAD_credential_gate"
+        "TestHTTPAuthenticationMatrix/CK-API-165_GET_/v1/manage/search-suggestions/inherited_HEAD_credential_gate",
+        "TestHTTPAuthenticationMatrix/CK-API-165_GET_/v1/manage/search-suggestions/anonymous_protected_operation"
       ],
       "security_evidence": "credential gate and app-key boundary only; no route-specific functional or mutation no-effect approval; executed in integrated-f052-aggregate",
       "evidence": [

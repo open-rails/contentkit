@@ -54,6 +54,8 @@ func (st *Store) feedbackState(scope string) string {
 // CompletedCount is measured completions only. Retained legacy resume data is
 // useful history, but is never promoted into measured account statistics.
 func (st *Store) CompletedCount(ctx context.Context, tenant string, subject signal.Subject, kind string) (int64, error) {
+	ctx, cancel := readContext(ctx)
+	defer cancel()
 	if err := subject.Validate(); err != nil {
 		return 0, err
 	}

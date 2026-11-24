@@ -3,13 +3,14 @@ package discoverystore
 import (
 	"net/http"
 
+	"github.com/open-rails/contentkit/access"
 	discovery "github.com/open-rails/contentkit/discovery"
 	"github.com/open-rails/contentkit/internal/gate"
 	"github.com/open-rails/contentkit/internal/httpapi"
 )
 
 var managementRoutes = []httpapi.Route[handler]{
-	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/manage/search-suggestions", Resource: "discovery", Auth: httpapi.Public,
+	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/manage/search-suggestions", Resource: "discovery", Auth: httpapi.Editor, Perm: string(access.ContentWrite),
 		Doc: "Private quick navigation to authorized content/entity editors. Requires a signed-in person or application. Current own titles, names and aliases match literal substrings with prefix bias; includes drafts, held edits and internal entities within management authority. No associated metadata/body matching or public-search fallback. Sections require explicit include flags; forbidden sections are omitted when another section is authorized. Returns lean name targets, with no content body or cover reads.",
 		Query: []httpapi.Param{httpapi.Text("q", "the partial name"), httpapi.List("content_kinds", "configured content kinds; all only when include_contents is explicitly true"),
 			httpapi.List("entity_kinds", "configured entity kinds; all only when include_entities is explicitly true"), httpapi.Bool("include_contents", "explicitly request authorized content targets"),

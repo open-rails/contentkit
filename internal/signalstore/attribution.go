@@ -25,6 +25,8 @@ import (
 // its clicks did not fit. Concatenating all pages at any size yields the same
 // rows once each. Erased subjects are excluded at read time.
 func (st *Store) Attribution(ctx context.Context, tenant string, opts signal.AttributionOptions) (signal.AttributionPage, error) {
+	ctx, cancel := readContext(ctx)
+	defer cancel()
 	var page signal.AttributionPage
 	if strings.TrimSpace(tenant) == "" {
 		return page, fmt.Errorf("signal: tenant is required")

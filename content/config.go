@@ -7,9 +7,10 @@ type Anonymous struct {
 	Comments bool `json:"comments"`
 	// Reactions: like and dislike works, posts and comments, keyed by IP.
 	Reactions bool `json:"reactions"`
-	// Votes: signed-out votes in multiple-choice polls are keyed by IP and
-	// deduplicated separately from signed-in votes. One person can vote once
-	// signed out and once signed in; a changing address (e.g. IPv6) votes again.
+	// Votes: signed-out votes in multiple-choice polls are keyed by IP (an
+	// IPv6 address by its /64) and deduplicated separately from signed-in
+	// votes. One person can vote once signed out and once signed in; a
+	// changing IPv4 address votes again.
 	Votes bool `json:"votes"`
 }
 

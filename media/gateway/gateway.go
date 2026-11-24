@@ -343,6 +343,11 @@ func (h *Handler) relay(w http.ResponseWriter, r *http.Request, key string, resp
 		cacheControl = "no-store" // a 412 or 416 answers this request, not the object
 	}
 	hdr.Set("Cache-Control", cacheControl)
+	if !public {
+		// Shared caches that ignore "private" (CDN rules) must not store a
+		// tokened answer for the next caller.
+		hdr.Set("CDN-Cache-Control", "no-store")
+	}
 	if dl != nil {
 		hdr.Set("Content-Disposition", layout.Disposition(*dl, resp.Header.Get("Content-Type")))
 	}
@@ -403,4 +408,5 @@ func securityHeaders(hdr http.Header) {
 	hdr.Set("Cross-Origin-Resource-Policy", "same-site")
 	hdr.Set("X-Content-Type-Options", "nosniff")
 	hdr.Set("Content-Security-Policy", "default-src 'none'; sandbox")
+	hdr.Set("Referrer-Policy", "no-referrer")
 }

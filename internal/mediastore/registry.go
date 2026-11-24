@@ -4,11 +4,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/url"
 	"slices"
 	"strings"
 
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/endpoint"
 	media "github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/layout"
 )
@@ -42,9 +42,12 @@ func NewRegistry(c media.Config, hooks Hooks) (*Registry, error) {
 		return nil, fmt.Errorf("media: invalid namespace %q", c.Namespace)
 	}
 	if c.BaseURL != "" {
-		u, err := url.Parse(c.BaseURL)
-		if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" || u.Path != "" || u.RawQuery != "" {
-			return nil, fmt.Errorf("media: BaseURL %q must be an http(s) origin", c.BaseURL)
+		u, err := endpoint.Secure(c.BaseURL)
+		if err != nil {
+			return nil, fmt.Errorf("media: BaseURL: %w", err)
+		}
+		if u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
+			return nil, fmt.Errorf("media: BaseURL %q must be an origin", c.BaseURL)
 		}
 	}
 	if c.Editor == (media.Image{}) {

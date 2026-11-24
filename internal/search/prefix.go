@@ -52,8 +52,8 @@ func NameSearchFrom(ctx context.Context, pool *pgxpool.Pool, query string, opts 
 
 func nameSearch(ctx context.Context, tx pgx.Tx, query string, opts Options, relation string) (Result, error) {
 	result := Result{Hits: []Hit{}}
-	if utf8.RuneCountInString(query) > 256 {
-		return result, fmt.Errorf("%w: keyword query exceeds 256 characters", ErrInvalidQuery)
+	if err := CheckQuery(query); err != nil {
+		return result, err
 	}
 	sqlLimit := min(MaxCandidateLimit, max(100, opts.Limit*8))
 	args := pgx.NamedArgs{"q": "", "contains": "", "limit": sqlLimit}
@@ -72,8 +72,8 @@ func nameSearch(ctx context.Context, tx pgx.Tx, query string, opts Options, rela
 	if len(tokens) == 0 {
 		return result, nil
 	}
-	if len(tokens) > 16 {
-		return result, fmt.Errorf("%w: keyword query exceeds 16 tokens", ErrInvalidQuery)
+	if err := checkTokens(tokens); err != nil {
+		return result, err
 	}
 	args["q"] = q
 	args["contains"] = literalSubstring(q)

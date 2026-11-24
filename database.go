@@ -70,6 +70,54 @@ func (e *Engine) configureStorage() error {
 			return err
 		}
 	}
+	return e.schemas().distinct()
+}
+
+// Schemas are the PostgreSQL schemas an engine owns. Catalog and Accounts
+// hold tables; River, MediaWorker and AccountWorker are River queues, each
+// elected and worked on its own. An unconfigured queue is "".
+type Schemas struct {
+	Catalog, River, Accounts, MediaWorker, AccountWorker string
+}
+
+// Schemas resolves c's schema names, defaults included, refusing names that
+// collide. A host sharing the database checks its own (its River schema,
+// AuthKit's) against them.
+func (c Config) Schemas() (Schemas, error) {
+	e := Engine{cfg: c}
+	if err := e.configureStorage(); err != nil {
+		return Schemas{}, err
+	}
+	return e.schemas(), nil
+}
+
+func (e *Engine) schemas() Schemas {
+	s := Schemas{Catalog: e.schema, River: e.riverSchema, Accounts: e.cfg.Accounts.Schema}
+	if e.cfg.Media != nil {
+		s.MediaWorker = e.cfg.Media.WorkerSchema
+	}
+	if a, ok := e.accountMediaStorage(); ok {
+		s.AccountWorker = a.WorkerSchema
+	}
+	return s
+}
+
+// distinct refuses a queue schema that is another schema: queues sharing one
+// share a River leader and each other's jobs. The catalog and account
+// tables may share a schema.
+func (s Schemas) distinct() error {
+	named := []struct{ name, schema string }{{"Database.Schema", s.Catalog}, {"Accounts.Schema", s.Accounts},
+		{"Database.RiverSchema", s.River}, {"Media.WorkerSchema", s.MediaWorker}, {"the account media queue", s.AccountWorker}}
+	for i, q := range named[2:] {
+		if q.schema == "" {
+			continue
+		}
+		for _, other := range named[:i+2] {
+			if other.schema == q.schema {
+				return fmt.Errorf("contentkit: %s and %s are both schema %q", other.name, q.name, q.schema)
+			}
+		}
+	}
 	return nil
 }
 
@@ -147,6 +195,15 @@ func MigrateClickHouse(ctx context.Context, pool *pgxpool.Pool, cfg Config) erro
 	}
 	if pool == nil || strings.TrimSpace(c.Addr) == "" || strings.TrimSpace(c.Database) == "" {
 		return errors.New("contentkit: ClickHouse migrations require a PostgreSQL ledger pool, address and database")
+	}
+	tlsConfig, err := c.tlsConfig()
+	if err != nil {
+		return err
+	}
+	if tlsConfig != nil {
+		// chmigrate dials Addr itself, without TLS: refuse rather than send
+		// the password in clear.
+		return errors.New("contentkit: ClickHouse migrations cannot use TLS: run MigrateClickHouse with a configuration naming a private plain listener")
 	}
 	admin, err := clickhouse.Open(&clickhouse.Options{Addr: []string{c.Addr}, Auth: clickhouse.Auth{Database: "default", Username: c.Username, Password: c.Password}})
 	if err != nil {

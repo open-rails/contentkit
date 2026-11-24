@@ -39,10 +39,10 @@ var routes = []httpapi.Route[*Store]{
 		Serve: httpapi.H((*Store).handleEvents)},
 
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/catalog/totals", Resource: "catalog", Auth: httpapi.Open,
-		Doc: "Each kind's content, in all and per language: how many items an anonymous visitor's listing shows and opens, and how many each tier's holders open. The request's site scope applies. Cacheable for ten minutes.",
+		Doc: "Each kind's content, in all and per language: how many items an anonymous visitor's listing shows and opens, and how many each tier's holders open. The request's site scope applies.",
 		Query: []httpapi.Param{httpapi.List("kinds", "content kinds to total; every kind by default"),
 			httpapi.List("languages", "languages to break the totals down by; every counted language by default")},
-		Responses: []httpapi.Reply{httpapi.OK(catalog.Totals{})}, Errors: []string{httpapi.CodeUnavailable}},
+		Responses: []httpapi.Reply{httpapi.OK(catalog.Totals{})}, Errors: []string{httpapi.CodeUnavailable}, Cache: httpapi.Cache{MaxAge: 10 * time.Minute}},
 		Serve: httpapi.H((*Store).handleTotals)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/contents/{id}", Resource: "contents", Auth: httpapi.Public,
 		Doc:   "A content item: its text in the viewer's language, live versions with their segments and access, groups and attributes; the body only to viewers who open a version, everyone else its description and the paywall decision. Editors see every version and every language.",
@@ -187,7 +187,7 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func writeErr(w http.ResponseWriter, err error) {
 	status, code, msg := classify(err)
-	if sw, ok := w.(*statusWriter); ok {
+	if sw, ok := httpapi.Writer[*statusWriter](w); ok {
 		sw.cause = err
 	}
 	writeJSON(w, status, errorBody{Error: msg, Code: code})
@@ -352,12 +352,11 @@ func (s *Store) handleTotals(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, ErrInvalid):
 		writeErr(w, err)
 	case err != nil:
-		if sw, ok := w.(*statusWriter); ok {
+		if sw, ok := httpapi.Writer[*statusWriter](w); ok {
 			sw.cause = err
 		}
 		writeJSON(w, http.StatusServiceUnavailable, errorBody{Error: "catalog totals are unavailable", Code: httpapi.CodeUnavailable})
 	default:
-		w.Header().Set("Cache-Control", "public, max-age=600")
 		writeJSON(w, http.StatusOK, t)
 	}
 }

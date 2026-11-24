@@ -135,6 +135,10 @@ func serveProgress(w http.ResponseWriter, req *http.Request, ref contentref.Cont
 	w.Header().Set("Cache-Control", "private, no-store")
 	w.Header().Set("X-Accel-Buffering", "no")
 	rc := http.NewResponseController(w)
+	// The request is read: a server's ReadTimeout must not end the stream.
+	if err := rc.SetReadDeadline(time.Time{}); err != nil && !errors.Is(err, http.ErrNotSupported) {
+		return err
+	}
 	write := func(name, id string, data any) error {
 		body, err := json.Marshal(data)
 		if err != nil {

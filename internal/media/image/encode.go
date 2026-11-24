@@ -68,9 +68,9 @@ type rules struct {
 }
 
 // source is a probed upload: one frame's displayed size (EXIF orientation
-// applied to stills) and its frame count.
+// applied to stills), its frame count and a still's EXIF orientation.
 type source struct {
-	w, h, frames int
+	w, h, frames, orientation int
 }
 
 func (s source) dims() media.Dims { return media.Dims{W: s.w, H: s.h} }
@@ -131,8 +131,11 @@ func probe(src []byte, contentType string, r rules) (source, error) {
 		return source{}, permanentError{&media.ImageError{Code: media.CodeImageTooLarge, Message: msg,
 			Details: media.ErrorDetails{Width: s.w, Height: s.h, Frames: s.frames, MaxPixels: r.maxPixels}}}
 	}
-	if o := img.Orientation(); s.frames == 1 && o >= 5 && o <= 8 {
-		s.w, s.h = s.h, s.w
+	if o := img.Orientation(); s.frames == 1 && o >= 2 && o <= 8 {
+		s.orientation = o
+		if o >= 5 {
+			s.w, s.h = s.h, s.w
+		}
 	}
 	return s, nil
 }
@@ -281,24 +284,52 @@ func webp(img *vips.ImageRef, quality int) ([]byte, media.Dims, error) {
 	return out, media.Dims{W: img.Width(), H: img.PageHeight()}, nil
 }
 
-// box is s's box: cover fills Width×Height and crops the centre; inside
-// fits within it (a zero side unbounded) and never enlarges.
-func box(s media.Image) (w, h int, crop vips.Interesting, size vips.Size) {
+// fitted is the size s renders a w×h frame at; nothing is enlarged. Inside
+// fits the box (a zero side unbounded). Cover fills it, cropping the centre,
+// or, from a frame smaller than the box, is the frame's largest centred crop
+// at the box's aspect.
+func fitted(s media.Image, w, h int) (int, int) {
 	if s.Fit == media.FitCover && s.Width > 0 && s.Height > 0 {
-		return s.Width, s.Height, vips.InterestingCentre, vips.SizeBoth
+		switch {
+		case w >= s.Width && h >= s.Height:
+			return s.Width, s.Height
+		case w*s.Height > h*s.Width:
+			return max(1, min(w, (h*s.Width+s.Height/2)/s.Height)), h
+		default:
+			return w, max(1, min(h, (w*s.Height+s.Width/2)/s.Width))
+		}
 	}
-	return orUnbounded(s.Width), orUnbounded(s.Height), vips.InterestingNone, vips.SizeDown
+	bw, bh := orUnbounded(s.Width), orUnbounded(s.Height)
+	switch {
+	case w <= bw && h <= bh:
+		return w, h
+	case w*bh > h*bw:
+		return bw, max(1, (h*bw+w/2)/w)
+	default:
+		return max(1, (w*bh+h/2)/h), bh
+	}
+}
+
+// resize puts one frame into s's box (fitted).
+func resize(f *vips.ImageRef, s media.Image) error {
+	if s.Fit != media.FitCover || s.Width <= 0 || s.Height <= 0 {
+		return f.ThumbnailWithSize(orUnbounded(s.Width), orUnbounded(s.Height), vips.InterestingNone, vips.SizeDown)
+	}
+	w, h := f.Width(), f.Height()
+	if tw, th := fitted(s, w, h); tw < s.Width || th < s.Height {
+		return f.ExtractArea((w-tw)/2, (h-th)/2, tw, th)
+	}
+	return f.ThumbnailWithSize(s.Width, s.Height, vips.InterestingCentre, vips.SizeDown)
 }
 
 // transform is every rendering's one pipeline: each frame through edit,
 // into s's box (a zero box keeps its size). The result replaces img, which
 // it closes on error.
 func transform(img *vips.ImageRef, edit *media.Edit, s media.Image) (*vips.ImageRef, error) {
-	w, h, crop, size := box(s)
 	out, err := eachFrame(img, func(f *vips.ImageRef) error {
 		err := apply(f, edit)
 		if err == nil && (s.Width > 0 || s.Height > 0) {
-			err = f.ThumbnailWithSize(w, h, crop, size)
+			err = resize(f, s)
 		}
 		return err
 	})
@@ -311,31 +342,106 @@ func transform(img *vips.ImageRef, edit *media.Edit, s media.Image) (*vips.Image
 	return out, nil
 }
 
-// encode renders src through edit per spec (nil edit: the whole source),
-// shrinking an unedited still on load. Source-format no-ops retain its bytes.
-func encode(src []byte, contentType string, s media.Image, edit *media.Edit) ([]byte, media.Dims, error) {
-	if s.Format == media.ImageFormatSource && edit.Normalize() == nil && s.Fit == media.FitInside && s.Aspect.Native() {
-		img, err := decode(src, contentType)
+// output refuses a rendering of info's frames at w×h when, every frame
+// together, it would pass r's pixels: checked before anything decodes.
+func (r rules) output(info source, w, h int) error {
+	if info.frames*w*h <= r.maxPixels {
+		return nil
+	}
+	return permanentError{&media.ImageError{Code: media.CodeImageTooLarge,
+		Message: fmt.Sprintf("renderings may have at most %d pixels over all frames; this one would be %d frames of %dx%d", r.maxPixels, info.frames, w, h),
+		Details: media.ErrorDetails{Width: w, Height: h, Frames: info.frames, MaxPixels: r.maxPixels}}}
+}
+
+// rendered is the size s renders info through edit at.
+func rendered(info source, edit *media.Edit, s media.Image) (int, int) {
+	w, h := edit.Size(info.w, info.h)
+	return fitted(s, w, h)
+}
+
+// load decodes src for renderings needing at most need of the edited image:
+// a JPEG or WebP still decodes at a fraction (shrink-on-load) still over
+// need, its edit scaled to match; anything else opens whole.
+func load(src []byte, contentType string, info source, edit *media.Edit, need media.Dims) (*vips.ImageRef, *media.Edit, error) {
+	ew, eh := edit.Size(info.w, info.h)
+	if info.frames != 1 || need.W <= 0 || need.H <= 0 || ew <= 0 || eh <= 0 {
+		img, err := open(src, contentType)
+		return img, edit, err
+	}
+	// Four edited pixels of headroom survive the load's and crop's rounding.
+	scale := min(1, max(float64(need.W)/float64(ew), float64(need.H)/float64(eh))+4/float64(min(ew, eh)))
+	p := vips.NewImportParams()
+	switch {
+	case scale > 0.5:
+		img, err := open(src, contentType)
+		return img, edit, err
+	case contentType == "image/jpeg":
+		f := 2 // libjpeg shrinks by 2, 4 or 8
+		for f < 8 && scale*float64(2*f) <= 1 {
+			f *= 2
+		}
+		p.JpegShrinkFactor.Set(f)
+	case contentType == "image/webp":
+		p.WebpScaleFactor.Set(scale)
+	default:
+		img, err := open(src, contentType)
+		return img, edit, err
+	}
+	img, err := vips.LoadImageFromBuffer(src, p)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := img.AutoRotate(); err != nil {
+		img.Close()
+		return nil, nil, err
+	}
+	return img, scaleEdit(edit, info, img.Width(), img.Height()), nil
+}
+
+// scaleEdit is e for its source shrunk from info's size to w×h.
+func scaleEdit(e *media.Edit, info source, w, h int) *media.Edit {
+	if e = e.Normalize(); e == nil || e.Crop == nil {
+		return e
+	}
+	c := *e.Crop
+	x0, y0 := c.X*w/info.w, c.Y*h/info.h
+	x1, y1 := min(w, (c.X+c.W)*w/info.w), min(h, (c.Y+c.H)*h/info.h)
+	return &media.Edit{Rotate: e.Rotate, Crop: &media.Crop{X: x0, Y: y0, W: max(1, x1-x0), H: max(1, y1-y0)}}
+}
+
+// encode renders src (probed as info) through edit per spec (nil edit: the
+// whole source), shrinking a still on load. A source-format no-op copies its
+// bytes without their metadata (stripMetadata), unless s keeps it.
+func encode(src []byte, contentType string, info source, s media.Image, edit *media.Edit, r rules) ([]byte, media.Dims, error) {
+	if s.Format == media.ImageFormatSource && edit.Normalize() == nil && s.Fit == media.FitInside && s.Aspect.Native() &&
+		(s.Width == 0 || info.w <= s.Width) && (s.Height == 0 || info.h <= s.Height) {
+		if s.KeepMetadata {
+			return src, info.dims(), nil
+		}
+		out, err := stripMetadata(src, contentType, info.orientation)
 		if err != nil {
 			return nil, media.Dims{}, permanentError{err}
 		}
-		w, h := img.Width(), img.PageHeight()
-		if frames(img) == 1 && img.Orientation() >= 5 && img.Orientation() <= 8 {
-			w, h = h, w
-		}
-		img.Close()
-		if (s.Width == 0 || w <= s.Width) && (s.Height == 0 || h <= s.Height) {
-			return src, media.Dims{W: w, H: h}, nil
-		}
+		return out, info.dims(), nil
+	}
+	w, h := rendered(info, edit, s)
+	if err := r.output(info, w, h); err != nil {
+		return nil, media.Dims{}, err
 	}
 	var img *vips.ImageRef
 	var err error
-	if edit == nil && (s.Width > 0 || s.Height > 0) && !animated[contentType] {
-		w, h, crop, size := box(s)
-		img, err = vips.NewThumbnailWithSizeFromBuffer(src, w, h, crop, size)
+	if edit.Normalize() == nil && info.frames == 1 && (s.Width > 0 || s.Height > 0) {
+		// One sequential pass straight to the rendered size.
+		crop := vips.InterestingNone
+		if s.Fit == media.FitCover && s.Width > 0 && s.Height > 0 {
+			crop = vips.InterestingCentre
+		} else {
+			w, h = orUnbounded(s.Width), orUnbounded(s.Height)
+		}
+		img, err = vips.NewThumbnailWithSizeFromBuffer(src, w, h, crop, vips.SizeDown)
 		s.Width, s.Height = 0, 0 // sized
 	} else {
-		img, err = open(src, contentType)
+		img, edit, err = load(src, contentType, info, edit, media.Dims{W: w, H: h})
 	}
 	if err != nil {
 		return nil, media.Dims{}, permanentError{err}
@@ -410,13 +516,26 @@ func encodePublic(src []byte, contentType string, p *media.Public, names []strin
 		return nil, dims, permanentError{fmt.Errorf("edit: %w", err)}
 	}
 	if len(p.Widths) == 0 {
-		out, d, err := encode(src, contentType, p.Image, edit)
+		out, d, err := encode(src, contentType, info, p.Image, edit, r)
 		if err != nil {
 			return nil, dims, err
 		}
 		return map[string]rendition{names[0]: {out, d}}, dims, nil
 	}
-	img, err := open(src, contentType)
+	ew, eh := edit.Size(dims.W, dims.H)
+	edited := media.Dims{W: ew, H: eh}
+	// Every rung's box and size is known before anything decodes.
+	specs, sizes := make([]media.Image, len(p.Widths)), make([]media.Dims, len(p.Widths))
+	var need media.Dims
+	for i, rung := range p.Widths {
+		specs[i] = atWidth(p.Image, rung, edited)
+		w, h := fitted(specs[i], ew, eh)
+		if err := r.output(info, w, h); err != nil {
+			return nil, dims, err
+		}
+		sizes[i], need = media.Dims{W: w, H: h}, media.Dims{W: max(need.W, w), H: max(need.H, h)}
+	}
+	img, edit, err := load(src, contentType, info, edit, need)
 	if err != nil {
 		return nil, dims, permanentError{err}
 	}
@@ -424,13 +543,11 @@ func encodePublic(src []byte, contentType string, p *media.Public, names []strin
 		return nil, dims, err
 	}
 	defer img.Close()
-	edited := media.Dims{W: img.Width(), H: img.PageHeight()}
 	outs := map[string]rendition{}
-	var last media.Image
-	for i, rung := range p.Widths {
-		s := atWidth(p.Image, rung, edited)
-		if i > 0 && s == last {
-			outs[names[i]] = outs[names[i-1]] // widths past the edited width share its bytes
+	for i := range p.Widths {
+		s := specs[i]
+		if i > 0 && sizes[i] == sizes[i-1] && s.Quality == specs[i-1].Quality {
+			outs[names[i]] = outs[names[i-1]] // widths past the edited image share its bytes
 			continue
 		}
 		out, err := img.Copy()
@@ -444,7 +561,7 @@ func encodePublic(src []byte, contentType string, p *media.Public, names []strin
 		if err != nil {
 			return nil, dims, err
 		}
-		outs[names[i]], last = rendition{b, d}, s
+		outs[names[i]] = rendition{b, d}
 	}
 	return outs, dims, nil
 }

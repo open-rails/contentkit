@@ -189,7 +189,12 @@ func (e *Engine) connectSignals(ctx context.Context, host signal.Conn) (signal.C
 	if conn == nil {
 		e.chMu.Lock()
 		if e.ownCH == nil {
-			own, err := clickhouse.Open(&clickhouse.Options{Addr: []string{c.Addr},
+			tlsConfig, err := c.tlsConfig()
+			if err != nil {
+				e.chMu.Unlock()
+				return nil, err
+			}
+			own, err := clickhouse.Open(&clickhouse.Options{Addr: []string{c.Addr}, TLS: tlsConfig,
 				Auth: clickhouse.Auth{Database: c.Database, Username: c.Username, Password: c.Password}})
 			if err != nil {
 				e.chMu.Unlock()

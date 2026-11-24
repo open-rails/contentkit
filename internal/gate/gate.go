@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -21,6 +22,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/internal/httpapi"
+	"github.com/open-rails/contentkit/internal/locationpolicy"
 	"github.com/open-rails/contentkit/internal/readerprefs"
 )
 
@@ -203,6 +205,12 @@ func Domain(ctx context.Context) string {
 	return s
 }
 
+// InRequest reports whether ctx is a request the gate admitted.
+func InRequest(ctx context.Context) bool {
+	_, ok := ctx.Value(actorKey{}).(access.Actor)
+	return ok
+}
+
 // Actor is the actor the gate bound to ctx; anonymous when none was.
 func Actor(ctx context.Context) access.Actor {
 	if a, ok := ctx.Value(actorKey{}).(access.Actor); ok {
@@ -255,20 +263,86 @@ func (g *Gate) Guard(s httpapi.Spec, next http.Handler) http.Handler {
 		if a.Anonymous {
 			ctx = readerprefs.WithHeader(ctx, r.Header.Values(readerprefs.Header))
 		}
-		if s.Auth == httpapi.Public && (r.Method == http.MethodGet || r.Method == http.MethodHead) {
-			w.Header().Add("Vary", readerprefs.Header)
+		cw := &cacheWriter{ResponseWriter: w, ctx: ctx, shared: s.Cache.Public() && a.Anonymous && !g.presented(r)}
+		directive := httpapi.NoStore
+		if cw.shared {
+			directive = s.Cache.Directive()
 		}
-		next.ServeHTTP(w, r.WithContext(ctx))
+		w.Header().Set("Cache-Control", directive)
+		for _, h := range s.Cache.Vary {
+			w.Header().Add("Vary", h)
+		}
+		next.ServeHTTP(cw, r.WithContext(ctx))
+		if !cw.wrote {
+			cw.decide(http.StatusOK)
+		}
 	})
 }
+
+// cacheWriter settles the route's caching when the answer starts: shared
+// caches keep only a success the visitor's location did not shape. A
+// handler may set a stricter directive; a shared one it set without the
+// route declaring it is refused.
+type cacheWriter struct {
+	http.ResponseWriter
+	ctx context.Context
+	// shared: the route is cacheable and the request anonymous.
+	shared bool
+	wrote  bool
+}
+
+func (w *cacheWriter) decide(status int) {
+	w.wrote = true
+	h := w.Header()
+	cc := strings.ToLower(h.Get("Cache-Control"))
+	if strings.Contains(cc, "private") || strings.Contains(cc, "no-store") {
+		return
+	}
+	if w.shared && (status >= 200 && status < 300 || status == http.StatusNotModified) && !locationpolicy.Varies(w.ctx) {
+		return
+	}
+	h.Set("Cache-Control", httpapi.NoStore)
+}
+
+func (w *cacheWriter) WriteHeader(status int) {
+	if !w.wrote {
+		w.decide(status)
+	}
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *cacheWriter) Write(b []byte) (int, error) {
+	if !w.wrote {
+		w.WriteHeader(http.StatusOK)
+	}
+	return w.ResponseWriter.Write(b)
+}
+
+func (w *cacheWriter) ReadFrom(r io.Reader) (int64, error) {
+	if !w.wrote {
+		w.WriteHeader(http.StatusOK)
+	}
+	return io.Copy(w.ResponseWriter, r)
+}
+
+func (w *cacheWriter) FlushError() error {
+	if !w.wrote {
+		w.WriteHeader(http.StatusOK)
+	}
+	return http.NewResponseController(w.ResponseWriter).Flush()
+}
+
+func (w *cacheWriter) Flush() { _ = w.FlushError() }
+
+func (w *cacheWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
 // anonymous is a caller without a credential, keyed by its address.
 func anonymous(r *http.Request) access.Actor {
 	return access.Actor{Anonymous: true, IP: clientIP(r)}
 }
 
-// clientIP is the request's peer address: the host's trusted proxy, if any,
-// rewrote RemoteAddr to the client's.
+// clientIP is the client's address: RemoteAddr, which the engine's dispatch
+// resolved behind Config.TrustedProxies or the host rewrote.
 func clientIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {

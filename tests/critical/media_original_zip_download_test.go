@@ -138,7 +138,7 @@ func TestOriginalZIPCannotBypassChapterRelease(t *testing.T) {
 	must(t, err)
 	uploads, err := mediastore.NewUploads(mediastore.UploadOptions{Store: storage.store, Manifests: jobs.Manifests(), Tickets: &ring})
 	must(t, err)
-	delivery, err := mediastore.NewReader(mediastore.ReaderOptions{Manifests: jobs.Manifests(), Delivery: media.Delivery{Mode: media.DeliverURL, SigningKey: storage.key}})
+	delivery, err := mediastore.NewReader(mediastore.ReaderOptions{Manifests: jobs.Manifests(), Delivery: media.Delivery{Mode: media.DeliverURL, Keys: deliveryKeys(t, storage.key)}})
 	must(t, err)
 	must(t, service.Bind(versionstore.Media{Manifests: jobs.Manifests(), Uploads: uploads, Jobs: jobs, Reader: delivery}))
 	raw, err := service.Download(t.Context(), access.Actor{Anonymous: true, IP: "127.0.0.1"}, versions.Target{Content: ref.ID, Version: ref.Version})

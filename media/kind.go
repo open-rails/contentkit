@@ -25,6 +25,11 @@ func (h *HLS) Aspects() (lo, hi float64) {
 // their libvips loaders are blocked as untrusted.
 var ImageTypes = []string{"image/jpeg", "image/png", "image/webp", "image/gif", "image/avif", "image/heic", "image/heif", "image/tiff"}
 
+// StrippableTypes are the image types whose metadata a source-format copy
+// drops without re-encoding; a source-format preset from any other type must
+// set Image.KeepMetadata.
+var StrippableTypes = []string{"image/jpeg", "image/png", "image/webp", "image/gif"}
+
 const (
 	MetaLang = "lang" // subtitles and audio: BCP 47
 )

@@ -77,6 +77,10 @@ can wait up to one slice behind a video still encoding its own. It is capped at 
 for the last chunk it starts. Shutdown ends a slice after its current chunk.
 The default, 0, yields after every chunk.
 
+## Scratch disk
+
+Jobs write scratch files under `TempDir` (stock workers: `MEDIA_WORKER_TMP`, default the system temporary directory). Put it on disk, not a memory-backed tmpfs, and size it for every job that can run at once in one process: `MEDIA_WORKER_INGEST_CONCURRENCY` (default 2) times the largest accepted ZIP upload (`MaxBytes` of its `Publish.Import` upload) plus one page (`MaxBytes` of its `Publish.Pages` upload), and `MEDIA_WORKER_CONCURRENCY` (default 1) times the largest video source plus its encoded outputs. A ZIP is validated in one streaming pass and its pages are then extracted again, one at a time, as each batch is written, so its expanded size (up to 2 GiB) never lands on disk.
+
 ## Adoption
 
 Use matching host libraries, media-worker images and KEDA triggers. Configure
