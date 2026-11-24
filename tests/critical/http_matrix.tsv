@@ -179,3 +179,4 @@ CK-API-197	DELETE	/v1/moderation/location-rules/{id}	staff	root:locations:write	
 CK-API-198	GET	/v1/moderation/location-rules/history	staff	root:locations:write	included-critical functionality and security
 CK-API-199	GET	/v1/moderation/location-rules/{id}/history	staff	root:locations:write	included-critical functionality and security
 CK-API-200	GET	/v1/moderation/location-rules/check	staff	root:locations:write	included-critical functionality and security
+CK-API-201	GET	/v1/accounts/{id}/erasure	staff	root:accounts:lifecycle	included-critical functionality and security

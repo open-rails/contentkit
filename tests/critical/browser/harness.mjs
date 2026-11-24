@@ -5,7 +5,7 @@ import { createContentKitClient, resolveInlineImageReferences } from "../../../s
 import { ContentKitProvider } from "../../../sdk/ui/dist/react/provider.js";
 import { useContentDetail } from "../../../sdk/ui/dist/react/detail.js";
 import { useFavorite } from "../../../sdk/ui/dist/react/engagement.js";
-import { ChannelFeed, RepostButton, ContentEditor, PollEditor } from "../../../sdk/ui/dist/index.js";
+import { ChannelFeed, Comments, RepostButton, ContentEditor, PollEditor } from "../../../sdk/ui/dist/index.js";
 
 let fixture, bearer, currentViewer, client, root;
 const target = () => ({ type: "contents", id: fixture.item });
@@ -26,6 +26,11 @@ function render() {
 window.critical = {
   initialize(input) { fixture=input; bearer=input.aliceToken; currentViewer=input.alice; client=createContentKitClient({baseUrl:"/content",token:()=>bearer}); window.client=client; },
   mount() { render(); },
+  postComment(body) { return client.comments.create(target(), { body, language: "en" }); },
+  mountComments() {
+    root ??= createRoot(document.querySelector("#root"));
+    root.render(React.createElement(ContentKitProvider, { client, viewer: currentViewer, language: "en" }, React.createElement(Comments, { item: target(), language: "en" })));
+  },
   mountPollEditor() {
     root ??= createRoot(document.querySelector("#root"));
     root.render(React.createElement(ContentKitProvider, { client, viewer: currentViewer, language: "en" }, React.createElement(PollEditor, { poll: fixture.poll })));
