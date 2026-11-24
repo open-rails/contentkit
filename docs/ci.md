@@ -37,3 +37,11 @@ Image-definition changes also select nonpublishing image builds. Diff or source-
 Go package shards, nested modules, native media and SDK/browser tests keep their existing commands and assertions. Whenever the critical suite runs, `Hosts link no media codecs` also builds every host-importable package of the root, server and adapter modules with `CGO_ENABLED=0` and refuses any that depends on `media/image`, `media/video`, `media/worker` or `cmd/media-worker`. Reusable leaf workflows have no independent automatic PR/master triggers. `CI` and `full` manual requests select every suite; individual media/UI workflows remain available for explicit diagnosis. Test selections are documented in the run summary.
 
 Version tags publish artifacts from a commit belonging to master. A UI prerelease tag may instead name an unmerged commit whose CI run passed the critical suite and `CI Gate`; a light run does not qualify it. npm builds and verifies the packed exports/types/styles, including matching wildcard export conditions, without repeating source unit tests. Native image builds remain artifact qualification. A package release does not itself deploy a consuming application.
+
+## Dependencies
+
+Run [`scripts/deps`](../scripts/deps) when a release candidate is cut. It lists the repository's open advisories by manifest and package and exits 1 when a fix is published. Submit the updates as one pull request into the release candidate. On the candidate's run into `master`, `Required Security` runs govulncheck over every module and blocks a reachable vulnerability that has a fix; the advisory feed also covers code that is not reached and development dependencies.
+
+Every module states `go` (the floor for consumers) and `toolchain` (the patched release that builds and scans use). The six modules and the image Go stages move in step. A dependency bump goes into every module that carries it, followed by `go mod tidy` and `go mod verify` in each. `authkit` and `openrails` follow their upstream releases, not this batch.
+
+A JavaScript bump updates `sdk/ui/pnpm-lock.yaml` with `pnpm install --lockfile-only --config.optimistic-repeat-install=false`. A patched transitive version that its parents' ranges allow but resolution keeps old goes in `overrides` in `sdk/ui/pnpm-workspace.yaml`. `minimumReleaseAge` holds back any release younger than a day.
