@@ -17,6 +17,10 @@ jobs:
     # network; the runner's Docker socket is mounted in.
     container:
       image: golang:1.26.11-trixie@sha256:cff05dd6b81c901f2e8249eb6f91c69a60451d0f12c26bfef08e476a85b32d4d
+    # A container job's run steps default to sh; the scripts are bash.
+    defaults:
+      run:
+        shell: bash
     # Leave room for cold race compilation and artifact collection around the
     # suite's own bounded Go test timeout.
     timeout-minutes: 60

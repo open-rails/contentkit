@@ -120,6 +120,10 @@ jobs:
     # The worker's build image; native packages come from its Debian snapshot.
     container:
       image: golang:1.26.11-trixie@sha256:cff05dd6b81c901f2e8249eb6f91c69a60451d0f12c26bfef08e476a85b32d4d
+    # A container job's run steps default to sh; the scripts are bash.
+    defaults:
+      run:
+        shell: bash
     timeout-minutes: 30
     env:
       GOWORK: 'off'
@@ -142,6 +146,10 @@ jobs:
     # packages type-check against the worker's libvips.
     container:
       image: golang:1.26.11-trixie@sha256:cff05dd6b81c901f2e8249eb6f91c69a60451d0f12c26bfef08e476a85b32d4d
+    # A container job's run steps default to sh; the scripts are bash.
+    defaults:
+      run:
+        shell: bash
     timeout-minutes: 30
     env:
       GOWORK: 'off'
@@ -156,6 +164,11 @@ jobs:
         packages: libvips-dev
     - name: Go vulnerability analysis
       run: |
+        # server/ pins released versions; scan it against this checkout, as it
+        # is built. govulncheck takes no -modfile, and the checkout is disposable.
+        server_mod=$(bash .github/scripts/server-modfile.sh)
+        cp "$server_mod" server/go.mod
+        cp "${server_mod%.mod}.sum" server/go.sum
         status=0
         for module in . adapters/authkit adapters/openrails sdk/ui/e2e/server server tests/critical; do
           echo "::group::govulncheck $module"
