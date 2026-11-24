@@ -25,6 +25,7 @@ cases = [
     ("generated-doc", [("M", "docs/api/routes.md")], source),
     ("sdk-doc", [("M", "sdk/ui/README.md")], set()),
     ("worker-image", [("M", "media/worker/Dockerfile")], heavy),
+    ("worker-packages", [("M", "cmd/media-worker/debian-snapshot.sh")], heavy),
     ("deleted-doc", [("D", "README.md")], heavy),
     ("renamed-doc", [("R", "README.md")], heavy),
     ("mixed", [("M", "README.md"), ("M", "sdk/ui/src/client/client.ts")], source),

@@ -45,7 +45,7 @@ def select(changes):
         name = Path(path).name
         if (name in ("go.mod", "go.sum", "package.json", "pnpm-lock.yaml", "package-lock.json", "yarn.lock")
                 or path.startswith((".github/", "scripts/", "tools/"))
-                or name.startswith("Dockerfile") or path == ".dockerignore"):
+                or name.startswith("Dockerfile") or path in (".dockerignore", "cmd/media-worker/debian-snapshot.sh")):
             selected.update(full())
             reasons.append("dependency, CI or image-build input: " + path)
             continue

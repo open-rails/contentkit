@@ -35,7 +35,7 @@ while IFS= read -r dockerfile; do
 done < <(git ls-files '*Dockerfile*')
 while IFS=: read -r file line text; do
   [[ $text =~ @sha256:[0-9a-f]{64}([[:space:]]|$) ]] || refuse "$file:$line: image is not pinned by digest"
-done < <(grep -nH -E '^[[:space:]]*(-[[:space:]]+)?image:' "${workflows[@]}")
+done < <(grep -nH -E '^[[:space:]]*(-[[:space:]]+)?image:|^[[:space:]]*container:[[:space:]]*[^[:space:]#]' "${workflows[@]}")
 # BuildKit's own images: setup-buildx driver-opts image= and the SBOM generator=.
 while IFS=: read -r file line ref; do
   [[ $ref =~ @sha256:[0-9a-f]{64}$ ]] || refuse "$file:$line: $ref is not pinned by digest"

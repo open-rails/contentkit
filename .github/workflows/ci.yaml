@@ -117,6 +117,9 @@ jobs:
     needs: source
     if: needs.source.outputs.light == 'true'
     runs-on: ubuntu-24.04
+    # The worker's build image; native packages come from its Debian snapshot.
+    container:
+      image: golang:1.26.11-trixie@sha256:cff05dd6b81c901f2e8249eb6f91c69a60451d0f12c26bfef08e476a85b32d4d
     timeout-minutes: 30
     env:
       GOWORK: 'off'
@@ -126,17 +129,7 @@ jobs:
       with:
         ref: ${{ github.sha }}
         persist-credentials: false
-    - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
-      with:
-        go-version-file: tests/critical/go.mod
-        cache-dependency-path: |
-          go.sum
-          tests/critical/go.sum
-          server/go.sum
-          adapters/authkit/go.sum
-          adapters/openrails/go.sum
-    - name: Install native processing dependencies
-      uses: ./.github/actions/apt-install
+    - uses: ./.github/actions/native-setup
       with:
         packages: libvips-dev
     - run: bash .github/scripts/build-and-vet.sh
@@ -145,6 +138,10 @@ jobs:
     needs: source
     if: needs.source.outputs.security == 'true'
     runs-on: ubuntu-24.04
+    # The images' Go stage, so the scan sees the stdlib that ships; cgo
+    # packages type-check against the worker's libvips.
+    container:
+      image: golang:1.26.11-trixie@sha256:cff05dd6b81c901f2e8249eb6f91c69a60451d0f12c26bfef08e476a85b32d4d
     timeout-minutes: 30
     env:
       GOWORK: 'off'
@@ -154,20 +151,7 @@ jobs:
       with:
         ref: ${{ github.sha }}
         persist-credentials: false
-    - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
-      with:
-        # setup-go reads only the go line (consumers' floor); go then switches to
-        # each module's toolchain line, so the scan sees the stdlib that ships.
-        go-version-file: go.mod
-        cache-dependency-path: |
-          go.sum
-          adapters/authkit/go.sum
-          adapters/openrails/go.sum
-          sdk/ui/e2e/server/go.sum
-          server/go.sum
-          tests/critical/go.sum
-    - name: Install native processing dependencies
-      uses: ./.github/actions/apt-install
+    - uses: ./.github/actions/native-setup
       with:
         packages: libvips-dev
     - name: Go vulnerability analysis
