@@ -10,12 +10,14 @@ import (
 type DeliveryMode string
 
 const (
-	// DeliverCookie (default) sets the item cookie; URLs are plain.
+	// DeliverCookie sets the item cookie; URLs are plain. Production sites
+	// on a media subdomain use it, so tokens stay out of URLs.
 	DeliverCookie DeliveryMode = "cookie"
 )
 
 const (
-	// DeliverURL appends ?t= to every URL: apps and clients without cookies.
+	// DeliverURL (the default) appends ?t= to every URL: apps and clients
+	// without cookies.
 	DeliverURL DeliveryMode = "url"
 )
 

@@ -267,8 +267,8 @@ func anonymous(r *http.Request) access.Actor {
 	return access.Actor{Anonymous: true, IP: clientIP(r)}
 }
 
-// clientIP is the request's peer address: the host's trusted proxy, if any,
-// rewrote RemoteAddr to the client's.
+// clientIP is the client's address: RemoteAddr, which the engine's dispatch
+// resolved behind Config.TrustedProxies or the host rewrote.
 func clientIP(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {

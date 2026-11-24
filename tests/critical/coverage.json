@@ -2628,6 +2628,32 @@
       ]
     },
     {
+      "id": "CK-J02-S40",
+      "journey": "CK-J02",
+      "behavior": "Behind trusted proxies the forwarded client is the visitor; untrusted peers and malformed chains cannot choose it",
+      "status": "verified",
+      "evidence": [
+        "The standalone server trusting loopback applies a whole-site network rule to the client X-Forwarded-For or Forwarded names, right to left past trusted hops, never to an address the client prepends; a malformed chain or both headers are 400 invalid_request. The embedded mount trusting no proxy ignores the header.",
+        "Fails on the base, where every visitor is the proxy's address and no rule matches. Not yet an execution receipt; qualification runs the case."
+      ],
+      "cases": [
+        "TestStandaloneClientAddress/CK-J02-S40_a_trusted_proxy_names_the_client_and_nobody_else_can"
+      ]
+    },
+    {
+      "id": "CK-J02-S41",
+      "journey": "CK-J02",
+      "behavior": "An IPv6 /64 is one anonymous visitor for reactions and limits",
+      "status": "verified",
+      "evidence": [
+        "Anonymous likes from two addresses in one /64 count once and read back as the visitor's own; another /64 counts again; the reaction limit counts the /64, refusing its fourth reaction while another /64 and an IPv4 visitor still react.",
+        "Fails on the base, which keys each IPv6 address on its own. Not yet an execution receipt; qualification runs the case."
+      ],
+      "cases": [
+        "TestAnonymousIPv6Prefix/CK-J02-S41_an_IPv6_64_is_one_anonymous_visitor"
+      ]
+    },
+    {
       "id": "CK-J29-S09",
       "journey": "CK-J29",
       "behavior": "Editor and public detail switch exact independent version content while retaining navigation",
@@ -2746,6 +2772,60 @@
       ],
       "cases": [
         "TestServingAndWorkingProcesses/CK-J01-S09_api_process_enqueues_and_worker_process_works_jobs"
+      ]
+    },
+    {
+      "id": "CK-J01-S10",
+      "journey": "CK-J01",
+      "behavior": "The standalone server bounds request bodies and header blocks, keeps answers and event streams open past its read timeout, and marks every answer nosniff",
+      "status": "verified",
+      "evidence": [
+        "With a two-second read timeout a stalled request body is answered 400 within it, an 80 KiB header block is 431, a media event stream delivers its ten-second heartbeat, and health, API, unknown-route and unmounted answers carry X-Content-Type-Options: nosniff.",
+        "Fails on the base: the stalled body is never cut, the header block is accepted and no answer is nosniff. Not yet an execution receipt; qualification runs the case."
+      ],
+      "cases": [
+        "TestConfiguredStandaloneParity/CK-J01-S10_the_server_bounds_bodies_and_headers_keeps_streams_open_and_marks_nosniff"
+      ]
+    },
+    {
+      "id": "CK-J01-S11",
+      "journey": "CK-J01",
+      "behavior": "A panic while serving answers 500 internal_error over HTTP and through the in-process client, and serving continues; an empty create is 400",
+      "status": "verified",
+      "evidence": [
+        "A host BodyProcessor that panics makes a create 500 internal_error over HTTP (nosniff JSON) and an *Error through Engine.Client instead of crashing the caller; later creates and reads succeed. An empty or zero POST /v1/contents is 400 invalid_request.",
+        "Fails on the base: the HTTP connection aborts without a body and the in-process panic unwinds into the test. Not yet an execution receipt; qualification runs the cases."
+      ],
+      "cases": [
+        "TestFailureContainment/CK-J01-S11_a_panic_answers_500_over_HTTP_and_in_process_and_serving_continues",
+        "TestFailureContainment/CK-J01-S11_an_empty_create_is_400"
+      ]
+    },
+    {
+      "id": "CK-J01-S12",
+      "journey": "CK-J01",
+      "behavior": "Startup refuses shared queue schemas, plain-HTTP credential endpoints off loopback, IPv4-mapped trusted proxies and ClickHouse TLS it cannot honor",
+      "status": "verified",
+      "evidence": [
+        "The engine refuses River in the catalog or account schema, a mapped trusted-proxy prefix, a ClickHouse CA without TLS and TLS with embedded migrations; MigrateClickHouse refuses TLS; a plain-http media origin is refused; a plain-http Go client base sends nothing. The server refuses a plain-http OpenRails base and AuthKit schemas equal to the engine's, and accepts a loopback OpenRails base.",
+        "Fails on the base, which starts with each of these. Not yet an execution receipt; qualification runs the cases."
+      ],
+      "cases": [
+        "TestStartupRefusesUnsafeTransport/CK-J01-S12_the_engine_refuses_shared_queues_plain_credentials_and_bad_proxies",
+        "TestStartupRefusesUnsafeTransport/CK-J01-S12_the_server_refuses_plain_OpenRails_and_shared_schemas"
+      ]
+    },
+    {
+      "id": "CK-J01-S13",
+      "journey": "CK-J01",
+      "behavior": "Signal reads serving a request carry a deadline and a memory ceiling",
+      "status": "verified",
+      "evidence": [
+        "A public similar read through the configured standalone issues its co-engagement query with max_memory_usage 1 GiB and a max_execution_time from its ten-second deadline, as ClickHouse's own query log records.",
+        "Fails on the base, whose query carries neither. Not yet an execution receipt; qualification runs the case."
+      ],
+      "cases": [
+        "TestConfiguredStandaloneParity/CK-J01-S13_signal_reads_serving_a_request_carry_a_deadline_and_memory_ceiling"
       ]
     },
     {

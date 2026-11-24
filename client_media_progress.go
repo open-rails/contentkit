@@ -121,9 +121,13 @@ func streamInProcess(handler http.Handler, req *http.Request) (*http.Response, e
 	go func() {
 		defer close(done)
 		defer cancel()
-		defer writer.Close()
-		handler.ServeHTTP(record, req)
+		if err := serveRecovered(handler, record, req); err != nil {
+			record.fail(err)
+			_ = writer.CloseWithError(err)
+			return
+		}
 		record.WriteHeader(http.StatusOK)
+		_ = writer.Close()
 	}()
 	go func() {
 		select {
@@ -137,6 +141,10 @@ func streamInProcess(handler http.Handler, req *http.Request) (*http.Response, e
 		_ = body.Close()
 		return nil, req.Context().Err()
 	case <-ready:
+		if record.err != nil {
+			_ = body.Close()
+			return nil, record.err
+		}
 		return &http.Response{StatusCode: record.status, Header: record.header.Clone(), Body: &streamBody{ReadCloser: body, cancel: cancel}, Request: req}, nil
 	}
 }
@@ -147,11 +155,15 @@ type streamRecorder struct {
 	ready  chan struct{}
 	once   sync.Once
 	status int
+	err    error // the handler failed before answering
 }
 
 func (w *streamRecorder) Header() http.Header { return w.header }
 func (w *streamRecorder) WriteHeader(status int) {
 	w.once.Do(func() { w.status = status; close(w.ready) })
+}
+func (w *streamRecorder) fail(err error) {
+	w.once.Do(func() { w.err = err; close(w.ready) })
 }
 func (w *streamRecorder) Write(data []byte) (int, error) {
 	w.WriteHeader(200)

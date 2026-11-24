@@ -87,7 +87,7 @@ func newAvatarForward(e *Engine, deps Deps, kind media.Kind, a *AvatarsConfig) (
 	}
 	c := e.cfg.Media.CommitLimit
 	return &avatarForward{kind: kind.Name, primary: strings.TrimRight(a.Primary, "/"), key: a.Key, media: base,
-		gate: &gate.Gate{Auth: e.auth, Log: e.log}, client: &http.Client{Timeout: forwardTimeout}, log: e.log,
+		gate: &gate.Gate{Auth: e.auth, Log: e.log}, client: &http.Client{Timeout: forwardTimeout, CheckRedirect: noRedirects}, log: e.log,
 		commits: mediastore.NewCommitLimiter(mediastore.RateLimit{PerSecond: c.PerSecond, Burst: c.Burst, Disabled: c.Disabled, Redis: deps.Redis})}, nil
 }
 

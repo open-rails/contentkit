@@ -168,11 +168,11 @@ normalization and the editor's reversible [page review](docs/api/uploads.md#page
 | `staff` | a person or an application holding the route's permission, one of `access.Permissions()` (`root:<resource>:<action>`), in the Authenticator's root scope, by its `Verified.Can` (403 without it) |
 
 Refusals carry `auth.Refuse`'s status and `WWW-Authenticate`; an auth outage
-is 503. ContentKit names its staff permissions (`access.Permissions()`); the
+is 503, and any other panic while serving is 500 `internal_error`. ContentKit names its staff permissions (`access.Permissions()`); the
 host declares them in its auth's roles from those constants. They are
 root-wide; per-item rights (creators, primary-channel editors) are the catalog's. Behind a
-proxy, set `Request.RemoteAddr` to the client's address before the routes:
-anonymous reactions, votes and limits are keyed by it. No content kind may
+proxy, list it in `Config.TrustedProxies`, or set `Request.RemoteAddr` to the client's address before the routes:
+location rules and anonymous reactions, votes and limits are keyed by it ([client address](HOST_INTEGRATION.md#client-address)). No content kind may
 be named `media`, `codes`, `entities`, `contents`, `kinds`, `catalog` or `notifications`.
 
 Every route is declared once, in its module's route table

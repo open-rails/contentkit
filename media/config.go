@@ -28,6 +28,8 @@ type Config struct {
 	Scope layout.Scope `json:"scope,omitzero"`
 	// BaseURL is the site's media origin, e.g. "https://media.doujins.ai":
 	// every URL is {BaseURL}/v1/{namespace}/{kind}/{id}/{public|private}/{name}.
+	// It is https; plain http only for a loopback host, since item tokens
+	// travel to it.
 	BaseURL string `json:"base_url,omitempty"`
 	// Kinds are the app's kinds plus the shared kinds it imports.
 	Kinds []Kind `json:"kinds"`

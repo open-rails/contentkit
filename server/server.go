@@ -5,13 +5,18 @@
 package server
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
+	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -64,7 +69,16 @@ type Config struct {
 	DrainDelay time.Duration `yaml:"drain_delay"`
 	// ShutdownTimeout bounds finishing in-flight requests; 0 is 30s.
 	ShutdownTimeout time.Duration `yaml:"shutdown_timeout"`
+	// ReadTimeout bounds reading a request's body, from when its headers
+	// are read; 0 is 60s. Once the body is read nothing bounds the answer,
+	// so event streams and archive downloads run as long as they need.
+	ReadTimeout time.Duration `yaml:"read_timeout"`
+	// IdleTimeout bounds a kept-alive connection between requests; 0 is 120s.
+	IdleTimeout time.Duration `yaml:"idle_timeout"`
 }
+
+// maxHeaderBytes caps a request's header block.
+const maxHeaderBytes = 64 << 10
 
 // OpenRailsConfig is the OpenRails server holding the site's merchant.
 type OpenRailsConfig struct {
@@ -147,6 +161,9 @@ func New(ctx context.Context, cfg Config, d Deps) (_ *Server, err error) {
 	if err := validateAuthorizationConfig(cfg, ak); err != nil {
 		return nil, err
 	}
+	if err := distinctSchemas(cfg.Engine, ak.Database); err != nil {
+		return nil, err
+	}
 	ak.Roles = serverRoles(cfg.Engine)
 	if s.auth, err = authkit.New(ctx, ak, authkit.Deps{Postgres: d.Postgres, Redis: d.Redis}); err != nil {
 		return nil, fmt.Errorf("server: AuthKit: %w", err)
@@ -157,6 +174,9 @@ func New(ctx context.Context, cfg Config, d Deps) (_ *Server, err error) {
 		return nil, err
 	}
 	if cfg.OpenRails.BaseURL != "" {
+		if err := secureEndpoint(cfg.OpenRails.BaseURL); err != nil {
+			return nil, fmt.Errorf("server: openrails.base_url: %w", err)
+		}
 		billing, err := openrails.NewRemoteMerchant(cfg.OpenRails.BaseURL, openrails.RemoteCredential{APIKey: cfg.OpenRails.APIKey})
 		if err != nil {
 			return nil, fmt.Errorf("server: OpenRails: %w", err)
@@ -193,8 +213,77 @@ func New(ctx context.Context, cfg Config, d Deps) (_ *Server, err error) {
 	for _, r := range routes {
 		mux.Handle(strings.TrimSpace(r.Method+" "+r.Path), r.Handler)
 	}
-	s.handler = mux
+	read := cmp.Or(cfg.ReadTimeout, 60*time.Second)
+	s.handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		if r.Body != nil && r.Body != http.NoBody {
+			rc := http.NewResponseController(w)
+			_ = rc.SetReadDeadline(time.Now().Add(read))
+			r.Body = &boundedBody{ReadCloser: r.Body, done: func() { _ = rc.SetReadDeadline(time.Time{}) }}
+		}
+		mux.ServeHTTP(w, r)
+	})
 	return s, nil
+}
+
+// boundedBody lifts the read deadline once the body is read or closed.
+type boundedBody struct {
+	io.ReadCloser
+	once sync.Once
+	done func()
+}
+
+func (b *boundedBody) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	if err != nil {
+		b.once.Do(b.done)
+	}
+	return n, err
+}
+
+func (b *boundedBody) Close() error {
+	b.once.Do(b.done)
+	return b.ReadCloser.Close()
+}
+
+// distinctSchemas refuses an AuthKit schema that is one of the engine's: they
+// would share tables or a River leader.
+func distinctSchemas(engine contentkit.Config, auth authkit.DatabaseConfig) error {
+	s, err := engine.Schemas()
+	if err != nil {
+		return err
+	}
+	if auth.Schema == auth.RiverSchema {
+		return fmt.Errorf("server: auth.database.schema and river_schema are both %q", auth.Schema)
+	}
+	for _, a := range []struct{ name, schema string }{{"auth.database.schema", auth.Schema}, {"auth.database.river_schema", auth.RiverSchema}} {
+		for _, e := range []struct{ name, schema string }{{"engine.database.schema", s.Catalog}, {"engine.database.river_schema", s.River},
+			{"engine.accounts.schema", s.Accounts}, {"engine.media.worker_schema", s.MediaWorker}, {"the account media queue", s.AccountWorker}} {
+			if e.schema == a.schema {
+				return fmt.Errorf("server: %s and %s are both %q", a.name, e.name, a.schema)
+			}
+		}
+	}
+	return nil
+}
+
+// secureEndpoint refuses a plain http URL off loopback: the API key would
+// cross in clear.
+func secureEndpoint(raw string) error {
+	u, err := url.Parse(raw)
+	switch {
+	case err != nil || u.Host == "":
+		return fmt.Errorf("%q is not an absolute URL", raw)
+	case u.Scheme == "https":
+		return nil
+	case u.Scheme == "http":
+		host := u.Hostname()
+		if addr, err := netip.ParseAddr(host); err == nil && addr.Unmap().IsLoopback() || strings.EqualFold(host, "localhost") {
+			return nil
+		}
+		return fmt.Errorf("%q is plain http; use https (http only for loopback)", raw)
+	}
+	return fmt.Errorf("%q is not an http(s) URL", raw)
 }
 
 // Reconcile repairs the engine's derived catalog state (Engine.Reconcile).
@@ -244,7 +333,10 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 		_ = ln.Close()
 		return err
 	}
-	srv := &http.Server{Handler: s.handler, ReadHeaderTimeout: 10 * time.Second}
+	// No server-wide ReadTimeout: it would also cancel a handler still
+	// answering after it, so Handler bounds body reads instead.
+	srv := &http.Server{Handler: s.handler, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: cmp.Or(s.cfg.IdleTimeout, 120*time.Second),
+		MaxHeaderBytes: maxHeaderBytes, ErrorLog: slog.NewLogLogger(s.log.Handler(), slog.LevelWarn)}
 	served := make(chan error, 1)
 	go func() { served <- srv.Serve(ln) }()
 	var serveErr error

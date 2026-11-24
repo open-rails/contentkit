@@ -238,6 +238,8 @@ func (st *Store) insertPopularityDay(ctx context.Context, tenant, kind string, s
 // Preparation walks days in order, so a failed first build exposes only its
 // completed prefix instead of claiming the requested full history.
 func (st *Store) DailyPopularityCoverage(ctx context.Context, tenant, kind string, scope signal.ActivityScope) (signal.Window, bool, error) {
+	ctx, cancel := readContext(ctx)
+	defer cancel()
 	if err := dailyPopularityScope(tenant, kind, scope); err != nil {
 		return signal.Window{}, false, err
 	}
@@ -275,6 +277,8 @@ const dailyRankSettings = " SETTINGS max_threads=2, max_memory_usage=67108864"
 // break so parallel floating-point reductions cannot reorder equal scores.
 // Raw data and the explicit rebuild remain available.
 func (st *Store) DailyPopular(ctx context.Context, tenant, kind string, window signal.Window, scope signal.ActivityScope, limit int) ([]signal.PopularHit, error) {
+	ctx, cancel := readContext(ctx)
+	defer cancel()
 	if err := dailyPopularityScope(tenant, kind, scope); err != nil {
 		return nil, err
 	}

@@ -43,7 +43,9 @@ defer ck.Close(ctx)
 ```
 
 Which process works jobs is code, never configuration. The standalone
-`server/` calls `StartJobs` itself. Media processing is the stock
+`server/` calls `StartJobs` itself.
+
+Each River queue schema is its own: `New` refuses a `Database.RiverSchema`, `Media.WorkerSchema` or account media queue equal to another of them or to the catalog or account schema, since queues sharing a schema share a leader and each other's jobs. `Config.Schemas()` lists what an engine owns, defaults included, so a host sharing the database can check its own River schema and AuthKit's against them. Media processing is the stock
 `contentkit-media-worker` image's ([Media worker schema](#media-worker-schema)).
 `Engine.Reconcile` repairs derived catalog state (facets, access snapshots,
 search marks and content paths) after a model change; the server CLI runs it as
@@ -90,6 +92,8 @@ Hosts import the root package (`New`, `Config`/`Deps`, `Start`/`StartJobs`/
 constructor, job and SQL helper is under `internal/`, which the compiler
 keeps from hosts; `internal/boundaries` enforces the rest. The same code works
 against an embedded engine (`Engine.Client()`) and a remote one (`NewClient`).
+
+`NewClient`'s base is https, or plain http to a loopback host: a call through a plain http base elsewhere fails without sending anything, since the `hc` transport may add a credential. An in-process transport over the routes takes an `https://` base (its scheme is never dialed). The client follows no redirect: a 3xx is an `*Error`, so a credential never leaves its base. The same rule covers every URL ContentKit itself sends a credential or token to: `Config.Accounts.Avatars.Primary`, the media `BaseURL` and the standalone server's `openrails.base_url`. S3 endpoints may stay plain http on a private network: their requests carry SigV4 signatures bound to one method, path and checksum, never the key.
 
 | Before | Now |
 | --- | --- |
@@ -182,14 +186,12 @@ bans) are a person's: an application gets 403 on public routes too. No staff
 action asks for a recent sign-in: they are moderation and editing, all
 reversible. Every refusal has `auth.Refuse`'s status and `WWW-Authenticate`
 (a DPoP challenge stays the provider's) and ContentKit's body; an auth
-outage, a panic or a `Can` error is 503 `unavailable`, and a credential that
+outage, a panic in the auth provider or a `Can` error is 503 `unavailable`, and a credential that
 ended between `Authenticate` and `Can` is 401. Hooks get the actor:
 `access.Actor.Can(ctx, scope, perm)` asks its `Verified`, and `Person()`
 tells a person from an application.
 
-Anonymous actors are keyed by `Request.RemoteAddr` (reactions, votes,
-limits). Behind a proxy, rewrite it to the client's address in a
-trusted-proxy step before the mount, or every anonymous visitor is the proxy.
+Any other panic while serving is 500 `internal_error`, its stack logged at ERROR; once an answer has started the connection is aborted instead (`http.ErrAbortHandler`). Through `ck.Client()` and `ck.VisitorClient` a panic is the call's error, never the host's crash. A host's own in-process transport over the routes should recover the same way. Every answer carries `X-Content-Type-Options: nosniff`.
 
 A host mounting a module alone passes the same Auth: `content.Options.Auth`
 (and `UserInfo`), `media.HandlerOptions.Auth`,
@@ -210,6 +212,14 @@ restores only a parent automatically deleted for having no versions, preserving
 its earlier draft or publication schedule. Moderation and owner deletion remain
 separate embedded lifecycle operations and cannot be bypassed this way. There
 is no ordinary parent-content DELETE route or Go method.
+
+### Client address
+
+The client's address is what location rules match and what anonymous reactions, votes and limits are keyed by. It is the request's peer, `Request.RemoteAddr`, unless the peer is one of `Config.TrustedProxies` (`trusted_proxies`, CIDR prefixes such as an ingress's `10.0.0.0/8`). From a trusted peer, ContentKit reads `Forwarded` or `X-Forwarded-For` right to left, skips every hop in a trusted prefix and takes the first other address; if every hop is trusted, the left-most. What a client sends ahead of the proxy's own entry is never read, so it cannot choose its address. A trusted proxy must write exactly one of the two headers: a request carrying both, or a hop that is not an address where one is read (`unknown`, an obfuscated `Forwarded` node), is 400 `invalid_request`. Write IPv4 proxies as IPv4 prefixes; an IPv4-mapped prefix is refused at `New`.
+
+Leave `TrustedProxies` empty when the host rewrites `RemoteAddr` itself, as `net/http` hosts behind their own trusted-proxy step do: the peer is then the client. Behind a proxy with neither, every visitor is the proxy: location rules match nobody and all anonymous visitors share one key. `ck.VisitorClient(ip, host)` takes the client's address directly; pass the resolved one, never an unverified header.
+
+Anonymous keys count an IPv6 address by its /64, the least a subscriber is handed, so rotating addresses within it is one visitor; an IPv4 address counts alone.
 
 ## Content ids
 
@@ -935,6 +945,8 @@ configured one is down. The engine retries a down ClickHouse in the
 background (migrations, connection, schema) and checks a live one every ten
 seconds; signals come back on without a restart, and contentkit-ui reads the
 model again a minute after it last found them off.
+
+A signal read serving a request (history, states, similar, recommendations, popular lists, stats, attribution) gets a ten-second deadline when its context has none, which the driver also sends as `max_execution_time`, and a 1 GiB `max_memory_usage`; a job's own deadline stands. Set `Config.ClickHouse.TLS` (`tls`) to connect to `Addr` over TLS, ClickHouse's secure native port, verifying the server against the system roots or `ca_file`; without it the password crosses in clear, so keep a plain connection on a private network. `MigrateClickHouse` cannot migrate over TLS yet: with `tls`, set `Database.SkipMigrations` and run `MigrateClickHouse` with a configuration naming a private plain listener.
 
 ## Search job
 
@@ -1706,8 +1718,8 @@ The host remains responsible for its response to a whole-site match.
 Use `ck.VisitorClient(ip, host)` for in-process reads on behalf of an anonymous
 visitor. It applies that IP's location rules and the host's content-filter domain.
 `ck.Client()` keeps its host application authority. As with HTTP requests, pass
-the trusted client IP, not an unverified forwarded header. HTTP integrations must
-set `RemoteAddr` after their trusted proxy processing. Each request reads enabled
+the trusted client IP, not an unverified forwarded header. HTTP integrations set
+`Config.TrustedProxies` or rewrite `RemoteAddr` in their own trusted-proxy step ([Client address](#client-address)). Each request reads enabled
 rules for its tenant and domain from Postgres; replicas retain no rule cache.
 Catalog totals and the global precomputed entity popularity ordering remain
 aggregate statistics, while returned content and public entity counts are

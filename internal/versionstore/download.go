@@ -20,6 +20,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/authkit/auth"
 	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/internal/clientaddr"
 	entitlement "github.com/open-rails/contentkit/internal/entitlement"
 	mediastore "github.com/open-rails/contentkit/internal/mediastore"
 	"github.com/open-rails/contentkit/internal/ratelimit"
@@ -75,7 +76,7 @@ func newQuotas(d versions.Downloads, rdb redis.UniversalClient, tiers []string, 
 
 // charge takes one download from actor's bucket.
 func (s *Service) charge(ctx context.Context, actor access.Actor) error {
-	bucket, key, l := "anonymous", "ip:"+actor.IP, s.dl.anonymous
+	bucket, key, l := "anonymous", "ip:"+clientaddr.Key(actor.IP), s.dl.anonymous
 	if actor.Member() {
 		bucket, key, l = "user", "user:"+actor.AccountID(), s.dl.user
 		if len(s.dl.tiers) > 0 && s.o.Gate != nil {
