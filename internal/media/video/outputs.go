@@ -199,11 +199,17 @@ func blobs(outs ...media.File) []string {
 // down, or taken down and put again, do not come back); any other errStale
 // leaves them for the retry or the sweep.
 func (e *Encoder) publish(ctx context.Context, item mediastore.Item, outs []media.File, edit func(*mediastore.Manifest) error) error {
+	return e.publishCharged(ctx, item, outs, nil, edit)
+}
+
+// publishCharged is publish charging the edit's upload bytes to charge
+// (Manifests.EditCharged).
+func (e *Encoder) publishCharged(ctx context.Context, item mediastore.Item, outs []media.File, charge *media.SourceAdmission, edit func(*mediastore.Manifest) error) error {
 	if testBeforePublish != nil {
 		testBeforePublish()
 	}
 	var gone bool
-	_, err := e.ms.EditExisting(ctx, item.Ref(), func(m *mediastore.Manifest) error {
+	_, err := e.ms.EditCharged(ctx, item.Ref(), charge, func(m *mediastore.Manifest) error {
 		if err := edit(m); errors.Is(err, errGone) {
 			gone = true
 			return e.ms.DeleteUnreferenced(ctx, item, m, blobs(outs...))

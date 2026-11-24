@@ -386,6 +386,9 @@ func (k *RegisteredKind) validate() error {
 		if j < 0 || k.patterns[j].literal == "" || !slices.ContainsFunc(k.Uploads[j].Types, isVideoType) {
 			return fmt.Errorf("upload %q: Frames %q is not a literal video upload", u.Path, u.Frames)
 		}
+		if !slices.Contains(u.Types, "image/png") {
+			return fmt.Errorf("upload %q: Frames needs image/png in Types (a grabbed frame is a PNG)", u.Path)
+		}
 	}
 	names := map[string]bool{}
 	for _, p := range k.Private {

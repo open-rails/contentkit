@@ -108,11 +108,15 @@ type Upload struct {
 	// preset and no public one): each version keeps its copy in private/,
 	// which only the version's openers read.
 	Body     bool     `json:"body,omitempty"`
-	Types    []string `json:"types"`            // accepted content types
-	MaxBytes int64    `json:"max_bytes"`        // per file
-	Max      int      `json:"max,omitempty"`    // uploads matching Path; 0 is unlimited
-	Frames   string   `json:"frames,omitempty"` // may be grabbed from a frame of this video upload (the frame op)
-	Named    bool     `json:"named,omitempty"`  // the server names it ({name} is "i-{uuid}"): inline images
+	Types    []string `json:"types"`         // accepted content types
+	MaxBytes int64    `json:"max_bytes"`     // per file
+	Max      int      `json:"max,omitempty"` // uploads matching Path; 0 is unlimited
+	// Frames names the literal video upload this one may be grabbed from (the
+	// frame op); only such uploads take frames, from it or another item's
+	// video, and they accept image/png. A frame counts toward Max and is
+	// charged at its still's size.
+	Frames string `json:"frames,omitempty"`
+	Named  bool   `json:"named,omitempty"` // the server names it ({name} is "i-{uuid}"): inline images
 	// Video bounds a video upload as probed from its real stream;
 	// nil or zero fields take the defaults (DefaultVideoLimits).
 	Video *VideoLimits `json:"video,omitempty"`

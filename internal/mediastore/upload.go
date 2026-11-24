@@ -446,6 +446,22 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 		}
 		prior = m.Clone()
 		o := &opRun{k: item.Kind(), m: m, ref: ref, copies: copies, frames: frames, exempt: grant.Exempt, trusted: trusted}
+		var charge *media.SourceAdmission
+		o.charge = func() (*media.SourceAdmission, error) {
+			if charge == nil {
+				c := &media.SourceAdmission{Generation: id.String(), Owner: grant.Owner, Enforce: u.o.Limiter != nil && !grant.Exempt, Accounting: u.o.Limiter != nil}
+				if c.Enforce {
+					quota, err := u.o.Limiter.Quota(editCtx, ref.TenantID, grant.Owner)
+					if err != nil {
+						return nil, err
+					}
+					c.Quota = quota
+				}
+				charge = c
+			}
+			c := *charge
+			return &c, nil
+		}
 		o.renames = map[string]string{}
 		for _, file := range prior.Files {
 			if file.IsUpload() {
@@ -577,9 +593,7 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 			key, _ := item.Staged(f.Staged)
 			if slices.Contains(expired, key) {
 				expiredPaths = append(expiredPaths, f.Path)
-				if f.Frame == nil {
-					expiredBytes += max(f.Size, uploadFloor)
-				}
+				expiredBytes += max(f.Size, uploadFloor)
 			}
 		}
 		o.dropUploads(expiredPaths)
@@ -1094,12 +1108,13 @@ func maxParts(size int64) int { return int((size + media.MinPartSize - 1) / medi
 const uploadFloor = 64 << 10
 
 // uploadBytes is the storage charged for a manifest: the size of every
-// upload put in it, staged or placed, at least uploadFloor (frames are the
-// worker's).
+// upload in it, staged, placed or a grabbed frame, at least uploadFloor. A
+// frame not grabbed yet is charged the floor; the worker's edit recording
+// the still charges the rest (Manifests.EditCharged).
 func (m *Manifest) uploadBytes() int64 {
 	var n int64
 	for _, f := range m.Files {
-		if f.IsUpload() && f.Frame == nil {
+		if f.IsUpload() {
 			n += max(f.Size, uploadFloor)
 		}
 	}

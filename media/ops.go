@@ -35,7 +35,7 @@ const (
 )
 
 const (
-	OpFrame = "frame" // fill an upload from a frame of its Upload.Frames video, or of another item's (From)
+	OpFrame = "frame" // fill an upload declaring Upload.Frames from a frame of that video, or of another item's (From)
 )
 
 const (
