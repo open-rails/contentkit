@@ -172,6 +172,9 @@ func (w *statusWriter) WriteHeader(code int) {
 	w.ResponseWriter.WriteHeader(code)
 }
 
+// Unwrap lets http.ResponseController reach the connection (deadlines, flush).
+func (w *statusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
 type errorBody struct {
 	Error string `json:"error"`
 	Code  string `json:"code"`
