@@ -433,8 +433,9 @@ func account(id string) (string, error) {
 	return id, nil
 }
 
-// address is an imported IP address in canonical form, an IPv4-mapped one
-// unmapped, as a request's address is keyed.
+// address is an anonymous record's address as a live anonymous write keys
+// it, so imported and live rows dedupe: its IPv4 address (unmapped), or its
+// IPv6 /64.
 func address(ip string) (string, error) {
 	ip = strings.TrimSpace(ip)
 	if ip == "" {
@@ -444,7 +445,11 @@ func address(ip string) (string, error) {
 	if err != nil || a.Zone() != "" {
 		return "", fmt.Errorf("%w: %q is not an IP address", errInvalid, ip)
 	}
-	return a.Unmap().String(), nil
+	if a = a.Unmap(); a.Is4() {
+		return a.String(), nil
+	}
+	p, _ := a.Prefix(64)
+	return p.String(), nil
 }
 
 // subject is a record's canonical user id, or its address when it has none.
