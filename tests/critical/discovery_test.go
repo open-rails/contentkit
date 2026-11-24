@@ -301,7 +301,11 @@ func TestDiscoveryVisibility(t *testing.T) {
 		if len(control.Entities) != 1 || control.Entities[0].ID != elsewhere.ID {
 			t.Fatalf("wide domain lost the tag of its visible work: %+v", control.Entities)
 		}
-		// The optional tag's newest work is outside the restricted domain.
+		// Both works publish at the fixed clock's instant, so favorites decide
+		// the automatic cover: the favored one is outside the restricted domain.
+		_, fan := w.person(t, 0)
+		_, err = reader("wide.invalid", fan).PostContentFavorite(t.Context(), excluded.ID, ck.PostContentFavoriteQuery{})
+		must(t, err)
 		cover := func(t *testing.T, reader *ck.Client, want string) {
 			t.Helper()
 			suggested, err := reader.GetTypeahead(t.Context(), ck.GetTypeaheadQuery{Q: "ChoiceNeedle", EntityKinds: []string{"tag"}})
@@ -310,7 +314,11 @@ func TestDiscoveryVisibility(t *testing.T) {
 			must(t, err)
 			for _, cards := range [][]entities.EntityCard{suggested.Entities, found.Entities} {
 				if len(cards) != 1 || cards[0].ID != optional.ID || cards[0].Cover == nil || cards[0].Cover.ContentID != want {
-					t.Fatalf("optional tag's automatic cover: %+v, want content %s", cards, want)
+					got := ""
+					if len(cards) == 1 && cards[0].Cover != nil {
+						got = cards[0].Cover.ContentID
+					}
+					t.Fatalf("optional tag's automatic cover is content %q, want %s: %+v", got, want, cards)
 				}
 			}
 		}
