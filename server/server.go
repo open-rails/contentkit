@@ -105,7 +105,8 @@ type S3Config struct {
 type Deps struct {
 	// Postgres holds ContentKit's, River's and AuthKit's schemas. Required.
 	Postgres *pgxpool.Pool
-	// Redis is optional: shared rate limits and DPoP replay state.
+	// Redis is optional: shared rate limits and DPoP replay state. While
+	// it fails, AuthKit refuses DPoP proofs rather than spend them locally.
 	Redis  redis.UniversalClient
 	Logger *slog.Logger
 }
