@@ -343,7 +343,9 @@ func (u *Uploads) abort(ctx context.Context, t ticket, key string, cause error) 
 // is a caller-stable UUIDv4 or UUIDv7 for the complete ordered batch: reuse it after an
 // uncertain response, but never for different inputs. Replays authorize again
 // and return the current manifest without repeating the original edit. Every op
-// is authorized against what it writes (Hooks.CanUpload). A put names a
+// is authorized against what it writes (Hooks.CanUpload), before any copy
+// and again under the item's lock, so a grant revoked while the commit waited
+// writes nothing. A put names a
 // staged upload or a blob in the folder, HEAD-checked against its Upload;
 // copies are copied server-side first. The owner is charged the change in
 // upload sizes; growth past its quota fails with CodeQuota (not for exempt
@@ -434,6 +436,14 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 	defer cancel()
 	var prior *Manifest
 	man, err := u.o.Manifests.editOperation(editCtx, ref, false, bound{project: item.Kind().Unwritten}, mutation, func(m *Manifest) error {
+		// Authority may change while the commit waits for the lock.
+		current, err := u.authorizeOps(editCtx, actor, item, ops)
+		if err != nil {
+			return err
+		}
+		if current.Owner != grant.Owner || current.Exempt != grant.Exempt {
+			return uploadErr(media.CodeConflict, "the upload grant changed during the commit: try again")
+		}
 		prior = m.Clone()
 		o := &opRun{k: item.Kind(), m: m, ref: ref, copies: copies, frames: frames, exempt: grant.Exempt, trusted: trusted}
 		o.renames = map[string]string{}
