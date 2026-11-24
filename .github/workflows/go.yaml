@@ -17,7 +17,7 @@ jobs:
     timeout-minutes: 60
     services:
       postgres:
-        image: groonga/pgroonga:4.1.0-debian-18
+        image: groonga/pgroonga@sha256:55f246f1137e194d830ffac88a22f4d3e8023bcebb3bc0b36eb8732e322c9dc2 # 4.1.0-debian-18
         env:
           POSTGRES_USER: contentkit
           POSTGRES_PASSWORD: contentkit
@@ -58,7 +58,7 @@ jobs:
         docker run -d --name critical-clickhouse -p 9000:9000 \
           -e CLICKHOUSE_USER=contentkit -e CLICKHOUSE_PASSWORD=contentkit -e CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1 \
           -v "$GITHUB_WORKSPACE/.github/clickhouse/keeper.xml:/etc/clickhouse-server/config.d/keeper.xml:ro" \
-          clickhouse/clickhouse-server:25.8
+          clickhouse/clickhouse-server@sha256:0152dd511befe6a2c2ef53e930726179669b08116da78500b37c51c96ff5ee77 # 25.8
         for i in $(seq 1 60); do
           if curl -fsS http://localhost:9100/minio/health/ready >/dev/null &&
             docker exec critical-clickhouse clickhouse-client --user contentkit --password contentkit -q "SELECT count() FROM system.zookeeper WHERE path = '/'"; then exit 0; fi

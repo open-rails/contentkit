@@ -1,6 +1,7 @@
 name: verify-images
 # Builds every image definition for linux/amd64 without credentials or
-# pushing. Release tags publish through images.yaml.
+# pushing, and scans it as images.yaml scans what it publishes. Release tags
+# publish through images.yaml.
 'on':
   workflow_call: {}
 permissions:
@@ -29,5 +30,15 @@ jobs:
         context: .
         file: ${{ matrix.file }}
         platforms: linux/amd64
-        outputs: type=cacheonly
+        outputs: type=docker,name=contentkit-${{ matrix.name }}:verify
+        provenance: false
         cache-from: type=gha,scope=${{ matrix.name }}-amd64
+    - name: Refuse fixable HIGH and CRITICAL vulnerabilities
+      uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+      with:
+        scan-type: image
+        image-ref: contentkit-${{ matrix.name }}:verify
+        scanners: vuln
+        severity: HIGH,CRITICAL
+        ignore-unfixed: true
+        exit-code: '1'

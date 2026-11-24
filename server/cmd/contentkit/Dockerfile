@@ -1,5 +1,5 @@
 # Build from the repository root: docker build -f server/cmd/contentkit/Dockerfile .
-FROM --platform=$BUILDPLATFORM golang:1.26.10 AS build
+FROM --platform=$BUILDPLATFORM golang:1.26.11-trixie@sha256:cff05dd6b81c901f2e8249eb6f91c69a60451d0f12c26bfef08e476a85b32d4d AS build
 ARG TARGETOS TARGETARCH
 WORKDIR /src
 COPY go.mod go.sum ./
@@ -19,7 +19,7 @@ RUN cd server && go mod edit \
     -replace=github.com/open-rails/contentkit/adapters/authkit=../adapters/authkit \
     && CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath -ldflags="-s -w" -o /out/contentkit ./cmd/contentkit
 
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
 COPY --from=build /out/contentkit /contentkit
 EXPOSE 8080
 ENTRYPOINT ["/contentkit"]

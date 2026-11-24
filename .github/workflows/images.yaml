@@ -94,6 +94,20 @@ jobs:
         outputs: type=image,"name=ghcr.io/open-rails/contentkit-${{ matrix.name }},docker.io/openrails/contentkit-${{ matrix.name }}",push-by-digest=true,name-canonical=true,push=true
         cache-from: type=gha,scope=${{ matrix.name }}-${{ matrix.arch }}
         cache-to: type=gha,mode=max,scope=${{ matrix.name }}-${{ matrix.arch }}
+        sbom: true
+        provenance: mode=max
+    # The digest is pushed untagged; publish tags it only if every scan passed.
+    - name: Refuse fixable HIGH and CRITICAL vulnerabilities
+      uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+      env:
+        TRIVY_PLATFORM: linux/${{ matrix.arch }}
+      with:
+        scan-type: image
+        image-ref: ghcr.io/open-rails/contentkit-${{ matrix.name }}@${{ steps.build.outputs.digest }}
+        scanners: vuln
+        severity: HIGH,CRITICAL
+        ignore-unfixed: true
+        exit-code: '1'
     - run: |
         mkdir -p digests
         touch "digests/${DIGEST#sha256:}"
