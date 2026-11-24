@@ -102,15 +102,20 @@ func (e *Engine) anonymizeSignals(ctx context.Context, accountID, anonymous stri
 
 // eraseMediaBookkeeping removes the account from this app's media journal and
 // quota ledger, and from the tenant's account media when this app holds it.
+// Media rows are keyed by the media namespace (the scope's partition), not the
+// catalog's tenant.
 func (e *Engine) eraseMediaBookkeeping(ctx context.Context, accountID string) error {
+	if e.cfg.Media == nil {
+		return nil
+	}
 	return pgx.BeginFunc(ctx, e.pool, func(tx pgx.Tx) error {
 		if _, err := subjectfence.Lock(ctx, tx, e.schema, e.cfg.Scope.AppID.String(), accountID); err != nil {
 			return err
 		}
-		if err := mediastore.EraseAccountTx(ctx, tx, e.schema, e.cfg.Scope.AppID.String(), accountID); err != nil {
+		if err := mediastore.EraseAccountTx(ctx, tx, e.schema, e.cfg.Media.Scope.Partition(), accountID); err != nil {
 			return err
 		}
-		if account, ok := e.accountMediaStorage(); ok && account.Schema != e.schema {
+		if account, ok := e.accountMediaStorage(); ok {
 			return mediastore.EraseAccountTx(ctx, tx, account.Schema, e.accountMediaPartition(), accountID)
 		}
 		return nil
