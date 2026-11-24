@@ -1,6 +1,7 @@
-# An allowlist: Go sources, module files and the files they embed (go:embed).
-# A new embed outside these paths must be added here. Exclusions name files
-# (dir/**): a directory already excluded by * does not re-exclude them.
+# An allowlist: Go sources, module files, the files they embed (go:embed) and
+# the worker's Debian package script. A new embed outside these paths must be
+# added here. Exclusions name files (dir/**): a directory already excluded by *
+# does not re-exclude them.
 *
 !**/*.go
 !**/go.mod
@@ -8,6 +9,7 @@
 !internal/migrations/**
 !internal/media/workqueue/migrations/**
 !media/avatar/avatar.png
+!cmd/media-worker/debian-snapshot.sh
 **/*_test.go
 **/testdata/**
 **/node_modules/**
