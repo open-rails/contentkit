@@ -1,6 +1,8 @@
 # Build from the repository root: docker build -f server/cmd/contentkit/Dockerfile .
 FROM --platform=$BUILDPLATFORM golang:1.26.11-trixie@sha256:cff05dd6b81c901f2e8249eb6f91c69a60451d0f12c26bfef08e476a85b32d4d AS build
 ARG TARGETOS TARGETARCH
+# The context carries no go.work; builds resolve each go.mod alone.
+ENV GOWORK=off
 WORKDIR /src
 COPY go.mod go.sum ./
 COPY adapters/openrails/go.mod adapters/openrails/go.sum adapters/openrails/

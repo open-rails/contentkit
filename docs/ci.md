@@ -15,7 +15,7 @@ The base and head branches choose the run:
 
 | Pull request | Run |
 |---|---|
-| Into `rc/**` | Light checks: workflow lint, source scan, build and vet of every module, public-surface boundaries, `Hosts link no media codecs`, and the UI package's generated contract, types, lint and packed exports. No services, no critical suite, no image builds |
+| Into `rc/**` | Light checks: workflow lint, supply-chain guards, source scan, build and vet of every module, public-surface boundaries, `Hosts link no media codecs`, and the UI package's generated contract, types, lint and packed exports. No services, no critical suite, no image builds |
 | `rc/*` into `master` | Every suite, whatever changed |
 | `release/*` into `master`, or into `release/**` | Suites selected from the changed paths, below |
 | Any other head into `master` | `Source branch` fails, no suite starts and `CI Gate` fails |
@@ -37,6 +37,14 @@ Image-definition changes also select nonpublishing image builds. Diff or source-
 Go package shards, nested modules, native media and SDK/browser tests keep their existing commands and assertions. Whenever the critical suite runs, `Hosts link no media codecs` also builds every host-importable package of the root, server and adapter modules with `CGO_ENABLED=0` and refuses any that depends on `media/image`, `media/video`, `media/worker` or `cmd/media-worker`. Reusable leaf workflows have no independent automatic PR/master triggers. `CI` and `full` manual requests select every suite; individual media/UI workflows remain available for explicit diagnosis. Test selections are documented in the run summary.
 
 Version tags publish artifacts from a commit belonging to master. A UI prerelease tag may instead name an unmerged commit whose CI run passed the critical suite and `CI Gate`; a light run does not qualify it. npm builds and verifies the packed exports/types/styles, including matching wildcard export conditions, without repeating source unit tests. Native image builds remain artifact qualification. A package release does not itself deploy a consuming application.
+
+## Supply chain
+
+- Every `uses:` names a commit SHA with its release as a comment, and every Dockerfile base and workflow job image is pinned by digest. [`check-supply-chain.sh`](../.github/scripts/check-supply-chain.sh) refuses anything else, and any tracked `go.work*` or `.env*` file, on every ready pull request.
+- Verifying holds no publish credentials. Pull-request image builds ([`verify-images.yaml`](../.github/workflows/verify-images.yaml)) run with `contents: read` and no registry login. Release tags publish images through [`images.yaml`](../.github/workflows/images.yaml) under the `release` environment, and the UI package through [`release.yaml`](../.github/workflows/release.yaml) under the `npm` environment. Each environment admits release tags only and holds its registry's credential. Dispatching `images` on a release tag republishes it.
+- Trivy refuses fixable HIGH and CRITICAL vulnerabilities in the image builds of a run into `master` and in each pushed digest before `images.yaml` tags it. Published images carry an SBOM and max-mode provenance.
+- The media worker installs Debian packages from `snapshot.debian.org` at the Dockerfile's `DEBIAN_SNAPSHOT`. Move it forward, with the base image digests, to take Debian's fixes.
+- The build context is an allowlist ([`.dockerignore`](../.dockerignore)): Go sources, module files and embedded files. Image builds set `GOWORK=off`.
 
 ## Dependencies
 

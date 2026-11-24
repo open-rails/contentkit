@@ -10,6 +10,8 @@ RUN sed -i -E "s#^URIs: http://deb\.debian\.org/(debian|debian-security)\$#URIs:
     && ! grep -q deb.debian.org /etc/apt/sources.list.d/debian.sources \
     && apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Retries=5 update \
     && apt-get install -y --no-install-recommends libvips-dev && rm -rf /var/lib/apt/lists/*
+# The context carries no go.work; builds resolve each go.mod alone.
+ENV GOWORK=off
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Supply-chain guards: every action is pinned to a commit and every image by digest.
+# Supply-chain guards: every action is pinned to a commit and every image by
+# digest; no Go workspace or environment file is tracked.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 status=0
@@ -35,5 +36,10 @@ done < <(git ls-files '*Dockerfile*')
 while IFS=: read -r file line text; do
   [[ $text =~ @sha256:[0-9a-f]{64}([[:space:]]|$) ]] || refuse "$file:$line: image is not pinned by digest"
 done < <(grep -nH -E '^[[:space:]]*(-[[:space:]]+)?image:' "${workflows[@]}")
+
+# Go workspaces and environment files stay local.
+while IFS= read -r path; do
+  refuse "$path: go.work* and .env* files are never committed"
+done < <(git ls-files | grep -E '(^|/)(go\.work|\.env)[^/]*$' || true)
 
 exit "$status"
