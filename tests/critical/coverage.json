@@ -909,6 +909,100 @@
       ]
     },
     {
+      "id": "CK-J07-S27",
+      "journey": "CK-J07",
+      "behavior": "Typeahead suggests only entities with a work inside the read boundary, and entity cards' automatic covers come from such works",
+      "status": "verified",
+      "evidence": [
+        "On a domain requiring an entity, typeahead omits a tag whose only work is outside the domain; the wide domain suggests it.",
+        "Typeahead and search cards of a tag take their automatic cover from its newest work inside the domain, not the newer one outside it; the wide domain's control picks the newer one.",
+        "Reviewed executable contract mapping for ContentKit #286; final combined qualification must execute every selected case. This is not an execution receipt."
+      ],
+      "cases": [
+        "TestDiscoveryVisibility/CK-J07-S27_typeahead_and_entity_covers_stay_inside_the_read_boundary"
+      ]
+    },
+    {
+      "id": "CK-J07-S28",
+      "journey": "CK-J07",
+      "behavior": "Search and typeahead refuse queries beyond the length, word and normalized-word bounds with 400 before retrieval",
+      "status": "verified",
+      "evidence": [
+        "A 257-character query, 22 compatibility characters that normalize to one 132-letter word, and 17 words each answer 400 invalid_request on /search and /typeahead; 16 words still search.",
+        "Reviewed executable contract mapping for ContentKit #286; final combined qualification must execute every selected case. This is not an execution receipt."
+      ],
+      "cases": [
+        "TestDiscoveryVisibility/CK-J07-S28_oversized_queries_are_refused_before_retrieval"
+      ]
+    },
+    {
+      "id": "CK-J07-S29",
+      "journey": "CK-J07",
+      "behavior": "Cursors whose value, id or seed is malformed and the server's Local time zone are refused with 400; a served cursor continues its list",
+      "status": "verified",
+      "evidence": [
+        "Newest and most_favorited cursors with values of another type, a cursor naming no content id, a 64-character random seed, and tz=Local on lists and release dates answer 400 invalid_request.",
+        "A served newest cursor still continues to the next page.",
+        "Reviewed executable contract mapping for ContentKit #286; final combined qualification must execute every selected case. This is not an execution receipt."
+      ],
+      "cases": [
+        "TestDiscoveryVisibility/CK-J07-S29_malformed_cursors_seeds_and_zones_are_refused"
+      ]
+    },
+    {
+      "id": "CK-J07-S30",
+      "journey": "CK-J07",
+      "behavior": "A code of a kind the configuration no longer has resolves nothing",
+      "status": "verified",
+      "evidence": [
+        "A stored code of an unconfigured kind is 404 not_found to visitors and the host; a live content code still resolves.",
+        "Reviewed executable contract mapping for ContentKit #286; final combined qualification must execute every selected case. This is not an execution receipt."
+      ],
+      "cases": [
+        "TestDiscoveryVisibility/CK-J07-S30_codes_of_unknown_kinds_resolve_nothing"
+      ]
+    },
+    {
+      "id": "CK-J07-S31",
+      "journey": "CK-J07",
+      "behavior": "Answers are private, no-store unless their route declares caching; a declared route caches only an anonymous success its visitor's location did not shape",
+      "status": "verified",
+      "evidence": [
+        "Content detail, entity lists and unknown paths answer private, no-store; kinds and totals answer their declared public max-age to anonymous readers.",
+        "A credential, an error answer, or a site location rule on the domain (covering other visitors) turns the declared routes private, no-store.",
+        "Reviewed executable contract mapping for ContentKit #286; final combined qualification must execute every selected case. This is not an execution receipt."
+      ],
+      "cases": [
+        "TestDiscoveryVisibility/CK-J07-S31_json_reads_are_private_unless_declared_and_location_independent"
+      ]
+    },
+    {
+      "id": "CK-J07-S32",
+      "journey": "CK-J07",
+      "behavior": "A location rule targeting a channel covers the content the channel owns, and the channel page's count",
+      "status": "verified",
+      "evidence": [
+        "A covered visitor gets 404 for the channel's post, sees it in no list or channel feed and the channel page counts none; an uncovered visitor still reads it.",
+        "Reviewed executable contract mapping for ContentKit #286; final combined qualification must execute every selected case. This is not an execution receipt."
+      ],
+      "cases": [
+        "TestChannelReadBoundary/CK-J07-S32_channel_targeted_location_rules_cover_its_content"
+      ]
+    },
+    {
+      "id": "CK-J07-S33",
+      "journey": "CK-J07",
+      "behavior": "A deleted channel's descriptive metadata is not public",
+      "status": "verified",
+      "evidence": [
+        "The public channel entities route answers 404 once the channel is deleted; management still reads the channel.",
+        "Reviewed executable contract mapping for ContentKit #286; final combined qualification must execute every selected case. This is not an execution receipt."
+      ],
+      "cases": [
+        "TestChannelReadBoundary/CK-J07-S33_deleted_channel_metadata_is_not_public"
+      ]
+    },
+    {
       "id": "CK-J08-S01",
       "journey": "CK-J08",
       "behavior": "Deleting one version preserves siblings and parent",
@@ -7066,7 +7160,8 @@
         "TestHTTPAuthenticationMatrix/CK-API-165_GET_/v1/manage/search-suggestions/inherited_HEAD_credential_gate",
         "TestHTTPAuthenticationMatrix/CK-API-165_GET_/v1/manage/search-suggestions/malformed_credential",
         "TestHTTPAuthenticationMatrix/CK-API-165_GET_/v1/manage/search-suggestions/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-165_GET_/v1/manage/search-suggestions/wrong_issuer"
+        "TestHTTPAuthenticationMatrix/CK-API-165_GET_/v1/manage/search-suggestions/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-165_GET_/v1/manage/search-suggestions/anonymous_protected_operation"
       ],
       "implemented_security_cases": [
         "TestHTTPAuthenticationMatrix/CK-API-165_GET_/v1/manage/search-suggestions/malformed_credential",
@@ -7074,7 +7169,8 @@
         "TestHTTPAuthenticationMatrix/CK-API-165_GET_/v1/manage/search-suggestions/expired_credential",
         "TestHTTPAuthenticationMatrix/CK-API-165_GET_/v1/manage/search-suggestions/wrong_issuer",
         "TestHTTPAuthenticationMatrix/CK-API-165_GET_/v1/manage/search-suggestions/foreign_app_key",
-        "TestHTTPAuthenticationMatrix/CK-API-165_GET_/v1/manage/search-suggestions/inherited_HEAD_credential_gate"
+        "TestHTTPAuthenticationMatrix/CK-API-165_GET_/v1/manage/search-suggestions/inherited_HEAD_credential_gate",
+        "TestHTTPAuthenticationMatrix/CK-API-165_GET_/v1/manage/search-suggestions/anonymous_protected_operation"
       ],
       "security_evidence": "credential gate and app-key boundary only; no route-specific functional or mutation no-effect approval; executed in integrated-f052-aggregate",
       "evidence": [

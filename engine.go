@@ -578,7 +578,7 @@ func (e *Engine) mount(deps Deps) error {
 	if e.avatars != nil {
 		avatars = e.avatars.rule
 	}
-	e.modules[httpapi.Kinds] = kindsHandler(c, e.hub.SignalPlane, avatars)
+	e.modules[httpapi.Kinds] = kindsHandler((&gate.Gate{Auth: e.auth, Log: e.log}).Guard, c, e.hub.SignalPlane, avatars)
 	if e.importer, err = importstore.New(importstore.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Scope.AppID.String(), Catalog: e.catalog, Entities: e.entities, Channels: e.channels,
 		Content: e.content, Signals: e.discover, Rebuild: e.rebuild, Logger: e.log}); err != nil {
 		return err

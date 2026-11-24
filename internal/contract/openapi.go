@@ -239,6 +239,10 @@ func (m *model) operation(r httpapi.Spec) *obj {
 	}
 	op.set("x-contentkit-errors", nonNil(r.Errors))
 	op.set("x-contentkit-error-sets", r.ErrorSets())
+	if r.Cache.Public() {
+		op.set("x-contentkit-cache", r.Cache.Directive())
+		op.set("x-contentkit-vary", nonNil(r.Cache.Vary))
+	}
 	return op
 }
 

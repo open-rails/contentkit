@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/open-rails/authkit/auth"
@@ -23,6 +24,9 @@ func (s *Service) ManagementSuggestions(ctx context.Context, o discovery.Managem
 	out := discovery.Typeahead{Contents: []discovery.Card{}, Entities: []entities.EntityCard{}}
 	if o.Actor.Anonymous || o.Actor.ID == "" {
 		return out, auth.ErrUnauthenticated
+	}
+	if err := search.CheckQuery(strings.TrimSpace(o.Query)); err != nil {
+		return out, fmt.Errorf("%w: %v", ErrInvalid, err)
 	}
 	manager, ok := s.o.Visibility.(discovery.ManagementCatalog)
 	if !ok {

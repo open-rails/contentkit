@@ -211,6 +211,10 @@ its earlier draft or publication schedule. Moderation and owner deletion remain
 separate embedded lifecycle operations and cannot be bypassed this way. There
 is no ordinary parent-content DELETE route or Go method.
 
+## HTTP caching
+
+Each route declares its caching in the route catalog (`httpapi.Spec.Cache`) and the gate writes it on every answer: `Cache-Control: private, no-store` unless the route is marked **Cached** in [docs/api/routes.md](docs/api/routes.md) (`GET /v1/kinds`, `GET /v1/catalog/totals`, `GET /v1/media/presets`). A cached route answers `public, max-age=N` only to an anonymous request without a credential, with a success, when the visitor's location rules did not shape the answer; otherwise it answers `private, no-store`. A domain with a whole-site location rule therefore caches nothing shared, since a cached answer would reach the visitors the rule covers. A CDN "cache everything" rule must honour these directives for `/v1/*` JSON; nothing else is safe to share, because reads embed signed media URLs and depend on the viewer, the domain and the visitor's location.
+
 ## Content ids
 
 `content_id` is a canonical lowercase UUIDv7 (`contentref.ValidateID`), never
@@ -301,7 +305,8 @@ Cards and content reads carry each item's `code` and language-prefixed `path`.
   leaking the slug. `Gone` answers 410. The engine's codes route group answers
   content items' and entities' visibility itself: a deleted entity is `Gone`,
   and merged entities resolve to their survivor. `kinds.Config.Routes()` maps
-  every content and entity kind to its route.
+  every content and entity kind to its route. A code of a kind the
+  configuration no longer has is `Hidden`.
 
 - **Legacy aliases.** The bulk import (`POST /v1/import`, `aliases`; see
   [docs/import.md](docs/import.md)) records the old site's identifiers. Each
@@ -870,6 +875,9 @@ that fits the reader (`display_language` first, then position).
   /typeahead` (direct title/entity-name/alias prefixes only; no contextual
   keywords or typo expansion). `SearchBox` puts matching recent queries first,
   followed by entities and content titles; full search remains broader.
+- A query is at most 1 KiB, 256 characters and 16 words, and each word at most 128 characters once normalized (compatibility characters can spell several letters); anything longer answers `400 invalid_request` on `/search`, `/typeahead` and `/manage/search-suggestions` before any retrieval. Search tolerates a typo only in words of 3 to 16 characters, within a bounded set of spellings per query. Typeahead suggests an entity only when the domain lists one of its works, and entity cards' counts and automatic covers come only from works inside the domain and the visitor's location rules.
+- A `summary` counts at most 10,000 contents; a larger selection answers lower-bound counts with `truncated: true`.
+- Cursors are opaque: one whose value, content id or seed is malformed, or from another sort, answers `400 invalid_request`, as do `tz=Local` and `time_zone=Local`. A `newest`/`oldest` cursor issued before v0.139 is refused once; restart from the first page.
 - `GET /contents/{id}/similar`, `GET /recommendations`: co-engagement
   candidates, admitted through the reader's visibility.
   Recommendations fill from the last 30 days' popularity, then all-time,
@@ -1695,6 +1703,8 @@ history, partial updates (including `enabled`), and `/check?ip=...`, which resol
 an address and lists matching enabled rules per configured domain. Rule changes
 and their history snapshots commit together. Rules apply to staff content reads
 too; only the location-rule administration routes are exempt.
+
+A rule targeting entities also covers the content they own: a channel target hides the channel's posts from covered visitors everywhere (detail, lists, feeds, search and counts), as a tag target hides tagged content.
 
 Host middleware can call `block, blocked, err := ck.SiteBlock(ctx, ip, host)` to
 check whole-site rules before rendering host pages. Handle `err` as a failed

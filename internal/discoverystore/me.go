@@ -160,7 +160,7 @@ func decodeMineCursor(raw string) (time.Time, string, error) {
 	}
 	b, err := base64.RawURLEncoding.DecodeString(raw)
 	at, id, ok := strings.Cut(string(b), "|")
-	if err != nil || !ok || id == "" {
+	if err != nil || !ok || id == "" || !textValue(id) {
 		return time.Time{}, "", fmt.Errorf("%w: cursor", ErrInvalid)
 	}
 	t, err := time.Parse(time.RFC3339Nano, at)

@@ -8,9 +8,10 @@ import (
 	entities "github.com/open-rails/contentkit/entities"
 )
 
-// ChannelMetadata returns descriptive metadata on a reserved channel. This
-// association never enters content facets or grants channel/post authority.
-func (s *Store) ChannelMetadata(ctx context.Context, id entities.EntityID) ([]entities.EntityID, error) {
+// ChannelMetadata returns descriptive metadata on a reserved channel: an
+// active one, or with management one in any state. This association never
+// enters content facets or grants channel/post authority.
+func (s *Store) ChannelMetadata(ctx context.Context, id entities.EntityID, management bool) ([]entities.EntityID, error) {
 	if !s.channels {
 		return nil, ErrForbidden
 	}
@@ -23,7 +24,7 @@ func (s *Store) ChannelMetadata(ctx context.Context, id entities.EntityID) ([]en
 		if err != nil {
 			return err
 		}
-		if len(found) != 1 {
+		if g, ok := found[id]; !ok || !management && (g.State != entities.StateActive || g.Internal) {
 			return ErrNotFound
 		}
 		rows, err := q.Query(ctx, `SELECT entity_id FROM `+s.table("content_channel_entities")+` WHERE tenant_id=$1 AND channel_id=$2 ORDER BY entity_id`, s.tenant, id)
