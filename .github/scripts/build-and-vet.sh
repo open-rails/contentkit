@@ -27,8 +27,9 @@ for module in "${!module_pids[@]}"; do
 done
 [[ $status -eq 0 ]] || exit 1
 CGO_ENABLED=1 go build -p 1 -o tests/critical/.bin/media-worker ./cmd/media-worker
-# Hosts, server/ and adapters/* reach only the public surface.
-go test -count=1 -p 1 ./internal/boundaries
+# Hosts, server/ and adapters/* reach only the public surface; the image
+# encoder's geometry, bounds and metadata stripping run against libvips.
+go test -count=1 -p 1 ./internal/boundaries ./internal/media/image
 # The published server module has no local replacements. Qualify this
 # checkout before its paired root/adapter tags exist, just as Docker does.
 server_mod="$RUNNER_TEMP/contentkit-server.mod"

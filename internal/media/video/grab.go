@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"time"
 
@@ -144,7 +145,8 @@ func (e *Encoder) grab(ctx context.Context, item mediastore.Item, f media.File, 
 		return err
 	}
 	grabbed := media.File{Blob: blob}
-	err = e.publish(ctx, item, []media.File{grabbed}, func(m *mediastore.Manifest) error {
+	// The still is the frame's upload bytes, charged to its commit's owner.
+	err = e.publishCharged(ctx, item, []media.File{grabbed}, f.Admission, func(m *mediastore.Manifest) error {
 		if f.Frame.From == nil {
 			if _, err := current(m, v.Path, v.Blob); err != nil {
 				return err
@@ -159,6 +161,9 @@ func (e *Encoder) grab(ctx context.Context, item mediastore.Item, f media.File, 
 			(g.Frame.From == nil) != (f.Frame.From == nil) || g.Frame.From != nil && *g.Frame.From != *f.Frame.From {
 			return errStale
 		}
+		if !reflect.DeepEqual(g.Admission, f.Admission) {
+			return errStale // charged under another commit's policy
+		}
 		g.Blob, g.Type, g.Size, g.W, g.H, g.Failed = blob, "image/png", size, w, h, nil
 		g.Frame = &media.Frame{T: t, Auto: g.Frame.Auto, Of: v.Blob, From: g.Frame.From}
 		if g.Edit.Check(w, h) != nil { // made for another shape: centred instead
@@ -166,6 +171,9 @@ func (e *Encoder) grab(ctx context.Context, item mediastore.Item, f media.File, 
 		}
 		return nil
 	})
+	if ue := (*media.UploadError)(nil); errors.As(err, &ue) && ue.Code == media.CodeQuota {
+		return &PermanentError{&media.ImageError{Code: media.CodeQuota, Message: ue.Message}}
+	}
 	if err == nil {
 		e.c.Logger.InfoContext(ctx, "media/video: frame", "ref", item.Ref().String(), "path", f.Path, "time", t, "auto", f.Frame.Auto)
 	}

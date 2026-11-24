@@ -45,6 +45,7 @@ type mediaWorld struct {
 	workerDone    chan error
 	management    *awss3.Client
 	gatewayConfig gateway.Config
+	scratch       string // the worker's own TempDir
 }
 
 func newMediaStorage(t *testing.T, scope ck.Scope) *mediaWorld {
@@ -154,7 +155,8 @@ func attachMedia(t *testing.T, w *world, a *application, configure ...func(*ck.C
 	must(t, err)
 	registry, err := mediastore.NewRegistry(config, mediastore.Hooks{})
 	must(t, err)
-	workerConfig := worker.Config{Pool: w.pool, Schema: a.cfg.Media.WorkerSchema, ContentSchema: w.schema, HostSchema: w.schema + "_river", Store: m.store, Kinds: registry, Threads: 1, IngestWorkers: 1, ImageSources: 1, DerivativeWorkers: 1, ShutdownGrace: time.Second}
+	m.scratch = t.TempDir()
+	workerConfig := worker.Config{Pool: w.pool, Schema: a.cfg.Media.WorkerSchema, ContentSchema: w.schema, HostSchema: w.schema + "_river", Store: m.store, Kinds: registry, Threads: 1, IngestWorkers: 1, ImageSources: 1, DerivativeWorkers: 1, ShutdownGrace: time.Second, TempDir: m.scratch}
 	if accountPrimary {
 		workerConfig.AccountSchema, workerConfig.AccountWorkerSchema = accountStorage.Schema, accountStorage.WorkerSchema
 	}

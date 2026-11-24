@@ -12,6 +12,7 @@ import (
 	discovery "github.com/open-rails/contentkit/discovery"
 	"github.com/open-rails/contentkit/entities"
 	entitystore "github.com/open-rails/contentkit/internal/entitystore"
+	"github.com/open-rails/contentkit/internal/search"
 )
 
 // summaryCandidates optionally bounds a keyword selection independently before
@@ -45,7 +46,7 @@ func (s *Service) settledListingSummary(ctx context.Context, filter Filter, sele
 		out.Truncated = candidates.truncated
 	}
 	visibleIDs := map[string]struct{}{}
-	unknownVisible, err := s.summaryRows(ctx, visible, sort, nil, func(row cardRow) {
+	unknownVisible, truncated, err := s.summaryRows(ctx, visible, sort, nil, maxSummaryRows, func(row cardRow) {
 		visibleIDs[row.ID] = struct{}{}
 		if !row.Access.Allowed && !row.Access.Unknown {
 			switch row.Access.Level {
@@ -57,6 +58,7 @@ func (s *Service) settledListingSummary(ctx context.Context, filter Filter, sele
 	if err != nil {
 		return nil, false, err
 	}
+	out.Truncated = out.Truncated || truncated
 	out.Total = len(visibleIDs)
 	hidden := visible.viewer.HiddenContentFilters()
 	var ids []entities.EntityID
@@ -100,7 +102,7 @@ func (s *Service) settledListingSummary(ctx context.Context, filter Filter, sele
 	for _, entry := range out.FilteredEntities {
 		counted = append(counted, string(entry.Entity.ID))
 	}
-	unknown, err := s.summaryRows(ctx, relaxed, sort, counted, func(row cardRow) {
+	unknown, truncated, err := s.summaryRows(ctx, relaxed, sort, counted, maxSummaryRows, func(row cardRow) {
 		// A visible matching edition already represents this content, even
 		// when a sibling edition has an optional hidden entity.
 		if _, ok := visibleIDs[row.ID]; ok {
@@ -114,6 +116,7 @@ func (s *Service) settledListingSummary(ctx context.Context, filter Filter, sele
 			}
 		}
 	})
+	out.Truncated = out.Truncated || truncated
 	return out, unknownVisible || unknown, err
 }
 
@@ -124,13 +127,18 @@ func summaryCandidateSelection(q *sel, ids []string) *sel {
 	return q.with("f.content_id = ANY(@summary_candidates::text[])", pgx.NamedArgs{"summary_candidates": ids})
 }
 
+// maxSummaryRows bounds the contents one summary count reads, as search
+// bounds its candidates; a larger selection is counted as a lower bound.
+const maxSummaryRows = search.MaxCandidateLimit
+
 // summaryRows visits each selected content once, with the version its card
 // would show, settled and redacted exactly as cards are. It reads only what
 // the counts need, in one query: no titles, codes, media or offers.
-// It also reports unresolved access, including rows withheld from the visitor.
+// It also reports unresolved access, including rows withheld from the visitor,
+// and, with a limit, whether the selection held more contents than it read.
 // Rows carry, of their entities, those visit counts by and those that can open
 // them.
-func (s *Service) summaryRows(ctx context.Context, q *sel, sort order, counted []string, visit func(cardRow)) (bool, error) {
+func (s *Service) summaryRows(ctx context.Context, q *sel, sort order, counted []string, limit int, visit func(cardRow)) (unknown, truncated bool, err error) {
 	args := maps.Clone(q.args)
 	for key, value := range sort.args {
 		args[key] = value
@@ -141,9 +149,13 @@ func (s *Service) summaryRows(ctx context.Context, q *sel, sort order, counted [
 		// Popularity is per content: score each content's chosen edition once.
 		pickSQL = fmt.Sprintf(`SELECT f.content_id, f.version_id FROM (
  SELECT DISTINCT ON (f.content_id) f.tenant_id, f.kind, f.content_id, f.version_id FROM %s f WHERE %s ORDER BY f.content_id, %s) f %s
-WHERE (%s) > 0`, s.t.facets, q.predicate(), preference, sort.join, sort.expr)
+WHERE (%s) > 0 ORDER BY f.content_id`, s.t.facets, q.predicate(), preference, sort.join, sort.expr)
 	}
-	// One read of the whole selection; access is then settled a batch at a time.
+	if limit > 0 {
+		pickSQL += " LIMIT @summary_limit"
+		args["summary_limit"] = limit + 1
+	}
+	// One read of the selection; access is then settled a batch at a time.
 	args["summary_tenant"], args["summary_user"] = s.o.Tenant, person(q.reader.Actor)
 	// Descriptive associations only support filter counts; they never open content.
 	args["summary_entities"] = counted
@@ -155,7 +167,7 @@ WHERE (%s) > 0`, s.t.facets, q.predicate(), preference, sort.join, sort.expr)
  JOIN %[1]s f ON f.tenant_id = v.tenant_id AND f.version_id = v.id
  JOIN %[2]s c ON c.tenant_id = f.tenant_id AND c.id = f.content_id`, s.t.facets, s.t.items, s.t.versions, s.t.creators, pickSQL, entityIDs), args)
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
 	all, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (cardRow, error) {
 		var c cardRow
@@ -163,14 +175,16 @@ WHERE (%s) > 0`, s.t.facets, q.predicate(), preference, sort.join, sort.expr)
 		return c, err
 	})
 	if err != nil {
-		return false, err
+		return false, false, err
+	}
+	if limit > 0 && len(all) > limit {
+		all, truncated = all[:limit], true
 	}
 	const batchSize = 2048
-	unknown := false
 	for start := 0; start < len(all); start += batchSize {
 		batch := all[start:min(start+batchSize, len(all))]
 		if err := s.settle(ctx, q, batch); err != nil {
-			return false, err
+			return false, false, err
 		}
 		for _, row := range batch {
 			unknown = unknown || row.Access.Unknown
@@ -183,5 +197,5 @@ WHERE (%s) > 0`, s.t.facets, q.predicate(), preference, sort.join, sort.expr)
 			visit(row)
 		}
 	}
-	return unknown, nil
+	return unknown, truncated, nil
 }

@@ -109,6 +109,9 @@ type opRun struct {
 	archiveAllowed func(string, string) error // verified source policy, only resolved when admitting a ZIP
 	// authorizePath rechecks a collision allocation against host path policy.
 	authorizePath func(string) error
+	// charge is the commit's quota policy, recorded on each frame so the
+	// worker charges the still it grabs as this commit would.
+	charge func() (*media.SourceAdmission, error)
 }
 
 func (o *opRun) apply(n int, op media.Op) error {
@@ -344,8 +347,6 @@ func (o *opRun) put(op media.Op) error {
 			}
 		}
 		f.Unattached = old.Unattached && op.Unattached
-	} else if u.Max > 0 && o.count(g) >= u.Max {
-		return tooManyFiles(u.Max, "kind %q allows at most %d uploads at %s", k.Name, u.Max, u.Path)
 	}
 	if k.IsPageUpload(f) && !legacy {
 		f.Meta = withPageSource(f.Meta, k.NameOf(f.Path), source)
@@ -432,6 +433,9 @@ func stripPending(f media.File) media.File {
 // From when the extension changed), or inserted at index. A video it
 // replaces has its frames grabbed again.
 func (o *opRun) place(g, i int, f media.File, index *int) error {
+	if u := o.k.Uploads[g]; i < 0 && u.Max > 0 && o.count(g) >= u.Max {
+		return tooManyFiles(u.Max, "kind %q allows at most %d uploads at %s", o.k.Name, u.Max, u.Path)
+	}
 	if err := o.admitSource(&f, i); err != nil {
 		return err
 	}
@@ -450,7 +454,9 @@ func (o *opRun) place(g, i int, f media.File, index *int) error {
 	}
 	m.index = nil
 	if old.Source() != f.Source() {
-		o.regrab(old.Path)
+		if err := o.regrab(old.Path); err != nil {
+			return err
+		}
 		// Retired producers cannot refresh retained legacy outputs. Keep them
 		// only while the original source bytes stay unchanged.
 		m.Files = slices.DeleteFunc(m.Files, func(out media.File) bool {
@@ -461,12 +467,13 @@ func (o *opRun) place(g, i int, f media.File, index *int) error {
 	return nil
 }
 
-// regrab resets the frames grabbed from the video upload at path.
-func (o *opRun) regrab(path string) {
+// regrab resets the frames grabbed from the video upload at path, charged
+// to this commit's owner.
+func (o *opRun) regrab(path string) error {
 	k, m := o.k, o.m
 	g, _, _, _, ok := k.upload(path)
 	if !ok {
-		return
+		return nil
 	}
 	for j := range m.Files {
 		f := &m.Files[j]
@@ -477,19 +484,37 @@ func (o *opRun) regrab(path string) {
 			f.Blob, f.W, f.H, f.Size, f.Failed = "", 0, 0, 0, nil
 			f.Frame = &media.Frame{T: f.Frame.T, Auto: f.Frame.Auto}
 			f.Pending = k.Presets(f.Path, false)
+			if err := o.chargeFrame(f); err != nil {
+				return err
+			}
 		}
 	}
+	return nil
 }
 
-// frame sets an upload to a frame grab of its Upload.Frames video, or of
-// the video op.From names.
+// chargeFrame records the commit's quota policy on frame f; trusted runs
+// without one keep f's.
+func (o *opRun) chargeFrame(f *media.File) error {
+	if o.charge == nil {
+		return nil
+	}
+	admission, err := o.charge()
+	if err != nil {
+		return err
+	}
+	f.Admission = admission
+	return nil
+}
+
+// frame sets an upload declaring Upload.Frames to a frame grab of that
+// video, or of the video op.From names.
 func (o *opRun) frame(n int, op media.Op) error {
 	k, m := o.k, o.m
 	g, stem, _, _, ok := k.upload(op.Path)
+	if !ok || k.Uploads[g].Frames == "" {
+		return uploadErr(media.CodeInvalid, "upload %q takes no frames", op.Path)
+	}
 	if op.From != nil {
-		if !ok || !slices.Contains(k.Uploads[g].Types, "image/png") {
-			return uploadErr(media.CodeType, "upload %q takes no frame: it does not allow image/png", op.Path)
-		}
 		v, ok := o.frames[n]
 		if !ok { // this item's, read under its lock
 			v, ok = uploadAt(m, op.From.Path)
@@ -499,9 +524,6 @@ func (o *opRun) frame(n int, op media.Op) error {
 		}
 		from := &media.CopyFrom{Kind: cmpOr(op.From.Kind, k.Name), ID: op.From.ID, Version: op.From.Version, Path: v.Path}
 		return o.placeFrame(g, stem, op, &media.Frame{Auto: op.Auto, From: from})
-	}
-	if !ok || k.Uploads[g].Frames == "" {
-		return uploadErr(media.CodeInvalid, "upload %q takes no frames", op.Path)
 	}
 	video := -1
 	for j, f := range m.Files {
@@ -531,6 +553,9 @@ func (o *opRun) placeFrame(g int, stem string, op media.Op, frame *media.Frame) 
 		f.Meta, f.Unattached = o.m.Files[i].Meta, o.m.Files[i].Unattached
 	}
 	f.Pending = o.k.Presets(f.Path, false)
+	if err := o.chargeFrame(&f); err != nil {
+		return err
+	}
 	return o.place(g, i, f, nil)
 }
 
@@ -676,9 +701,6 @@ func (o *opRun) copy(op media.Op, src []media.File) error {
 	}
 	if i >= 0 && op.Meta[media.MetaAutoCover] == true && m.Files[i].Meta[media.MetaAutoCover] != true {
 		return uploadErr(media.CodeConflict, "an editor owns cover %q", m.Files[i].Path)
-	}
-	if i < 0 && k.Uploads[g].Max > 0 && o.count(g) >= k.Uploads[g].Max {
-		return tooManyFiles(k.Uploads[g].Max, "kind %q allows at most %d uploads at %s", k.Name, k.Uploads[g].Max, k.Uploads[g].Path)
 	}
 	// Private outputs come along current; public ones render here.
 	for _, p := range k.PublicFor(f.Path) {

@@ -219,8 +219,9 @@ type DeliveryConfig struct {
 	// CookieDomain is the site's registrable domain; required in cookie mode.
 	CookieDomain string `yaml:"cookie_domain" json:"cookie_domain"`
 	// SigningKey is the media gateway's current token key, "{kid}:{base64
-	// secret}"; PreviousKey the one it still verifies. A secret: the server
-	// reads it from the environment. Required.
+	// secret}"; PreviousKey the one it still verifies, as the engine does for
+	// download tickets and activity receipts signed before a rotation. A
+	// secret: the server reads it from the environment. Required.
 	SigningKey  string `yaml:"signing_key" json:"signing_key"`
 	PreviousKey string `yaml:"previous_key" json:"previous_key"`
 	// TTL is the minimum token lifetime and Window its rounding; zero takes

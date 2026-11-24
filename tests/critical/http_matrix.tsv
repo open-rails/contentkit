@@ -143,7 +143,7 @@ CK-API-161	GET	/v1/sitemap/contents	open		included-critical functionality and se
 CK-API-162	GET	/v1/sitemap/entities	open		included-critical functionality and security
 CK-API-163	GET	/v1/stats/activity	staff	root:content:view-restricted	partial-security-only; positive/full functionality deferred P1
 CK-API-164	GET	/v1/me/stats	user		partial-security-only; positive/full functionality deferred P1
-CK-API-165	GET	/v1/manage/search-suggestions	public		included-critical functionality and security
+CK-API-165	GET	/v1/manage/search-suggestions	editor	root:content:write	included-critical functionality and security
 CK-API-166	POST	/v1/import	staff	root:import:write	partial-security-reply-counts-import-recounts-and-merged-entity-aliases; other functionality deferred P1
 CK-API-167	POST	/v1/import/external-ids	staff	root:import:write	partial-security-only; positive/full functionality deferred P1
 CK-API-168	GET	/v1/channels/{id}/comments	public		included-critical functionality and security

@@ -62,7 +62,6 @@ type keywordQuery struct {
 	q        string
 	tokens   []string
 	prefix   string
-	typos    string
 	contains string
 	// native is the schema of PGroonga, quoted.
 	native string
@@ -70,8 +69,8 @@ type keywordQuery struct {
 
 func prepareKeyword(ctx context.Context, tx pgx.Tx, schema, query string) (keywordQuery, error) {
 	var k keywordQuery
-	if utf8.RuneCountInString(query) > 256 {
-		return k, fmt.Errorf("%w: keyword query exceeds 256 characters", ErrInvalidQuery)
+	if err := CheckQuery(query); err != nil {
+		return k, err
 	}
 	qs, err := quoteIdent(schema)
 	if err != nil {
@@ -86,26 +85,48 @@ func prepareKeyword(ctx context.Context, tx pgx.Tx, schema, query string) (keywo
 		return k, err
 	}
 	k.tokens = keywordTokens(k.q)
-	if len(k.tokens) > 16 {
-		return k, fmt.Errorf("%w: keyword query exceeds 16 tokens", ErrInvalidQuery)
+	if err := checkTokens(k.tokens); err != nil {
+		return k, err
 	}
 	k.native, _ = quoteIdent(native)
 	k.contains = literalSubstring(k.q)
 	// Tokens contain letters/numbers only and are lowercase. Appending '*' makes
 	// each token a literal prefix, never an OR/NOT/query-language operator.
 	prefixes := make([]string, len(k.tokens))
-	typos := make([]string, len(k.tokens))
 	for i, t := range k.tokens {
 		prefixes[i] = t + "*"
-		typos[i] = "(" + strings.Join(append([]string{t + "*"}, oneEdits(t)...), " OR ") + ")"
 	}
 	k.prefix = strings.Join(prefixes, " ")
-	k.typos = strings.Join(typos, " ")
 	return k, nil
 }
 
 // fuzzy reports whether typo tolerance applies; Go accepts at most one edit.
 func (k keywordQuery) fuzzy() bool { return utf8.RuneCountInString(k.q) >= 3 }
+
+// typoOperand matches each token as a prefix or, for a token of at most
+// MaxTypoRunes, one of its one-edit spellings, within maxTypoBytes: a token
+// whose spellings would exceed the budget matches as a prefix only.
+func (k keywordQuery) typoOperand() string {
+	budget := maxTypoBytes
+	terms := make([]string, len(k.tokens))
+	for i, t := range k.tokens {
+		terms[i] = t + "*"
+		if utf8.RuneCountInString(t) > MaxTypoRunes {
+			continue
+		}
+		edits := oneEdits(t)
+		size := 0
+		for _, e := range edits {
+			size += len(e) + len(" OR ")
+		}
+		if size > budget {
+			continue
+		}
+		budget -= size
+		terms[i] = "(" + strings.Join(append([]string{t + "*"}, edits...), " OR ") + ")"
+	}
+	return strings.Join(terms, " ")
+}
 
 // typoRoute matches documents whose every token is a word prefix or one of
 // its one-edit spellings, through the terms index, so it reads only documents
@@ -201,7 +222,7 @@ func keywordSearch(ctx context.Context, tx pgx.Tx, query string, opts Options) (
 	literal := strings.Join(k.literalRoutes(`sd.content_kind,sd.content_id,sd.content_version_id,sd.language,`+cols, from, where, "@q", "@prefix", "@contains"), " UNION ")
 	queries := []string{`SELECT * FROM (` + literal + `) sd ORDER BY ` + tierSQL + ` DESC,` + order + ` LIMIT @limit`}
 	if k.fuzzy() {
-		args["typos"] = k.typos
+		args["typos"] = k.typoOperand()
 		queries = append(queries, `SELECT sd.content_kind,sd.content_id,sd.content_version_id,sd.language,`+cols+` FROM `+from+` WHERE `+where+` AND `+k.typoRoute("@typos")+` ORDER BY `+order+` LIMIT @limit`)
 	}
 	// The whole request has a two-second ceiling (or an earlier caller deadline),
@@ -276,9 +297,10 @@ func KeywordMatch(ctx context.Context, pool *pgxpool.Pool, query string, opts Op
 		if _, err = tx.Exec(ctx, `SET LOCAL statement_timeout=2000`); err != nil {
 			return Match{}, err
 		}
+		operand := k.typoOperand()
 		for _, language := range languages {
 			o := Options{Schema: opts.Schema, Tenant: opts.Tenant, Language: language, ContentKinds: opts.ContentKinds}
-			args := pgx.NamedArgs{"typos": k.typos, "limit": typoWindow}
+			args := pgx.NamedArgs{"typos": operand, "limit": typoWindow}
 			from, where, _, err := hostClauses(o, args)
 			if err != nil {
 				return Match{}, err

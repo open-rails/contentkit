@@ -191,7 +191,7 @@ func decodeSitemapCursor(raw string) (string, error) {
 		return "", nil
 	}
 	b, err := base64.RawURLEncoding.DecodeString(raw)
-	if err != nil || len(b) == 0 {
+	if err != nil || len(b) == 0 || len(raw) > maxCursorBytes || !textValue(string(b)) {
 		return "", fmt.Errorf("%w: cursor", ErrInvalid)
 	}
 	return string(b), nil

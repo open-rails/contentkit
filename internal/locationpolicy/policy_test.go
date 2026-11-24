@@ -52,11 +52,14 @@ func TestMatch(t *testing.T) {
 }
 
 func TestBlock(t *testing.T) {
-	b := Block{ContentIDs: []string{"item"}, EntityIDs: []string{"tag"}}
-	if b.Allows("item", nil) || b.Allows("other", []string{"tag"}) || !b.Allows("other", []string{"uncovered"}) {
+	b := Block{ContentIDs: []string{"item"}, EntityIDs: []string{"tag"}, Ruled: true}
+	if b.Allows("item", nil, "") || b.Allows("other", []string{"tag"}, "") || !b.Allows("other", []string{"uncovered"}, "") {
 		t.Fatal("content/tag boundary failed")
 	}
-	if (Block{Site: true}).Allows("other", nil) {
+	if b.Allows("other", nil, "tag") || !b.Allows("other", nil, "channel") {
+		t.Fatal("owner boundary failed")
+	}
+	if (Block{Site: true}).Allows("other", nil, "") {
 		t.Fatal("site boundary failed")
 	}
 	predicate, args := b.SQL("f", "loc")
@@ -64,11 +67,17 @@ func TestBlock(t *testing.T) {
 		t.Fatalf("missing SQL boundary: %q %v", predicate, args)
 	}
 	// An engine request reuses its one read, without sharing state with the next
-	// request, tenant or domain. No querier is needed for this already-bound read.
+	// request, tenant or domain. No querier is needed for this already-read block.
 	ctx := WithBlock(context.Background(), "tenant", "main", b)
+	if Varies(ctx) {
+		t.Fatal("unread content rules made the answer vary")
+	}
 	got, err := Resolve(ctx, nil, "schema", "tenant", "main", "203.0.113.45")
-	if err != nil || got.Allows("item", nil) {
+	if err != nil || got.Allows("item", nil, "") {
 		t.Fatalf("request boundary was lost: %+v %v", got, err)
+	}
+	if !Varies(ctx) {
+		t.Fatal("a consulted rule did not make the answer vary")
 	}
 }
 
@@ -256,16 +265,23 @@ func TestResolveFromPostgres(t *testing.T) {
 	if _, err := pool.Exec(t.Context(), `INSERT INTO `+quoted+`.content_location_rule_domains VALUES ('tenant','country','another'); INSERT INTO `+entries+` (tenant_id,rule_id,position,country) VALUES ('tenant','country',1,'US')`); err != nil {
 		t.Fatal(err)
 	}
-	ctx := WithLocation(t.Context(), content.VisitorLocation{Country: "US", Subdivision: "US-TX"})
+	// Each request starts its own location state; within one, rules are read once.
+	request := func() context.Context {
+		return WithLocation(t.Context(), content.VisitorLocation{Country: "US", Subdivision: "US-TX"})
+	}
+	ctx := request()
 	b, err := Resolve(ctx, pool, schema, "tenant", "main", "203.0.113.45")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if b.Site || len(b.Matches) != 4 || b.Allows("country-item", nil) || b.Allows("second-country-item", nil) || b.Allows("address-item", nil) || b.Allows("network-item", nil) || b.Allows("uncovered", []string{"tag"}) || !b.Allows("uncovered", nil) {
+	if b.Site || len(b.Matches) != 4 || b.Allows("country-item", nil, "") || b.Allows("second-country-item", nil, "") || b.Allows("address-item", nil, "") || b.Allows("network-item", nil, "") || b.Allows("uncovered", []string{"tag"}, "") || b.Allows("uncovered", nil, "tag") || !b.Allows("uncovered", nil, "") {
 		t.Fatalf("incorrect enabled/domain/tenant matching: %+v", b)
 	}
+	if !b.Ruled || b.SiteRuled || !Varies(ctx) {
+		t.Fatalf("rule presence: %+v", b)
+	}
 	pred, args := b.SQL("f", "location")
-	rows, err := pool.Query(ctx, `SELECT f.content_id FROM (VALUES ('country-item','{}'::text[]),('tag-item',ARRAY['tag']),('uncovered','{}'::text[])) f(content_id,entity_ids) WHERE `+pred, args)
+	rows, err := pool.Query(ctx, `SELECT f.content_id FROM (VALUES ('country-item','{}'::text[],NULL),('tag-item',ARRAY['tag'],NULL),('owned-item','{}'::text[],'tag'),('uncovered','{}'::text[],NULL)) f(content_id,entity_ids,owner_entity_id) WHERE `+pred, args)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -280,11 +296,10 @@ func TestResolveFromPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(unknown.Matches) != 2 || !unknown.Allows("country-item", []string{"tag"}) {
+	if len(unknown.Matches) != 2 || !unknown.Allows("country-item", []string{"tag"}, "") {
 		t.Fatalf("unknown location matched geography: %+v", unknown)
 	}
-	bound := WithBlock(ctx, "tenant", "main", b)
-	reset := WithLocation(bound, content.VisitorLocation{})
+	reset := WithLocation(ctx, content.VisitorLocation{})
 	refreshed, err := Resolve(reset, pool, schema, "tenant", "main", "203.0.113.45")
 	if err != nil {
 		t.Fatal(err)
@@ -303,7 +318,7 @@ func TestResolveFromPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	next, err := Resolve(ctx, pool, schema, "tenant", "main", "203.0.113.45")
+	next, err := Resolve(request(), pool, schema, "tenant", "main", "203.0.113.45")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -313,7 +328,7 @@ func TestResolveFromPostgres(t *testing.T) {
 	if _, err := pool.Exec(ctx, `DELETE FROM `+quoted+`.content_items WHERE tenant_id='tenant'; DELETE FROM `+quoted+`.content_entities WHERE tenant_id='tenant'; UPDATE `+rules+` SET enabled=false WHERE target='site'`); err != nil {
 		t.Fatal(err)
 	}
-	next, err = Resolve(ctx, pool, schema, "tenant", "main", "203.0.113.45")
+	next, err = Resolve(request(), pool, schema, "tenant", "main", "203.0.113.45")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -324,11 +339,11 @@ func TestResolveFromPostgres(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	next, err = Resolve(ctx, pool, schema, "tenant", "main", "203.0.113.45")
+	next, err = Resolve(request(), pool, schema, "tenant", "main", "203.0.113.45")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !next.Empty() {
+	if !next.Empty() || next.Ruled {
 		t.Fatal("next request retained deleted rules")
 	}
 }

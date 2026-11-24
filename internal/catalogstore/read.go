@@ -533,7 +533,7 @@ func (s *Store) entitySummaries(ctx context.Context, ids []string, language stri
 	for i, id := range ids {
 		gids[i] = entities.EntityID(id)
 	}
-	cards, err := s.entities.Cards(ctx, gids, entitystore.CardOptions{Language: language, IncludeInternal: management})
+	cards, err := s.entities.Cards(ctx, gids, entitystore.CardOptions{Language: language, IncludeInternal: management, NamesOnly: true})
 	if err != nil {
 		return nil, err
 	}

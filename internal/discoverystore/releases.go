@@ -24,22 +24,19 @@ type DailyReleasesOptions struct {
 	CardEntities []string
 }
 
-func releaseWindow(now time.Time, days int, zone, endDate string) (time.Time, time.Time, *time.Location, error) {
+func releaseWindow(now time.Time, days int, name, endDate string) (time.Time, time.Time, *time.Location, error) {
 	if days == 0 {
 		days = 10
 	}
 	if days < 1 || days > 31 {
 		return time.Time{}, time.Time{}, nil, fmt.Errorf("%w: days must be from 1 through 31", ErrInvalid)
 	}
-	if zone == "" {
-		zone = "UTC"
+	if name == "" {
+		name = "UTC"
 	}
-	if zone == "Local" {
-		return time.Time{}, time.Time{}, nil, fmt.Errorf("%w: time_zone must name an IANA time zone", ErrInvalid)
-	}
-	loc, err := time.LoadLocation(zone)
+	loc, err := zone(name)
 	if err != nil {
-		return time.Time{}, time.Time{}, nil, fmt.Errorf("%w: invalid time_zone %q", ErrInvalid, zone)
+		return time.Time{}, time.Time{}, nil, fmt.Errorf("%w: time_zone must name an IANA time zone", ErrInvalid)
 	}
 	local := now.In(loc)
 	today := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, loc)

@@ -1,6 +1,8 @@
 package mediastore
 
 import (
+	"time"
+
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/internal/httpapi"
 	media "github.com/open-rails/contentkit/media"
@@ -66,7 +68,7 @@ var mediaReadQuery = []httpapi.Param{httpapi.Text("prefix", "only files under th
 var readRoutes = []httpapi.Route[readHandler]{
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/presets", Resource: "media", Auth: httpapi.Open,
 		Doc:       "Every kind's public preset rules: crop bounds, widths and default images. Current image URLs come from a read's public.",
-		Responses: []httpapi.Reply{httpapi.OK([]media.PresetRule{})}},
+		Responses: []httpapi.Reply{httpapi.OK([]media.PresetRule{})}, Cache: httpapi.Cache{MaxAge: 5 * time.Minute}},
 		Serve: httpapi.H(readHandler.presets)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/{kind}/{id}", Resource: "media", Auth: httpapi.Public,
 		Doc:       "Released files under a prefix in manifest order. Offset/limit or repeated path selects which get URLs. Version access covers its private folder. Explicit editor reads can inspect unserved source/prepared files through short-lived storage URLs. Unreadable files are omitted.",

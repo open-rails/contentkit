@@ -7,6 +7,7 @@ package contentkit
 import (
 	"encoding/json"
 	"net/http"
+	"time"
 
 	"github.com/open-rails/contentkit/internal/httpapi"
 	"github.com/open-rails/contentkit/kinds"
@@ -63,10 +64,10 @@ type kindsServer struct {
 }
 
 // kindsHandler serves the content model and the current domain’s configured buckets.
-func kindsHandler(c kinds.Config, signals func() bool, avatars *media.PresetRule) http.Handler {
+func kindsHandler(guard httpapi.Guard, c kinds.Config, signals func() bool, avatars *media.PresetRule) http.Handler {
 	srv := &kindsServer{content: c, signals: signals, avatars: avatars}
 	mux := http.NewServeMux()
-	httpapi.Mount(mux, nil, srv, kindsRoutes)
+	httpapi.Mount(mux, guard, srv, kindsRoutes)
 	return mux
 }
 
@@ -74,8 +75,8 @@ func init() { httpapi.Register(httpapi.Kinds, kindsRoutes) }
 
 var kindsRoutes = []httpapi.Route[*kindsServer]{
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/kinds", Resource: "kinds", Auth: httpapi.Open,
-		Doc:       "The site's content model: languages, tiers, content kinds, entity kinds, whether signals are recorded now and people's avatar preset. Cacheable for a minute.",
-		Responses: []httpapi.Reply{httpapi.OK(ContentModel{})}}, Serve: httpapi.H((*kindsServer).handle)},
+		Doc:       "The site's content model: languages, tiers, content kinds, entity kinds, whether signals are recorded now and people's avatar preset.",
+		Responses: []httpapi.Reply{httpapi.OK(ContentModel{})}, Cache: httpapi.Cache{MaxAge: time.Minute}}, Serve: httpapi.H((*kindsServer).handle)},
 }
 
 func (s *kindsServer) handle(w http.ResponseWriter, r *http.Request) {
@@ -99,7 +100,5 @@ func (s *kindsServer) handle(w http.ResponseWriter, r *http.Request) {
 		model.Kinds[name] = kind
 	}
 	w.Header().Set("Content-Type", "application/json")
-	// Short, so clients see the signal plane come and go.
-	w.Header().Set("Cache-Control", "public, max-age=60")
 	_ = json.NewEncoder(w).Encode(model)
 }

@@ -31,8 +31,10 @@ type Delivery struct {
 	// CookieDomain is the site's registrable domain, e.g. "doujins.ai";
 	// required in cookie mode, because a host-only cookie never reaches media.
 	CookieDomain string
-	// SigningKey is the current key of the ring the media gateway verifies.
-	SigningKey token.Key
+	// Keys is the ring the media gateway verifies: grants and tickets are
+	// signed with its current key, and tickets and receipts signed with the
+	// previous one still verify while it rotates out.
+	Keys token.Ring
 	// TTL is the minimum token lifetime (default 1h); expiries round up to
 	// Window (default token.DefaultWindow, whole seconds).
 	TTL, Window time.Duration

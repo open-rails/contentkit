@@ -56,6 +56,9 @@ type ListOptions struct {
 	Limit int
 	// namesOnly leaves out counts and automatic covers.
 	namesOnly bool
+	// visible keeps, under a bounded scope, only entities with content
+	// inside it: directories and pages never lead to an empty page.
+	visible bool
 	// popular is the stored ranking SortPopular reads; List resolves it.
 	popular *popularRanking
 }
@@ -91,7 +94,7 @@ type cardQuery struct {
 
 const sortName = `coalesce(nullif(lower(t.sort_key), ''), nm.normalized, '')`
 
-func (s *Store) compile(opts ListOptions, ids []string) (cardQuery, error) {
+func (s *Store) compile(opts ListOptions, ids []string, bound readScope) (cardQuery, error) {
 	c := cardQuery{args: pgx.NamedArgs{"tenant": s.tenant, "fallback": s.cfg.Languages}, sort: opts.Sort, limit: opts.Limit}
 	if c.sort == "" {
 		c.sort = entities.SortName
@@ -240,9 +243,12 @@ func (s *Store) compile(opts ListOptions, ids []string) (cardQuery, error) {
 		}
 		scope, parent = visibleLink("scope_id"), visibleLink("parent_id")
 	}
+	if opts.IncludeInternal {
+		bound = readScope{}
+	}
 	listed := LiveListed
-	if !opts.IncludeInternal && (len(s.boundary) > 0 || !s.locations.Empty()) {
-		boundary, args := s.publicBoundary("f", "entity_domain")
+	if bound.bounded() {
+		boundary, args := bound.sql("f", "entity_domain")
 		listed += " AND " + boundary
 		maps.Copy(c.args, args)
 	}
@@ -252,7 +258,7 @@ func (s *Store) compile(opts ListOptions, ids []string) (cardQuery, error) {
  AND g.state='active' AND %s AND (@count_language='' OR @count_language::text=ANY(f.languages))%s) cc ON true`,
 		s.table("content_facets"), listed, countKind)
 	eligible, eligibilityJoin := "", ""
-	if (countKind != "" || len(s.boundary) > 0 || !s.locations.Empty()) && !opts.IncludeInternal {
+	if (countKind != "" || opts.visible && bound.bounded()) && !opts.IncludeInternal && !opts.namesOnly {
 		// Eligibility and counts share one facet scan, including owner-only links.
 		// Direct lookups keep the scan within the requested entities' facets.
 		members := ""
@@ -420,7 +426,15 @@ func (s *Store) List(ctx context.Context, opts ListOptions) (entities.EntityPage
 		}
 		opts.popular = &ranking
 	}
-	c, err := s.compile(opts, nil)
+	var scope readScope
+	if !opts.IncludeInternal {
+		var err error
+		if scope, err = s.publicScope(ctx); err != nil {
+			return entities.EntityPage{Entities: []entities.EntityCard{}}, err
+		}
+		opts.visible = !s.channels
+	}
+	c, err := s.compile(opts, nil, scope)
 	if err != nil {
 		return entities.EntityPage{Entities: []entities.EntityCard{}}, err
 	}
@@ -458,6 +472,9 @@ type CardOptions struct {
 	// NamesOnly reads names and paths without counts or automatic covers,
 	// which are derived from every content of each entity.
 	NamesOnly bool
+	// Visible keeps only entities with content inside the request's
+	// boundary, as List does. Counts and automatic covers always stay inside it.
+	Visible bool
 }
 
 // Cards returns the active entities among ids as cards, resolved as List
@@ -470,7 +487,13 @@ func (s *Store) Cards(ctx context.Context, ids []entities.EntityID, o CardOption
 	if err != nil || len(want) == 0 {
 		return []entities.EntityCard{}, err
 	}
-	c, err := s.compile(ListOptions{Language: o.Language, IncludeInternal: o.IncludeInternal, namesOnly: o.NamesOnly}, want)
+	var scope readScope
+	if !o.IncludeInternal && !o.NamesOnly {
+		if scope, err = s.publicScope(ctx); err != nil {
+			return nil, err
+		}
+	}
+	c, err := s.compile(ListOptions{Language: o.Language, IncludeInternal: o.IncludeInternal, namesOnly: o.NamesOnly, visible: o.Visible}, want, scope)
 	if err != nil {
 		return nil, err
 	}
@@ -510,9 +533,7 @@ func (s *Store) ManagementDetail(ctx context.Context, id entities.EntityID, lang
 	if err := s.requireInternalRead(ctx, true); err != nil {
 		return entities.EntityDetail{}, err
 	}
-	unscoped := *s
-	unscoped.boundary = nil
-	return unscoped.detail(ctx, id, language, true)
+	return s.detail(ctx, id, language, true)
 }
 
 func (s *Store) requireInternalRead(ctx context.Context, include bool) error {
@@ -534,6 +555,14 @@ func (s *Store) detail(ctx context.Context, id entities.EntityID, language strin
 	if err := validateID(id); err != nil {
 		return d, err
 	}
+	var scope readScope
+	if !includeInternal {
+		var err error
+		if scope, err = s.publicScope(ctx); err != nil {
+			return d, err
+		}
+	}
+	visible := !includeInternal && !s.channels
 	err := s.read(ctx, func(q Querier) error {
 		for hop := 0; ; hop++ {
 			found, err := s.byIDs(ctx, q, []string{string(id)})
@@ -551,7 +580,7 @@ func (s *Store) detail(ctx context.Context, id entities.EntityID, language strin
 			d.Entity = g
 			break
 		}
-		c, err := s.compile(ListOptions{Language: language, IncludeInternal: includeInternal, Deleted: d.State == entities.StateDeleted}, []string{string(id)})
+		c, err := s.compile(ListOptions{Language: language, IncludeInternal: includeInternal, Deleted: d.State == entities.StateDeleted, visible: visible}, []string{string(id)}, scope)
 		if err != nil {
 			return err
 		}
@@ -579,7 +608,7 @@ func (s *Store) detail(ctx context.Context, id entities.EntityID, language strin
 			}
 		}
 		if len(links) > 0 {
-			if c, err = s.compile(ListOptions{Language: language, IncludeInternal: includeInternal}, links); err != nil {
+			if c, err = s.compile(ListOptions{Language: language, IncludeInternal: includeInternal, visible: visible}, links, scope); err != nil {
 				return err
 			}
 			linked, err := s.cards(ctx, q, c)
@@ -595,7 +624,7 @@ func (s *Store) detail(ctx context.Context, id entities.EntityID, language strin
 				}
 			}
 		}
-		if c, err = s.compile(ListOptions{Parent: id, Language: language, Limit: 200, IncludeInternal: includeInternal}, nil); err != nil {
+		if c, err = s.compile(ListOptions{Parent: id, Language: language, Limit: 200, IncludeInternal: includeInternal, visible: visible}, nil, scope); err != nil {
 			return err
 		}
 		children, err := s.cards(ctx, q, c)
@@ -603,7 +632,7 @@ func (s *Store) detail(ctx context.Context, id entities.EntityID, language strin
 			return err
 		}
 		d.Children = children.Entities
-		counts, err := s.counts(ctx, q, []string{string(id)})
+		counts, err := s.counts(ctx, q, []string{string(id)}, scope)
 		if d.Counts = counts[id]; d.Counts == nil {
 			d.Counts = []entities.Count{}
 		}

@@ -99,10 +99,10 @@ func NewReader(o ReaderOptions) (*Reader, error) {
 	if d.Mode == media.DeliverCookie && d.CookieDomain == "" {
 		return nil, errors.New("media: cookie delivery needs Delivery.CookieDomain")
 	}
-	ring, err := token.NewRing(d.SigningKey, nil)
-	if err != nil {
+	if err := d.Keys.Validate(); err != nil {
 		return nil, err
 	}
+	ring := d.Keys
 	if d.TTL <= 0 {
 		d.TTL = time.Hour
 	}
