@@ -1442,7 +1442,7 @@
       "status": "verified",
       "evidence": [
         "A real two-second H264 clip is encoded by the actual worker; frame ops at a time inside a frame, from another clip with a crop in source pixels, and into a site kind each produce the source's frame a player shows at that time (compared with ffmpeg's decode of the source against the neighbouring frame).",
-        "The API refuses a contributor's frame of a clip it cannot edit (403), a missing or non-video source (404), a time past the end and an unknown kind (400), a destination that takes no PNG (415) and from.kind on copy (400), and writes nothing."
+        "The API refuses a contributor's frame of a clip it cannot edit (403), a missing or non-video source (404), a time past the end and an unknown kind (400), a destination that declares no Frames, a video or a PNG image alike (400), and from.kind on copy (400), and writes nothing."
       ],
       "cases": [
         "TestMediaFramePosters"
@@ -1492,6 +1492,19 @@
       ]
     },
     {
+      "id": "CK-J12-S06",
+      "journey": "CK-J12",
+      "behavior": "Frames count toward their upload's Max and are charged to the commit's quota owner at the still's size, refunded once on removal",
+      "status": "verified",
+      "evidence": [
+        "With the shared usage ledger on, frame ops into a Max 1 stills upload refuse a second still in one commit and in a later one (409 too_many_files) while replacing the one still succeeds; a contributor's poster grabbed by the real worker moves its usage by exactly the still's size (at least 64 KiB), and removing it restores the usage. Added with the media work-bounds change; not yet run in an integrated execution, which full qualification requires."
+      ],
+      "cases": [
+        "TestMediaFramePosters/CK-J12-S06_frames_count_toward_max",
+        "TestMediaFramePosters/CK-J12-S06_a_frame_is_charged_its_still_and_refunded_once"
+      ]
+    },
+    {
       "id": "CK-J13-S01",
       "journey": "CK-J13",
       "behavior": "Private exact-file grant refuses a sibling file or another item",
@@ -1524,12 +1537,14 @@
       "status": "verified",
       "evidence": [
         "Expired tokens refuse. Previous signing keys work only during declared overlap, removed keys cannot leak/cache bytes, and the current key always opens the exact object.",
+        "Through the real engine, a download ticket signed before a rotation transfers after the engine restarts with a new signing key and the old one as previous, a ticket signed after it transfers too, and the old ticket is refused (404) once the previous key is dropped. Added with the media work-bounds change; not yet run in an integrated execution, which full qualification requires.",
         "Reviewed against current public behavior; exact cases passed in integrated/focused race receipts retained with this task. Full qualification still requires every selected contract and one integrated execution."
       ],
       "cases": [
         "TestGatewayCapabilities/CK-J13-S03_expiry_and_key_rotation",
         "TestGatewayCapabilities/CK-J13-S03_expiry_and_key_rotation/overlap",
-        "TestGatewayCapabilities/CK-J13-S03_expiry_and_key_rotation/removed"
+        "TestGatewayCapabilities/CK-J13-S03_expiry_and_key_rotation/removed",
+        "TestDeliveryRotationKeepsTickets"
       ]
     },
     {
@@ -1601,6 +1616,7 @@
       "status": "verified",
       "evidence": [
         "Exact allowed private CORS origin/credentials/cache headers are enforced, a foreign origin is not authorized, public cache policy remains public, and download bytes/filename/disposition/nosniff survive.",
+        "Every private answer adds CDN-Cache-Control: no-store and no public one does; every answer, denials included, carries Referrer-Policy: no-referrer. Added with the media work-bounds change; not yet run in an integrated execution, which full qualification requires.",
         "Reviewed against current public behavior; exact cases passed in integrated/focused race receipts retained with this task. Full qualification still requires every selected contract and one integrated execution."
       ],
       "cases": [
@@ -2775,6 +2791,42 @@
       ],
       "evidence": [
         "Pure readiness table: a required upload counts once attached (pages also once included); staged or encoding reads processing, failed reads failed, absent reads missing. Real worker, S3 and publication: a clip released without its source and a gallery released without pages before the rule are withdrawn by Reconcile (exactly two queued), leave the anonymous listings, read missing to editors with their publications waiting, while the encoded clip and the gallery with pages stay live; the withdrawn clip's version read is 404. A release whose storage copy failed under the old rule keeps its frozen plan; retried after the rule, it waits instead of going live. A clip published without its source never activates a release (not released, no release, no published_at). After its source is uploaded the clip stays unreleased while its encode output is held, then releases; a second Reconcile queues none. Focused local runs passed with the race detector; mutations (keeping a release that lacks its source; readiness ignoring Required; activating a frozen plan that now waits) failed them."
+      ]
+    },
+    {
+      "id": "CK-J09-S33",
+      "journey": "CK-J09",
+      "behavior": "A commit is authorized again under its item's lock: authority revoked while it waited writes nothing",
+      "status": "verified",
+      "evidence": [
+        "A commit through the real journal, S3 and PostgreSQL lock whose upload grant is revoked as it takes the item lock answers 403 forbidden and leaves the manifest as the previous, authorized commit wrote it. Added with the media work-bounds change; not yet run in an integrated execution, which full qualification requires."
+      ],
+      "cases": [
+        "TestCommitReauthorizesUnderLock"
+      ]
+    },
+    {
+      "id": "CK-J09-S34",
+      "journey": "CK-J09",
+      "behavior": "HostOnly outputs of every kind are prepared in internal/, which no item token opens",
+      "status": "verified",
+      "evidence": [
+        "The real worker renders a site kind's HostOnly image into internal/ and its served one into private/: an item token opens only the served one at the gateway, editors are signed both, and an ordinary read lists no HostOnly output. Added with the media work-bounds change; not yet run in an integrated execution, which full qualification requires."
+      ],
+      "cases": [
+        "TestHostOnlyOutputsStayInternal"
+      ]
+    },
+    {
+      "id": "CK-J09-S35",
+      "journey": "CK-J09",
+      "behavior": "ZIP ingestion validates in one streaming pass and extracts pages per batch, so scratch holds the ZIP and one page",
+      "status": "verified",
+      "evidence": [
+        "Twelve uncompressed PNG pages that deflate to a small ZIP are ingested by the real worker into twelve pages while its scratch directory never holds more than the ZIP and two pages. Added with the media work-bounds change; not yet run in an integrated execution, which full qualification requires."
+      ],
+      "cases": [
+        "TestArchiveIngestScratch"
       ]
     },
     {

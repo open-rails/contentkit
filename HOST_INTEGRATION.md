@@ -1052,37 +1052,14 @@ worker, _ := cfg.MediaRegistry() // the stock worker's MEDIA_KINDS_FILE
   its own media without the engine authorizes the kind in `CanUpload`: a
   person their own, staff anyone's (exempt).
 
-- **Uploads** are paths: a literal (`cover`) or a pattern (`originals/{name}`);
-  a file's path adds its extension (`cover.png`), and a put to the same stem
-  replaces it. `Max` caps an Upload's files, `Frames` lets the `frame` op
-  grab the upload from a video upload, `Named` lets the server name it (`i-{uuid}`, inline images;
-  it needs a `Max`). `Required` holds a version back until it has an
-  attached upload there: its media state reads `missing` and its publication
-  waits, and a live release without one is withdrawn when it is re-planned.
+- **Uploads** are paths: a literal (`cover`) or a pattern (`originals/{name}`); a file's path adds its extension (`cover.png`), and a put to the same stem replaces it. `Max` caps an Upload's files, frames included, `MaxPixels` lowers the image processor's decoded-pixel bound for its images (avatars: 25 MP), `Frames` lets the `frame` op grab the upload from a video upload (it must accept `image/png`; no other upload takes frames), `Named` lets the server name it (`i-{uuid}`, inline images; it needs a `Max`). `Required` holds a version back until it has an attached upload there: its media state reads `missing` and its publication waits, and a live release without one is withdrawn when it is re-planned.
 - **Private presets** have one producer: `Image` (with `Shapes`, below),
   `HLS` (byte-range fMP4 ladder, audio and subtitle tracks, seek sprite; each
   track's segment table is its own private blob), `MP4` (one rung, H.264),
   `Zip` (the files under a prefix, in manifest order), `Audio` (an HLS track
   and an M4A) or `Subtitles` (clean WebVTT; a video lists them after its own
   tracks). Nothing is upscaled.
-  Image presets default to WebP. A private preset with
-  `Image.Format: media.ImageFormatSource` must end its `To` with `{ext}`
-  (the upload's original extension), such as `download-pages/{name}{ext}`.
-  With an inside fit and no edit, a source within its width/height box
-  passes through byte-for-byte. `Width: 6000, Height: 6000` bounds either
-  edge proportionally; zero leaves an edge unbounded. Oversized or edited
-  JPEG, PNG, WebP and GIF files retain their codec, including animation;
-  other accepted codecs support unchanged passthrough only. Keep archival
-  uploads with `KeepOriginals: true`; a ZIP preset over `download-pages/`
-  packs the resulting original-format pages in reading order. Upgrade the
-  worker/gateway cohort before declaring this registry, then regenerate
-  existing items to replace an old download rendition.
-  `Shapes` give an image preset another `Image` for uploads of another
-  aspect (width:height), wider than `WiderThan` and no wider than
-  `NoWiderThan` (unset is open). They are data, so the stock worker runs
-  them; they never overlap and keep the preset's format and animation; an
-  upload in none renders `Image`. Tall pages keep more height, wide pages
-  more width:
+  Image presets default to WebP. A private preset with `Image.Format: media.ImageFormatSource` must end its `To` with `{ext}` (the upload's original extension), such as `download-pages/{name}{ext}`. With an inside fit and no edit, a source within its width/height box passes through with its pixels byte-for-byte and its metadata (EXIF, XMP, IPTC, comments, trailing data) dropped, orientation and colour profile kept; `Image.KeepMetadata` keeps all of it and is required for AVIF, HEIF and TIFF uploads. `Width: 6000, Height: 6000` bounds either edge proportionally; zero leaves an edge unbounded. Oversized or edited JPEG, PNG, WebP and GIF files retain their codec, including animation; other accepted codecs support unchanged passthrough only. Keep archival uploads with `KeepOriginals: true`; a ZIP preset over `download-pages/` packs the resulting original-format pages in reading order. Upgrade the worker/gateway cohort before declaring this registry, then regenerate existing items to replace an old download rendition. `Shapes` give an image preset another `Image` for uploads of another aspect (width:height), wider than `WiderThan` and no wider than `NoWiderThan` (unset is open). They are data, so the stock worker runs them; they never overlap and keep the preset's format and animation; an upload in none renders `Image`. Tall pages keep more height, wide pages more width:
 
   ```json
   {"name": "low", "from": "originals/{name}", "to": "low-res/{name}.webp",
@@ -1105,11 +1082,8 @@ worker, _ := cfg.MediaRegistry() // the stock worker's MEDIA_KINDS_FILE
   presets' sources are always kept). Except a version's declared audio
   (`Publish.Playback`), the read API never returns an upload's path or URL
   to viewers.
-- **Host-only presets.** `Private.HostOnly` keeps an output out of generic
-  reads, downloads and playlists.
-- **`private/` is all or nothing.** One token per item opens every private
-  file of it. `HostOnly` decides what reads list, not what the token
-  reaches: a viewer with access who learns a blob's hash can fetch it.
+- **Host-only presets.** `Private.HostOnly` keeps an Image, MP4 or Zip output out of generic reads, downloads and playlists.
+- **`private/` is all or nothing.** One token per item opens every private file of it; a version's `private/` holds only released files. `HostOnly` outputs, of every kind, stay in `internal/`, which no token reaches.
 - **Defaults.** A kind's `Defaults` (an `fs.FS`, e.g. `go:embed`) holds the
   images its public presets name in `Public.Default`; the registry checks
   they exist. A shared kind ships its own, so importing apps merge nothing.
@@ -1190,7 +1164,7 @@ server-side instead, so no byte passes through the importer.
 | `remove {path, takedown?}` | Removes an upload and its outputs (cancelling its processing). With `takedown` it also removes the frames grabbed from the upload and the zips that bundled it, then deletes at once the blobs the commit dropped, the removed uploads' editor views and staged objects, and the item's unused public files. With an exempt grant (`UploadGrant.Exempt`, staff) it instead deletes every private blob the item no longer references, earlier versions and all editor views included, which costs re-rendering them; sent again on the path already gone, it runs that sweep again. If a takedown's deletes fail it says so: staff complete it with the exempt takedown, otherwise the leftovers go at the grace sweep. For anyone else a takedown of a path already gone is `not_found`. |
 | `attach {path, index?, meta?}` | Makes an unattached upload part of the item. |
 | `copy {from: {id, path}, to?, edit?}` | Copies an upload within the kind, including the current item. Copies within an Upload preserve current private outputs; another Upload or a supplied edit renders its own presets from the original. Blobs copied from another item are reserved like uploads (rate limits, pending quota) before they move. |
-| `frame {path, t \| auto, edit?, from?}` | Fills an upload from a frame of its `Frames` video, the one a player shows `t` seconds in; a new video grabs again. With `from: {kind?, id, version?, path}` the frame is of another item's video upload (`kind` defaults to this item's, in its namespace), which the editor must also be able to write; the upload must allow `image/png`, and the worker grabs it once, a still that later changes to that video leave alone. |
+| `frame {path, t \| auto, edit?, from?}` | Fills an upload declaring `Frames` from a frame of that video, the one a player shows `t` seconds in; a new video grabs again. With `from: {kind?, id, version?, path}` the frame is of another item's video upload (`kind` defaults to this item's, in its namespace), which the editor must also be able to write; the worker grabs it once, a still that later changes to that video leave alone. Any other upload takes no frame (400). A frame counts toward the upload's `Max` and is charged to the commit's quota owner: the minimum at commit, the still's size once grabbed (past the quota the frame fails `quota_exceeded`). |
 | `meta {meta}` | Sets the template values (`{title}` in download names). |
 | `regenerate {preset?, force?}` | Asks the worker to redo stale outputs and retry uploads that failed for their current blob and edit, which any writer of the item may do; `force` redoes every output and needs an exempt grant. |
 
@@ -1448,17 +1422,7 @@ the host's periodic jobs. The worker migrates its schema itself.
   `_default` item. `Cross-Origin-Resource-Policy` is always `same-site`.
 - **Bucket**: one per app, private (no public ACL or policy); the gateway's
   key reads only `*/private/*` and `*/public/*` of each; only the hosts write.
-- **CDN**: may cache `public/` in a shared cache. Generation-named URLs answer
-  `public, max-age=31536000, immutable`; stable names and default images answer
-  `public, max-age=300, stale-while-revalidate=86400` with ETag revalidation.
-  ContentKit does not enqueue CDN invalidation jobs. Never cache `private/` in
-  a shared cache: the token is not part of a cache key the CDN checks, so a
-  cached object would be served without one. Private blobs are hash-named and
-  answer `private, max-age=31536000, immutable`: tokens guard new reads, not
-  copies a browser already holds, so expiry, key rotation and deletion don't
-  reach those. The gateway sets these headers itself and ignores any
-  `Cache-Control` stored on the object. A CDN hit skips the deletion fence, so
-  a deleted `public/` file can stay served until that copy expires.
+- **CDN**: may cache `public/` in a shared cache. Generation-named URLs answer `public, max-age=31536000, immutable`; stable names and default images answer `public, max-age=300, stale-while-revalidate=86400` with ETag revalidation. ContentKit does not enqueue CDN invalidation jobs. Never cache `private/` in a shared cache: the token is not part of a cache key the CDN checks, so a cached object would be served without one. Private blobs are hash-named and answer `private, max-age=31536000, immutable` with `CDN-Cache-Control: no-store`, so a CDN that ignores `private` still stores none: tokens guard new reads, not copies a browser already holds, so expiry, key rotation and deletion don't reach those. Every media answer carries `Referrer-Policy: no-referrer`, so a page a media file links to never sees its tokened URL. The gateway sets these headers itself and ignores any `Cache-Control` stored on the object. A CDN hit skips the deletion fence, so a deleted `public/` file can stay served until that copy expires.
 - **Denials are 404 by design**: a missing, malformed, expired, wrong-scope
   or unknown-key token on `private/` gets the same response as a
   missing object (status, headers, body; `Cache-Control: no-store`), decided
@@ -1466,14 +1430,7 @@ the host's periodic jobs. The worker migrates its schema itself.
   content exists. The reason is logged at debug (`media-gateway: denied`).
   Clients that re-grant on expiry must treat 404 on these URLs as "refresh
   and retry once"; the SDK player's `refresh` does.
-- **Key rotation**: add the new key to every access worker as
-  `MEDIA_GATEWAY_TOKEN_KEY` with the old one as `_TOKEN_KEY_PREVIOUS`, then
-  switch the hosts' `Delivery.SigningKey`, then drop the previous key after
-  the longest token lifetime (TTL rounded up to the window, about 5 h by default).
-  A scope change does not revoke already-issued item tokens: they remain
-  valid until expiry while their signing key is accepted. If immediate
-  revocation is required, coordinate a key replacement without accepting the
-  old key and have clients refresh their media grants.
+- **Key rotation**: add the new key to every access worker as `MEDIA_GATEWAY_TOKEN_KEY` with the old one as `_TOKEN_KEY_PREVIOUS`, then switch the hosts' `Delivery.SigningKey` with the old key as `Delivery.PreviousKey`, so download tickets and activity receipts signed before the switch still verify, then drop the previous key everywhere after the longest token lifetime (TTL rounded up to the window, about 5 h by default) and, on hosts, after a day, the activity receipts' lifetime. A scope change does not revoke already-issued item tokens: they remain valid until expiry while their signing key is accepted. If immediate revocation is required, coordinate a key replacement without accepting the old key and have clients refresh their media grants.
 - **Scraping** is limited in three places, none of them the media gateway
   (it keeps no state):
   - `ReaderOptions.Issuance` bounds the distinct items a viewer is given the

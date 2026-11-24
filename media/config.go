@@ -108,11 +108,19 @@ type Upload struct {
 	// preset and no public one): each version keeps its copy in private/,
 	// which only the version's openers read.
 	Body     bool     `json:"body,omitempty"`
-	Types    []string `json:"types"`            // accepted content types
-	MaxBytes int64    `json:"max_bytes"`        // per file
-	Max      int      `json:"max,omitempty"`    // uploads matching Path; 0 is unlimited
-	Frames   string   `json:"frames,omitempty"` // may be grabbed from a frame of this video upload (the frame op)
-	Named    bool     `json:"named,omitempty"`  // the server names it ({name} is "i-{uuid}"): inline images
+	Types    []string `json:"types"`         // accepted content types
+	MaxBytes int64    `json:"max_bytes"`     // per file
+	Max      int      `json:"max,omitempty"` // uploads matching Path; 0 is unlimited
+	// MaxPixels bounds a decoded image upload, all frames of an animation
+	// together; 0 takes the image processor's (default 100 MP), which it can
+	// only lower.
+	MaxPixels int `json:"max_pixels,omitempty"`
+	// Frames names the literal video upload this one may be grabbed from (the
+	// frame op); only such uploads take frames, from it or another item's
+	// video, and they accept image/png. A frame counts toward Max and is
+	// charged at its still's size.
+	Frames string `json:"frames,omitempty"`
+	Named  bool   `json:"named,omitempty"` // the server names it ({name} is "i-{uuid}"): inline images
 	// Video bounds a video upload as probed from its real stream;
 	// nil or zero fields take the defaults (DefaultVideoLimits).
 	Video *VideoLimits `json:"video,omitempty"`
@@ -167,10 +175,12 @@ type Private struct {
 	// Download is the human name template a download read signs into the
 	// URL, filled from the manifest's meta and {name}: "{title}.zip".
 	Download string `json:"download,omitempty"`
-	// HostOnly leaves this preset out of generic reads and playlists. Version
-	// outputs stay in internal and can be served only by the authorized host
-	// download transfer. They never share an allocation with ordinary served
-	// outputs, because an item token opens every private file in its folder.
+	// HostOnly leaves this Image, MP4 or Zip preset out of generic reads and
+	// playlists. Its outputs stay in internal/, which no token opens: a
+	// version's are served only by the authorized host download transfer,
+	// another kind's only to editors. They never share an allocation with
+	// ordinary served outputs, because an item token opens every private file
+	// in its folder.
 	HostOnly  bool       `json:"host_only,omitempty"`
 	Image     *Image     `json:"image,omitempty"`
 	HLS       *HLS       `json:"hls,omitempty"`
@@ -237,7 +247,8 @@ type Public struct {
 }
 
 // Image is a rendering, WebP by default. Source-format private presets retain
-// the upload's codec and copy unchanged bytes when no resize/edit is needed.
+// the upload's codec and copy unchanged pixels, without metadata, when no
+// resize/edit is needed.
 // Resizing and editing in source format support JPEG, PNG, WebP and GIF.
 // Zero Width and Height keep the full size; nothing is upscaled.
 type Image struct {
@@ -252,6 +263,11 @@ type Image struct {
 	Aspect    Aspect    `json:"aspect,omitzero"`
 	MinWidth  int       `json:"min_width,omitempty"`
 	Animation Animation `json:"animation,omitempty"`
+	// KeepMetadata keeps an unchanged source-format copy's metadata (EXIF,
+	// XMP, IPTC, comments, GPS). By default the copy drops it losslessly,
+	// keeping the orientation and colour profile; re-encoded images never
+	// carry it.
+	KeepMetadata bool `json:"keep_metadata,omitempty"`
 }
 
 // ImageFormat selects WebP encoding or the upload's original codec.

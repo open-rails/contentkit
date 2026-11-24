@@ -160,7 +160,7 @@ WHERE tenant_id=$1 AND folder_prefix=$2`, ref.TenantID, item.Prefix())
 	var revision, nextRevision uuid.UUID
 	var operations, nextOperations []uuid.UUID
 	must(t, w.pool.QueryRow(t.Context(), cleanupState, ref.TenantID, item.Prefix()).Scan(&chunk, &revision, &operations))
-	options := mediastore.ReaderOptions{Manifests: manifests, Delivery: media.Delivery{Mode: media.DeliverURL, SigningKey: storage.key, TTL: time.Hour}}
+	options := mediastore.ReaderOptions{Manifests: manifests, Delivery: media.Delivery{Mode: media.DeliverURL, Keys: deliveryKeys(t, storage.key), TTL: time.Hour}}
 	reader, err := mediastore.NewReader(options)
 	must(t, err)
 	read := func(actor access.Actor, editor bool) *media.ReadResult {

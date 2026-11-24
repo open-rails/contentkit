@@ -9,10 +9,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/authkit/authtest"
 	"github.com/open-rails/authkit/iam"
 	ck "github.com/open-rails/contentkit"
@@ -21,12 +23,15 @@ import (
 )
 
 // withPosters gives the tiny video kinds a poster upload grabbed from their
-// video and rendered by an image preset.
+// video and rendered by an image preset, one more still at most, and an
+// image upload that takes no frames.
 func withPosters(c *ck.Config) {
 	for i := range c.Media.Config.Kinds {
 		k := &c.Media.Config.Kinds[i]
 		if k.Name == "clip" || k.Name == "siteclip" {
-			k.Uploads = append(k.Uploads, media.Upload{Path: "poster", Types: []string{"image/png"}, MaxBytes: 1 << 20, Frames: "source"})
+			k.Uploads = append(k.Uploads, media.Upload{Path: "poster", Types: []string{"image/png"}, MaxBytes: 1 << 20, Frames: "source"},
+				media.Upload{Path: "stills/{name}", Types: []string{"image/png"}, MaxBytes: 1 << 20, Max: 1, Frames: "source"},
+				media.Upload{Path: "art", Types: []string{"image/png"}, MaxBytes: 1 << 20})
 			k.Private = append(k.Private, media.Private{Name: "poster", From: "poster", To: "posters/poster.webp", Image: &media.Image{Width: 64, Height: 36}})
 		}
 	}
@@ -36,7 +41,10 @@ func withPosters(c *ck.Config) {
 // encoded video: the item's own, or another item's (of any kind in the
 // namespace) that the editor may also edit. Hosts decode nothing.
 func TestMediaFramePosters(t *testing.T) {
-	f := newTinyHLSConfiguredFixture(t, false, withPosters)
+	f := newTinyHLSConfiguredFixture(t, false, func(c *ck.Config) {
+		withPosters(c)
+		c.Content.Channels.Uploads.QuotaBytes = 1 << 30 // enable the shared usage ledger
+	})
 	admin := f.app.engine.Client()
 	frame := func(n int) image.Image { return sourceFrame(t, f.Source, n) }
 	// The grabbed still is the source's frame n, the one a player shows at
@@ -119,7 +127,8 @@ func TestMediaFramePosters(t *testing.T) {
 			"missing_upload":    {media.Op{Op: media.OpFrame, Path: "poster", T: seconds(0.5), From: &media.CopyFrom{ID: from.ID, Version: from.Version, Path: "absent.mp4"}}, 404, "not_found"},
 			"past_the_end":      {media.Op{Op: media.OpFrame, Path: "poster", T: seconds(99), From: from}, 400, "invalid_request"},
 			"unknown_kind":      {media.Op{Op: media.OpFrame, Path: "poster", T: seconds(0.5), From: &media.CopyFrom{Kind: "nope", ID: from.ID, Version: from.Version, Path: "source.mp4"}}, 400, "invalid_request"},
-			"not_an_image_path": {media.Op{Op: media.OpFrame, Path: "source", T: seconds(0.5), From: from}, 415, "type_not_allowed"},
+			"not_an_image_path": {media.Op{Op: media.OpFrame, Path: "source", T: seconds(0.5), From: from}, 400, "invalid_request"},
+			"no_frames_upload":  {media.Op{Op: media.OpFrame, Path: "art", T: seconds(0.5), From: from}, 400, "invalid_request"},
 			"kind_is_for_frame": {media.Op{Op: media.OpCopy, From: &media.CopyFrom{Kind: "clip", ID: from.ID, Version: from.Version, Path: "source.mp4"}, To: "source"}, 400, "invalid_request"},
 		} {
 			t.Run(name, func(t *testing.T) {
@@ -138,6 +147,54 @@ func TestMediaFramePosters(t *testing.T) {
 			if read := editorRead(t, admin, ref); len(read.Files) != 0 {
 				t.Fatalf("refused frame ops wrote %s: %+v", ref.ID, read.Files)
 			}
+		}
+	})
+
+	t.Run("CK-J12-S06_frames_count_toward_max", func(t *testing.T) {
+		dest := newClip(t, admin, "Bounded stills")
+		still := func(name string, at float64) media.Op {
+			return media.Op{Op: media.OpFrame, Path: "stills/" + name, T: seconds(at), From: from}
+		}
+		requireError(t, commit(admin, dest, still("a", 0.5), still("b", 1)), 409, "too_many_files")
+		must(t, commit(admin, dest, still("a", 0.5)))
+		requireError(t, commit(admin, dest, still("b", 1)), 409, "too_many_files")
+		must(t, commit(admin, dest, still("a", 1))) // replacing the one still is no new file
+		var stills []string
+		for _, file := range editorRead(t, admin, dest).Files {
+			if file.Upload && strings.HasPrefix(file.Path, "stills/") {
+				stills = append(stills, file.Path)
+			}
+		}
+		if len(stills) != 1 || stills[0] != "stills/a.png" {
+			t.Fatalf("stills past Max: %v", stills)
+		}
+	})
+
+	t.Run("CK-J12-S06_a_frame_is_charged_its_still_and_refunded_once", func(t *testing.T) {
+		person, token := f.world.person(t, 0)
+		authtest.GrantRole(t, f.world.tenant[0], f.app.group, iam.UserSubject(person.ID), f.world.contributor)
+		owner := f.app.client(token)
+		own := newClip(t, owner, "Charged poster")
+		_, err := owner.IngestMedia(t.Context(), http.DefaultClient, own, uuid.NewString(), []ck.MediaFile{{Path: "source.mp4", Type: "video/mp4", Body: bytes.NewReader(f.Source)}})
+		must(t, err)
+		awaitMediaReady(t, owner, own)
+		target, err := f.config.Kinds.VersionRef(own.Kind, own.ID, own.Version)
+		must(t, err)
+		usage := func() int64 {
+			var used int64
+			must(t, f.pool.QueryRow(t.Context(), `SELECT used_bytes FROM `+pgx.Identifier{f.schema, "content_media_usage"}.Sanitize()+` WHERE tenant_id=$1 AND owner_id=$2`, target.TenantID, string(person.ID)).Scan(&used))
+			return used
+		}
+		before := usage()
+		must(t, commit(owner, own, media.Op{Op: media.OpFrame, Path: "poster", T: seconds(1)}))
+		poster := awaitPoster(t, owner, own)
+		charged := max(poster.Size, 64<<10) // each upload is charged at least 64 KiB
+		if got := usage(); got != before+charged {
+			t.Fatalf("a %d-byte still moved usage from %d to %d, want %d", poster.Size, before, got, before+charged)
+		}
+		must(t, commit(owner, own, media.Op{Op: media.OpRemove, Path: poster.Path}))
+		if got := usage(); got != before {
+			t.Fatalf("removing the still left usage at %d, want %d", got, before)
 		}
 	})
 }

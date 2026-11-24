@@ -78,7 +78,7 @@ func (e *Edit) Size(w, h int) (int, int) {
 	return w, h
 }
 
-// Hash is the edit's stable identity; "" for no edit.
+// Hash is the edit's stable identity, its whole SHA-256; "" for no edit.
 func (e *Edit) Hash() string {
 	if e = e.Normalize(); e == nil {
 		return ""
@@ -88,7 +88,7 @@ func (e *Edit) Hash() string {
 		s += fmt.Sprintf("|c%d,%d,%d,%d", c.X, c.Y, c.W, c.H)
 	}
 	sum := sha256.Sum256([]byte(s))
-	return hex.EncodeToString(sum[:4])
+	return hex.EncodeToString(sum[:])
 }
 
 // Resolve is the edit im applies to a w×h source (EXIF-oriented): e with its

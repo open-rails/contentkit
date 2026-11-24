@@ -19587,6 +19587,9 @@
           "max": {
             "type": "integer"
           },
+          "max_pixels": {
+            "type": "integer"
+          },
           "named": {
             "type": "boolean"
           },

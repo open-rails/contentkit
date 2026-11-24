@@ -33,6 +33,18 @@ import (
 // Recipe versions the image producer: a change re-renders every image output.
 const Recipe = "webp-1"
 
+// SourceRecipe versions source-format outputs, which copy an unchanged
+// upload without its metadata.
+const SourceRecipe = "source-2"
+
+// privateFP is the fingerprint of an Image preset's output of src at s.
+func privateFP(src media.File, s media.Image) string {
+	if s.Format == media.ImageFormatSource {
+		return mediastore.SpecFP(src, s, SourceRecipe)
+	}
+	return mediastore.SpecFP(src, s, Recipe)
+}
+
 // Config configures a Processor.
 type Config struct {
 	Store     media.Store
@@ -240,7 +252,7 @@ func (p *Processor) todo(ctx context.Context, item mediastore.Item, m *mediastor
 			}
 			outs := m.Outputs(f.Path, pr.Name)
 			if job.Force || slices.Contains(f.Pending, pr.Name) || len(outs) != 1 || outs[0].Path != k.OutputPath(pr, f.Path) ||
-				outs[0].FP != mediastore.SpecFP(f, pr.ImageFor(media.Dims{W: f.W, H: f.H}), Recipe) {
+				outs[0].FP != privateFP(f, pr.ImageFor(media.Dims{W: f.W, H: f.H})) {
 				w.private = append(w.private, pr)
 			}
 		}
@@ -694,9 +706,10 @@ func (p *Processor) render(ctx context.Context, item mediastore.Item, m *mediast
 		d.analysis = &a
 	}
 	k := item.Kind()
+	u, _ := k.UploadOf(w.src.Path) // read refused an undeclared path
 	for _, pu := range w.public {
 		names := k.PublicNames(pu, w.src.Path)
-		outs, dims, err := encodePublic(src, w.src.Type, pu, names, w.src.Edit, p.rules(pu.Image.Animation))
+		outs, dims, err := encodePublic(src, w.src.Type, pu, names, w.src.Edit, p.rules(u, pu.Image.Animation))
 		if d.dims = dims; err != nil {
 			return p.permanent(d, err)
 		}
@@ -789,12 +802,13 @@ func (p *Processor) render(ctx context.Context, item mediastore.Item, m *mediast
 	for _, pr := range w.private {
 		// The probed size picks the shape, so an unmeasured upload renders
 		// its own on the first pass; shapes keep the preset's animation.
-		info, err := probe(src, w.src.Type, p.rules(pr.Image.Animation))
+		r := p.rules(u, pr.Image.Animation)
+		info, err := probe(src, w.src.Type, r)
 		if err != nil {
 			return p.permanent(d, err)
 		}
 		s := pr.ImageFor(info.dims())
-		out, dims, err := encode(src, w.src.Type, s, w.src.Edit)
+		out, dims, err := encode(src, w.src.Type, info, s, w.src.Edit, r)
 		if err != nil {
 			return p.permanent(d, err)
 		}
@@ -809,10 +823,10 @@ func (p *Processor) render(ctx context.Context, item mediastore.Item, m *mediast
 			}
 		}
 		d.outputs[pr.Name] = media.File{Path: k.OutputPath(pr, w.src.Path), Blob: blob, Type: typ, Size: int64(len(out)),
-			W: dims.W, H: dims.H, FP: mediastore.SpecFP(w.src, s, Recipe)}
+			W: dims.W, H: dims.H, FP: privateFP(w.src, s)}
 	}
 	if d.dims.W == 0 {
-		s, err := probe(src, w.src.Type, p.rules(media.AnimationAllow))
+		s, err := probe(src, w.src.Type, p.rules(u, media.AnimationAllow))
 		if err != nil {
 			return p.permanent(d, err)
 		}
@@ -870,10 +884,13 @@ func (p *Processor) editorViews(ctx context.Context, item mediastore.Item, m *me
 			if err != nil {
 				return nil // missing or unreadable: its upload records why
 			}
-			if _, err := probe(src, f.Type, p.rules(media.AnimationAllow)); err != nil {
+			u, _ := item.Kind().UploadOf(f.Path)
+			r := p.rules(u, media.AnimationAllow)
+			info, err := probe(src, f.Type, r)
+			if err != nil {
 				return nil
 			}
-			out, _, err := encode(src, f.Type, p.reg.Config().Editor, nil)
+			out, _, err := encode(src, f.Type, info, p.reg.Config().Editor, nil, r)
 			if err != nil {
 				return nil
 			}
@@ -902,8 +919,13 @@ func (p *Processor) editorViews(ctx context.Context, item mediastore.Item, m *me
 	return g.Wait()
 }
 
-func (p *Processor) rules(animation media.Animation) rules {
-	return rules{maxPixels: p.c.MaxPixels, maxFrames: p.c.MaxFrames, maxSeconds: p.c.MaxAnimationSeconds, animation: animation}
+// rules bound a source of upload u: its MaxPixels lowers the processor's.
+func (p *Processor) rules(u media.Upload, animation media.Animation) rules {
+	pixels := p.c.MaxPixels
+	if u.MaxPixels > 0 {
+		pixels = min(pixels, u.MaxPixels)
+	}
+	return rules{maxPixels: pixels, maxFrames: p.c.MaxFrames, maxSeconds: p.c.MaxAnimationSeconds, animation: animation}
 }
 
 // putBlob records ownership and writes one immutable allocation in area.
@@ -935,7 +957,11 @@ func (p *Processor) putBlob(ctx context.Context, item mediastore.Item, area stri
 // MaxBytes, or a grabbed frame's recorded size) is refused unread. Blobs are
 // hashed when placed or produced, so the bytes are not hashed again.
 func (p *Processor) read(ctx context.Context, key string, f media.File, k *mediastore.RegisteredKind) ([]byte, error) {
-	u, _ := k.UploadOf(f.Path)
+	u, ok := k.UploadOf(f.Path)
+	if !ok {
+		return nil, permanentError{&media.ImageError{Code: media.CodeNotFound,
+			Message: fmt.Sprintf("%s is no longer a declared upload path of kind %q", f.Path, k.Name)}}
+	}
 	limit := u.MaxBytes
 	if f.Frame != nil && f.Frame.Of != "" {
 		limit = max(limit, f.Size)
