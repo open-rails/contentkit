@@ -111,6 +111,10 @@ type Upload struct {
 	Types    []string `json:"types"`         // accepted content types
 	MaxBytes int64    `json:"max_bytes"`     // per file
 	Max      int      `json:"max,omitempty"` // uploads matching Path; 0 is unlimited
+	// MaxPixels bounds a decoded image upload, all frames of an animation
+	// together; 0 takes the image processor's (default 100 MP), which it can
+	// only lower.
+	MaxPixels int `json:"max_pixels,omitempty"`
 	// Frames names the literal video upload this one may be grabbed from (the
 	// frame op); only such uploads take frames, from it or another item's
 	// video, and they accept image/png. A frame counts toward Max and is
@@ -241,7 +245,8 @@ type Public struct {
 }
 
 // Image is a rendering, WebP by default. Source-format private presets retain
-// the upload's codec and copy unchanged bytes when no resize/edit is needed.
+// the upload's codec and copy unchanged pixels, without metadata, when no
+// resize/edit is needed.
 // Resizing and editing in source format support JPEG, PNG, WebP and GIF.
 // Zero Width and Height keep the full size; nothing is upscaled.
 type Image struct {
@@ -256,6 +261,11 @@ type Image struct {
 	Aspect    Aspect    `json:"aspect,omitzero"`
 	MinWidth  int       `json:"min_width,omitempty"`
 	Animation Animation `json:"animation,omitempty"`
+	// KeepMetadata keeps an unchanged source-format copy's metadata (EXIF,
+	// XMP, IPTC, comments, GPS). By default the copy drops it losslessly,
+	// keeping the orientation and colour profile; re-encoded images never
+	// carry it.
+	KeepMetadata bool `json:"keep_metadata,omitempty"`
 }
 
 // ImageFormat selects WebP encoding or the upload's original codec.

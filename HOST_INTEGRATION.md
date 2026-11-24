@@ -1044,37 +1044,14 @@ worker, _ := cfg.MediaRegistry() // the stock worker's MEDIA_KINDS_FILE
   its own media without the engine authorizes the kind in `CanUpload`: a
   person their own, staff anyone's (exempt).
 
-- **Uploads** are paths: a literal (`cover`) or a pattern (`originals/{name}`);
-  a file's path adds its extension (`cover.png`), and a put to the same stem
-  replaces it. `Max` caps an Upload's files, `Frames` lets the `frame` op
-  grab the upload from a video upload, `Named` lets the server name it (`i-{uuid}`, inline images;
-  it needs a `Max`). `Required` holds a version back until it has an
-  attached upload there: its media state reads `missing` and its publication
-  waits, and a live release without one is withdrawn when it is re-planned.
+- **Uploads** are paths: a literal (`cover`) or a pattern (`originals/{name}`); a file's path adds its extension (`cover.png`), and a put to the same stem replaces it. `Max` caps an Upload's files, frames included, `MaxPixels` lowers the image processor's decoded-pixel bound for its images (avatars: 25 MP), `Frames` lets the `frame` op grab the upload from a video upload (it must accept `image/png`; no other upload takes frames), `Named` lets the server name it (`i-{uuid}`, inline images; it needs a `Max`). `Required` holds a version back until it has an attached upload there: its media state reads `missing` and its publication waits, and a live release without one is withdrawn when it is re-planned.
 - **Private presets** have one producer: `Image` (with `Shapes`, below),
   `HLS` (byte-range fMP4 ladder, audio and subtitle tracks, seek sprite; each
   track's segment table is its own private blob), `MP4` (one rung, H.264),
   `Zip` (the files under a prefix, in manifest order), `Audio` (an HLS track
   and an M4A) or `Subtitles` (clean WebVTT; a video lists them after its own
   tracks). Nothing is upscaled.
-  Image presets default to WebP. A private preset with
-  `Image.Format: media.ImageFormatSource` must end its `To` with `{ext}`
-  (the upload's original extension), such as `download-pages/{name}{ext}`.
-  With an inside fit and no edit, a source within its width/height box
-  passes through byte-for-byte. `Width: 6000, Height: 6000` bounds either
-  edge proportionally; zero leaves an edge unbounded. Oversized or edited
-  JPEG, PNG, WebP and GIF files retain their codec, including animation;
-  other accepted codecs support unchanged passthrough only. Keep archival
-  uploads with `KeepOriginals: true`; a ZIP preset over `download-pages/`
-  packs the resulting original-format pages in reading order. Upgrade the
-  worker/gateway cohort before declaring this registry, then regenerate
-  existing items to replace an old download rendition.
-  `Shapes` give an image preset another `Image` for uploads of another
-  aspect (width:height), wider than `WiderThan` and no wider than
-  `NoWiderThan` (unset is open). They are data, so the stock worker runs
-  them; they never overlap and keep the preset's format and animation; an
-  upload in none renders `Image`. Tall pages keep more height, wide pages
-  more width:
+  Image presets default to WebP. A private preset with `Image.Format: media.ImageFormatSource` must end its `To` with `{ext}` (the upload's original extension), such as `download-pages/{name}{ext}`. With an inside fit and no edit, a source within its width/height box passes through with its pixels byte-for-byte and its metadata (EXIF, XMP, IPTC, comments, trailing data) dropped, orientation and colour profile kept; `Image.KeepMetadata` keeps all of it and is required for AVIF, HEIF and TIFF uploads. `Width: 6000, Height: 6000` bounds either edge proportionally; zero leaves an edge unbounded. Oversized or edited JPEG, PNG, WebP and GIF files retain their codec, including animation; other accepted codecs support unchanged passthrough only. Keep archival uploads with `KeepOriginals: true`; a ZIP preset over `download-pages/` packs the resulting original-format pages in reading order. Upgrade the worker/gateway cohort before declaring this registry, then regenerate existing items to replace an old download rendition. `Shapes` give an image preset another `Image` for uploads of another aspect (width:height), wider than `WiderThan` and no wider than `NoWiderThan` (unset is open). They are data, so the stock worker runs them; they never overlap and keep the preset's format and animation; an upload in none renders `Image`. Tall pages keep more height, wide pages more width:
 
   ```json
   {"name": "low", "from": "originals/{name}", "to": "low-res/{name}.webp",

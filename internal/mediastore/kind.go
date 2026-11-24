@@ -309,7 +309,7 @@ func (k *RegisteredKind) mirrors(item Item, cur, next *Manifest) []Mirror {
 func (k *RegisteredKind) UploadRules() []media.UploadRule {
 	out := make([]media.UploadRule, 0, len(k.Uploads))
 	for _, u := range k.Uploads {
-		r := media.UploadRule{Path: u.Path, Types: slices.Clone(u.Types), MaxBytes: u.MaxBytes, Max: u.Max, Named: u.Named, Body: u.Body, Frames: u.Frames}
+		r := media.UploadRule{Path: u.Path, Types: slices.Clone(u.Types), MaxBytes: u.MaxBytes, Max: u.Max, MaxPixels: u.MaxPixels, Named: u.Named, Body: u.Body, Frames: u.Frames}
 		r.Page = k.Publish != nil && u.Path == k.Publish.Pages
 		if i := slices.IndexFunc(k.Public, func(p media.Public) bool { return p.From == u.Path }); i >= 0 {
 			r.Aspect, r.MinWidth = k.Public[i].Image.Aspect, k.Public[i].Image.MinWidth
@@ -357,8 +357,8 @@ func (k *RegisteredKind) validate() error {
 		if !ok || slices.ContainsFunc(k.Uploads[:i], func(o media.Upload) bool { return o.Path == u.Path }) {
 			return fmt.Errorf("upload %q: invalid or duplicate path", u.Path)
 		}
-		if len(u.Types) == 0 || u.MaxBytes <= 0 || u.Max < 0 {
-			return fmt.Errorf("upload %q: needs Types and MaxBytes", u.Path)
+		if len(u.Types) == 0 || u.MaxBytes <= 0 || u.Max < 0 || u.MaxPixels < 0 {
+			return fmt.Errorf("upload %q: needs Types and MaxBytes; Max and MaxPixels are not negative", u.Path)
 		}
 		if u.Named && p.literal != "" {
 			return fmt.Errorf("upload %q: only a pattern is Named", u.Path)
@@ -480,6 +480,11 @@ func (k *RegisteredKind) validatePrivate(p media.Private, names map[string]bool)
 	if sourceFormat && !strings.HasSuffix(p.To, "{ext}") {
 		return fmt.Errorf("source-format image To %q must retain the source extension with {ext}", p.To)
 	}
+	if sourceFormat && !p.Image.KeepMetadata {
+		if i := slices.IndexFunc(k.Uploads[k.uploadIndex(p.From)].Types, func(t string) bool { return !slices.Contains(media.StrippableTypes, t) }); i >= 0 {
+			return fmt.Errorf("source-format copies of %s cannot drop their metadata losslessly: set Image.KeepMetadata or drop the type", k.Uploads[k.uploadIndex(p.From)].Types[i])
+		}
+	}
 	if slices.Contains(placeholders(p.Download), "") {
 		return fmt.Errorf("invalid Download %q", p.Download)
 	}
@@ -571,6 +576,9 @@ func validateImage(im media.Image) error {
 	if im.Format != media.ImageFormatWebP && im.Format != media.ImageFormatSource {
 		return fmt.Errorf("invalid image format %q", im.Format)
 	}
+	if im.KeepMetadata && im.Format != media.ImageFormatSource {
+		return errors.New("KeepMetadata is for source-format images; re-encoded ones carry no metadata")
+	}
 	if im.Width < 0 || im.Height < 0 || im.Width > 16384 || im.Height > 16384 || im.Quality < 0 || im.Quality > 100 ||
 		im.MinWidth < 0 || !im.Aspect.Valid() ||
 		im.Fit != media.FitInside && im.Fit != media.FitCover || im.Animation != media.AnimationAllow && im.Animation != media.AnimationReject {
@@ -587,8 +595,8 @@ func validateShapes(base media.Image, shapes []media.Shape) error {
 			!spans(s.WiderThan, s.NoWiderThan) {
 			return fmt.Errorf("shape %d: set WiderThan, NoWiderThan or both (reduced W:H), the first narrower", i)
 		}
-		if s.Image.Format != base.Format || s.Image.Animation != base.Animation {
-			return fmt.Errorf("shape %d: keep the preset's format and animation", i)
+		if s.Image.Format != base.Format || s.Image.Animation != base.Animation || s.Image.KeepMetadata != base.KeepMetadata {
+			return fmt.Errorf("shape %d: keep the preset's format, animation and metadata policy", i)
 		}
 		if err := validateImage(s.Image); err != nil {
 			return fmt.Errorf("shape %d: %w", i, err)

@@ -445,33 +445,9 @@ bucket answers, and `MEDIA_METRICS_ADDR` serves `/livez`, `/readyz`,
 worker leading its River schema also exports the queue backlog
 (`media_video_jobs`, `media_video_tenant_backlog`, ...); hosts collect none.
 
-**Images** (`media/image`, CGO over libvips): WebP at each `Image` spec
-(inside or cover box, quality), through the upload's edit (crop in
-EXIF-oriented source pixels, then a clockwise quarter rotation); nothing is
-upscaled. GIF and WebP animations keep every frame, delay and loop count;
-`MaxPixels` (100 MP over all frames), `MaxFrames` (1000) and
-`MaxAnimationSeconds` (60) bound sources, and a stored source over its
-Upload's `MaxBytes` is refused unread. Uploads feeding image presets take
-only `media.ImageTypes` (JPEG, PNG, WebP, GIF, AVIF, HEIF, TIFF), the
-declared type binds the decoder, and every other libvips loader is blocked
-(libvips 8.13 or later). Public presets render every width through the same
-spec (a width past the edited image at its width) and carry `from` and `fp`
-as object metadata.
+**Images** (`media/image`, CGO over libvips): WebP at each `Image` spec (inside or cover box, quality), through the upload's edit (crop in EXIF-oriented source pixels, then a clockwise quarter rotation); nothing is upscaled: a cover box larger than its source renders the source's largest centred crop at the box's aspect. GIF and WebP animations keep every frame, delay and loop count; `MaxPixels` (100 MP over all frames, lowered per upload by `Upload.MaxPixels`; avatars 25 MP), `MaxFrames` (1000) and `MaxAnimationSeconds` (60) bound sources, every rendering is checked against the same pixel bound (frames × output area) before it decodes, and a stored source over its Upload's `MaxBytes` is refused unread. A JPEG or WebP still rendered small decodes at a fraction of its size. Uploads feeding image presets take only `media.ImageTypes` (JPEG, PNG, WebP, GIF, AVIF, HEIF, TIFF), the declared type binds the decoder, and every other libvips loader is blocked (libvips 8.13 or later). A source-format preset's unchanged copy drops the upload's metadata (EXIF, XMP, IPTC, comments, trailing data) without re-encoding, keeping its orientation and colour profile; `Image.KeepMetadata` keeps it, and is required for AVIF, HEIF and TIFF sources. Public presets render every width through the same spec (a width past the edited image at its width) and carry `from` and `fp` as object metadata.
 
-A private image preset can instead use `Format: media.ImageFormatSource`
-and `To: "download-pages/{name}{ext}"` to retain the upload's format.
-With no edit and an inside fit, files already inside the configured
-box keep their exact bytes; zero dimensions leave that side unbounded.
-`Width: 6000, Height: 6000` proportionally limits the longest edge to 6,000
-pixels without cropping or enlarging. Only an oversized or edited image is
-re-encoded: JPEG, PNG, WebP and GIF support this, including animated GIF and
-WebP; other accepted codecs can pass through unchanged but cannot currently
-be resized in source format. `Quality` controls JPEG/WebP re-encoding;
-unchanged files keep their bytes and PNG stays lossless. `KeepOriginals: true`
-retains the uploaded source even when a bounded download is generated, and
-the uploaded ZIP is not rewritten. A `Zip: "download-pages/"` preset packs
-those files in the selected reading order, excluding pages omitted by ingestion review. Public
-images, thumbnails and editor previews continue to use WebP.
+A private image preset can instead use `Format: media.ImageFormatSource` and `To: "download-pages/{name}{ext}"` to retain the upload's format. With no edit and an inside fit, files already inside the configured box keep their exact pixels, without their metadata unless `KeepMetadata` is set; zero dimensions leave that side unbounded. `Width: 6000, Height: 6000` proportionally limits the longest edge to 6,000 pixels without cropping or enlarging. Only an oversized or edited image is re-encoded: JPEG, PNG, WebP and GIF support this, including animated GIF and WebP; other accepted codecs can pass through unchanged but cannot currently be resized in source format. `Quality` controls JPEG/WebP re-encoding; unchanged files keep their pixels and PNG stays lossless. `KeepOriginals: true` retains the uploaded source even when a bounded download is generated, and the uploaded ZIP is not rewritten. A `Zip: "download-pages/"` preset packs those files in the selected reading order, excluding pages omitted by ingestion review. Public images, thumbnails and editor previews continue to use WebP.
 
 Deploy media workers and gateways that understand the source-format registry
 before an app starts declaring it. When replacing an existing download

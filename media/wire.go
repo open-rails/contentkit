@@ -223,9 +223,12 @@ type UploadRule struct {
 	Types    []string `json:"types"`
 	MaxBytes int64    `json:"max_bytes"`
 	// Max caps the files at Path; 0 is unlimited.
-	Max   int  `json:"max,omitempty"`
-	Named bool `json:"named,omitempty"`
-	Page  bool `json:"page,omitempty"` // original pages of a versioned reader
+	Max int `json:"max,omitempty"`
+	// MaxPixels bounds a decoded image upload when it sets its own
+	// (Upload.MaxPixels); 0 is the image processor's.
+	MaxPixels int  `json:"max_pixels,omitempty"`
+	Named     bool `json:"named,omitempty"`
+	Page      bool `json:"page,omitempty"` // original pages of a versioned reader
 	// Body: the upload holds the body's images (Upload.Body).
 	Body   bool   `json:"body,omitempty"`
 	Frames string `json:"frames,omitempty"`
