@@ -62,7 +62,7 @@ type Options struct {
 	PreferenceSyncOverlap time.Duration
 
 	// Optional ports (nil -> default).
-	Processor content.ContentProcessor // comments; default: trim plain text
+	TextProcessor content.TextProcessor // comments; default: trim plain text
 	// Moderator screens comment writes, and the catalog's (Screen); nil
 	// publishes everything.
 	Moderator content.ContentModerator
@@ -124,7 +124,7 @@ type Runtime struct {
 	avatars              content.Avatars
 	resolver             resolve.Resolver
 	media                *Media
-	processor            content.ContentProcessor
+	processor            content.TextProcessor
 	moderator            content.ContentModerator
 	breaker              *moderatorBreaker
 	providerEraser       content.ProviderDataEraser
@@ -185,7 +185,7 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 	if opts.DuplicateWindow < 0 {
 		return nil, fmt.Errorf("content: DuplicateWindow must not be negative")
 	}
-	processor := orDefault[content.ContentProcessor](opts.Processor, trimProcessor{})
+	processor := orDefault[content.TextProcessor](opts.TextProcessor, trimProcessor{})
 	rt := &Runtime{
 		store:           newStore(opts.Pool, opts.Schema, opts.Tenant),
 		locate:          opts.Locate,

@@ -38,6 +38,6 @@ func newPostHTML() postHTML {
 	return postHTML{p}
 }
 
-func (h postHTML) Sanitize(_ context.Context, raw string) (string, error) {
+func (h postHTML) SanitizeHTML(_ context.Context, raw string) (string, error) {
 	return strings.TrimSpace(h.p.Sanitize(raw)), nil
 }

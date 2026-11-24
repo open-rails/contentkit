@@ -307,7 +307,7 @@ func (rt *Runtime) ImportComments(ctx context.Context, tx pgx.Tx, in []content.I
 			}
 			r.AnonName = &anon
 		}
-		if r.Body, err = rt.processor.Sanitize(ctx, strings.TrimSpace(c.Body)); err != nil {
+		if r.Body, err = rt.processor.ProcessText(ctx, strings.TrimSpace(c.Body)); err != nil {
 			return err
 		}
 		if r.Body = strings.TrimSpace(r.Body); r.Body == "" {

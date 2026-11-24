@@ -225,7 +225,7 @@ func (c *comments) cleanBody(ctx context.Context, raw string) (string, error) {
 	if utf8.RuneCountInString(body) > c.rt.commentMax {
 		return "", &content.TooLongError{Max: c.rt.commentMax}
 	}
-	clean, err := c.rt.processor.Sanitize(ctx, body)
+	clean, err := c.rt.processor.ProcessText(ctx, body)
 	if err != nil {
 		return "", err
 	}

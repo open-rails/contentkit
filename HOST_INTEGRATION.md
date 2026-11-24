@@ -16,7 +16,7 @@ ck, _ := contentkit.New(ctx, cfg, contentkit.Deps{
 	Postgres: pool, ClickHouse: ch, Redis: rdb,
 	Auth:  ak.Authenticator(), // who a request is (authkit/auth)
 	Users: ak.UserInfo(),      // authors' names (authkit/userinfo)
-	Store: bucket, Moderator: moderator, BodyProcessor: sanitizer,
+	Store: bucket, Moderator: moderator, BodySanitizer: sanitizer,
 })
 _ = ck.Start(ctx) // serve: requests enqueue jobs
 routes, _ := ck.Routes(contentkit.Routes{Prefix: "/api/contentkit", Groups: contentkit.AllRoutes})
@@ -452,7 +452,7 @@ Ports (in `content` unless qualified):
 | `Auth` | yes | `auth.Authenticator` (Auth above); the engine fills it from `Deps.Auth` |
 | `UserInfo` | no | `userinfo.Lookup`: authors' names (Authors below); the engine fills it from `Deps.Users` |
 | `Media` | no | poll images and avatars in ContentKit media (see below); absent = image routes answer 501 |
-| `ContentProcessor` | no | plain-text processor for comment bodies (default only trims whitespace; render as text) |
+| `TextProcessor` | no | `ProcessText`: comment bodies are plain text (default trims whitespace); render them as text, never as HTML |
 | `ContentModerator` | no | `Screen(ModerationInput) → Verdict{Decision, Reason, Model, PromptVersion, Confidence}` before a comment publishes; absent = publish (see Moderation) |
 
 **Authors.** Comments, replies, the latest-comments feed, held items and
@@ -499,7 +499,7 @@ per language.
 Nothing stores an image URL: a public file's name carries a generation that
 changes on every republish. Covers and poll images store the name; a body
 stores a reference, `contentkit:i-{uuid}` (the SDK's `imageRef`), which
-`Deps.BodyProcessor` must keep. Reads resolve a body's references to signed
+`Deps.BodySanitizer` (`catalog.HTMLSanitizer`, `SanitizeHTML`) must keep. Bodies are HTML: every write, the bulk import included, runs them through it, and the default strips every tag. Reads resolve a body's references to signed
 URLs of the opened version's private images, a cover to its current public
 file; one not rendered yet stays as it is.
 
@@ -1351,7 +1351,7 @@ public URLs: a body that names one keeps naming a file that goes stale.
   `url`. Cover and poll image routes answer null until the image has a
   public file.
 - Posts carry `cover` (the name) and `images`; `body` is resolved.
-- The host's `PostBodyProcessor` must keep `contentkit:` image URLs.
+- The host's `BodySanitizer` must keep `contentkit:` image URLs.
 - Rewrite stored bodies: replace each image URL of a post's own folder
   (`…/{kind}/{post_id}/public/i-{uuid}….webp`) with `contentkit:i-{uuid}`.
 - SDK: `usePost` stores references (`update`, `storedBody`) and shows them

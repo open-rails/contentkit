@@ -83,6 +83,6 @@ type stripTags struct{}
 
 var tagRe = regexp.MustCompile(`<[^>]*>`)
 
-func (stripTags) Sanitize(_ context.Context, raw string) (string, error) {
+func (stripTags) SanitizeHTML(_ context.Context, raw string) (string, error) {
 	return strings.TrimSpace(tagRe.ReplaceAllString(raw, "")), nil
 }
