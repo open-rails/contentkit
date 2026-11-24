@@ -200,12 +200,7 @@ func MigrateClickHouse(ctx context.Context, pool *pgxpool.Pool, cfg Config) erro
 	if err != nil {
 		return err
 	}
-	if tlsConfig != nil {
-		// chmigrate dials Addr itself, without TLS: refuse rather than send
-		// the password in clear.
-		return errors.New("contentkit: ClickHouse migrations cannot use TLS: run MigrateClickHouse with a configuration naming a private plain listener")
-	}
-	admin, err := clickhouse.Open(&clickhouse.Options{Addr: []string{c.Addr}, Auth: clickhouse.Auth{Database: "default", Username: c.Username, Password: c.Password}})
+	admin, err := clickhouse.Open(&clickhouse.Options{Addr: []string{c.Addr}, TLS: tlsConfig, Auth: clickhouse.Auth{Database: "default", Username: c.Username, Password: c.Password}})
 	if err != nil {
 		return fmt.Errorf("contentkit: open ClickHouse migration connection: %w", err)
 	}
@@ -219,7 +214,7 @@ func MigrateClickHouse(ctx context.Context, pool *pgxpool.Pool, cfg Config) erro
 	}
 	db := stdlib.OpenDBFromPool(pool)
 	defer db.Close()
-	m := chmigrate.New(&chmigrate.Config{ClientAddr: c.Addr, Database: c.Database, Username: c.Username, Password: c.Password, Cluster: c.Cluster, App: "contentkit_signal", PostgresDB: db})
+	m := chmigrate.New(&chmigrate.Config{ClientAddr: c.Addr, Database: c.Database, Username: c.Username, Password: c.Password, Cluster: c.Cluster, TLS: tlsConfig, App: "contentkit_signal", PostgresDB: db})
 	defer m.Close()
 	if err := m.ApplyMigrations(ctx, steps); err != nil {
 		return fmt.Errorf("contentkit: apply signal migrations: %w", err)

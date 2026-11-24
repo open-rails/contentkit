@@ -134,7 +134,8 @@ def main():
         if not args.focus or re.search("Media|Upload|Multipart|Gateway|Browser", args.focus):
             required += ["CONTENTKIT_CRITICAL_S3_ENDPOINT", "CONTENTKIT_CRITICAL_S3_USER", "CONTENTKIT_CRITICAL_S3_PASSWORD"]
         if not args.focus:
-            required += ["CONTENTKIT_CRITICAL_CH_ADDR", "CONTENTKIT_CRITICAL_CH_USER", "CONTENTKIT_CRITICAL_CH_PASSWORD"]
+            required += ["CONTENTKIT_CRITICAL_CH_ADDR", "CONTENTKIT_CRITICAL_CH_USER", "CONTENTKIT_CRITICAL_CH_PASSWORD",
+                         "CONTENTKIT_CRITICAL_CH_TLS_ADDR", "CONTENTKIT_CRITICAL_CH_CA_FILE"]
         missing = [name for name in required if not os.getenv(name)]
         if missing:
             raise ValueError("missing real fixture settings: " + ", ".join(missing))
