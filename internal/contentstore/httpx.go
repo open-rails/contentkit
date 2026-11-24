@@ -79,7 +79,7 @@ func (w *statusWriter) WriteHeader(code int) {
 func writeErr(w http.ResponseWriter, err error) {
 	status, code, msg := classifyErr(err)
 	if status >= http.StatusInternalServerError {
-		if sw, ok := w.(*statusWriter); ok {
+		if sw, ok := httpapi.Writer[*statusWriter](w); ok {
 			sw.internalErr = err
 		}
 	}

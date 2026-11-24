@@ -101,7 +101,6 @@ func (h readHandler) read(w http.ResponseWriter, req *http.Request) {
 
 // presets lists the preset rules: the same for every viewer, so cacheable.
 func (h readHandler) presets(w http.ResponseWriter, req *http.Request) {
-	w.Header().Set("Cache-Control", "public, max-age=300")
 	writeJSON(w, http.StatusOK, h.r.reg.PresetRules())
 }
 

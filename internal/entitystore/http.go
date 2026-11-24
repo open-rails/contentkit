@@ -223,7 +223,7 @@ func fail(w http.ResponseWriter, err error) {
 	if code == httpapi.CodeInvalidRequest && !errors.As(err, &ce) {
 		msg = httpapi.Rule(err, code)
 	}
-	if sw, ok := w.(*statusWriter); ok {
+	if sw, ok := httpapi.Writer[*statusWriter](w); ok {
 		sw.cause = err
 	}
 	write(w, status, errorBody{Error: msg, Code: code})

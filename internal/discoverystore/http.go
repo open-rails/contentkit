@@ -26,7 +26,7 @@ import (
 // request is; each request runs in access.WithMemo, so a page costs one
 // billing read.
 func (s *Service) Handler(a auth.Authenticator) (http.Handler, error) {
-	if err := gate.Check(a); err != nil {
+	if err := gate.Check(a, access.ContentWrite); err != nil {
 		return nil, fmt.Errorf("discovery: Handler: %w", err)
 	}
 	mux := http.NewServeMux()

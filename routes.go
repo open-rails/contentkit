@@ -164,6 +164,7 @@ func (e *Engine) dispatch(prefix string, modules map[httpapi.Module]http.Handler
 		}
 		if h == nil {
 			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Cache-Control", httpapi.NoStore)
 			w.WriteHeader(http.StatusNotFound)
 			_, _ = w.Write([]byte(`{"error":"not found","code":"not_found"}` + "\n"))
 			return
