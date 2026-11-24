@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/authkit/iam"
 	ck "github.com/open-rails/contentkit"
+	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/importer"
 	"github.com/open-rails/contentkit/kinds"
@@ -26,7 +27,7 @@ func TestImportMergedEntityMemberships(t *testing.T) {
 		{ExternalID: "a", Kind: "collection", Slug: "legacy-a", Names: []entities.Name{{Language: "en", Kind: "name", Name: "Legacy A"}}},
 		{ExternalID: "b", Kind: "collection", Slug: "survivor-b", Names: []entities.Name{{Language: "en", Kind: "name", Name: "Survivor B"}}},
 		{ExternalID: "c", Kind: "collection", Slug: "unrelated-c", Names: []entities.Name{{Language: "en", Kind: "name", Name: "Unrelated C"}}},
-	}, Contents: []importer.ContentRecord{{ExternalID: "content", Kind: "article", State: "draft"}},
+	}, Contents: []importer.ContentRecord{{ExternalID: "content", Kind: "article", State: "draft", Access: &access.Rule{Level: access.Public}}},
 		Aliases: []importer.AliasRecord{
 			{Kind: "collection", Key: "a", Target: importer.TargetRef{Entity: &importer.Ref{ExternalID: "a"}}},
 			{Kind: "collection", Key: "c", Target: importer.TargetRef{Entity: &importer.Ref{ExternalID: "c"}}},

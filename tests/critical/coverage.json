@@ -1348,7 +1348,7 @@
         "TestMediaPreparedCommitRecovery/matching-receipt",
         "TestMediaPreparedCommitRecovery/equal-etag",
         "TestMediaPreparedCommitRecovery/missing-existing",
-                "TestMediaVideoFailureRecovery/video",
+        "TestMediaVideoFailureRecovery/video",
         "TestMediaVideoFailureRecovery/mp4",
         "TestMediaVideoFailureRecovery/subtitle",
         "TestMediaVideoFailureRecovery/poster",
@@ -2950,10 +2950,10 @@
     {
       "id": "CK-J01-S12",
       "journey": "CK-J01",
-      "behavior": "Startup refuses shared queue schemas, plain-HTTP credential endpoints off loopback, IPv4-mapped trusted proxies and ClickHouse TLS it cannot honor",
+      "behavior": "Startup refuses shared queue schemas, plain-HTTP credential endpoints off loopback, IPv4-mapped trusted proxies and a ClickHouse CA without TLS",
       "status": "verified",
       "evidence": [
-        "The engine refuses River in the catalog or account schema, a mapped trusted-proxy prefix, a ClickHouse CA without TLS and TLS with embedded migrations; MigrateClickHouse refuses TLS; a plain-http media origin is refused; a plain-http Go client base sends nothing. The server refuses a plain-http OpenRails base and AuthKit schemas equal to the engine's, and accepts a loopback OpenRails base.",
+        "The engine refuses River in the catalog or account schema, a mapped trusted-proxy prefix and a ClickHouse CA without TLS; a plain-http media origin is refused; a plain-http Go client base sends nothing. The server refuses a plain-http OpenRails base and AuthKit schemas equal to the engine's, and accepts a loopback OpenRails base.",
         "Fails on the base, which starts with each of these. Not yet an execution receipt; qualification runs the cases."
       ],
       "cases": [
@@ -2977,6 +2977,19 @@
     {
       "id": "CK-J01-S14",
       "journey": "CK-J01",
+      "behavior": "ClickHouse migrations and the signal plane run over TLS",
+      "status": "verified",
+      "evidence": [
+        "Against the fixture ClickHouse's secure native port, MigrateClickHouse verified against the system roots fails on the certificate and creates no database; with ca_file it migrates, and New without SkipMigrations replays the migrations over TLS and opens its own TLS connection: the contentkit_clickhouse probe passes and the content model reports signals on.",
+        "Fails on the base, where MigrateClickHouse refuses TLS and New refuses TLS without SkipMigrations. Not yet an execution receipt; qualification runs the case."
+      ],
+      "cases": [
+        "TestClickHouseOverTLS/CK-J01-S14_ClickHouse_migrations_and_signals_run_over_TLS"
+      ]
+    },
+    {
+      "id": "CK-J01-S15",
+      "journey": "CK-J01",
       "behavior": "The standalone server gives AuthKit the engine's client-address posture and refuses a contradicting one",
       "status": "verified",
       "evidence": [
@@ -2984,7 +2997,7 @@
         "Fails on the base, which starts with each contradicting posture. Not yet an execution receipt; qualification runs the case."
       ],
       "cases": [
-        "TestStartupRefusesUnsafeTransport/CK-J01-S14_the_server_gives_AuthKit_the_engine_proxies"
+        "TestStartupRefusesUnsafeTransport/CK-J01-S15_the_server_gives_AuthKit_the_engine_proxies"
       ]
     },
     {
@@ -3024,6 +3037,171 @@
       ],
       "cases": [
         "TestEngineReconcile/CK-J31-S07_reconcile_rederives_paths_after_a_model_change"
+      ]
+    },
+    {
+      "id": "CK-J17-S06",
+      "journey": "CK-J17",
+      "behavior": "A comment body is plain text: markup in it renders as its characters in the shipped UI",
+      "status": "verified",
+      "cases": [
+        "TestShippedBrowserClient/CK-J17-S06"
+      ],
+      "evidence": [
+        "A real comment holding an onerror image and bold markup is stored as written and rendered by the shipped Comments component as text, with no element or script from it.",
+        "contentkit#287: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
+      "id": "CK-J27-S07",
+      "journey": "CK-J27",
+      "behavior": "Bulk import stores the body an authored write stores: the configured sanitizer runs on import",
+      "status": "verified",
+      "cases": [
+        "TestImportContracts/CK-J27-S07_import_sanitizes_bodies_as_authored_writes_do"
+      ],
+      "evidence": [
+        "An imported version body with an onerror image and a script is stored exactly as an authored write of the same body, tags stripped by the default sanitizer.",
+        "contentkit#287: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
+      "id": "CK-J27-S08",
+      "journey": "CK-J27",
+      "behavior": "An imported record without access, or a version without state, is refused rather than defaulted",
+      "status": "verified",
+      "cases": [
+        "TestImportContracts/CK-J27-S08_a_record_without_access_or_version_state_is_refused"
+      ],
+      "evidence": [
+        "A replay of a paid record without access and a version without state each fail invalid while a complete record writes; the stored paywall is unchanged.",
+        "contentkit#287: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
+      "id": "CK-J27-S09",
+      "journey": "CK-J27",
+      "behavior": "A delete of an external id the source never imported is reported per record as unmapped",
+      "status": "verified",
+      "cases": [
+        "TestImportContracts/CK-J27-S09_a_delete_of_an_unmapped_external_id_is_reported"
+      ],
+      "evidence": [
+        "Re-sent deletes write the mapped one and list each unmapped content and version delete by index, entity and external id, not counting them written.",
+        "contentkit#287: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
+      "id": "CK-J27-S10",
+      "journey": "CK-J27",
+      "behavior": "Imported account ids are stored canonical and anonymous addresses as live writes key them",
+      "status": "verified",
+      "cases": [
+        "TestImportContracts/CK-J27-S10_imported_account_ids_and_addresses_are_canonical"
+      ],
+      "evidence": [
+        "An upper-case, padded account id favorites as the signed-in account; anonymous reaction addresses are stored as an unmapped IPv4 address and an IPv6 /64; an invalid address fails invalid.",
+        "contentkit#287: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
+      "id": "CK-J16-S13",
+      "journey": "CK-J16",
+      "behavior": "A channel's authorization group is its own id: the import wire cannot name one and storage refuses another",
+      "status": "verified",
+      "cases": [
+        "TestChannelImportScope/CK-J16-S13_import_wire_has_no_auth_scope",
+        "TestChannelImportScope/CK-J16-S13_import_provisions_the_channels_own_group",
+        "TestChannelImportScope/CK-J16-S13_storage_refuses_a_scope_other_than_the_channel_id"
+      ],
+      "evidence": [
+        "An import naming another channel's auth_scope is refused 400 over HTTP; a channel import provisions its own live AuthKit group without a flag, idempotently; rebinding a stored channel to another channel's scope violates its check.",
+        "contentkit#287: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
+      "id": "CK-J02-S31",
+      "journey": "CK-J02",
+      "behavior": "A foreign identity issuer's user is admitted only with a verified tenant claim equal to the app's tenant",
+      "status": "verified",
+      "cases": [
+        "TestForeignIssuerTenantClaim/CK-J02-S31_foreign_user_with_the_apps_tenant_claim_is_its_subject",
+        "TestForeignIssuerTenantClaim/CK-J02-S31_foreign_user_of_another_tenant_or_without_a_claim_is_refused",
+        "TestForeignIssuerTenantClaim/CK-J02-S31_native_users_keep_their_live_ownership"
+      ],
+      "evidence": [
+        "A real AuthKit-verified user, reported by a foreign directory with the app's tenant, resolves as its subject and a member; another tenant's claim or none is forbidden; native users still resolve through live ownership.",
+        "contentkit#287: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
+      "id": "CK-J24-S08",
+      "journey": "CK-J24",
+      "behavior": "A real purge leaves the account id in no catalog column but its fence and lifecycle rows",
+      "status": "verified",
+      "cases": [
+        "TestPurgeLeavesNoAccountID/CK-J24-S08_purge_leaves_the_id_only_in_its_fence"
+      ],
+      "evidence": [
+        "An account that owned a channel, authored and was credited, commented, favorited, liked, uploaded quota-charged media and created and edited a location rule is purged; a sweep of every text, array, json and uuid column of the catalog schema finds its id only in content_erased_subjects and content_account_lifecycle.",
+        "contentkit#287: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
+      "id": "CK-J24-S09",
+      "journey": "CK-J24",
+      "behavior": "Every write that stores an account id refuses an erased account",
+      "status": "verified",
+      "cases": [
+        "TestErasedAccountWritesFenced/CK-J24-S09_an_erased_account_creates_nothing",
+        "TestErasedAccountWritesFenced/CK-J24-S09_no_write_names_an_erased_account"
+      ],
+      "evidence": [
+        "After erasure the account's live session cannot create content or a channel (403), staff cannot credit it (403), imports naming it as creator or channel owner fail erased, and nothing stores its id.",
+        "contentkit#287: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
+      "id": "CK-J24-S10",
+      "journey": "CK-J24",
+      "behavior": "A per-account erasure state read reports state, request and completion",
+      "status": "verified",
+      "cases": [
+        "TestPurgeLeavesNoAccountID/CK-J24-S10_erasure_state_reads_the_completed_purge",
+        "TestProvisionedSignalPlaneKeepsErasurePending/CK-J23-S08_provisioned_plane_without_clickhouse_keeps_erasure_pending"
+      ],
+      "evidence": [
+        "Engine.AccountErasure and GET /v1/accounts/{id}/erasure agree: active before, purged with requested and completed times after, purging without completion while pending; a member is refused.",
+        "contentkit#287: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
+      "id": "CK-J23-S08",
+      "journey": "CK-J23",
+      "behavior": "An app whose signal plane was provisioned keeps erasure pending on an engine without ClickHouse",
+      "status": "verified",
+      "cases": [
+        "TestProvisionedSignalPlaneKeepsErasurePending/CK-J23-S08_provisioned_plane_without_clickhouse_keeps_erasure_pending",
+        "TestProvisionedSignalPlaneKeepsErasurePending/CK-J23-S08_app_without_a_plane_completes_erasure"
+      ],
+      "evidence": [
+        "After a real MigrateClickHouse for the app, its engine without ClickHouse returns ErrSignalPlaneRequired and writes no receipt; a sibling app that never had a plane completes.",
+        "contentkit#287: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
+      "id": "CK-J20-S10",
+      "journey": "CK-J20",
+      "behavior": "IPv4-mapped networks are stored as their IPv4 networks, so they match; mixed ones are refused",
+      "status": "verified",
+      "cases": [
+        "TestIPv4MappedNetworks/CK-J20-S10_mapped_location_network_covers_ipv4_visitors",
+        "TestIPv4MappedNetworks/CK-J20-S10_mapped_ip_ban_is_the_ipv4_network",
+        "TestIPv4MappedNetworks/CK-J20-S10_network_mixing_mapped_and_ipv6_is_refused"
+      ],
+      "evidence": [
+        "A ::ffff:192.0.2.0/120 location rule is stored as 192.0.2.0/24 and hides its content from an IPv4 visitor inside it only; mapped IP bans store IPv4 networks; a mapped prefix shorter than /96 is refused 400.",
+        "contentkit#287: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
       ]
     }
   ],
@@ -7352,7 +7530,9 @@
         "TestDeferredRecountKeepsRequeuedTarget",
         "TestImportIsolatesBadRecords",
         "TestImportSingleRecordRetry",
-        "TestImportMergedEntityMemberships"
+        "TestImportMergedEntityMemberships",
+        "TestImportContracts",
+        "TestChannelImportScope"
       ],
       "implemented_security_cases": [
         "TestHTTPAuthenticationMatrix/CK-API-166_POST_/v1/import/malformed_credential",
@@ -8386,6 +8566,39 @@
       "evidence": [
         "The IP check asserts two matching rules in the selected domain, none in the other domain and an empty country on the network-only lookup.",
         "Reviewed executable contract mapping for ContentKit #285; final combined qualification must execute every selected case. This is not an execution receipt."
+      ]
+    },
+    {
+      "id": "CK-API-201",
+      "method": "GET",
+      "path": "/v1/accounts/{id}/erasure",
+      "selection": "included-critical functionality and security",
+      "status": "verified",
+      "cases": [
+        "TestPurgeLeavesNoAccountID/CK-J24-S10_erasure_state_reads_the_completed_purge",
+        "TestHTTPAuthenticationMatrix/CK-API-201_GET_/v1/accounts/{id}/erasure/anonymous_protected_operation",
+        "TestHTTPAuthenticationMatrix/CK-API-201_GET_/v1/accounts/{id}/erasure/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-201_GET_/v1/accounts/{id}/erasure/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-201_GET_/v1/accounts/{id}/erasure/inherited_HEAD_credential_gate",
+        "TestHTTPAuthenticationMatrix/CK-API-201_GET_/v1/accounts/{id}/erasure/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-201_GET_/v1/accounts/{id}/erasure/member_without_named_permission",
+        "TestHTTPAuthenticationMatrix/CK-API-201_GET_/v1/accounts/{id}/erasure/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-201_GET_/v1/accounts/{id}/erasure/wrong_issuer"
+      ],
+      "implemented_security_cases": [
+        "TestHTTPAuthenticationMatrix/CK-API-201_GET_/v1/accounts/{id}/erasure/anonymous_protected_operation",
+        "TestHTTPAuthenticationMatrix/CK-API-201_GET_/v1/accounts/{id}/erasure/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-201_GET_/v1/accounts/{id}/erasure/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-201_GET_/v1/accounts/{id}/erasure/inherited_HEAD_credential_gate",
+        "TestHTTPAuthenticationMatrix/CK-API-201_GET_/v1/accounts/{id}/erasure/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-201_GET_/v1/accounts/{id}/erasure/member_without_named_permission",
+        "TestHTTPAuthenticationMatrix/CK-API-201_GET_/v1/accounts/{id}/erasure/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-201_GET_/v1/accounts/{id}/erasure/wrong_issuer"
+      ],
+      "security_evidence": "credential gate and app-key boundary only; functional behavior is the mapped host contract case",
+      "evidence": [
+        "The host reads a purged account's state with its request and completion times; a member is refused.",
+        "contentkit#287: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
       ]
     }
   ],
@@ -11582,6 +11795,30 @@
       "evidence": [
         "Remote client anonymizes an account, twice, idempotently.",
         "contentkit#267: focused real-service execution against PostgreSQL; the strict gate must execute every exact case again."
+      ]
+    },
+    {
+      "id": "go:Engine.AccountErasure",
+      "name": "Engine.AccountErasure",
+      "status": "verified",
+      "cases": [
+        "TestPurgeLeavesNoAccountID/CK-J24-S10_erasure_state_reads_the_completed_purge"
+      ],
+      "evidence": [
+        "Reads active, purging and purged states with request and completion times.",
+        "contentkit#287: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
+      "id": "go:Client.GetAccountErasure",
+      "name": "Client.GetAccountErasure",
+      "status": "verified",
+      "cases": [
+        "TestPurgeLeavesNoAccountID/CK-J24-S10_erasure_state_reads_the_completed_purge"
+      ],
+      "evidence": [
+        "Remote client reads the same state as the engine.",
+        "contentkit#287: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
       ]
     }
   ],

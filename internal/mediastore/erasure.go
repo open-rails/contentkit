@@ -100,3 +100,31 @@ func (j *Jobs) Erase(ctx context.Context, d media.Deletion) error {
 	}
 	return nil
 }
+
+// EraseAccountTx removes an erased account from schema's media bookkeeping
+// for tenant: commit actors and quota owners lose its id, and its usage,
+// reservations, releases and upload rates go. Folder paths keep their ids; an
+// avatar's folder is the account's storage fence. Run it after the account's
+// avatar erasure, whose deletion records the owner.
+func EraseAccountTx(ctx context.Context, tx pgx.Tx, schema, tenant, account string) error {
+	if account == "" {
+		return errors.New("media: account erasure needs the account id")
+	}
+	q := func(table string) string { return pgx.Identifier{schema, table}.Sanitize() }
+	for _, sql := range []string{
+		`UPDATE ` + q("content_media_commits") + ` SET actor_id='' WHERE tenant_id=$1 AND actor_id='user:'||$2::text`,
+		`UPDATE ` + q("content_media_commits") + ` SET effects=jsonb_set(effects,'{settlement,Owner}','""')
+ WHERE tenant_id=$1 AND effects->'settlement'->>'Owner'=$2`,
+		`UPDATE ` + q("content_media_commits") + ` SET effects=effects #- '{folder_delete,owner}'
+ WHERE tenant_id=$1 AND effects->'folder_delete'->>'owner'=$2`,
+		`DELETE FROM ` + q("content_media_usage") + ` WHERE tenant_id=$1 AND owner_id=$2`,
+		`DELETE FROM ` + q("content_media_reservations") + ` WHERE tenant_id=$1 AND owner_id=$2`,
+		`DELETE FROM ` + q("content_media_releases") + ` WHERE tenant_id=$1 AND owner_id=$2`,
+		`DELETE FROM ` + q("content_media_upload_rates") + ` WHERE tenant_id=$1 AND uploader=$2`,
+	} {
+		if _, err := tx.Exec(ctx, sql, tenant, account); err != nil {
+			return err
+		}
+	}
+	return nil
+}

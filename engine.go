@@ -280,9 +280,6 @@ func (e *Engine) validate(deps Deps) error {
 	if _, err := cfg.ClickHouse.tlsConfig(); err != nil {
 		return err
 	}
-	if cfg.ClickHouse.TLS && cfg.ClickHouse.Addr != "" && !cfg.Database.SkipMigrations {
-		return errors.New("contentkit: Config.ClickHouse.TLS needs Database.SkipMigrations: MigrateClickHouse cannot migrate over TLS")
-	}
 	return nil
 }
 
@@ -362,7 +359,7 @@ func (e *Engine) newCatalog(ctx context.Context, deps Deps, now func() time.Time
 	}
 	e.channels = channelstore.FromStore(e.entities)
 	co := catalogstore.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Scope.AppID.String(), Kinds: c, Auth: e.auth, Gate: e.gate, Entities: e.entities, Channels: e.channels,
-		Body: deps.BodyProcessor, Now: now, Logger: e.log,
+		Body: deps.BodySanitizer, Now: now, Logger: e.log,
 		EventRetention: e.cfg.EventRetention, OnPurge: e.forgetPurgedTx, AfterPurge: e.purgeSignals,
 		DocumentsChanged: func(ctx context.Context, q catalogstore.Querier) error { return e.syncDocuments(ctx, q) }}
 	if e.catalog, err = catalogstore.New(ctx, co); err != nil {
@@ -520,7 +517,7 @@ func (e *Engine) contentOptions(deps Deps) contentstore.Options {
 	l := in.Limits
 	o := contentstore.Options{
 		Locate: e.geo.Lookup, Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Scope.AppID.String(), Auth: e.auth, UserInfo: deps.Users, Resolver: interactionTargets{e}, Kinds: e.cfg.Content,
-		Processor:             deps.Processor,
+		TextProcessor:         deps.TextProcessor,
 		NotificationPublisher: deps.Notifications,
 		EraseAccountReceipts:  e.eraseAccountReceipts,
 		Accounts:              e,

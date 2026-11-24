@@ -35,10 +35,7 @@ type Batch struct {
 	// PreferenceFloor raises the preference revision sequence past a
 	// retained signal plane's newest revision before anything is stamped, as
 	// after a Postgres restore. It only ever advances.
-	PreferenceFloor int64 `json:"preference_floor,omitempty"`
-	// ProvisionScopes lets ContentKit create a missing imported channel's
-	// AuthKit scope. It never grants authority through a metadata entity.
-	ProvisionScopes bool                  `json:"provision_scopes,omitempty"`
+	PreferenceFloor int64                 `json:"preference_floor,omitempty"`
 	Entities        []EntityRecord        `json:"entities,omitempty"`
 	Channels        []ChannelRecord       `json:"channels,omitempty"`
 	Contents        []ContentRecord       `json:"contents,omitempty"`
@@ -118,8 +115,9 @@ type EntityRecord struct {
 }
 
 // ChannelRecord imports an authoring channel independently of descriptive
-// entities. Names and text preserve existing values when omitted. Scope and
-// owner attribution do not themselves assign any new editorial grants.
+// entities. Names and text preserve existing values when omitted. Its
+// authorization group is always its own id: the import provisions it, or
+// verifies the live one. Owner attribution assigns no new editorial grants.
 type ChannelRecord struct {
 	ExternalID   string          `json:"external_id"`
 	ID           string          `json:"id,omitempty"`
@@ -131,7 +129,6 @@ type ChannelRecord struct {
 	CoverContent *Ref            `json:"cover_content,omitempty"`
 	Avatar       string          `json:"avatar,omitempty"`
 	OwnerUserID  string          `json:"owner_user_id,omitempty"`
-	AuthScope    string          `json:"auth_scope,omitempty"`
 	Code         string          `json:"code,omitempty"`
 	CreatedAt    *time.Time      `json:"created_at,omitempty"`
 	UpdatedAt    *time.Time      `json:"updated_at,omitempty"`
@@ -155,8 +152,9 @@ type ContentRecord struct {
 	DeletedAt *time.Time `json:"deleted_at,omitempty"`
 	// Comments is open (the default), closed or hidden.
 	Comments string `json:"comments,omitempty"`
-	// Access defaults to public. A entity rule names the entity's id.
-	Access       *access.Rule      `json:"access,omitempty"`
+	// Access is required: a record without it is refused, never defaulted.
+	// A channel rule names the channel's id.
+	Access       *access.Rule      `json:"access"`
 	Restrictions []string          `json:"restrictions,omitempty"`
 	Attributes   map[string]any    `json:"attributes,omitempty"`
 	Channel      *Ref              `json:"channel,omitempty"`
@@ -178,8 +176,9 @@ type VersionRecord struct {
 	Languages []string `json:"languages"`
 	Traits    []string `json:"traits,omitempty"`
 	Label     string   `json:"label,omitempty"`
-	// State is published (the default), draft or deleted; times as ContentRecord's.
-	State       string         `json:"state,omitempty"`
+	// State is required: published, draft or deleted; times as
+	// ContentRecord's.
+	State       string         `json:"state"`
 	PublishAt   *time.Time     `json:"publish_at,omitempty"`
 	PublishedAt *time.Time     `json:"published_at,omitempty"`
 	DeletedAt   *time.Time     `json:"deleted_at,omitempty"`
@@ -343,8 +342,8 @@ type SignalRecord struct {
 // DeleteRecord deletes a record the source no longer has, as its delete
 // route would: a content item, version, entity, comment or poll, by its
 // external id under the batch's source. One already deleted (or since
-// erased) stays as it is, so re-sending converges; an external id never
-// imported fails not_found.
+// erased) stays as it is, so re-sending converges; an external id this
+// source never imported deletes nothing and is reported in Result.Unmapped.
 type DeleteRecord struct {
 	// Entity is content, version, entity, comment or poll.
 	Entity     string `json:"entity"`
@@ -442,6 +441,9 @@ type Result struct {
 	// written; references to them resolve to the survivor.
 	Merged map[string]int  `json:"merged,omitempty"`
 	Failed []RecordFailure `json:"failed"`
+	// Unmapped lists the deletes whose external id this source never
+	// imported: nothing was deleted, and they are not counted as written.
+	Unmapped []UnmappedDelete `json:"unmapped,omitempty"`
 	// IDs maps each written record's external id to its id, by entity.
 	IDs map[string]map[string]string `json:"ids"`
 	// Recounted is how many queued targets the batch's Recount recounted.
@@ -449,6 +451,13 @@ type Result struct {
 	// RecountsQueued is how many targets still wait for a recount, when the
 	// batch defers recounts or recounts.
 	RecountsQueued *int `json:"recounts_queued,omitempty"`
+}
+
+// UnmappedDelete is a delete record whose external id has no import mapping.
+type UnmappedDelete struct {
+	Index      int    `json:"index"`
+	Entity     string `json:"entity"`
+	ExternalID string `json:"external_id"`
 }
 
 // RecordFailure is one record not written. Sending it again (or the whole

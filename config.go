@@ -22,6 +22,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/discovery"
 	"github.com/open-rails/contentkit/entities"
@@ -351,9 +352,12 @@ type Deps struct {
 	// ProviderDataEraser erases what a retaining Moderator
 	// keeps; required with one.
 	ProviderDataEraser content.ProviderDataEraser
-	// Processor sanitizes comments, BodyProcessor content items' rich-text
-	// bodies (keeping "contentkit:" image references); nil strips tags.
-	Processor, BodyProcessor content.ContentProcessor
+	// TextProcessor processes comment text on write; readers render it as
+	// text. Nil trims whitespace.
+	TextProcessor content.TextProcessor
+	// BodySanitizer makes content bodies safe to render as HTML, keeping
+	// "contentkit:" image references. Nil strips every tag.
+	BodySanitizer catalog.HTMLSanitizer
 
 	// Clock is the time; nil is time.Now.
 	Clock func() time.Time

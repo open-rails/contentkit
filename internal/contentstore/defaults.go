@@ -5,9 +5,9 @@ import (
 	"strings"
 )
 
-// trimProcessor is the default ContentProcessor: trim plain text.
+// trimProcessor is the default TextProcessor: trim plain text.
 type trimProcessor struct{}
 
-func (trimProcessor) Sanitize(_ context.Context, raw string) (string, error) {
+func (trimProcessor) ProcessText(_ context.Context, raw string) (string, error) {
 	return strings.TrimSpace(raw), nil
 }

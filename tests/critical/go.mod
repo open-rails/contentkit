@@ -119,7 +119,7 @@ require (
 	github.com/open-rails/contentkit/adapters/openrails v0.11.0
 	github.com/open-rails/contentkit/server v0.11.0
 	github.com/open-rails/helpers v1.19.0
-	github.com/open-rails/migratekit v1.11.2 // indirect
+	github.com/open-rails/migratekit v1.12.0 // indirect
 	github.com/open-rails/openrails v0.266.0
 	github.com/paulmach/orb v0.12.0 // indirect
 	github.com/philhofer/fwd v1.2.0 // indirect

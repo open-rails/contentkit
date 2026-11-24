@@ -15,8 +15,8 @@ import (
 
 // AuthorizationConfig selects existing grants; startup never creates groups
 // or assigns their roles. Local identity uses AuthKit's verified tenant account
-// ownership. An explicitly remote issuer retains the legacy dedicated-directory
-// contract until its tenant-aware identity integration is configured.
+// ownership. A remote identity issuer's users must carry a verified tenant_id
+// equal to engine.scope.tenant_id.
 type AuthorizationConfig struct {
 	Issuer        string `yaml:"issuer"`
 	AppGroupID    string `yaml:"app_group_id"`
@@ -110,7 +110,6 @@ func (s *Server) scopedAuthorization(ctx context.Context, cfg Config, ak authkit
 		}
 		deps.Users = accounts.UserInfo()
 	} else {
-		policy.Accounts = ckauthkit.IssuerAccounts(cfg.Engine.Scope.TenantID, a.Issuer)
 		remote, err := s.auth.RemoteApplication(ctx, iam.AppByIssuer(a.Issuer))
 		if err != nil || !remote.Enabled || remote.GroupID != a.AppGroupID {
 			return fmt.Errorf("server: identity issuer must have a live remote application in authorization.app_group_id: %w", errors.Join(err, errors.New("missing or mismatched remote application binding")))

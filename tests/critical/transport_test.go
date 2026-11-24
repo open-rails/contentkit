@@ -179,11 +179,11 @@ func TestAnonymousIPv6Prefix(t *testing.T) {
 	})
 }
 
-// panickingBody is a host BodyProcessor with a bug: it panics on a marked
+// panickingBody is a host BodySanitizer with a bug: it panics on a marked
 // body.
 type panickingBody struct{}
 
-func (panickingBody) Sanitize(_ context.Context, raw string) (string, error) {
+func (panickingBody) SanitizeHTML(_ context.Context, raw string) (string, error) {
 	if strings.Contains(raw, "PANIC") {
 		panic("host body processor bug")
 	}
@@ -195,7 +195,7 @@ func TestFailureContainment(t *testing.T) {
 	a := w.apps[0]
 	cfg, deps := a.cfg, a.deps
 	cfg.Database.SkipMigrations = true
-	deps.BodyProcessor = panickingBody{}
+	deps.BodySanitizer = panickingBody{}
 	engine, err := ck.New(t.Context(), cfg, deps)
 	must(t, err)
 	t.Cleanup(func() { must(t, engine.Close(context.Background())) })
@@ -262,10 +262,6 @@ func TestStartupRefusesUnsafeTransport(t *testing.T) {
 			}, "both schema"},
 			"an IPv4-mapped trusted proxy": {func(c *ck.Config) { c.TrustedProxies = []netip.Prefix{netip.MustParsePrefix("::ffff:10.0.0.0/104")} }, "IPv4-mapped"},
 			"a ClickHouse CA without TLS":  {func(c *ck.Config) { c.ClickHouse.CAFile = "ca.pem" }, "needs TLS"},
-			"ClickHouse TLS with embedded migrations": {func(c *ck.Config) {
-				c.Database.SkipMigrations = false
-				c.ClickHouse = ck.ClickHouseConfig{Addr: "127.0.0.1:9440", Database: "signals", TLS: true}
-			}, "SkipMigrations"},
 		} {
 			cfg, deps := prepared()
 			c.mutate(&cfg)
@@ -276,9 +272,6 @@ func TestStartupRefusesUnsafeTransport(t *testing.T) {
 			t.Run(name, func(t *testing.T) { refused(t, err, c.want) })
 		}
 		cfg, _ := prepared()
-		cfg.ClickHouse = ck.ClickHouseConfig{Addr: "127.0.0.1:9440", Database: "signals", TLS: true}
-		refused(t, ck.MigrateClickHouse(t.Context(), w.pool, cfg), "cannot use TLS")
-		cfg, _ = prepared()
 		cfg.Media = &ck.MediaConfig{Config: media.Config{BaseURL: "http://media.example"}}
 		_, err := cfg.MediaRegistry()
 		refused(t, err, "plain http")
@@ -318,7 +311,7 @@ func TestStartupRefusesUnsafeTransport(t *testing.T) {
 			c.OpenRails = server.OpenRailsConfig{BaseURL: "http://127.0.0.1:1", APIKey: "merchant-key"}
 		}))
 	})
-	t.Run("CK-J01-S14_the_server_gives_AuthKit_the_engine_proxies", func(t *testing.T) {
+	t.Run("CK-J01-S15_the_server_gives_AuthKit_the_engine_proxies", func(t *testing.T) {
 		proxies := []netip.Prefix{netip.MustParsePrefix("10.0.0.0/8"), netip.MustParsePrefix("173.245.48.0/20")}
 		refused(t, build(t, func(c *server.Config) {
 			c.Engine.TrustedProxies = proxies

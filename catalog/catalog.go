@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/open-rails/contentkit/access"
-	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contentref"
 )
 
@@ -26,5 +25,8 @@ type Standing interface {
 	Standing(ctx context.Context, actor access.Actor, refs []contentref.ContentRef) ([]ViewerState, error)
 }
 
-// Sanitizer cleans rich text on write: content.ContentProcessor.
-type Sanitizer = content.ContentProcessor
+// HTMLSanitizer makes a content body safe to render as HTML on write,
+// keeping "contentkit:" image references. The default strips every tag.
+type HTMLSanitizer interface {
+	SanitizeHTML(ctx context.Context, raw string) (string, error)
+}

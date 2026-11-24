@@ -88,8 +88,8 @@ github.com/open-rails/authkit v1.53.0 h1:hx3YvN707rYLm4FkVi9odO7QBau5KDAT1elue4l
 github.com/open-rails/authkit v1.53.0/go.mod h1:wbxTHMKwbozLyvxA7NL07h9X60GGh2RHjWHC9xtLftw=
 github.com/open-rails/helpers v1.19.0 h1:MzCP8tntMlZhJk0G7NmPRTeLvCy+ATFV7i6RVrcG9F4=
 github.com/open-rails/helpers v1.19.0/go.mod h1:Olub8akvlMMb6wxdVX15+9sTETLvNnyyJytioFxj83o=
-github.com/open-rails/migratekit v1.11.2 h1:QTtn8i/Yj62SiGv6b7FnQ/mKudSDfLjnlmPSQN0NA7k=
-github.com/open-rails/migratekit v1.11.2/go.mod h1:ONDMUycRcwAB+eKlPvho6mnNAZf9gf9+yqwCKDRuO9g=
+github.com/open-rails/migratekit v1.12.0 h1:2W3WWJs3uNKfBj5/7jT4aTxFVqmBxw8qE1jPCKj6WNM=
+github.com/open-rails/migratekit v1.12.0/go.mod h1:ONDMUycRcwAB+eKlPvho6mnNAZf9gf9+yqwCKDRuO9g=
 github.com/oschwald/geoip2-golang v1.13.0 h1:Q44/Ldc703pasJeP5V9+aFSZFmBN7DKHbNsSFzQATJI=
 github.com/oschwald/geoip2-golang v1.13.0/go.mod h1:P9zG+54KPEFOliZ29i7SeYZ/GM6tfEL+rgSn03hYuUo=
 github.com/oschwald/maxminddb-golang v1.13.0 h1:R8xBorY71s84yO06NgTmQvqvTvlS/bnYZrrWX1MElnU=

@@ -21,13 +21,11 @@ type ImportEntity struct {
 	Cover       *Cover
 	Avatar      *Avatar
 	OwnerUserID string
-	// AuthScope names the entity's AuthKit scope; empty keeps the stored one.
-	AuthScope string
-	Names     []Name
-	Text      []Text
-	Code      string
-	CreatedAt *time.Time
-	UpdatedAt *time.Time
+	Names       []Name
+	Text        []Text
+	Code        string
+	CreatedAt   *time.Time
+	UpdatedAt   *time.Time
 }
 
 // sameNames reports whether given names, duplicates aside, are the stored

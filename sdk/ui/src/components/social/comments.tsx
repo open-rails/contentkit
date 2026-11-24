@@ -43,7 +43,7 @@ export interface CommentsProps {
    * comment under a name and react anonymously.
    */
   onSignIn?: () => void;
-  /** A body as the host formats it (links, spoilers); default plain text. */
+  /** A body as the host formats it (links, spoilers); default plain text. Bodies are plain text, never HTML: render them as text. */
   renderBody?: (body: string, comment: Comment) => ReactNode;
   /** A profile URL for an author. */
   userHref?: (user: PublicUser) => string | undefined;

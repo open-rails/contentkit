@@ -22,10 +22,8 @@ type EntityInput struct {
 	Avatar     *Avatar        `json:"avatar,omitempty"`
 	// OwnerUserID owns a user-owned entity; a person creating one owns it.
 	OwnerUserID string `json:"-"`
-	// AuthScope is staff's (an import's); ContentKit provisions it otherwise.
-	AuthScope string `json:"-"`
-	Names     []Name `json:"names,omitempty"`
-	Text      []Text `json:"text,omitempty"`
+	Names       []Name `json:"names,omitempty"`
+	Text        []Text `json:"text,omitempty"`
 }
 
 // EntityUpdate changes one entity's given fields; nil fields are unchanged.
@@ -47,7 +45,6 @@ type EntityUpdate struct {
 	// the first.
 	Avatar      *Avatar `json:"avatar,omitempty"`
 	OwnerUserID *string `json:"-"`
-	AuthScope   *string `json:"-"`
 	// Names replaces every name and alias.
 	Names []Name `json:"names,omitempty"`
 	// Text replaces the text of every language.

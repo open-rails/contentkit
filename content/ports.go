@@ -26,10 +26,10 @@ type PublicUser struct {
 	AvatarSrcSet string `json:"avatar_srcset,omitempty"`
 }
 
-// ContentProcessor processes plain text on write. The default only trims whitespace;
-// callers render the result as text.
-type ContentProcessor interface {
-	Sanitize(ctx context.Context, raw string) (string, error)
+// TextProcessor processes a comment's plain text on write. Readers render
+// the result as text, never as HTML. The default trims whitespace.
+type TextProcessor interface {
+	ProcessText(ctx context.Context, raw string) (string, error)
 }
 
 // Decision is a ContentModerator's outcome for one text write.

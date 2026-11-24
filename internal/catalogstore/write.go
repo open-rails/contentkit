@@ -16,6 +16,7 @@ import (
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/codes"
 	entitystore "github.com/open-rails/contentkit/internal/entitystore"
+	"github.com/open-rails/contentkit/internal/subjectfence"
 	versionstore "github.com/open-rails/contentkit/internal/versionstore"
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
@@ -53,6 +54,12 @@ func (fx effects) fenced() []versions.Target {
 // events and queues media exposure before committing. After the commit it
 // fences or unfences the media of what it deleted or restored.
 func (s *Store) mutate(ctx context.Context, actor access.Actor, ids []string, fn func(ctx context.Context, tx pgx.Tx, got map[string]owned) (effects, error)) error {
+	return s.mutateNaming(ctx, actor, ids, nil, fn)
+}
+
+// mutateNaming is mutate for a write that stores accounts: their erasure
+// fences are taken before any content lock.
+func (s *Store) mutateNaming(ctx context.Context, actor access.Actor, ids, accounts []string, fn func(ctx context.Context, tx pgx.Tx, got map[string]owned) (effects, error)) error {
 	g, err := s.grantsFor(ctx, actor, ids)
 	if err != nil {
 		return err
@@ -62,6 +69,9 @@ func (s *Store) mutate(ctx context.Context, actor access.Actor, ids []string, fn
 		return err
 	}
 	defer tx.Rollback(ctx)
+	if err := s.fenceAccounts(ctx, tx, accounts...); err != nil {
+		return err
+	}
 	got, err := s.authorize(ctx, tx, actor, ids, g)
 	if err != nil {
 		return err
@@ -258,6 +268,15 @@ func (a *CreateAuthorization) CreateTx(ctx context.Context, tx pgx.Tx, in []cata
 }
 
 func (s *Store) createPreparedTx(ctx context.Context, tx pgx.Tx, actor access.Actor, preps []preparedCreateContent) ([]string, error) {
+	accounts := []string{viewerID(actor)}
+	for _, p := range preps {
+		for _, c := range p.creators {
+			accounts = append(accounts, c.UserID)
+		}
+	}
+	if err := s.fenceAccounts(ctx, tx, accounts...); err != nil {
+		return nil, err
+	}
 	ids := make([]string, len(preps))
 	var events []catalog.Event
 	for i, p := range preps {
@@ -329,7 +348,15 @@ func (s *Store) Update(ctx context.Context, actor access.Actor, in []catalog.Upd
 			in[i].Restrictions = &rs
 		}
 	}
-	return s.mutate(ctx, actor, ids, func(ctx context.Context, tx pgx.Tx, got map[string]owned) (effects, error) {
+	var accounts []string
+	for _, u := range in {
+		if u.Creators != nil {
+			for _, c := range *u.Creators {
+				accounts = append(accounts, strings.TrimSpace(c.UserID))
+			}
+		}
+	}
+	return s.mutateNaming(ctx, actor, ids, accounts, func(ctx context.Context, tx pgx.Tx, got map[string]owned) (effects, error) {
 		fx := effects{}
 		for _, u := range in {
 			o := got[u.ID]
@@ -432,6 +459,12 @@ func (s *Store) inheritingVersions(ctx context.Context, tx pgx.Tx, id string, ch
 }
 
 var errStale = errors.Join(ErrConflict, errors.New("the content changed since it was read"))
+
+// fenceAccounts locks the accounts a write stores, before its other locks,
+// and refuses an erased one (contentstore.ErrSubjectErased).
+func (s *Store) fenceAccounts(ctx context.Context, tx pgx.Tx, ids ...string) error {
+	return subjectfence.Guard(ctx, tx, s.schema, s.tenant, ids...)
+}
 
 func (s *Store) writeCreators(ctx context.Context, tx pgx.Tx, id string, cs []catalog.Creator) error {
 	for _, c := range cs {

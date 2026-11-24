@@ -47,6 +47,8 @@ type world struct {
 	viewer             iam.Role
 	moderator          iam.Role
 	commentManager     iam.Role
+	importer           iam.Role
+	locationManager    iam.Role
 	globalReviewer     iam.Role
 	channelWriter      iam.Role
 	channelContributor iam.Role
@@ -107,6 +109,8 @@ func newWorldAuth(t *testing.T, configureAuth func(*authkit.Config), configure .
 	w.viewer = appPersona.Role("auditor", permissions[access.ContentViewRestricted])
 	w.moderator = appPersona.Role("moderator", moderate)
 	w.commentManager = appPersona.Role("comment-manager", moderate, permissions[access.CommentsBan], permissions[access.ModerationReview])
+	w.importer = appPersona.Role("importer", permissions[access.ImportWrite])
+	w.locationManager = appPersona.Role("location-manager", permissions[access.LocationsWrite])
 	w.globalReviewer = w.roles.Root.Role("reviewer", moderate)
 	channel := w.roles.Persona("channel")
 	channelPermissions := map[string]iam.Perm{}
