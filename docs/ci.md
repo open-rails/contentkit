@@ -36,6 +36,8 @@ Image-definition changes also select nonpublishing image builds. Diff or source-
 
 Go package shards, nested modules, native media and SDK/browser tests keep their existing commands and assertions. Whenever the critical suite runs, `Hosts link no media codecs` also builds every host-importable package of the root, server and adapter modules with `CGO_ENABLED=0` and refuses any that depends on `media/image`, `media/video`, `media/worker` or `cmd/media-worker`. Reusable leaf workflows have no independent automatic PR/master triggers. `CI` and `full` manual requests select every suite; individual media/UI workflows remain available for explicit diagnosis. Test selections are documented in the run summary.
 
+Jobs that need Ubuntu packages install them through [`apt-install`](../.github/actions/apt-install/action.yml). Its .debs are cached per runner image and install with no network; on a miss they come from the mirror, with a bounded retry. A pull request reads its base branch's cache, which [`apt-cache.yaml`](../.github/workflows/apt-cache.yaml) fills on pushes to `rc/**` and `master`.
+
 Version tags publish artifacts from a commit belonging to master. A UI prerelease tag may instead name an unmerged commit whose CI run passed the critical suite and `CI Gate`; a light run does not qualify it. npm builds and verifies the packed exports/types/styles, including matching wildcard export conditions, without repeating source unit tests. Native image builds remain artifact qualification. A package release does not itself deploy a consuming application.
 
 ## Supply chain

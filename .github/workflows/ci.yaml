@@ -136,7 +136,9 @@ jobs:
           adapters/authkit/go.sum
           adapters/openrails/go.sum
     - name: Install native processing dependencies
-      run: $GITHUB_WORKSPACE/.github/scripts/apt-install.sh libvips-dev
+      uses: ./.github/actions/apt-install
+      with:
+        packages: libvips-dev
     - run: bash .github/scripts/build-and-vet.sh
   security:
     name: Required Security
@@ -165,7 +167,9 @@ jobs:
           server/go.sum
           tests/critical/go.sum
     - name: Install native processing dependencies
-      run: $GITHUB_WORKSPACE/.github/scripts/apt-install.sh libvips-dev
+      uses: ./.github/actions/apt-install
+      with:
+        packages: libvips-dev
     - name: Go vulnerability analysis
       run: |
         status=0

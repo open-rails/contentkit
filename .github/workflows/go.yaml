@@ -68,7 +68,9 @@ jobs:
         docker logs critical-clickhouse
         exit 1
     - name: Install native processing dependencies
-      run: $GITHUB_WORKSPACE/.github/scripts/apt-install.sh libvips-dev
+      uses: ./.github/actions/apt-install
+      with:
+        packages: libvips-dev
     - name: Start the media worker's FFmpeg runtime
       run: bash .github/scripts/critical-media-tools.sh start
     - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
