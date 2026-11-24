@@ -164,12 +164,7 @@ jobs:
   image-definitions:
     needs: source
     if: needs.source.outputs.images == 'true'
-    uses: ./.github/workflows/images.yaml
-    permissions:
-      contents: read
-      packages: write
-    with:
-      verify_only: true
+    uses: ./.github/workflows/verify-images.yaml
   gate:
     name: ${{ (github.event.pull_request.draft || github.event.action == 'closed') && 'Inactive PR (CI not requested)' || 'CI Gate' }}
     needs: [source-branch, source, scan, critical, build, ui-package, codec-free, image-definitions]

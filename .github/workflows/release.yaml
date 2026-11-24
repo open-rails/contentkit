@@ -90,6 +90,8 @@ jobs:
   npm:
     name: Publish @openrails/contentkit-ui to npm
     needs: package
+    # The npm trusted publisher is bound to this environment.
+    environment: npm
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:

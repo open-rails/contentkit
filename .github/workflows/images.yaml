@@ -4,35 +4,54 @@ name: images
 # each built on a native runner (QEMU arm64 builds exceeded the timeout), then
 # merged into one multi-arch tag. media-gateway/vX.Y.Z releases only that
 # component as contentkit-media-gateway:gateway-vX.Y.Z, independently of root
-# release image tags. Pull requests that touch image definitions
-# build linux/amd64 only, without pushing. workflow_dispatch rebuilds a tag.
+# release image tags. Dispatched on a release tag, it republishes that tag.
+# Registry credentials live in the release environment, which admits release
+# tags only; pull requests build through verify-images.yaml.
 'on':
   push:
     tags:
     - 'v*'
     - 'media-gateway/v*'
-  workflow_call:
-    inputs:
-      verify_only:
-        type: boolean
-        default: true
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: Existing root or media-gateway release tag to (re)publish
-        required: true
+  workflow_dispatch: {}
 permissions:
   contents: read
 concurrency:
-  group: images-${{ github.event.pull_request.number || inputs.tag || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
-env:
-  PUBLISH: ${{ !inputs.verify_only && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
-  TAG: ${{ inputs.tag || github.ref_name }}
+  group: images-${{ github.ref }}
+  cancel-in-progress: false
 jobs:
+  release:
+    name: Release source
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      names: ${{ steps.version.outputs.names }}
+    steps:
+    - name: Image version
+      id: version
+      env:
+        REF_TYPE: ${{ github.ref_type }}
+        REF_NAME: ${{ github.ref_name }}
+      run: |
+        [[ "$REF_TYPE" == tag && "$REF_NAME" =~ ^(media-gateway/)?v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo 'Invalid image release tag'; exit 1; }
+        if [[ "$REF_NAME" == media-gateway/* ]]; then
+          echo "tag=gateway-${REF_NAME##*/}" >> "$GITHUB_OUTPUT"
+          echo 'names=["media-gateway"]' >> "$GITHUB_OUTPUT"
+        else
+          echo "tag=$REF_NAME" >> "$GITHUB_OUTPUT"
+          echo 'names=["media-gateway","media-worker","server"]' >> "$GITHUB_OUTPUT"
+        fi
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      with:
+        ref: ${{ github.sha }}
+        persist-credentials: false
+        fetch-depth: 0
+    - name: Verify release source belongs to master
+      run: git merge-base --is-ancestor HEAD origin/master
   build:
     name: ${{ matrix.name }} (${{ matrix.arch }})
-    if: '!github.event.pull_request.draft'
+    needs: release
+    environment: release
     runs-on: ${{ matrix.arch == 'arm64' && 'ubuntu-24.04-arm' || 'ubuntu-24.04' }}
     timeout-minutes: 30
     permissions:
@@ -41,34 +60,24 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        name: ${{ fromJSON(startsWith(inputs.tag || github.ref_name, 'media-gateway/') && '["media-gateway"]' || '["media-gateway","media-worker","server"]') }}
-        arch: ${{ fromJSON((inputs.verify_only || github.event_name == 'pull_request') && '["amd64"]' || '["amd64","arm64"]') }}
+        name: ${{ fromJSON(needs.release.outputs.names) }}
+        arch: [amd64, arm64]
+    env:
+      TAG: ${{ needs.release.outputs.tag }}
     steps:
-    - name: Image version
-      if: env.PUBLISH == 'true'
-      run: |
-        [[ "$TAG" =~ ^(media-gateway/)?v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]] || { echo 'Invalid image release tag'; exit 1; }
-        if [[ "$TAG" == media-gateway/* ]]; then TAG="gateway-${TAG##*/}"; fi
-        echo "TAG=$TAG" >> "$GITHUB_ENV"
     - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       with:
-        ref: ${{ inputs.tag || github.sha }}
+        ref: ${{ github.sha }}
         persist-credentials: false
-        fetch-depth: 0
-    - name: Verify release source belongs to master
-      if: env.PUBLISH == 'true'
-      run: git merge-base --is-ancestor HEAD origin/master
     - id: rev
       run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
     - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
-    - if: env.PUBLISH == 'true'
-      uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+    - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
       with:
         registry: ghcr.io
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
-    - if: env.PUBLISH == 'true'
-      uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+    - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
       with:
         username: openrails
         password: ${{ secrets.DOCKERHUB_TOKEN }}
@@ -82,25 +91,23 @@ jobs:
           org.opencontainers.image.source=https://github.com/${{ github.repository }}
           org.opencontainers.image.revision=${{ steps.rev.outputs.sha }}
           org.opencontainers.image.version=${{ env.TAG }}
-        outputs: ${{ env.PUBLISH == 'true' && format('type=image,"name=ghcr.io/open-rails/contentkit-{0},docker.io/openrails/contentkit-{0}",push-by-digest=true,name-canonical=true,push=true', matrix.name) || 'type=cacheonly' }}
+        outputs: type=image,"name=ghcr.io/open-rails/contentkit-${{ matrix.name }},docker.io/openrails/contentkit-${{ matrix.name }}",push-by-digest=true,name-canonical=true,push=true
         cache-from: type=gha,scope=${{ matrix.name }}-${{ matrix.arch }}
-        cache-to: ${{ env.PUBLISH == 'true' && format('type=gha,mode=max,scope={0}-{1}', matrix.name, matrix.arch) || '' }}
-    - if: env.PUBLISH == 'true'
-      run: |
+        cache-to: type=gha,mode=max,scope=${{ matrix.name }}-${{ matrix.arch }}
+    - run: |
         mkdir -p digests
         touch "digests/${DIGEST#sha256:}"
       env:
         DIGEST: ${{ steps.build.outputs.digest }}
-    - if: env.PUBLISH == 'true'
-      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
       with:
         name: digest-${{ matrix.name }}-${{ matrix.arch }}
         path: digests/*
         retention-days: 1
   publish:
     name: ${{ matrix.name }} (multi-arch)
-    needs: build
-    if: ${{ !inputs.verify_only && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') }}
+    needs: [release, build]
+    environment: release
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -109,7 +116,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        name: ${{ fromJSON(startsWith(inputs.tag || github.ref_name, 'media-gateway/') && '["media-gateway"]' || '["media-gateway","media-worker","server"]') }}
+        name: ${{ fromJSON(needs.release.outputs.names) }}
     steps:
     - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
       with:
@@ -128,7 +135,6 @@ jobs:
         password: ${{ secrets.DOCKERHUB_TOKEN }}
     - working-directory: digests
       run: |
-        if [[ "$TAG" == media-gateway/* ]]; then TAG="gateway-${TAG##*/}"; fi
         test "$(ls | wc -l)" -eq 2
         for repo in ghcr.io/open-rails/contentkit-$NAME docker.io/openrails/contentkit-$NAME; do
           docker buildx imagetools create -t "$repo:$TAG" $(printf "$repo@sha256:%s " *)
@@ -136,3 +142,4 @@ jobs:
         done
       env:
         NAME: ${{ matrix.name }}
+        TAG: ${{ needs.release.outputs.tag }}
