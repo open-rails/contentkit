@@ -256,14 +256,12 @@ func (b *boundedBody) Close() error {
 }
 
 // distinctSchemas refuses an AuthKit schema that is one of the engine's: they
-// would share tables or a River leader.
+// would share tables or a River leader. AuthKit may keep its tables and its
+// River in one schema; that is AuthKit's to allow.
 func distinctSchemas(engine contentkit.Config, auth authkit.DatabaseConfig) error {
 	s, err := engine.Schemas()
 	if err != nil {
 		return err
-	}
-	if auth.Schema == auth.RiverSchema {
-		return fmt.Errorf("server: auth.database.schema and river_schema are both %q", auth.Schema)
 	}
 	for _, a := range []struct{ name, schema string }{{"auth.database.schema", auth.Schema}, {"auth.database.river_schema", auth.RiverSchema}} {
 		for _, e := range []struct{ name, schema string }{{"engine.database.schema", s.Catalog}, {"engine.database.river_schema", s.River},

@@ -2953,7 +2953,7 @@
       "behavior": "Startup refuses shared queue schemas, plain-HTTP credential endpoints off loopback, IPv4-mapped trusted proxies and a ClickHouse CA without TLS",
       "status": "verified",
       "evidence": [
-        "The engine refuses River in the catalog or account schema, a mapped trusted-proxy prefix and a ClickHouse CA without TLS; a plain-http media origin is refused; a plain-http Go client base sends nothing. The server refuses a plain-http OpenRails base and AuthKit schemas equal to the engine's, and accepts a loopback OpenRails base.",
+        "The engine refuses River in the catalog or account schema, a mapped trusted-proxy prefix and a ClickHouse CA without TLS; a plain-http media origin is refused; a plain-http Go client base sends nothing. The server refuses a plain-http OpenRails base and an AuthKit schema or River equal to one of the engine's, and accepts AuthKit's tables and River in one schema and a loopback OpenRails base.",
         "Fails on the base, which starts with each of these. Not yet an execution receipt; qualification runs the cases."
       ],
       "cases": [

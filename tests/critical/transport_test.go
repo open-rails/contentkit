@@ -307,6 +307,9 @@ func TestStartupRefusesUnsafeTransport(t *testing.T) {
 		}), "plain http")
 		refused(t, build(t, func(c *server.Config) { c.Auth.Database.Schema = c.Engine.Database.Schema }), "are both")
 		refused(t, build(t, func(c *server.Config) { c.Auth.Database.RiverSchema = c.Engine.Database.Schema + "_river" }), "are both")
+		refused(t, build(t, func(c *server.Config) { c.Auth.Database.RiverSchema = c.Engine.Database.Schema }), "are both")
+		// AuthKit's tables and its River may share a schema: that is AuthKit's to allow.
+		must(t, build(t, func(c *server.Config) { c.Auth.Database.RiverSchema = c.Auth.Database.Schema }))
 		must(t, build(t, func(c *server.Config) {
 			c.OpenRails = server.OpenRailsConfig{BaseURL: "http://127.0.0.1:1", APIKey: "merchant-key"}
 		}))
