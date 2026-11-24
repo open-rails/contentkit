@@ -185,7 +185,7 @@ type manifestCommit struct {
 // makes restoration refuse the version before the first S3 request is issued.
 func (j *PGJournal) claimErasureTx(ctx context.Context, tx pgx.Tx, item Item) error {
 	j = j.forTenant(item.Ref().TenantID)
-	operation := uuid.NewSHA1(uuid.NameSpaceURL, []byte("erasure-claim:"+item.Prefix()))
+	operation := uuidv7.Name(item.at(), uuid.NameSpaceURL, "erasure-claim:"+item.Prefix())
 	fingerprint := sha256.Sum256([]byte("permanent-version-erasure"))
 	_, err := tx.Exec(ctx, `INSERT INTO `+j.table+`
 (tenant_id,operation_id,content_kind,content_id,content_version_id,folder_prefix,actor_id,fingerprint,lease_id,state,effects)

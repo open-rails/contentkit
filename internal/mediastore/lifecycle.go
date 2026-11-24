@@ -151,7 +151,7 @@ func (j *Jobs) retireFolder(ctx context.Context, item Item, intent manifestCommi
 			return err
 		}
 	}
-	operation := uuid.NewSHA1(intent.ID, []byte("delete"))
+	operation := uuidv7.Child(intent.ID, "delete")
 	if err := j.deleteItem(ctx, item, d.Owner, operation, d.Incarnation, time.Time{}, false); err != nil {
 		return err
 	}
@@ -229,7 +229,7 @@ func (j *Jobs) resetItem(ctx context.Context, item Item, deletion uuid.UUID) err
 	} else if kind == layout.FenceErased {
 		return errors.New("media: permanently erased item cannot be reset")
 	}
-	operation := uuid.NewSHA1(deletion, []byte("reset"))
+	operation := uuidv7.Child(deletion, "reset")
 	mutation := &manifestMutation{lifecycle: true, commit: manifestCommit{ID: operation,
 		Fingerprint: sha256.Sum256([]byte("reset:" + deletion.String()))}}
 	_, err := j.manifests.editOperation(ctx, item.Ref(), true, bound{}, mutation, func(cur *Manifest) error {

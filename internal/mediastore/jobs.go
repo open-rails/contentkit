@@ -114,7 +114,7 @@ func (j *PGJournal) retireItemTx(ctx context.Context, tx pgx.Tx, item Item, owne
 	if err != nil {
 		return err
 	}
-	operation := uuid.NewSHA1(uuid.NameSpaceURL, []byte("folder-retirement:"+item.Prefix()+incarnation))
+	operation := uuidv7.Name(item.at(incarnation), uuid.NameSpaceURL, "folder-retirement:"+item.Prefix()+incarnation)
 	fingerprint := sha256.Sum256(effects)
 	jr := j.forTenant(item.Ref().TenantID)
 	if err := jr.lockAdmission(ctx, tx, item.Prefix()); err != nil {
@@ -188,7 +188,7 @@ func (j *Jobs) Purge(ctx context.Context, d media.Deletion) error {
 	if d.OperationID == "" {
 		return errors.New("media: purge needs an operation id")
 	}
-	operation := uuid.NewSHA1(uuid.NameSpaceURL, []byte("purge:"+item.Prefix()+d.OperationID))
+	operation := uuidv7.Name(item.at(d.OperationID), uuid.NameSpaceURL, "purge:"+item.Prefix()+d.OperationID)
 	if err := j.deleteItem(ctx, item, d.Owner, operation, "", time.Time{}, false); err != nil {
 		return err
 	}
