@@ -8,7 +8,7 @@ import { sha256Hex } from "./hash.js";
 import { Pacer } from "./pacer.js";
 import { itemRef } from "./ref.js";
 import { defaultTransport, type Transport } from "./transport.js";
-import { uuidv7 } from "../uuid.js";
+import { uuidv4, uuidv7 } from "../uuid.js";
 
 /** Upload tuning for the media module. */
 export interface MediaOptions {
@@ -251,7 +251,7 @@ export class MediaClient {
     const up = await this.upload(file, o);
     o.onUploaded?.(up);
     const op: Op = { op: "put", path: up.path, source_name: up.sourceName, blob: up.blob };
-    if (o.createOnly) op.create_id = crypto.randomUUID();
+    if (o.createOnly) op.create_id = uuidv4();
     else op.replace = true;
     if (o.edit) op.edit = o.edit;
     if (o.meta) op.meta = o.meta;

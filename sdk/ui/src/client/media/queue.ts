@@ -1,7 +1,7 @@
 import { ContentKitError, aborted, throwIfAborted, toContentKitError } from "../errors.js";
 import type { FileInfo, Op, RefBody } from "../generated/wire.js";
 import { fill } from "../public.js";
-import { uuidv7 } from "../uuid.js";
+import { uuidv4, uuidv7 } from "../uuid.js";
 import { samePath, stem, type MediaClient, type Progress, type UploadedFile, type UploadState } from "./client.js";
 
 export type ItemStatus = "queued" | "uploading" | "uploaded" | "failed" | "committed";
@@ -97,7 +97,7 @@ export class ItemUploadQueue {
   ): QueueItem[] {
     const added = [...files].map(
       (file): QueueItem => ({
-        id: crypto.randomUUID(),
+        id: uuidv4(),
         file,
         path: opts.path?.(file) ?? fill(this.o.path, { name: file.name }),
         ...(opts.byName?.(file) ? { byName: true } : {}),
