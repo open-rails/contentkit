@@ -420,12 +420,16 @@ func (k *RegisteredKind) validateDownload() error {
 }
 
 // Area is the area of an upload's allocation (preset "") or of a derived
-// file's: a version's originals/ or internal/, else private/.
+// file's: a version's originals/ or internal/; else private/, but internal/
+// for a HostOnly preset's, which no item token opens.
 func (k *RegisteredKind) Area(preset string) string {
 	if k.Versions {
 		if preset == "" {
 			return layout.AreaOriginals
 		}
+		return layout.AreaInternal
+	}
+	if p := k.private(preset); p != nil && p.HostOnly {
 		return layout.AreaInternal
 	}
 	return layout.AreaPrivate
@@ -499,6 +503,9 @@ func (k *RegisteredKind) validatePrivate(p media.Private, names map[string]bool)
 	}
 	if len(p.Shapes) > 0 && p.Image == nil {
 		return errors.New("Shapes need an Image producer")
+	}
+	if p.HostOnly && (p.HLS != nil || p.Subtitles != nil) {
+		return errors.New("HostOnly is for Image, MP4 and Zip presets: an HLS ladder or caption track left out of playlists plays nowhere")
 	}
 	switch {
 	case p.Image != nil:

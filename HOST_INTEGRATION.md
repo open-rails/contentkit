@@ -1074,11 +1074,8 @@ worker, _ := cfg.MediaRegistry() // the stock worker's MEDIA_KINDS_FILE
   presets' sources are always kept). Except a version's declared audio
   (`Publish.Playback`), the read API never returns an upload's path or URL
   to viewers.
-- **Host-only presets.** `Private.HostOnly` keeps an output out of generic
-  reads, downloads and playlists.
-- **`private/` is all or nothing.** One token per item opens every private
-  file of it. `HostOnly` decides what reads list, not what the token
-  reaches: a viewer with access who learns a blob's hash can fetch it.
+- **Host-only presets.** `Private.HostOnly` keeps an Image, MP4 or Zip output out of generic reads, downloads and playlists.
+- **`private/` is all or nothing.** One token per item opens every private file of it; a version's `private/` holds only released files. `HostOnly` outputs, of every kind, stay in `internal/`, which no token reaches.
 - **Defaults.** A kind's `Defaults` (an `fs.FS`, e.g. `go:embed`) holds the
   images its public presets name in `Public.Default`; the registry checks
   they exist. A shared kind ships its own, so importing apps merge nothing.

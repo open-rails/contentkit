@@ -175,10 +175,12 @@ type Private struct {
 	// Download is the human name template a download read signs into the
 	// URL, filled from the manifest's meta and {name}: "{title}.zip".
 	Download string `json:"download,omitempty"`
-	// HostOnly leaves this preset out of generic reads and playlists. Version
-	// outputs stay in internal and can be served only by the authorized host
-	// download transfer. They never share an allocation with ordinary served
-	// outputs, because an item token opens every private file in its folder.
+	// HostOnly leaves this Image, MP4 or Zip preset out of generic reads and
+	// playlists. Its outputs stay in internal/, which no token opens: a
+	// version's are served only by the authorized host download transfer,
+	// another kind's only to editors. They never share an allocation with
+	// ordinary served outputs, because an item token opens every private file
+	// in its folder.
 	HostOnly  bool       `json:"host_only,omitempty"`
 	Image     *Image     `json:"image,omitempty"`
 	HLS       *HLS       `json:"hls,omitempty"`
