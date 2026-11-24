@@ -2,6 +2,8 @@ module github.com/open-rails/contentkit/sdk/ui/e2e/server
 
 go 1.26.10
 
+toolchain go1.26.11
+
 require (
 	github.com/ClickHouse/clickhouse-go/v2 v2.40.3
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.7

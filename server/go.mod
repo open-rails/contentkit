@@ -2,6 +2,8 @@ module github.com/open-rails/contentkit/server
 
 go 1.26.10
 
+toolchain go1.26.11
+
 require (
 	github.com/goccy/go-yaml v1.19.2
 	github.com/jackc/pgx/v5 v5.11.0

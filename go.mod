@@ -2,6 +2,8 @@ module github.com/open-rails/contentkit
 
 go 1.26.10
 
+toolchain go1.26.11
+
 // Premature v1 tags: ContentKit is pre-stable; use the latest v0.x release.
 // v1.1.2 is a withdrawal-only marker and retracts itself.
 retract [v1.0.0-0, v1.1.2]
