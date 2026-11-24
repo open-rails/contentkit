@@ -402,27 +402,7 @@ always holds the bytes of its name. The upload limiter rate-limits uploaders
 and charges each upload's size (at least 64 KiB) to the grant's `Owner`; growth past the quota fails with 413
 `quota_exceeded`, and deleting an item releases it.
 
-**Media gateway** (`cmd/media-gateway`, `media/gateway`, image
-`ghcr.io/open-rails/contentkit-media-gateway:{tag}`): `public/` to anyone,
-falling back to the kind's `_default` for declared names, and
-`private/sha256-{hex}` with an authorized item token or exact-file token.
-Private blobs and generation-named public files are cached for a year
-(`max-age=31536000, immutable`); other public responses, such as `Stable`
-presets and defaults, use `public, max-age=300, stale-while-revalidate=86400`.
-An item token
-opens every private file of its item or none. Versioned reader grants use exact-file
-tokens in `?t=` so an older grant cannot open newly uploaded or unreleased
-pages; ordinary whole-item grants may use the `mt` cookie. `?dl={name}` serves the file as a download
-under that name when it has the file's type. A soft-deleted or erased item's
-reserved `public/_contentkit_erased` fence refuses all of its files, checked with
-one HEAD per read. Everything else and every denial is one `no-store` 404. It keeps no state: rate limit the media host at the
-ingress; the read API limits the items a viewer opens per hour
-(`ReaderOptions.Issuance`). It needs `MEDIA_GATEWAY_S3_ENDPOINT`, a key
-reading only `*/private/*` and `*/public/*`, `MEDIA_GATEWAY_TOKEN_KEY` and
-`_TOKEN_KEY_PREVIOUS`, `MEDIA_GATEWAY_ROUTES` (a JSON list of
-`{host, scope, bucket, origins}`, one per tenant account or app root a media
-host serves) and `MEDIA_GATEWAY_DEFAULTS`
-(`contentkit-media-worker publish-defaults` prints it).
+**Media gateway** (`cmd/media-gateway`, `media/gateway`, image `ghcr.io/open-rails/contentkit-media-gateway:{tag}`): `public/` to anyone, falling back to the kind's `_default` for declared names, and `private/sha256-{hex}` with an authorized item token or exact-file token. Private blobs and generation-named public files are cached for a year (`max-age=31536000, immutable`; private ones add `CDN-Cache-Control: no-store`, and every answer `Referrer-Policy: no-referrer`); other public responses, such as `Stable` presets and defaults, use `public, max-age=300, stale-while-revalidate=86400`. An item token opens every private file of its item or none, versioned reader grants included: a version's `private/` holds only released files (prepared outputs wait in `internal/` until their chapter releases), so a grant opens what has been released until it expires. Grants may use the `mt` cookie. `?dl={name}` serves the file as a download under that name when it has the file's type. A soft-deleted or erased item's reserved `public/_contentkit_erased` fence refuses all of its files, checked with one HEAD per read. Everything else and every denial is one `no-store` 404. It keeps no state: rate limit the media host at the ingress; the read API limits the items a viewer opens per hour (`ReaderOptions.Issuance`). It needs `MEDIA_GATEWAY_S3_ENDPOINT`, a key reading only `*/private/*` and `*/public/*`, `MEDIA_GATEWAY_TOKEN_KEY` and `_TOKEN_KEY_PREVIOUS`, `MEDIA_GATEWAY_ROUTES` (a JSON list of `{host, scope, bucket, origins}`, one per tenant account or app root a media host serves) and `MEDIA_GATEWAY_DEFAULTS` (`contentkit-media-worker publish-defaults` prints it).
 
 **The media worker** (`internal/media/worker`) runs every producer from the host's
 worker River schema (`MEDIA_WORKER_SCHEMA`, per host:

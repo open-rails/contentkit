@@ -274,6 +274,14 @@ func TestGatewayCapabilities(t *testing.T) {
 			if res.StatusCode != c.status || res.Header.Get("Cache-Control") != c.want {
 				t.Fatalf("%s: status=%d Cache-Control=%q, want %d %q", c.name, res.StatusCode, res.Header.Get("Cache-Control"), c.status, c.want)
 			}
+			// A CDN that ignores "private" must still not store a tokened answer.
+			cdn := ""
+			if strings.HasPrefix(c.want, "private,") {
+				cdn = "no-store"
+			}
+			if res.Header.Get("CDN-Cache-Control") != cdn || res.Header.Get("Referrer-Policy") != "no-referrer" {
+				t.Fatalf("%s: CDN-Cache-Control=%q Referrer-Policy=%q, want %q and no-referrer", c.name, res.Header.Get("CDN-Cache-Control"), res.Header.Get("Referrer-Policy"), cdn)
+			}
 		}
 		fresh, _ := request(t, m.gateway.URL, "GET", generated, "", "", nil)
 		notModified, _ := request(t, m.gateway.URL, "GET", generated, "", "", map[string]string{"If-None-Match": fresh.Header.Get("ETag")})

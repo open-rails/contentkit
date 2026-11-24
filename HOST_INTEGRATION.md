@@ -1414,17 +1414,7 @@ the host's periodic jobs. The worker migrates its schema itself.
   `_default` item. `Cross-Origin-Resource-Policy` is always `same-site`.
 - **Bucket**: one per app, private (no public ACL or policy); the gateway's
   key reads only `*/private/*` and `*/public/*` of each; only the hosts write.
-- **CDN**: may cache `public/` in a shared cache. Generation-named URLs answer
-  `public, max-age=31536000, immutable`; stable names and default images answer
-  `public, max-age=300, stale-while-revalidate=86400` with ETag revalidation.
-  ContentKit does not enqueue CDN invalidation jobs. Never cache `private/` in
-  a shared cache: the token is not part of a cache key the CDN checks, so a
-  cached object would be served without one. Private blobs are hash-named and
-  answer `private, max-age=31536000, immutable`: tokens guard new reads, not
-  copies a browser already holds, so expiry, key rotation and deletion don't
-  reach those. The gateway sets these headers itself and ignores any
-  `Cache-Control` stored on the object. A CDN hit skips the deletion fence, so
-  a deleted `public/` file can stay served until that copy expires.
+- **CDN**: may cache `public/` in a shared cache. Generation-named URLs answer `public, max-age=31536000, immutable`; stable names and default images answer `public, max-age=300, stale-while-revalidate=86400` with ETag revalidation. ContentKit does not enqueue CDN invalidation jobs. Never cache `private/` in a shared cache: the token is not part of a cache key the CDN checks, so a cached object would be served without one. Private blobs are hash-named and answer `private, max-age=31536000, immutable` with `CDN-Cache-Control: no-store`, so a CDN that ignores `private` still stores none: tokens guard new reads, not copies a browser already holds, so expiry, key rotation and deletion don't reach those. Every media answer carries `Referrer-Policy: no-referrer`, so a page a media file links to never sees its tokened URL. The gateway sets these headers itself and ignores any `Cache-Control` stored on the object. A CDN hit skips the deletion fence, so a deleted `public/` file can stay served until that copy expires.
 - **Denials are 404 by design**: a missing, malformed, expired, wrong-scope
   or unknown-key token on `private/` gets the same response as a
   missing object (status, headers, body; `Cache-Control: no-store`), decided
