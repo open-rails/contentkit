@@ -23,6 +23,8 @@ export interface Attribution {
 
 
 const MAX = 100;
+// The server's exposure batch limit (signal.MaxExposuresPerBatch).
+const MAX_EXPOSURES = 8;
 // Fetch's keepalive limit includes all in-flight bodies in the fetch group.
 // Leave headroom and serialize this module's keepalive requests across clients.
 const KEEPALIVE_BYTES = 60 * 1024;
@@ -33,9 +35,10 @@ const bytes = (field: "signals" | "exposures", rows: readonly unknown[], session
 
 function packets<T>(items: readonly T[], field: "signals" | "exposures", session?: string): { items: T[]; bytes: number }[] {
   const out: { items: T[]; bytes: number }[] = [];
+  const limit = field === "exposures" ? MAX_EXPOSURES : MAX;
   let current: T[] = [];
   for (const item of items) {
-    if (current.length && (current.length === MAX || bytes(field, [...current, item], session) > KEEPALIVE_BYTES)) {
+    if (current.length && (current.length === limit || bytes(field, [...current, item], session) > KEEPALIVE_BYTES)) {
       out.push({ items: current, bytes: bytes(field, current, session) });
       current = [];
     }

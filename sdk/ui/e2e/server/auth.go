@@ -6,9 +6,6 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"fmt"
-	"net"
-	"net/http"
-	"strings"
 	"testing"
 	"time"
 
@@ -105,18 +102,6 @@ func newAuthInDatabase(ctx context.Context, origin string, pool *pgxpool.Pool, d
 		return nil, nil, err
 	}
 	return auth, outbox, nil
-}
-
-// behindProxy is the host's trusted-proxy step in front of ContentKit: the
-// client's address in X-Forwarded-For becomes RemoteAddr, which ContentKit
-// keys signed-out visitors by. Tests give each signed-out visitor its own.
-func behindProxy(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-			r.RemoteAddr = net.JoinHostPort(strings.TrimSpace(strings.Split(xff, ",")[0]), "0")
-		}
-		next.ServeHTTP(w, r)
-	})
 }
 
 // testUser is a signed-in account the control surface hands a test.

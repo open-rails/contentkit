@@ -1,12 +1,16 @@
 package critical_test
 
 import (
+	"bufio"
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -34,7 +38,7 @@ func TestConfiguredStandaloneParity(t *testing.T) {
 	awaitEditionPublication(t, a, a.engine.Client(), ref.ID, ref.Version)
 	var authConfig authkit.Config
 	authtest.Replica(t, w.auth, authtest.WithConfig(func(c *authkit.Config) { authConfig = *c }))
-	cfg := server.Config{Engine: a.cfg, Auth: authConfig, Authorization: &server.AuthorizationConfig{Issuer: authtest.Issuer, AppGroupID: a.cfg.Scope.AppID.String()}, Prefix: "/configured", DrainDelay: time.Millisecond, ShutdownTimeout: 5 * time.Second,
+	cfg := server.Config{Engine: a.cfg, Auth: authConfig, Authorization: &server.AuthorizationConfig{Issuer: authtest.Issuer, AppGroupID: a.cfg.Scope.AppID.String()}, Prefix: "/configured", DrainDelay: time.Millisecond, ShutdownTimeout: 5 * time.Second, ReadTimeout: 2 * time.Second,
 		S3: server.S3Config{Bucket: m.bucket, Endpoint: os.Getenv("CONTENTKIT_CRITICAL_S3_ENDPOINT"), AccessKeyID: os.Getenv("CONTENTKIT_CRITICAL_S3_USER"), SecretAccessKey: os.Getenv("CONTENTKIT_CRITICAL_S3_PASSWORD"), UsePathStyle: true}}
 	cfg.Engine.Database.SkipMigrations = true
 	standalone, err := server.New(t.Context(), cfg, server.Deps{Postgres: w.pool})
@@ -116,6 +120,71 @@ func TestConfiguredStandaloneParity(t *testing.T) {
 		must(t, w.pool.Ping(t.Context()))
 		must(t, a.deps.ClickHouse.Exec(t.Context(), "SELECT 1"))
 		assertImage(t, local.Files[0].URL, 48, 32)
+	})
+	t.Run("CK-J01-S13_signal_reads_serving_a_request_carry_a_deadline_and_memory_ceiling", func(t *testing.T) {
+		_, err := client.GetContentSimilar(t.Context(), ref.ID, ck.GetContentSimilarQuery{})
+		must(t, err)
+		must(t, a.deps.ClickHouse.Exec(t.Context(), "SYSTEM FLUSH LOGS"))
+		rows, err := a.deps.ClickHouse.Query(t.Context(), `SELECT Settings['max_memory_usage'], toUInt64OrZero(Settings['max_execution_time']) FROM system.query_log
+ WHERE type = 'QueryFinish' AND event_time > now() - 600 AND has(databases, ?) AND position(query, 'ORDER BY cityHash64(subject_kind,subject)') > 0`, a.cfg.ClickHouse.Database)
+		must(t, err)
+		reads := 0
+		for rows.Next() {
+			var memory string
+			var seconds uint64
+			must(t, rows.Scan(&memory, &seconds))
+			if memory != "1073741824" || seconds == 0 || seconds > 20 {
+				t.Errorf("an unbounded co-engagement read: max_memory_usage=%q max_execution_time=%d", memory, seconds)
+			}
+			reads++
+		}
+		must(t, rows.Close())
+		if reads == 0 {
+			t.Fatal("the similar read issued no co-engagement query")
+		}
+	})
+	t.Run("CK-J01-S10_the_server_bounds_bodies_and_headers_keeps_streams_open_and_marks_nosniff", func(t *testing.T) {
+		for _, path := range []string{"/readyz", "/configured/v1/kinds", "/configured/v1/no-such-route", "/elsewhere"} {
+			if _, _, header := answer(t, http.MethodGet, base+path, nil, nil); header.Get("X-Content-Type-Options") != "nosniff" {
+				t.Errorf("%s: %v", path, header)
+			}
+		}
+		if status, _, _ := answer(t, http.MethodGet, base+"/configured/v1/kinds", http.Header{"X-Filler": {strings.Repeat("a", 80<<10)}}, nil); status != http.StatusRequestHeaderFieldsTooLarge {
+			t.Errorf("an 80 KiB header block: %d", status)
+		}
+		// A body that stalls is cut at the read timeout and answered.
+		conn, err := net.Dial("tcp", listener.Addr().String())
+		must(t, err)
+		defer conn.Close()
+		start := time.Now()
+		_, err = fmt.Fprintf(conn, "POST /configured/v1/signals HTTP/1.1\r\nHost: %s\r\nContent-Type: application/json\r\nContent-Length: 100\r\n\r\n{", listener.Addr())
+		must(t, err)
+		must(t, conn.SetReadDeadline(time.Now().Add(15*time.Second)))
+		stalled, err := http.ReadResponse(bufio.NewReader(conn), nil)
+		if err != nil {
+			t.Fatalf("a stalled body was never cut: %v", err)
+		}
+		stalled.Body.Close()
+		if waited := time.Since(start); stalled.StatusCode != http.StatusBadRequest || waited < time.Second || waited > 10*time.Second {
+			t.Fatalf("stalled body: %d after %s", stalled.StatusCode, waited)
+		}
+		// An event stream outlives the read timeout: its heartbeat comes
+		// after ten seconds.
+		staff := ck.NewClient(base+"/configured", &http.Client{Transport: bearerTransport{staffKey(t, w, a), http.DefaultTransport}})
+		ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+		defer cancel()
+		var events []string
+		opened := time.Now()
+		heartbeat := errors.New("heartbeat")
+		err = staff.WatchMedia(ctx, ref, "", func(p ck.MediaProgress) error {
+			if events = append(events, p.Event); p.Event == "heartbeat" {
+				return heartbeat
+			}
+			return nil
+		})
+		if !errors.Is(err, heartbeat) || events[0] != "snapshot" || time.Since(opened) < 2*time.Second {
+			t.Fatalf("event stream: %v after %s, events %v", err, time.Since(opened), events)
+		}
 	})
 	stop()
 	must(t, a.deps.ClickHouse.Exec(t.Context(), "SELECT 1"))

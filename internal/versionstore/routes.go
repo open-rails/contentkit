@@ -178,6 +178,8 @@ func (h handler) archive(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Length", strconv.FormatInt(a.Size, 10))
 	}
 	w.Header().Set("Content-Disposition", layout.Attachment(a.Name))
+	// The request is read: a server's ReadTimeout must not cut the download.
+	_ = http.NewResponseController(w).SetReadDeadline(time.Time{})
 	w.WriteHeader(http.StatusOK)
 	if _, err := a.WriteTo(w); err != nil {
 		if r.Context().Err() == nil {

@@ -10,6 +10,7 @@ import (
 
 	"github.com/open-rails/contentkit/access"
 	content "github.com/open-rails/contentkit/content"
+	"github.com/open-rails/contentkit/internal/clientaddr"
 	"github.com/open-rails/contentkit/internal/ratelimit"
 	"github.com/redis/go-redis/v9"
 )
@@ -118,7 +119,7 @@ func (rt *Runtime) limit(ctx context.Context, a content.Action, actor access.Act
 	case actor.ID != "" && !actor.Anonymous:
 		key = "u:" + actor.ID
 	case actor.IP != "":
-		key = "ip:" + actor.IP
+		key = "ip:" + clientaddr.Key(actor.IP)
 	}
 	if l == nil || key == "" {
 		return nil

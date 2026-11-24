@@ -16,7 +16,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"regexp"
 	"slices"
 	"strings"
@@ -47,6 +46,8 @@ import (
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contenturl"
 	"github.com/open-rails/contentkit/entities"
+	"github.com/open-rails/contentkit/internal/clientaddr"
+	"github.com/open-rails/contentkit/internal/endpoint"
 	"github.com/open-rails/contentkit/internal/gate"
 	"github.com/open-rails/contentkit/internal/httpapi"
 	"github.com/open-rails/contentkit/internal/hub"
@@ -224,6 +225,9 @@ func (e *Engine) validate(deps Deps) error {
 	}
 	cfg := &e.cfg
 	var err error
+	if err := clientaddr.CheckTrusted(cfg.TrustedProxies); err != nil {
+		return fmt.Errorf("contentkit: Config.TrustedProxies: %w", err)
+	}
 	if err := signal.ValidateActivityCohorts(cfg.ActivityCohorts); err != nil {
 		return fmt.Errorf("contentkit: Config.ActivityCohorts: %w", err)
 	}
@@ -262,8 +266,8 @@ func (e *Engine) validate(deps Deps) error {
 			return errors.New("contentkit: Config.Accounts.Avatars needs Config.Media")
 		}
 		if a.Primary != "" {
-			if u, err := url.Parse(a.Primary); err != nil || u.Scheme != "https" && u.Scheme != "http" || u.Host == "" {
-				return fmt.Errorf("contentkit: Config.Accounts.Avatars.Primary %q is not an http(s) URL", a.Primary)
+			if _, err := endpoint.Secure(a.Primary); err != nil {
+				return fmt.Errorf("contentkit: Config.Accounts.Avatars.Primary: %w", err)
 			}
 			if strings.TrimSpace(a.Key) == "" {
 				return errors.New("contentkit: Config.Accounts.Avatars.Primary needs Key")
@@ -272,6 +276,12 @@ func (e *Engine) validate(deps Deps) error {
 	}
 	if (deps.ClickHouse != nil || cfg.ClickHouse.Addr != "") && strings.TrimSpace(cfg.ClickHouse.Database) == "" {
 		return errors.New("contentkit: the signal plane needs Config.ClickHouse.Database")
+	}
+	if _, err := cfg.ClickHouse.tlsConfig(); err != nil {
+		return err
+	}
+	if cfg.ClickHouse.TLS && cfg.ClickHouse.Addr != "" && !cfg.Database.SkipMigrations {
+		return errors.New("contentkit: Config.ClickHouse.TLS needs Database.SkipMigrations: MigrateClickHouse cannot migrate over TLS")
 	}
 	return nil
 }
@@ -596,7 +606,7 @@ func (e *Engine) mount(deps Deps) error {
 		return err
 	}
 	e.modules[httpapi.Codes] = router.Handler((&gate.Gate{Auth: e.auth, Log: e.log}).Guard)
-	e.inproc = e.dispatch("", e.modules)
+	e.inproc = e.dispatch("", e.modules, nil)
 	return nil
 }
 

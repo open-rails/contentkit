@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"math"
 	"net/http"
-	"net/netip"
 	"strconv"
 	"strings"
 	"time"
@@ -15,6 +14,7 @@ import (
 	"github.com/open-rails/authkit/auth"
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/clientaddr"
 	entitlement "github.com/open-rails/contentkit/internal/entitlement"
 	"github.com/open-rails/contentkit/internal/gate"
 	"github.com/open-rails/contentkit/internal/httpapi"
@@ -223,9 +223,8 @@ func limit(lim *ratelimit.Limiter, next http.Handler, log *slog.Logger) http.Han
 }
 
 // viewerKey is the key limits count a viewer under: the actor's id, else
-// its IP (the gate fills in the peer address), "" when it has neither. An
-// IPv6 address is keyed by its /64, the least a client is handed: keyed
-// whole, one client would have as many keys as it has addresses.
+// its address's key (an IPv6 address counts as its /64), "" when it has
+// neither.
 func viewerKey(a access.Actor) string {
 	switch {
 	case !a.Anonymous && a.ID != "":
@@ -233,12 +232,7 @@ func viewerKey(a access.Actor) string {
 	case a.IP == "":
 		return ""
 	}
-	if addr, err := netip.ParseAddr(a.IP); err == nil && !addr.Is4() && !addr.Is4In6() {
-		if p, err := addr.WithZone("").Prefix(64); err == nil {
-			return "ip:" + p.String()
-		}
-	}
-	return "ip:" + a.IP
+	return "ip:" + clientaddr.Key(a.IP)
 }
 
 // logIssued records the URLs a grant signed for its viewer.

@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/clientaddr"
 	"github.com/open-rails/contentkit/internal/ratelimit"
 	media "github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/layout"
@@ -1096,7 +1097,7 @@ func (u *Uploads) authorize(ctx context.Context, actor access.Actor, t media.Upl
 
 func uploaderID(a access.Actor) string {
 	if a.Anonymous || a.ID == "" {
-		return "ip:" + a.IP
+		return "ip:" + clientaddr.Key(a.IP)
 	}
 	return a.ID
 }
