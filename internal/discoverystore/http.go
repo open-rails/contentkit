@@ -17,6 +17,7 @@ import (
 	"github.com/open-rails/contentkit/internal/gate"
 	"github.com/open-rails/contentkit/internal/httpapi"
 	"github.com/open-rails/contentkit/internal/hub"
+	"github.com/open-rails/contentkit/internal/search"
 )
 
 // Handler serves the discovery routes: lists, search, typeahead, similar and
@@ -524,7 +525,7 @@ func (h handler) fail(w http.ResponseWriter, r *http.Request, err error) {
 		code, failed = httpapi.CodeUnauthorized, false
 	case errors.Is(err, auth.ErrForbidden):
 		code, failed = httpapi.CodeForbidden, false
-	case errors.Is(err, ErrInvalid):
+	case errors.Is(err, ErrInvalid), errors.Is(err, search.ErrInvalidQuery):
 		code, msg, failed = httpapi.CodeInvalidRequest, httpapi.Rule(err, httpapi.CodeInvalidRequest), false
 	case errors.Is(err, ErrNotFound):
 		code, failed = httpapi.CodeNotFound, false

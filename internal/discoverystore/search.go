@@ -75,6 +75,9 @@ func (s *Service) Search(ctx context.Context, o SearchOptions) (result discovery
 	if text == "" {
 		return empty, fmt.Errorf("%w: q is required", ErrInvalid)
 	}
+	if err := search.CheckQuery(text); err != nil {
+		return empty, err
+	}
 	var err error
 	sortName := o.Sort
 	if sortName == "" {
@@ -180,6 +183,9 @@ func (s *Service) Typeahead(ctx context.Context, o discovery.TypeaheadOptions) (
 	text := strings.TrimSpace(o.Query)
 	if text == "" {
 		return out, nil
+	}
+	if err := search.CheckQuery(text); err != nil {
+		return out, err
 	}
 	limit := o.Limit
 	if limit <= 0 {
