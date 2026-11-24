@@ -74,7 +74,6 @@ func TestPurgeLeavesNoAccountID(t *testing.T) {
 	user.TOTP = authtest.EnrollTOTP(t, a.tenant, user)
 	token := authtest.SignIn(t, a.tenant, user).AccessToken
 	authtest.GrantRole(t, w.tenant[0], a.group, iam.UserSubject(user.ID), w.contributor)
-	authtest.GrantRole(t, w.tenant[0], a.group, iam.UserSubject(user.ID), w.locationManager)
 	client := a.client(token)
 	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")[:12]
 	channel, err := client.PostChannels(ctx, channels.Input{Slug: "swept-" + suffix, Names: []entities.Name{{Language: "en", Kind: "name", Name: "Swept channel"}}})
@@ -95,6 +94,9 @@ func TestPurgeLeavesNoAccountID(t *testing.T) {
 	_, err = client.IngestMedia(ctx, nil, ref, uuid.NewString(), []ck.MediaFile{{Path: "pages/one.png", Type: "image/png", Body: bytes.NewReader(imageBytes(t))}})
 	must(t, err)
 	awaitMediaReady(t, client, ref)
+	// A member holds one role in a group: the location role replaces the
+	// contributor's once the content is in.
+	authtest.GrantRole(t, w.tenant[0], a.group, iam.UserSubject(user.ID), w.locationManager)
 	rule, err := client.PostModerationLocationRules(ctx, content.LocationRuleInput{Locations: []content.LocationEntry{{Country: "FR"}}, Target: "site", Domains: []string{"main"}, Note: "swept"})
 	must(t, err)
 	note := "still swept"
