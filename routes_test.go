@@ -11,6 +11,7 @@ import (
 	"net/netip"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/open-rails/contentkit/internal/httpapi"
@@ -198,3 +199,33 @@ func TestClientTransport(t *testing.T) {
 type roundTripper func(*http.Request) (*http.Response, error)
 
 func (f roundTripper) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
+
+// conn is a ResponseWriter that holds connection controls, as net/http's does.
+type conn struct {
+	http.ResponseWriter
+	read    time.Time
+	flushed bool
+}
+
+func (c *conn) SetReadDeadline(at time.Time) error { c.read = at; return nil }
+func (c *conn) FlushError() error                  { c.flushed = true; return nil }
+
+// A handler behind dispatch reaches the connection's deadlines and flush, as
+// event streams and archive downloads need.
+func TestDispatchReachesTheConnection(t *testing.T) {
+	at := time.Now().Add(time.Hour)
+	h := dispatchEngine(t, func(w http.ResponseWriter, _ *http.Request) {
+		rc := http.NewResponseController(w)
+		if err := rc.SetReadDeadline(at); err != nil {
+			t.Errorf("SetReadDeadline: %v", err)
+		}
+		if err := rc.Flush(); err != nil {
+			t.Errorf("Flush: %v", err)
+		}
+	})
+	c := &conn{ResponseWriter: httptest.NewRecorder()}
+	h.ServeHTTP(c, httptest.NewRequest(http.MethodGet, "/v1/manage", nil))
+	if !c.read.Equal(at) || !c.flushed {
+		t.Fatalf("the connection was not reached: %+v", c)
+	}
+}

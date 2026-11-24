@@ -222,37 +222,45 @@ func New(ctx context.Context, cfg Config, d Deps) (_ *Server, err error) {
 	for _, r := range routes {
 		mux.Handle(strings.TrimSpace(r.Method+" "+r.Path), r.Handler)
 	}
-	read := cmp.Or(cfg.ReadTimeout, 60*time.Second)
-	s.handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	s.handler = boundReads(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
-		if r.Body != nil && r.Body != http.NoBody {
-			rc := http.NewResponseController(w)
-			_ = rc.SetReadDeadline(time.Now().Add(read))
-			r.Body = &boundedBody{ReadCloser: r.Body, done: func() { _ = rc.SetReadDeadline(time.Time{}) }}
-		}
 		mux.ServeHTTP(w, r)
-	})
+	}), cmp.Or(cfg.ReadTimeout, 60*time.Second))
 	return s, nil
 }
 
-// boundedBody lifts the read deadline once the body is read or closed.
+// boundReads bounds reading a request's body to d from when its headers are
+// read. Only a body read to its end lifts the deadline, so the answer after
+// it runs unbounded; a body that stalls or fails keeps it, which also bounds
+// net/http's discard of what is left before it answers. It must wrap
+// net/http's own ResponseWriter, and it hands the handlers a copy of the
+// request, so net/http still sees its own body.
+func boundReads(next http.Handler, d time.Duration) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Body != nil && r.Body != http.NoBody {
+			rc := http.NewResponseController(w)
+			if err := rc.SetReadDeadline(time.Now().Add(d)); err == nil {
+				r = r.WithContext(r.Context())
+				r.Body = &boundedBody{ReadCloser: r.Body, lift: func() { _ = rc.SetReadDeadline(time.Time{}) }}
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// boundedBody lifts the read deadline once the body is read to its end.
 type boundedBody struct {
 	io.ReadCloser
 	once sync.Once
-	done func()
+	lift func()
 }
 
 func (b *boundedBody) Read(p []byte) (int, error) {
 	n, err := b.ReadCloser.Read(p)
-	if err != nil {
-		b.once.Do(b.done)
+	if err == io.EOF {
+		b.once.Do(b.lift)
 	}
 	return n, err
-}
-
-func (b *boundedBody) Close() error {
-	b.once.Do(b.done)
-	return b.ReadCloser.Close()
 }
 
 // distinctSchemas refuses an AuthKit schema that is one of the engine's: they

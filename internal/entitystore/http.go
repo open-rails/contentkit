@@ -149,6 +149,9 @@ func (w *statusWriter) WriteHeader(code int) {
 	w.ResponseWriter.WriteHeader(code)
 }
 
+// Unwrap lets http.ResponseController reach the connection (deadlines, flush).
+func (w *statusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
 // accessLog logs each request at DEBUG and a 5xx at ERROR, both with the
 // captured cause: the only place a constraint name or internal error appears.
 func accessLog(log *slog.Logger, next http.Handler) http.Handler {
