@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/open-rails/authkit"
+
+	contentkit "github.com/open-rails/contentkit"
 )
 
 func TestLoadTransport(t *testing.T) {
@@ -65,6 +67,21 @@ func TestAuthClientIP(t *testing.T) {
 	} {
 		if err := authClientIP(&c.h, c.trusted); err == nil {
 			t.Errorf("%s: want refused", name)
+		}
+	}
+}
+
+func TestDistinctSchemas(t *testing.T) {
+	engine := contentkit.Config{Scope: &contentkit.Scope{TenantID: contentkit.NewTenantID(), AppID: contentkit.NewAppID()}, Database: contentkit.DatabaseConfig{Schema: "site"}}
+	for _, ok := range []authkit.DatabaseConfig{{Schema: "auth", RiverSchema: "auth_river"}, {Schema: "auth", RiverSchema: "auth"}} {
+		if err := distinctSchemas(engine, ok); err != nil {
+			t.Errorf("%+v: %v", ok, err)
+		}
+	}
+	for _, bad := range []authkit.DatabaseConfig{{Schema: "site", RiverSchema: "auth_river"}, {Schema: "auth", RiverSchema: "site_river"},
+		{Schema: "auth", RiverSchema: "site"}, {Schema: "contentkit_accounts", RiverSchema: "auth"}} {
+		if err := distinctSchemas(engine, bad); err == nil {
+			t.Errorf("%+v accepted", bad)
 		}
 	}
 }
