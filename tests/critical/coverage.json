@@ -2950,10 +2950,10 @@
     {
       "id": "CK-J01-S12",
       "journey": "CK-J01",
-      "behavior": "Startup refuses shared queue schemas, plain-HTTP credential endpoints off loopback, IPv4-mapped trusted proxies and ClickHouse TLS it cannot honor",
+      "behavior": "Startup refuses shared queue schemas, plain-HTTP credential endpoints off loopback, IPv4-mapped trusted proxies and a ClickHouse CA without TLS",
       "status": "verified",
       "evidence": [
-        "The engine refuses River in the catalog or account schema, a mapped trusted-proxy prefix, a ClickHouse CA without TLS and TLS with embedded migrations; MigrateClickHouse refuses TLS; a plain-http media origin is refused; a plain-http Go client base sends nothing. The server refuses a plain-http OpenRails base and AuthKit schemas equal to the engine's, and accepts a loopback OpenRails base.",
+        "The engine refuses River in the catalog or account schema, a mapped trusted-proxy prefix and a ClickHouse CA without TLS; a plain-http media origin is refused; a plain-http Go client base sends nothing. The server refuses a plain-http OpenRails base and AuthKit schemas equal to the engine's, and accepts a loopback OpenRails base.",
         "Fails on the base, which starts with each of these. Not yet an execution receipt; qualification runs the cases."
       ],
       "cases": [
@@ -2972,6 +2972,19 @@
       ],
       "cases": [
         "TestConfiguredStandaloneParity/CK-J01-S13_signal_reads_serving_a_request_carry_a_deadline_and_memory_ceiling"
+      ]
+    },
+    {
+      "id": "CK-J01-S14",
+      "journey": "CK-J01",
+      "behavior": "ClickHouse migrations and the signal plane run over TLS",
+      "status": "verified",
+      "evidence": [
+        "Against the fixture ClickHouse's secure native port, MigrateClickHouse verified against the system roots fails on the certificate and creates no database; with ca_file it migrates, and New without SkipMigrations replays the migrations over TLS and opens its own TLS connection: the contentkit_clickhouse probe passes and the content model reports signals on.",
+        "Fails on the base, where MigrateClickHouse refuses TLS and New refuses TLS without SkipMigrations. Not yet an execution receipt; qualification runs the case."
+      ],
+      "cases": [
+        "TestClickHouseOverTLS/CK-J01-S14_ClickHouse_migrations_and_signals_run_over_TLS"
       ]
     },
     {

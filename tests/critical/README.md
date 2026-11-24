@@ -52,6 +52,7 @@ Provide disposable services through:
 - `CONTENTKIT_CRITICAL_CH_ADDR`, `CONTENTKIT_CRITICAL_CH_USER`,
   `CONTENTKIT_CRITICAL_CH_PASSWORD`, optionally `CONTENTKIT_CRITICAL_CH_CLUSTER`:
   ClickHouse with Keeper and replica macros. Each fixture owns a fresh database.
+- `CONTENTKIT_CRITICAL_CH_TLS_ADDR`, `CONTENTKIT_CRITICAL_CH_CA_FILE`: the same ClickHouse's secure native port and the PEM CA that signs its certificate (valid for `localhost`).
 
 Native tests need libvips and the media worker's compatible FFmpeg runtime;
 browser tests need Node, pnpm and Playwright Chromium. CI provisions these in

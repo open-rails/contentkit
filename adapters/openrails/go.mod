@@ -62,7 +62,7 @@ require (
 	github.com/oasisprotocol/curve25519-voi v0.0.0-20251114093237-2ab5a27a1729 // indirect
 	github.com/open-rails/authkit v1.43.0 // indirect
 	github.com/open-rails/helpers v1.18.0 // indirect
-	github.com/open-rails/migratekit v1.11.2 // indirect
+	github.com/open-rails/migratekit v1.12.0 // indirect
 	github.com/redis/go-redis/v9 v9.23.0 // indirect
 	github.com/riverqueue/river v0.49.0 // indirect
 	github.com/riverqueue/river/riverdriver v0.49.0 // indirect

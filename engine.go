@@ -280,9 +280,6 @@ func (e *Engine) validate(deps Deps) error {
 	if _, err := cfg.ClickHouse.tlsConfig(); err != nil {
 		return err
 	}
-	if cfg.ClickHouse.TLS && cfg.ClickHouse.Addr != "" && !cfg.Database.SkipMigrations {
-		return errors.New("contentkit: Config.ClickHouse.TLS needs Database.SkipMigrations: MigrateClickHouse cannot migrate over TLS")
-	}
 	return nil
 }
 

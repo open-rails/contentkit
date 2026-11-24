@@ -74,7 +74,7 @@ The file is YAML; unknown keys are refused. Durations are Go durations (`30s`).
 |---|---|---|
 | `engine` | The embedded engine's `contentkit.Config` ([host integration](../HOST_INTEGRATION.md)). | required |
 | `engine.trusted_proxies` | CIDR prefixes of the proxies in front of the server (an ingress, a load balancer). From one, the client is read from `Forwarded` or `X-Forwarded-For`, right to left past trusted hops; a malformed chain is 400. Behind a proxy, set it: otherwise every visitor is the proxy, location rules match nobody and anonymous visitors share one limit. See [client address](../HOST_INTEGRATION.md#client-address). | none: the peer is the client |
-| `engine.clickhouse.tls`, `engine.clickhouse.ca_file` | Connect to ClickHouse over TLS, verifying it against the system roots or the PEM CA file. Needs `engine.database.skip_migrations`; migrate over a private plain listener. | plain |
+| `engine.clickhouse.tls`, `engine.clickhouse.ca_file` | Connect to ClickHouse over TLS, migrations included, verifying it against the system roots or the PEM CA file. | plain |
 | `auth` | AuthKit as a resource server; its tables are in `auth.database.schema`, its River in `auth.database.river_schema`. Neither may be one of the engine's schemas. | `contentkit_auth`, `contentkit_auth_river` |
 | `authorization` | The AuthKit groups and identity issuer the engine is bound to ([scoped authorization](#scoped-authorization)). | required |
 | `users_issuer` | The issuer whose directory names authors; when set it must equal `authorization.issuer`. | `authorization.issuer` |

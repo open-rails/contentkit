@@ -36,6 +36,7 @@ jobs:
       CONTENTKIT_CRITICAL_CH_USER: contentkit
       CONTENTKIT_CRITICAL_CH_PASSWORD: contentkit
       CONTENTKIT_CRITICAL_CH_CLUSTER: contentkit
+      CONTENTKIT_CRITICAL_CH_TLS_ADDR: localhost:9440
     steps:
     - uses: actions/checkout@v4
       with:
@@ -50,13 +51,26 @@ jobs:
           server/go.sum
           adapters/authkit/go.sum
           adapters/openrails/go.sum
+    - name: Issue the signal store's test TLS certificate
+      run: |
+        dir="$RUNNER_TEMP/clickhouse-tls"
+        mkdir -p "$dir" && cd "$dir"
+        openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj "/CN=contentkit critical CA" -keyout ca.key -out ca.crt
+        openssl req -newkey rsa:2048 -nodes -subj "/CN=localhost" -keyout server.key -out server.csr
+        printf 'subjectAltName=DNS:localhost,IP:127.0.0.1\n' > san.ext
+        openssl x509 -req -in server.csr -CA ca.crt -CAkey ca.key -CAcreateserial -days 1 -extfile san.ext -out server.crt
+        chmod 644 server.key
+        echo "CONTENTKIT_CRITICAL_CH_TLS_DIR=$dir" >> "$GITHUB_ENV"
+        echo "CONTENTKIT_CRITICAL_CH_CA_FILE=$dir/ca.crt" >> "$GITHUB_ENV"
     - name: Start shared object and signal stores
       run: |
         docker run -d --name critical-minio -p 9100:9000 \
           -e MINIO_ROOT_USER=contentkit -e MINIO_ROOT_PASSWORD=contentkit-secret \
           cgr.dev/chainguard/minio@sha256:bd014394a80898e68c149f2311fdf8d5a2c2f3bb2c33b9327ae6d02b4b065ae1 server /data
-        docker run -d --name critical-clickhouse -p 9000:9000 \
+        docker run -d --name critical-clickhouse -p 9000:9000 -p 9440:9440 \
           -e CLICKHOUSE_USER=contentkit -e CLICKHOUSE_PASSWORD=contentkit -e CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT=1 \
+          -v "$GITHUB_WORKSPACE/.github/clickhouse/tls.xml:/etc/clickhouse-server/config.d/tls.xml:ro" \
+          -v "$CONTENTKIT_CRITICAL_CH_TLS_DIR:/etc/clickhouse-server/tls:ro" \
           -v "$GITHUB_WORKSPACE/.github/clickhouse/keeper.xml:/etc/clickhouse-server/config.d/keeper.xml:ro" \
           clickhouse/clickhouse-server:25.8
         for i in $(seq 1 60); do

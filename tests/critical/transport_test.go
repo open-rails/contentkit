@@ -252,10 +252,6 @@ func TestStartupRefusesUnsafeTransport(t *testing.T) {
 			}, "both schema"},
 			"an IPv4-mapped trusted proxy": {func(c *ck.Config) { c.TrustedProxies = []netip.Prefix{netip.MustParsePrefix("::ffff:10.0.0.0/104")} }, "IPv4-mapped"},
 			"a ClickHouse CA without TLS":  {func(c *ck.Config) { c.ClickHouse.CAFile = "ca.pem" }, "needs TLS"},
-			"ClickHouse TLS with embedded migrations": {func(c *ck.Config) {
-				c.Database.SkipMigrations = false
-				c.ClickHouse = ck.ClickHouseConfig{Addr: "127.0.0.1:9440", Database: "signals", TLS: true}
-			}, "SkipMigrations"},
 		} {
 			cfg, deps := prepared()
 			c.mutate(&cfg)
@@ -266,9 +262,6 @@ func TestStartupRefusesUnsafeTransport(t *testing.T) {
 			t.Run(name, func(t *testing.T) { refused(t, err, c.want) })
 		}
 		cfg, _ := prepared()
-		cfg.ClickHouse = ck.ClickHouseConfig{Addr: "127.0.0.1:9440", Database: "signals", TLS: true}
-		refused(t, ck.MigrateClickHouse(t.Context(), w.pool, cfg), "cannot use TLS")
-		cfg, _ = prepared()
 		cfg.Media = &ck.MediaConfig{Config: media.Config{BaseURL: "http://media.example"}}
 		_, err := cfg.MediaRegistry()
 		refused(t, err, "plain http")

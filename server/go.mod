@@ -98,7 +98,7 @@ require (
 	github.com/nyaruka/phonenumbers v1.8.1 // indirect
 	github.com/oasisprotocol/curve25519-voi v0.0.0-20251114093237-2ab5a27a1729 // indirect
 	github.com/open-rails/contentkit/adapters/authkit v0.14.0
-	github.com/open-rails/migratekit v1.11.2 // indirect
+	github.com/open-rails/migratekit v1.12.0 // indirect
 	github.com/paulmach/orb v0.12.0 // indirect
 	github.com/philhofer/fwd v1.2.0 // indirect
 	github.com/pierrec/lz4/v4 v4.1.25 // indirect
