@@ -20,7 +20,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       with:
         ref: ${{ github.sha }}
         persist-credentials: false
@@ -39,8 +39,9 @@ jobs:
       critical: ${{ steps.areas.outputs.critical }}
       suite: ${{ steps.areas.outputs.suite }}
       scan: ${{ steps.areas.outputs.scan }}
+      security: ${{ steps.areas.outputs.security }}
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       with:
         ref: ${{ github.sha }}
         fetch-depth: 2
@@ -83,6 +84,8 @@ jobs:
         printf '%s  %s\n' 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8 "$RUNNER_TEMP/actionlint.tar.gz" | sha256sum --check --status
         tar -xzf "$RUNNER_TEMP/actionlint.tar.gz" -C "$RUNNER_TEMP" actionlint
         "$RUNNER_TEMP/actionlint" -shellcheck= -pyflakes=
+    - name: Supply-chain guards
+      run: bash .github/scripts/check-supply-chain.sh
     - name: Select affected checks conservatively
       id: areas
       env:
@@ -119,11 +122,11 @@ jobs:
       GOWORK: 'off'
       GOMAXPROCS: '2'
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       with:
         ref: ${{ github.sha }}
         persist-credentials: false
-    - uses: actions/setup-go@v5
+    - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
       with:
         go-version-file: tests/critical/go.mod
         cache-dependency-path: |
@@ -133,8 +136,49 @@ jobs:
           adapters/authkit/go.sum
           adapters/openrails/go.sum
     - name: Install native processing dependencies
-      run: $GITHUB_WORKSPACE/.github/scripts/apt-install.sh libvips-dev
+      uses: ./.github/actions/apt-install
+      with:
+        packages: libvips-dev
     - run: bash .github/scripts/build-and-vet.sh
+  security:
+    name: Required Security
+    needs: source
+    if: needs.source.outputs.security == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      GOWORK: 'off'
+      GOMAXPROCS: '2'
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      with:
+        ref: ${{ github.sha }}
+        persist-credentials: false
+    - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+      with:
+        # setup-go reads only the go line (consumers' floor); go then switches to
+        # each module's toolchain line, so the scan sees the stdlib that ships.
+        go-version-file: go.mod
+        cache-dependency-path: |
+          go.sum
+          adapters/authkit/go.sum
+          adapters/openrails/go.sum
+          sdk/ui/e2e/server/go.sum
+          server/go.sum
+          tests/critical/go.sum
+    - name: Install native processing dependencies
+      uses: ./.github/actions/apt-install
+      with:
+        packages: libvips-dev
+    - name: Go vulnerability analysis
+      run: |
+        status=0
+        for module in . adapters/authkit adapters/openrails sdk/ui/e2e/server server tests/critical; do
+          echo "::group::govulncheck $module"
+          (cd "$module" && go run golang.org/x/vuln/cmd/govulncheck@v1.10.0 ./...) || status=1
+          echo "::endgroup::"
+        done
+        exit "$status"
   ui-package:
     needs: source
     if: needs.source.outputs.light == 'true'
@@ -146,11 +190,11 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       with:
         ref: ${{ github.sha }}
         persist-credentials: false
-    - uses: actions/setup-go@v5
+    - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
       with:
         go-version-file: go.mod
         cache-dependency-path: |
@@ -162,15 +206,10 @@ jobs:
   image-definitions:
     needs: source
     if: needs.source.outputs.images == 'true'
-    uses: ./.github/workflows/images.yaml
-    permissions:
-      contents: read
-      packages: write
-    with:
-      verify_only: true
+    uses: ./.github/workflows/verify-images.yaml
   gate:
     name: ${{ (github.event.pull_request.draft || github.event.action == 'closed') && 'Inactive PR (CI not requested)' || 'CI Gate' }}
-    needs: [source-branch, source, scan, critical, build, ui-package, codec-free, image-definitions]
+    needs: [source-branch, source, scan, critical, build, security, ui-package, codec-free, image-definitions]
     if: always() && github.event.pull_request.draft != true && github.event.action != 'closed'
     runs-on: ubuntu-24.04
     steps:
@@ -188,10 +227,10 @@ jobs:
         if jobs['source']['result'] != 'success':
             raise SystemExit('source verification did not pass')
         plan = jobs['source']['outputs']
-        for area in ('scan', 'critical', 'images', 'light'):
+        for area in ('scan', 'critical', 'images', 'security', 'light'):
             if plan.get(area) not in ('true', 'false'):
                 raise SystemExit(f'missing selection for {area}')
-        for name, areas in [('scan', ['scan']), ('critical', ['critical']), ('build', ['light']), ('ui-package', ['light']),
+        for name, areas in [('scan', ['scan']), ('critical', ['critical']), ('build', ['light']), ('security', ['security']), ('ui-package', ['light']),
                             ('codec-free', ['critical', 'light']), ('image-definitions', ['images'])]:
             expected = 'success' if any(plan[area] == 'true' for area in areas) else 'skipped'
             if jobs[name]['result'] != expected:
