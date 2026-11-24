@@ -199,12 +199,13 @@ Entity identity, aliases and slug normalization are unchanged.
 
 A full-search score is a match tier: exact title 1, alias 0.9, name prefix
 0.84–0.85, name substring 0.81–0.82, contextual/token matches 0.75–0.77,
-and typo 0.5–0.52. Queries are capped at 256 characters, 16 tokens and two
-seconds. Each search document stores its normalized terms, so a bounded candidate window keeps the strongest
+and typo 0.5–0.52. Queries are capped at 1 KiB, 256 characters, 16 tokens
+of at most 128 normalized characters and two seconds; typos are tried only
+in tokens of up to 16 characters. Each search document stores its normalized terms, so a bounded candidate window keeps the strongest
 name matches. A search sorted by newest, title or popularity orders every
 literal match; typo matches come from the nearest-distance window.
 
-`GET /v1/manage/search-suggestions` is private quick navigation to editors.
+`GET /v1/manage/search-suggestions` (tier `editor`) is private quick navigation to editors.
 Explicitly request `include_contents` and/or `include_entities`, optionally
 limiting `content_kinds` / `entity_kinds`; `limit` defaults to 8 per section
 and is capped at 20. Current draft/held names and internal entities are matched
