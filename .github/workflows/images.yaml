@@ -72,6 +72,8 @@ jobs:
     - id: rev
       run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
     - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      with:
+        driver-opts: image=moby/buildkit@sha256:baf6138eb8c37644800c7c913fba051e840ebb9ba13eaf92d92ef9a1712d0b4c # buildx-stable-1
     - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
       with:
         registry: ghcr.io
@@ -94,7 +96,7 @@ jobs:
         outputs: type=image,"name=ghcr.io/open-rails/contentkit-${{ matrix.name }},docker.io/openrails/contentkit-${{ matrix.name }}",push-by-digest=true,name-canonical=true,push=true
         cache-from: type=gha,scope=${{ matrix.name }}-${{ matrix.arch }}
         cache-to: type=gha,mode=max,scope=${{ matrix.name }}-${{ matrix.arch }}
-        sbom: true
+        sbom: generator=docker/buildkit-syft-scanner@sha256:873a7458c3c8ac8e32c7b796c10e1600b07b963d2aa000a72a2d97aaaa2d6315 # stable-1
         provenance: mode=max
     # The digest is pushed untagged; publish tags it only if every scan passed.
     - name: Refuse fixable HIGH and CRITICAL vulnerabilities
@@ -138,6 +140,8 @@ jobs:
         path: digests
         merge-multiple: true
     - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      with:
+        driver-opts: image=moby/buildkit@sha256:baf6138eb8c37644800c7c913fba051e840ebb9ba13eaf92d92ef9a1712d0b4c # buildx-stable-1
     - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
       with:
         registry: ghcr.io
