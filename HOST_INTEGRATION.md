@@ -1435,14 +1435,7 @@ the host's periodic jobs. The worker migrates its schema itself.
   content exists. The reason is logged at debug (`media-gateway: denied`).
   Clients that re-grant on expiry must treat 404 on these URLs as "refresh
   and retry once"; the SDK player's `refresh` does.
-- **Key rotation**: add the new key to every access worker as
-  `MEDIA_GATEWAY_TOKEN_KEY` with the old one as `_TOKEN_KEY_PREVIOUS`, then
-  switch the hosts' `Delivery.SigningKey`, then drop the previous key after
-  the longest token lifetime (TTL rounded up to the window, about 5 h by default).
-  A scope change does not revoke already-issued item tokens: they remain
-  valid until expiry while their signing key is accepted. If immediate
-  revocation is required, coordinate a key replacement without accepting the
-  old key and have clients refresh their media grants.
+- **Key rotation**: add the new key to every access worker as `MEDIA_GATEWAY_TOKEN_KEY` with the old one as `_TOKEN_KEY_PREVIOUS`, then switch the hosts' `Delivery.SigningKey` with the old key as `Delivery.PreviousKey`, so download tickets and activity receipts signed before the switch still verify, then drop the previous key everywhere after the longest token lifetime (TTL rounded up to the window, about 5 h by default) and, on hosts, after a day, the activity receipts' lifetime. A scope change does not revoke already-issued item tokens: they remain valid until expiry while their signing key is accepted. If immediate revocation is required, coordinate a key replacement without accepting the old key and have clients refresh their media grants.
 - **Scraping** is limited in three places, none of them the media gateway
   (it keeps no state):
   - `ReaderOptions.Issuance` bounds the distinct items a viewer is given the

@@ -62,6 +62,12 @@ func NewRing(current Key, previous *Key) (Ring, error) {
 	return Ring{current: current, previous: previous}, nil
 }
 
+// Validate reports a ring NewRing would refuse, such as the zero Ring.
+func (r Ring) Validate() error {
+	_, err := NewRing(r.current, r.previous)
+	return err
+}
+
 // ParseKey parses "{kid}:{base64 secret}" (standard or URL alphabet, padding
 // optional), the form hosts and the access worker read from their secret store.
 func ParseKey(s string) (Key, error) {

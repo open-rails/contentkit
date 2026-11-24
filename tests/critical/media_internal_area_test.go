@@ -239,7 +239,7 @@ func TestInternalArea(t *testing.T) {
 			must(t, err)
 			uploads, err := mediastore.NewUploads(mediastore.UploadOptions{Store: m.store, Manifests: jobs.Manifests(), Tickets: &ring})
 			must(t, err)
-			mediaReader, err := mediastore.NewReader(mediastore.ReaderOptions{Manifests: jobs.Manifests(), Delivery: media.Delivery{Mode: media.DeliverURL, SigningKey: m.key}})
+			mediaReader, err := mediastore.NewReader(mediastore.ReaderOptions{Manifests: jobs.Manifests(), Delivery: media.Delivery{Mode: media.DeliverURL, Keys: deliveryKeys(t, m.key)}})
 			must(t, err)
 			must(t, service.Bind(versionstore.Media{Manifests: jobs.Manifests(), Uploads: uploads, Jobs: jobs, Reader: mediaReader}))
 			target, err := registry.VersionRef(ref.Kind, ref.ID, ref.Version)

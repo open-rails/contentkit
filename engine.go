@@ -461,7 +461,7 @@ func (e *Engine) newMedia(ctx context.Context, deps Deps, now func() time.Time) 
 		mode = media.DeliveryMode(d.Mode)
 	}
 	if m.reader, err = mediastore.NewReader(mediastore.ReaderOptions{Manifests: m.jobs.Manifests(), Queue: m.queue, Progress: m.progress,
-		Delivery: media.Delivery{Mode: mode, CookieDomain: d.CookieDomain, SigningKey: signing, TTL: d.TTL, Window: d.Window},
+		Delivery: media.Delivery{Mode: mode, CookieDomain: d.CookieDomain, Keys: ring, TTL: d.TTL, Window: d.Window},
 		Issuance: mediastore.Issuance{PerHour: mc.Issuance.PerHour, AnonymousPerHour: mc.Issuance.AnonymousPerHour, Disabled: mc.Issuance.Disabled, Redis: deps.Redis},
 		Now:      now}); err != nil {
 		return nil, err
