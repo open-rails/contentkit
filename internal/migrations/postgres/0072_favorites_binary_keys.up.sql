@@ -23,17 +23,18 @@ BEGIN
 END
 $ck$;
 
+-- Constraints carry the final table's names.
 CREATE TABLE content_favorites_next (
-    revision bigint NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    app_id uuid NOT NULL,
+    revision bigint CONSTRAINT content_favorites_revision_not_null NOT NULL,
+    created_at timestamp with time zone DEFAULT now() CONSTRAINT content_favorites_created_at_not_null NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() CONSTRAINT content_favorites_updated_at_not_null NOT NULL,
+    app_id uuid CONSTRAINT content_favorites_app_id_not_null NOT NULL,
     user_id uuid,
     anonymous_actor_id uuid,
-    content_id uuid NOT NULL,
+    content_id uuid CONSTRAINT content_favorites_content_id_not_null NOT NULL,
     content_version_id uuid,
-    value smallint NOT NULL,
-    content_kind text NOT NULL,
+    value smallint CONSTRAINT content_favorites_value_not_null NOT NULL,
+    content_kind text CONSTRAINT content_favorites_content_kind_not_null NOT NULL,
     -- NULL is unknown history; '' marks native writes; nonempty values name import sources.
     import_source text,
     CONSTRAINT content_favorites_actor_ck CHECK ((user_id IS NULL) <> (anonymous_actor_id IS NULL)),
