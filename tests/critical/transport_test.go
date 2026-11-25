@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/open-rails/authkit"
 	"github.com/open-rails/authkit/authtest"
 	"github.com/open-rails/authkit/iam"
@@ -20,6 +21,7 @@ import (
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/server"
+	"github.com/open-rails/openrails/billing"
 )
 
 // standaloneAuth is w's AuthKit configuration for the server, its HTTP
@@ -310,8 +312,11 @@ func TestStartupRefusesUnsafeTransport(t *testing.T) {
 		refused(t, build(t, func(c *server.Config) { c.Auth.Database.RiverSchema = c.Engine.Database.Schema }), "are both")
 		// AuthKit's tables and its River may share a schema: that is AuthKit's to allow.
 		must(t, build(t, func(c *server.Config) { c.Auth.Database.RiverSchema = c.Auth.Database.Schema }))
-		must(t, build(t, func(c *server.Config) {
+		refused(t, build(t, func(c *server.Config) {
 			c.OpenRails = server.OpenRailsConfig{BaseURL: "http://127.0.0.1:1", APIKey: "merchant-key"}
+		}), "merchant_id")
+		must(t, build(t, func(c *server.Config) {
+			c.OpenRails = server.OpenRailsConfig{BaseURL: "http://127.0.0.1:1", MerchantID: billing.MerchantID(uuid.New()), APIKey: "merchant-key"}
 		}))
 	})
 	t.Run("CK-J01-S15_the_server_gives_AuthKit_the_engine_proxies", func(t *testing.T) {
