@@ -1003,6 +1003,21 @@
       ]
     },
     {
+      "id": "CK-J07-S34",
+      "journey": "CK-J07",
+      "behavior": "The preference job sends each settled reaction and favorite once: a backlog larger than a run completes across deadline-limited runs without re-sending what earlier runs sent, a run with nothing new sends nothing, and a change is sent once after it settles",
+      "status": "verified",
+      "evidence": [
+        "The real preference job runs on a River fleet with a one-second job timeout over 20,000 imported reactions and favorites spread over twelve months; merges of the owned signals table are stopped, so its row count is every row sent. Only the engine clock that settles revision samples is controlled.",
+        "contentkit#301: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ],
+      "cases": [
+        "TestPreferenceSync/CK-J07-S34_backlog_completes_across_deadline_limited_runs_without_resending",
+        "TestPreferenceSync/CK-J07-S34_a_run_with_nothing_new_sends_nothing",
+        "TestPreferenceSync/CK-J07-S34_a_change_is_sent_once_after_it_settles"
+      ]
+    },
+    {
       "id": "CK-J08-S01",
       "journey": "CK-J08",
       "behavior": "Deleting one version preserves siblings and parent",
@@ -3226,6 +3241,19 @@
       "evidence": [
         "After a real MigrateClickHouse for the app, its engine without ClickHouse returns ErrSignalPlaneRequired and writes no receipt; a sibling app that never had a plane completes.",
         "contentkit#287: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
+      "id": "CK-J23-S09",
+      "journey": "CK-J23",
+      "behavior": "A preference batch racing an account erasure leaves no row of the erased account in the signal plane",
+      "status": "verified",
+      "evidence": [
+        "The signal plane's erasure fence lands after Postgres still holds the account's changed reaction; the job's plain multi-row insert lands it and the post-insert ledger check deletes it, while another account's change in the same batch stays.",
+        "contentkit#301: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ],
+      "cases": [
+        "TestPreferenceSync/CK-J23-S09_a_preference_batch_racing_an_erasure_leaves_no_rows"
       ]
     },
     {
