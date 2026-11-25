@@ -38,9 +38,9 @@ func (s *Service) RefreshEntityPopularRankings(ctx context.Context) error {
 					return err
 				}
 				_, err = tx.Exec(ctx, `WITH favorites AS (
- SELECT user_id, content_id, exp(-ln(2)*extract(epoch FROM now()-max(created_at))::float8/5184000) AS weight
+ SELECT user_id, content_id::text AS content_id, exp(-ln(2)*extract(epoch FROM now()-max(created_at))::float8/5184000) AS weight
  FROM `+s.t.favorites+`
- WHERE tenant_id=@tenant AND content_kind=@content_kind AND value=1 AND user_id IS NOT NULL
+ WHERE app_id=@tenant::text::uuid AND content_kind=@content_kind AND value=1 AND user_id IS NOT NULL
  AND created_at >= now()-interval '180 days' AND created_at <= now()
  GROUP BY user_id,content_id),
 members AS (

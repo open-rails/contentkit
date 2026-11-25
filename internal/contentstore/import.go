@@ -222,6 +222,12 @@ func (rt *Runtime) checkFavorite(f content.ImportFavorite) (keyRow, error) {
 	if strings.TrimSpace(f.UserID) == "" {
 		return k, invalidImport("a favorite needs a user_id")
 	}
+	if !isUUID(strings.TrimSpace(f.UserID)) {
+		return k, invalidImport("a favorite's user_id must be a UUID")
+	}
+	if _, ok := favoriteArgs(contentref.ContentKey{ContentID: k.ID, ContentVersionID: k.Version}, strings.TrimSpace(f.UserID)); !ok {
+		return k, invalidImport("a favorite's target must be a UUID")
+	}
 	return k, nil
 }
 
@@ -600,11 +606,11 @@ func (rt *Runtime) ImportFavorites(ctx context.Context, tx pgx.Tx, in []content.
 		return err
 	}
 	s := rt.store
-	if _, err := tx.Exec(ctx, `INSERT INTO `+s.t.favorites+` AS f (tenant_id, user_id, content_kind, content_id, content_version_id, value, revision,
+	if _, err := tx.Exec(ctx, `INSERT INTO `+s.t.favorites+` AS f (app_id, user_id, content_kind, content_id, content_version_id, value, revision,
  created_at, updated_at, import_source)
- SELECT $1, r.user_id, r.kind, r.id, r.version, r.value, `+s.nextRevision()+`, r.created_at, r.created_at, NULLIF(r.source, '')
- FROM jsonb_to_recordset($2::jsonb) AS r(user_id text, kind text, id text, version text, value smallint, source text, created_at timestamptz)
- ON CONFLICT (tenant_id, user_id, content_kind, content_id, content_version_id) WHERE user_id IS NOT NULL DO UPDATE SET value = EXCLUDED.value, revision = `+s.nextRevision()+`,
+ SELECT $1::uuid, r.user_id, r.kind, r.id, r.version, r.value, `+s.nextRevision()+`, r.created_at, r.created_at, NULLIF(r.source, '')
+ FROM jsonb_to_recordset($2::jsonb) AS r(user_id uuid, kind text, id uuid, version uuid, value smallint, source text, created_at timestamptz)
+ ON CONFLICT (app_id, user_id, content_kind, content_id, content_version_id) WHERE user_id IS NOT NULL DO UPDATE SET value = EXCLUDED.value, revision = `+s.nextRevision()+`,
   created_at = EXCLUDED.created_at, updated_at = clock_timestamp(), import_source = EXCLUDED.import_source
  WHERE (f.import_source = EXCLUDED.import_source OR
   (f.import_source IS NULL AND EXCLUDED.import_source IS NOT NULL AND EXCLUDED.value = 0))
@@ -833,11 +839,17 @@ ON CONFLICT (tenant_id, content_kind, content_id, content_version_id) DO NOTHING
  WHERE x.tenant_id = $1 ORDER BY k.n FOR UPDATE OF x`, rt.tenant, string(data)); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `WITH k AS (SELECT * FROM jsonb_to_recordset($2::jsonb) AS k(kind text, id text, version text)),
+	// Favorites are keyed by uuids: uid and uversion, where favorable.
+	if _, err := tx.Exec(ctx, `WITH k AS (SELECT k.*,
+ pg_input_is_valid(k.id, 'uuid') AND (k.version IS NULL OR pg_input_is_valid(k.version, 'uuid')) AS favorable,
+ CASE WHEN pg_input_is_valid(k.id, 'uuid') THEN k.id::uuid END AS uid,
+ CASE WHEN pg_input_is_valid(k.version, 'uuid') THEN k.version::uuid END AS uversion
+ FROM jsonb_to_recordset($2::jsonb) AS k(kind text, id text, version text)),
 n AS (SELECT k.kind, k.id, k.version,
  (SELECT count(*) FROM `+s.t.reactions+` r WHERE r.tenant_id = $1 AND r.content_kind = k.kind AND r.content_id = k.id AND r.content_version_id IS NOT DISTINCT FROM k.version AND r.value = 1 AND NOT r.author_hidden)::int AS likes,
  (SELECT count(*) FROM `+s.t.reactions+` r WHERE r.tenant_id = $1 AND r.content_kind = k.kind AND r.content_id = k.id AND r.content_version_id IS NOT DISTINCT FROM k.version AND r.value = -1 AND NOT r.author_hidden)::int AS dislikes,
- (SELECT count(*) FROM `+s.t.favorites+` f WHERE f.tenant_id = $1 AND f.content_kind = k.kind AND f.content_id = k.id AND f.content_version_id IS NOT DISTINCT FROM k.version AND f.value = 1)::int AS favorites,
+ (SELECT count(*) FROM `+s.t.favorites+` f WHERE f.app_id = $1::text::uuid AND f.content_kind = k.kind AND f.content_id = k.uid
+   AND f.content_version_id IS NOT DISTINCT FROM k.uversion AND f.value = 1 AND k.favorable)::int AS favorites,
  (SELECT count(*) FROM `+s.t.comments+` c WHERE c.tenant_id = $1 AND c.content_kind = k.kind AND c.content_id = k.id AND c.content_version_id IS NOT DISTINCT FROM k.version
    AND c.reply_to_id IS NULL AND c.deleted_at IS NULL AND c.moderation = 'approved' AND NOT c.author_hidden)::int AS comments
  FROM k)

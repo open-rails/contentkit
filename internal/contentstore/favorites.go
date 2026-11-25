@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strconv"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/contentkit/access"
 	content "github.com/open-rails/contentkit/content"
@@ -17,7 +19,9 @@ import (
 // favorites is the user-only bookmark (wishlist) over a content key: value 1
 // favorited, 0 unfavorited (the row is kept so the change exports). A
 // favorite requires the target be VISIBLE only, not accessible: premium
-// content can be wishlisted before it is owned. No anonymous favorites.
+// content can be wishlisted before it is owned. No anonymous favorites. Rows
+// are keyed by uuids: the app, the account, the content and its version, so
+// only an account with a UUID id holds favorites.
 type favorites struct {
 	rt *Runtime
 	s  *store
@@ -47,8 +51,14 @@ func (f *favorites) remove(ctx context.Context, actor access.Actor, target conte
 }
 
 func (f *favorites) set(ctx context.Context, actor access.Actor, ref contentref.ContentRef, value int16) error {
-	if !actor.Member() {
+	if !actor.Member() || !isUUID(actor.AccountID()) {
 		return errForbidden
+	}
+	if _, ok := favoriteArgs(ref.Key(), actor.AccountID()); !ok {
+		if value == 1 {
+			return ErrNotFound
+		}
+		return nil
 	}
 	tx, err := f.s.beginMutation(ctx)
 	if err != nil {
@@ -73,16 +83,17 @@ func (f *favorites) set(ctx context.Context, actor access.Actor, ref contentref.
 // setTx moves the caller's row to value under its row lock, taking a fresh
 // revision on change; a lost insert race re-locks the winner's row once.
 func (f *favorites) setTx(ctx context.Context, tx pgx.Tx, userID string, key contentref.ContentKey, value int16, retry bool) (bool, error) {
-	args := append(keyArgs(key), userID)
+	args, _ := favoriteArgs(key, userID)
 	var prev int16
-	err := tx.QueryRow(ctx, `SELECT value FROM `+f.s.t.favorites+` WHERE `+keyPred(1)+` AND user_id = $5 FOR UPDATE`, args...).Scan(&prev)
+	err := tx.QueryRow(ctx, `SELECT value FROM `+f.s.t.favorites+` WHERE `+favoritePred(1)+` AND user_id = $5 FOR UPDATE`, args...).Scan(&prev)
 	switch {
 	case errors.Is(err, pgx.ErrNoRows):
 		if value == 0 {
 			return false, nil
 		}
-		tag, err := tx.Exec(ctx, `INSERT INTO `+f.s.t.favorites+` (`+keyCols+`, user_id, value, revision, import_source) VALUES ($1, $2, $3, $4, $5, 1, `+f.s.nextRevision()+`, '')
-			ON CONFLICT (tenant_id, user_id, content_kind, content_id, content_version_id) WHERE user_id IS NOT NULL DO NOTHING`, args...)
+		tag, err := tx.Exec(ctx, `INSERT INTO `+f.s.t.favorites+` (app_id, content_kind, content_id, content_version_id, user_id, value, revision, import_source)
+			VALUES ($1, $2, $3, $4, $5, 1, `+f.s.nextRevision()+`, '')
+			ON CONFLICT (app_id, user_id, content_kind, content_id, content_version_id) WHERE user_id IS NOT NULL DO NOTHING`, args...)
 		if err != nil || tag.RowsAffected() == 1 || !retry {
 			return err == nil && tag.RowsAffected() == 1, err
 		}
@@ -90,13 +101,35 @@ func (f *favorites) setTx(ctx context.Context, tx pgx.Tx, userID string, key con
 	case err != nil:
 		return false, err
 	case prev == value:
-		_, err = tx.Exec(ctx, `UPDATE `+f.s.t.favorites+` SET import_source = '' WHERE `+keyPred(1)+` AND user_id = $5 AND import_source IS DISTINCT FROM ''`, args...)
+		_, err = tx.Exec(ctx, `UPDATE `+f.s.t.favorites+` SET import_source = '' WHERE `+favoritePred(1)+` AND user_id = $5 AND import_source IS DISTINCT FROM ''`, args...)
 		return false, err
 	}
 	// Re-favoriting restarts the bookmark's age, which orders the wishlist.
 	_, err = tx.Exec(ctx, `UPDATE `+f.s.t.favorites+` SET import_source = '', value = $6::smallint, revision = `+f.s.nextRevision()+`, updated_at = now(),
-		created_at = CASE WHEN $6::smallint = 1 THEN now() ELSE created_at END WHERE `+keyPred(1)+` AND user_id = $5`, append(args, value)...)
+		created_at = CASE WHEN $6::smallint = 1 THEN now() ELSE created_at END WHERE `+favoritePred(1)+` AND user_id = $5`, append(args, value)...)
 	return err == nil, err
+}
+
+// favoritePred is keyPred for favorites: $n..$n+3 bind keyArgs.
+func favoritePred(n int) string {
+	return "app_id = $" + strconv.Itoa(n) + "::uuid AND content_kind = $" + strconv.Itoa(n+1) +
+		" AND content_id = $" + strconv.Itoa(n+2) + "::uuid AND content_version_id IS NOT DISTINCT FROM $" + strconv.Itoa(n+3) + "::uuid"
+}
+
+// favoriteArgs binds favoritePred and then userID, or reports that the key or
+// the account cannot hold a favorite: an id that is not a UUID.
+func favoriteArgs(key contentref.ContentKey, userID string) ([]any, bool) {
+	if !isUUID(key.ContentID) || key.ContentVersionID != "" && !isUUID(key.ContentVersionID) || !isUUID(userID) {
+		return nil, false
+	}
+	return append(keyArgs(key), userID), true
+}
+
+// isUUID reports whether s is a UUID in its 36-character form, as Postgres
+// reads one.
+func isUUID(s string) bool {
+	_, err := uuid.Parse(s)
+	return err == nil && len(s) == 36
 }
 
 func favoriteRoutes() []httpapi.Route[*favorites] {
@@ -123,11 +156,12 @@ func favoriteRoutes() []httpapi.Route[*favorites] {
 // state reads userID's bookmark of ref ("" for none) and, when count, ref's
 // favorite count.
 func (f *favorites) state(ctx context.Context, userID string, ref contentref.ContentRef, count bool) (content.FavoriteState, error) {
-	args := append(keyArgs(ref.Key()), userID)
 	var out content.FavoriteState
 	var n int
-	err := f.s.pool.QueryRow(ctx, `SELECT coalesce((SELECT favorites FROM `+f.s.t.counts+` WHERE `+keyPred(1)+`), 0),
-		EXISTS (SELECT 1 FROM `+f.s.t.favorites+` WHERE `+keyPred(1)+` AND user_id = $5 AND value = 1)`, args...).Scan(&n, &out.Favorited)
+	err := f.s.pool.QueryRow(ctx, `SELECT coalesce((SELECT favorites FROM `+f.s.t.counts+` WHERE `+keyPred(1)+`), 0)`, keyArgs(ref.Key())...).Scan(&n)
+	if args, ok := favoriteArgs(ref.Key(), userID); ok && err == nil {
+		err = f.s.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM `+f.s.t.favorites+` WHERE `+favoritePred(1)+` AND user_id = $5 AND value = 1)`, args...).Scan(&out.Favorited)
+	}
 	if count {
 		out.Count = &n
 	}

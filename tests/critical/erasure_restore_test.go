@@ -99,7 +99,7 @@ WHERE a.tenant_id=$1 AND a.actor_id=$2`, a.cfg.Scope.AppID.String(), user.ID, a.
 			must(t, w.pool.QueryRow(t.Context(), "SELECT coalesce(i.created_by,''),coalesce(e.owner_user_id,'') FROM "+qs+".content_items i CROSS JOIN "+qs+".content_entities e WHERE i.tenant_id=$1 AND i.id=$2 AND e.tenant_id=$1 AND e.id=$3", a.cfg.Scope.AppID.String(), item.ID, channel.ID).Scan(&createdBy, &owner))
 			var creators, attributedFavorites int
 			must(t, w.pool.QueryRow(t.Context(), "SELECT count(*) FROM "+qs+".content_creators WHERE tenant_id=$1 AND user_id=$2", a.cfg.Scope.AppID.String(), user.ID).Scan(&creators))
-			must(t, w.pool.QueryRow(t.Context(), "SELECT count(*) FROM "+qs+".content_favorites WHERE tenant_id=$1 AND (user_id=$2 OR anonymous_actor_id IS NULL)", a.cfg.Scope.AppID.String(), user.ID).Scan(&attributedFavorites))
+			must(t, w.pool.QueryRow(t.Context(), "SELECT count(*) FROM "+qs+".content_favorites WHERE app_id=$1::uuid AND (user_id=$2::uuid OR anonymous_actor_id IS NULL)", a.cfg.Scope.AppID.String(), user.ID).Scan(&attributedFavorites))
 			if createdBy != "" || owner != "" || creators != 0 || attributedFavorites != 0 {
 				t.Fatal("replay retained creator, owner or favorite attribution")
 			}
@@ -197,7 +197,7 @@ func TestPausedInteractionWriterErasure(t *testing.T) {
 		_, _ = holder.Exec(context.Background(), "SELECT pg_advisory_unlock($1)", barrier)
 		holder.Release()
 	}()
-	_, err = w.pool.Exec(t.Context(), fmt.Sprintf(`CREATE FUNCTION %s.critical_pause_favorite() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN IF NEW.user_id=TG_ARGV[0] THEN PERFORM pg_advisory_xact_lock(%d); END IF; RETURN NEW; END$$;
+	_, err = w.pool.Exec(t.Context(), fmt.Sprintf(`CREATE FUNCTION %s.critical_pause_favorite() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN IF NEW.user_id::text=TG_ARGV[0] THEN PERFORM pg_advisory_xact_lock(%d); END IF; RETURN NEW; END$$;
 CREATE TRIGGER critical_pause_favorite BEFORE INSERT ON %s.content_favorites FOR EACH ROW EXECUTE FUNCTION %s.critical_pause_favorite('%s')`, qs, barrier, qs, qs, user.ID))
 	must(t, err)
 	t.Run("CK-J23-S02_paused_pre_erasure_writer_cannot_resurrect_activity", func(t *testing.T) {

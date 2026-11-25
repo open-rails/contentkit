@@ -438,10 +438,14 @@ func (s *Store) eraseVersionBatch(ctx context.Context, cutoff time.Time, after s
 // (vids[i] of item ids[i]).
 func (s *Store) eraseInteractions(ctx context.Context, tx pgx.Tx, kinds, ids, vids []string) error {
 	target := `(content_kind, content_id) IN (SELECT * FROM unnest($2::text[], $3::text[]))`
+	// Favorites are keyed by app_id and uuids.
+	favorites := `app_id = $1::text::uuid AND (content_kind, content_id) IN (SELECT k, i::uuid FROM unnest($2::text[], $3::text[]) u(k, i))`
 	args := []any{s.tenant, kinds, ids}
 	history, historyArgs := `content_id = ANY($2)`, []any{s.tenant, ids}
 	if vids != nil {
 		target = `(content_kind, content_id, content_version_id) IN (SELECT * FROM unnest($2::text[], $3::text[], $4::text[]))`
+		favorites = `app_id = $1::text::uuid AND (content_kind, content_id, content_version_id) IN
+ (SELECT k, i::uuid, v::uuid FROM unnest($2::text[], $3::text[], $4::text[]) u(k, i, v))`
 		args = append(args, vids)
 		history, historyArgs = `version_id = ANY($2)`, []any{s.tenant, vids}
 	}
@@ -458,7 +462,7 @@ func (s *Store) eraseInteractions(ctx context.Context, tx pgx.Tx, kinds, ids, vi
  AND content_id IN (SELECT id::text FROM ` + s.t.comments + ` WHERE tenant_id = $1 AND ` + target + `)`,
 		`DELETE FROM ` + s.t.comments + ` WHERE tenant_id = $1 AND ` + target,
 		`DELETE FROM ` + s.t.reactions + ` WHERE tenant_id = $1 AND ` + target,
-		`DELETE FROM ` + s.t.favorites + ` WHERE tenant_id = $1 AND ` + target,
+		`DELETE FROM ` + s.t.favorites + ` WHERE ` + favorites,
 		`DELETE FROM ` + s.t.counts + ` WHERE tenant_id = $1 AND ` + target,
 		`DELETE FROM ` + s.t.recounts + ` WHERE tenant_id = $1 AND ` + target,
 	} {
