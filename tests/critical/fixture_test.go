@@ -126,7 +126,7 @@ func newWorldAuth(t *testing.T, configureAuth func(*authkit.Config), configure .
 	w.auth, _ = authtest.New(t,
 		authtest.WithConfig(func(c *authkit.Config) {
 			c.Roles = w.roles
-			c.DefaultTenantID = iam.TenantID{}
+			c.Tenancy = authkit.TenancyMulti // tenants and their apps share one directory
 			if configureAuth != nil {
 				configureAuth(c)
 			}
