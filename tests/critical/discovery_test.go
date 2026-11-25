@@ -19,6 +19,7 @@ import (
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/open-rails/authkit"
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
@@ -33,15 +34,18 @@ import (
 	"github.com/open-rails/contentkit/signal"
 )
 
-type domainTransport struct{ host, token string }
+// domainTransport is bearerTransport on another Host.
+type domainTransport struct {
+	test        testing.TB
+	auth        *authkit.Client
+	host, token string
+}
 
 func (d domainTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	r = r.Clone(r.Context())
 	r.Header = r.Header.Clone()
 	r.Host = d.host
-	if d.token != "" {
-		r.Header.Set("Authorization", "Bearer "+d.token)
-	}
+	presentToken(d.test, d.auth, r, d.token)
 	return http.DefaultTransport.RoundTrip(r)
 }
 
@@ -99,7 +103,7 @@ func TestDiscoveryVisibility(t *testing.T) {
 	startPublicationRuntime(t, a)
 	admin = a.engine.Client()
 	reader := func(host, token string) *ck.Client {
-		return ck.NewClient(a.server.URL+"/content", &http.Client{Transport: domainTransport{host, token}})
+		return ck.NewClient(a.server.URL+"/content", &http.Client{Transport: domainTransport{test: t, auth: w.auth, host: host, token: token}})
 	}
 	public, wide := reader("restricted.invalid", ""), reader("wide.invalid", "")
 	create := func(title string, membership []entities.EntityID, publishAt *time.Time, publish bool) catalog.Content {
@@ -273,9 +277,7 @@ func TestDiscoveryVisibility(t *testing.T) {
 		request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, a.server.URL+"/content"+path, nil)
 		must(t, err)
 		request.Host = "restricted.invalid"
-		if token != "" {
-			request.Header.Set("Authorization", "Bearer "+token)
-		}
+		presentToken(t, w.auth, request, token)
 		response, err := http.DefaultClient.Do(request)
 		must(t, err)
 		defer response.Body.Close()
@@ -567,7 +569,7 @@ func TestDiscoveryVisibility(t *testing.T) {
 		requireError(t, err, 400, "invalid_request")
 		request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, a.server.URL+"/content/v1/contents?kind=article&sort=popular&activity_from=2025-11-01&activity_until=2025-11-24", nil)
 		must(t, err)
-		response, err := (&http.Client{Transport: domainTransport{"restricted.invalid", ""}}).Do(request)
+		response, err := (&http.Client{Transport: domainTransport{host: "restricted.invalid"}}).Do(request)
 		must(t, err)
 		response.Body.Close()
 		if response.StatusCode != 400 {

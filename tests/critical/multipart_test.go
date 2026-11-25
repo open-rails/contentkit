@@ -54,7 +54,7 @@ func TestMultipartUpload(t *testing.T) {
 		defer func() { must(t, reopened.Close(context.Background())) }()
 		must(t, reopened.StartJobs(t.Context()))
 		server := mountEngine(t, reopened)
-		resumed := ck.NewClient(server.URL+"/content", &http.Client{Transport: bearerTransport{credential, http.DefaultTransport}})
+		resumed := ck.NewClient(server.URL+"/content", &http.Client{Transport: bearerTransport{test: t, auth: w.auth, token: credential, base: http.DefaultTransport}})
 		landed, err := resumed.PostMediaUploadPartsList(t.Context(), ticket)
 		must(t, err)
 		if len(landed.Parts) != 1 || landed.Parts[0].Number != 1 || landed.Parts[0].Size != media.MinPartSize || landed.Parts[0].SHA256 != digestBytes(payload[:media.MinPartSize]) {

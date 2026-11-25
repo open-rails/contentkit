@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -18,12 +19,12 @@ import (
 	"github.com/open-rails/authkit/iam"
 	"github.com/open-rails/authkit/keys"
 	"github.com/open-rails/authkit/notify"
+	notifypg "github.com/open-rails/authkit/notify/postgres"
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/access"
 	ckauth "github.com/open-rails/contentkit/adapters/authkit"
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/kinds"
-	"github.com/open-rails/contentkit/media/layout"
 )
 
 type clock struct {
@@ -60,20 +61,30 @@ type world struct {
 	apps               []*application
 	clock              *clock
 	schema             string
-	signer             keys.Signer
-	configure          []func(*ck.Config)
+	// authSchema holds AuthKit's tables, the account inbox among them.
+	authSchema string
+	signer     keys.Signer
+	configure  []func(*ck.Config)
+	// people are the accounts person signed in, by ID.
+	people    sync.Map
+	authStart sync.Once
 }
 
 type application struct {
-	test        *testing.T
-	engine      *ck.Engine
-	cfg         ck.Config
-	deps        ck.Deps
-	group       iam.GroupRef
-	server      *httptest.Server
-	tenant      *authkit.Client
-	inbox       *authkit.Client
-	inboxServer *httptest.Server
+	test   *testing.T
+	world  *world
+	engine *ck.Engine
+	cfg    ck.Config
+	deps   ck.Deps
+	group  iam.GroupRef
+	server *httptest.Server
+	tenant *authkit.Client
+	// inbox is the app's inbox owner: its own deployment (issuer) on the
+	// world's account store, so its app-visible notices are its alone.
+	inbox         *authkit.Client
+	inboxServer   *httptest.Server
+	inboxStore    *notifypg.Store
+	inboxSessions sync.Map
 }
 
 func newWorld(t *testing.T, configure ...func(*ck.Config)) *world {
@@ -94,6 +105,18 @@ func newWorldAuth(t *testing.T, configureAuth func(*authkit.Config), configure .
 	_, err = pool.Exec(ctx, "CREATE EXTENSION IF NOT EXISTS pg_trgm; CREATE EXTENSION IF NOT EXISTS pgroonga")
 	must(t, err)
 	w := &world{pool: pool, clock: &clock{at: time.Now().UTC().Truncate(time.Second)}, schema: "ckc_" + strings.ReplaceAll(uuid.NewString(), "-", "")[:20], configure: configure}
+	w.authSchema = w.schema + "_auth"
+	// Registered before AuthKit's own cleanup, so it runs after AuthKit closes.
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		// The standalone server keeps AuthKit's River in <schema>_river.
+		for _, schema := range []string{w.authSchema, w.authSchema + "_river"} {
+			if _, err := pool.Exec(ctx, "DROP SCHEMA IF EXISTS "+pgx.Identifier{schema}.Sanitize()+" CASCADE"); err != nil {
+				t.Errorf("drop AuthKit fixture schema: %v", err)
+			}
+		}
+	})
 	w.roles = authkit.NewRoles(authkit.APIKeys)
 	appPersona := w.roles.Persona("app", authkit.APIKeys)
 	permissions := map[access.Permission]iam.Perm{}
@@ -127,11 +150,14 @@ func newWorldAuth(t *testing.T, configureAuth func(*authkit.Config), configure .
 		authtest.WithConfig(func(c *authkit.Config) {
 			c.Roles = w.roles
 			c.Tenancy = authkit.TenancyMulti // tenants and their apps share one directory
+			c.Database.Schema = w.authSchema
+			authtest.LiftLimits(c) // accounts sign in at several apps' inbox owners
 			if configureAuth != nil {
 				configureAuth(c)
 			}
 		}),
 		authtest.WithDeps(func(d *authkit.Deps) { d.Postgres = pool; w.signer = d.KeySource.ActiveSigner() }))
+	sessionIssuer.Store(w.auth)
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
@@ -182,25 +208,18 @@ func (w *world) newApplication(t *testing.T, tenant *authkit.Client, tid iam.Ten
 	for _, configure := range w.configure {
 		configure(&cfg)
 	}
-	// The fixture's account owner explicitly enables the optional inbox. The
-	// content runtime only receives a scoped producer; it creates no inbox tables.
-	inboxSchema := "contentkit_accounts"
-	if cfg.Accounts != nil {
-		inboxSchema = cfg.Accounts.Schema
-	}
-	inboxOwner := authtest.Replica(t, w.auth, authtest.WithConfig(func(c *authkit.Config) {
-		c.Notifications = &authkit.NotificationsConfig{Schema: inboxSchema,
-			Scopes: map[string]string{tid.String(): "contentkit:" + (layout.Scope{TenantID: tid.String()}).Partition()},
-			AppID:  aid.String(),
-			Producers: []authkit.NotificationProducer{
-				{Name: "contentkit", TenantID: tid, Origin: notify.OriginScope{System: "contentkit", Scope: aid.String()}, Visibility: notify.VisibilityApp, AppID: aid.String()},
-				{Name: "application", TenantID: tid, Origin: notify.OriginScope{System: "critical", Scope: aid.String()}, Visibility: notify.VisibilityApp, AppID: aid.String()},
-			},
-		}
-	}))
+	// Each app's inbox owner is a sibling deployment on the world's account
+	// store under its own issuer: AuthKit shows a deployment its own
+	// app-visible notices and every tenant-wide one.
+	issuer := "https://" + aid.String() + ".apps.example.com"
+	inboxOwner := authtest.Replica(t, w.auth, authtest.WithConfig(func(c *authkit.Config) { c.Issuer = issuer }))
 	inbox, err := inboxOwner.ForTenant(ctx, tid)
 	must(t, err)
-	deps.Notifications, err = inbox.Notifications("contentkit")
+	deps.Notifications, err = inbox.Notifications(authkit.NotificationProducer{Name: "contentkit", Origin: notify.OriginScope{System: "contentkit", Scope: aid.String()}})
+	must(t, err)
+	inboxScope, err := inbox.NotificationScope()
+	must(t, err)
+	inboxStore, err := notifypg.New(w.pool, notifypg.Config{Schema: w.authSchema, Scope: inboxScope, AppView: &notify.AppView{AppID: issuer}})
 	must(t, err)
 	inboxServer := httptest.NewServer(inboxOwner.Handler())
 	t.Cleanup(inboxServer.Close)
@@ -208,14 +227,14 @@ func (w *world) newApplication(t *testing.T, tenant *authkit.Client, tid iam.Ten
 	must(t, err)
 	engine, err := ck.New(ctx, cfg, deps)
 	must(t, err)
-	a := &application{test: t, engine: engine, cfg: cfg, deps: deps, group: group, tenant: tenant, inbox: inbox, inboxServer: inboxServer}
+	a := &application{test: t, world: w, engine: engine, cfg: cfg, deps: deps, group: group, tenant: tenant, inbox: inbox, inboxServer: inboxServer, inboxStore: inboxStore}
 	routes, err := engine.Routes(ck.Routes{Prefix: "/content", Groups: engine.RouteGroups()})
 	must(t, err)
 	mux := http.NewServeMux()
 	for _, route := range routes {
 		mux.Handle(route.Path, route.Handler)
 	}
-	a.server = httptest.NewServer(mux)
+	a.server = httptest.NewServer(withSessionProofs(t, mux))
 	t.Cleanup(func() {
 		a.server.Close()
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -227,7 +246,13 @@ func (w *world) newApplication(t *testing.T, tenant *authkit.Client, tid iam.Ten
 	return a
 }
 
+// bearerTransport presents token as a signed-in browser does: a session
+// SignIn bound to a DPoP key with a fresh proof naming auth's origin
+// (authtest.Authorize), an API key or any other token as Bearer. Without auth
+// every token goes as Bearer.
 type bearerTransport struct {
+	test  testing.TB
+	auth  *authkit.Client
 	token string
 	base  http.RoundTripper
 }
@@ -235,20 +260,58 @@ type bearerTransport struct {
 func (b bearerTransport) RoundTrip(r *http.Request) (*http.Response, error) {
 	r = r.Clone(r.Context())
 	r.Header = r.Header.Clone()
-	if b.token != "" {
-		r.Header.Set("Authorization", "Bearer "+b.token)
-	}
+	presentToken(b.test, b.auth, r, b.token)
 	return b.base.RoundTrip(r)
 }
 
+func presentToken(t testing.TB, auth *authkit.Client, r *http.Request, token string) {
+	switch {
+	case token == "":
+	case auth == nil:
+		r.Header.Set("Authorization", "Bearer "+token)
+	default:
+		authtest.Authorize(t, auth, r, token)
+	}
+}
+
+// sessionIssuer is an AuthKit client of the suite's issuer (authtest.Issuer).
+// authtest.Authorize reads only its public origin, and authtest keeps every
+// SignIn session's DPoP key for the process, so any world's client presents
+// any world's sessions.
+var sessionIssuer atomic.Pointer[authkit.Client]
+
+// withSessionProofs fronts a ContentKit test server as a browser's own
+// transport would: a Bearer token a browser or Node driver sent arrives as
+// authtest.Authorize presents it, a session SignIn bound to a DPoP key with
+// its proof. Only this process holds the session keys. Any other credential,
+// and a request already carrying a proof, passes unchanged.
+func withSessionProofs(t testing.TB, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if scheme, token, ok := strings.Cut(r.Header.Get("Authorization"), " "); ok && strings.EqualFold(scheme, "Bearer") && r.Header.Get("DPoP") == "" {
+			if auth := sessionIssuer.Load(); auth != nil {
+				r = r.Clone(r.Context())
+				authtest.Authorize(t, auth, r, token)
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
 func (a *application) client(token string) *ck.Client {
-	return ck.NewClient(a.server.URL+"/content", &http.Client{Transport: bearerTransport{token, http.DefaultTransport}})
+	return ck.NewClient(a.server.URL+"/content", &http.Client{Transport: bearerTransport{test: a.test, auth: a.tenant, token: token, base: http.DefaultTransport}})
 }
 
 func (w *world) person(t *testing.T, tenant int) (authtest.User, string) {
 	t.Helper()
 	user := authtest.NewUser(t, w.tenant[tenant])
+	w.people.Store(user.ID, user)
 	return user, authtest.SignIn(t, w.tenant[tenant], user).AccessToken
+}
+
+// startAuth runs AuthKit's own River once, for its account purges.
+func (w *world) startAuth(t *testing.T) {
+	t.Helper()
+	w.authStart.Do(func() { must(t, w.auth.Start(context.Background())) })
 }
 
 func must(t testing.TB, err error) {

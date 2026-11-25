@@ -2,26 +2,30 @@ package critical_test
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
+	"testing"
 
+	"github.com/open-rails/authkit"
 	"github.com/open-rails/authkit/authtest"
 	"github.com/open-rails/authkit/iam"
 	"github.com/open-rails/authkit/notify"
 	ck "github.com/open-rails/contentkit"
 )
 
-// These fixture helpers call the account owner's real publisher and HTTP API.
-// They preserve the former integration assertions after ContentKit's inbox API
-// removal; no response, identity, authorization decision or storage is mocked.
+// These fixture helpers call the app's inbox owner: its real publisher, its
+// HTTP API and AuthKit's inbox storage through its app view. No response,
+// identity, authorization decision or storage is mocked.
 type inboxPublication struct{ Notifications []notify.Input }
 type inboxPublished struct{ Items []notify.Item }
 type inboxQuery struct{ Dismissed *bool }
 
 func (a *application) publishInbox(ctx context.Context, input inboxPublication) (inboxPublished, error) {
-	publisher, err := a.inbox.Notifications("application")
+	publisher, err := a.inbox.Notifications(authkit.NotificationProducer{Name: "application", Origin: notify.OriginScope{System: "critical", Scope: a.cfg.Scope.AppID.String()}})
 	if err != nil {
 		return inboxPublished{}, err
 	}
@@ -35,7 +39,7 @@ func (a *application) publishInbox(ctx context.Context, input inboxPublication) 
 	}
 	var out inboxPublished
 	for _, value := range input.Notifications {
-		page, err := a.inbox.ListNotifications(ctx, value.Recipient.ID, notify.ListOptions{Limit: 100})
+		page, err := a.inboxStore.List(ctx, value.Recipient, notify.ListOptions{Limit: 100})
 		if err != nil {
 			return out, err
 		}
@@ -48,13 +52,55 @@ func (a *application) publishInbox(ctx context.Context, input inboxPublication) 
 	return out, nil
 }
 
-type accountInboxClient struct {
-	base, token string
-	authorize   func(*http.Request)
+// inboxItems is recipient's inbox as the app's inbox owner shows it, read from
+// AuthKit's storage: a purged account's is empty.
+func (a *application) inboxItems(t *testing.T, recipient string) []notify.Item {
+	t.Helper()
+	page, err := a.inboxStore.List(t.Context(), notify.Recipient{Audience: notify.AudienceUser, ID: recipient}, notify.ListOptions{Limit: 100})
+	must(t, err)
+	return page.Items
 }
 
+type accountInboxClient struct {
+	base      string
+	authorize func(*http.Request)
+}
+
+// accountInbox is the HTTP inbox of token's account at the app's inbox owner,
+// which admits only sessions it issued: the account signs in there once.
 func (a *application) accountInbox(token string) *accountInboxClient {
-	return &accountInboxClient{base: a.inboxServer.URL + a.inbox.APIBase() + "/me/notifications", token: token, authorize: func(r *http.Request) { authtest.Authorize(a.test, a.tenant, r, token) }}
+	session := a.inboxSession(token)
+	return &accountInboxClient{base: a.inboxServer.URL + a.inbox.APIBase() + "/me/notifications", authorize: func(r *http.Request) { authtest.Authorize(a.test, a.inbox, r, session) }}
+}
+
+func (a *application) inboxSession(token string) string {
+	subject := tokenSubject(a.test, token)
+	if session, ok := a.inboxSessions.Load(subject); ok {
+		return session.(string)
+	}
+	user, ok := a.world.people.Load(subject)
+	if !ok {
+		a.test.Fatalf("no fixture account %s to sign in at the inbox owner", subject)
+	}
+	session := authtest.SignIn(a.test, a.inbox, user.(authtest.User)).AccessToken
+	a.inboxSessions.Store(subject, session)
+	return session
+}
+
+// tokenSubject is a signed-in access token's sub.
+func tokenSubject(t testing.TB, token string) string {
+	t.Helper()
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		t.Fatal("fixture access token is not a JWT")
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	must(t, err)
+	var claims struct {
+		Subject string `json:"sub"`
+	}
+	must(t, json.Unmarshal(payload, &claims))
+	return claims.Subject
 }
 
 func (c *accountInboxClient) call(ctx context.Context, method, path string, out any) error {

@@ -87,7 +87,7 @@ func attachBilling(t *testing.T, w *world, a *application, configure ...func(*op
 	for _, route := range routes {
 		mux.Handle(route.Path, route.Handler)
 	}
-	a.server = httptest.NewServer(mux)
+	a.server = httptest.NewServer(withSessionProofs(t, mux))
 	return b
 }
 

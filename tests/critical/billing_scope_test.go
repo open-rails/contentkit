@@ -265,7 +265,7 @@ func TestCommerceEntitlementBoundaries(t *testing.T) {
 			host string
 			want []string
 		}{{"limited.invalid", []string{one.ID}}, {"wide.invalid", []string{one.ID, other.ID}}} {
-			client := ck.NewClient(server.URL+"/content", &http.Client{Transport: domainTransport{sample.host, credential}})
+			client := ck.NewClient(server.URL+"/content", &http.Client{Transport: domainTransport{test: t, auth: w.auth, host: sample.host, token: credential}})
 			page, err := client.GetMeLibrary(t.Context(), ck.GetMeLibraryQuery{})
 			must(t, err)
 			seen := map[string]bool{}
@@ -296,7 +296,7 @@ func TestCommerceEntitlementBoundaries(t *testing.T) {
 		must(t, err)
 		defer func() { must(t, siblingEngine.Close(context.Background())) }()
 		siblingServer := mountEngine(t, siblingEngine)
-		client := ck.NewClient(siblingServer.URL+"/content", &http.Client{Transport: bearerTransport{credential, http.DefaultTransport}})
+		client := ck.NewClient(siblingServer.URL+"/content", &http.Client{Transport: bearerTransport{test: t, auth: w.auth, token: credential, base: http.DefaultTransport}})
 		page, err := client.GetMeLibrary(t.Context(), ck.GetMeLibraryQuery{})
 		must(t, err)
 		if len(page.Items) != 1 || page.Items[0].ContentID != foreign.ID {

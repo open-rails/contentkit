@@ -100,9 +100,7 @@ func TestHTTPAuthenticationMatrix(t *testing.T) {
 				request, err := http.NewRequestWithContext(t.Context(), method, a.server.URL+"/content"+path, strings.NewReader("{}"))
 				must(t, err)
 				request.Header.Set("Content-Type", "application/json")
-				if bearer != "" {
-					request.Header.Set("Authorization", "Bearer "+bearer)
-				}
+				presentToken(t, w.auth, request, bearer)
 				response, err := http.DefaultClient.Do(request)
 				must(t, err)
 				defer response.Body.Close()

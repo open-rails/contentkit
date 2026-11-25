@@ -148,7 +148,7 @@ func TestCredentialAndAppBoundary(t *testing.T) {
 		}
 		srv := httptest.NewServer(mux)
 		defer srv.Close()
-		client := ck.NewClient(srv.URL, &http.Client{Transport: bearerTransport{token, http.DefaultTransport}})
+		client := ck.NewClient(srv.URL, &http.Client{Transport: bearerTransport{test: t, auth: w.auth, token: token, base: http.DefaultTransport}})
 		_, err = client.GetContents(t.Context(), ck.GetContentsQuery{})
 		must(t, err)
 		authtest.GrantRole(t, w.tenant[0], a.group, iam.UserSubject(alice.ID), w.writer)

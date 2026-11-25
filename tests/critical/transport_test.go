@@ -203,7 +203,7 @@ func TestFailureContainment(t *testing.T) {
 	t.Cleanup(func() { must(t, engine.Close(context.Background())) })
 	srv := mountEngine(t, engine)
 	secret := staffKey(t, w, a)
-	staff := ck.NewClient(srv.URL+"/content", &http.Client{Transport: bearerTransport{secret, http.DefaultTransport}})
+	staff := ck.NewClient(srv.URL+"/content", &http.Client{Transport: bearerTransport{token: secret, base: http.DefaultTransport}})
 	article := func(body string) catalog.ContentInput {
 		return catalog.ContentInput{Kind: "article", Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: "Contained", Body: body}}}}}
 	}

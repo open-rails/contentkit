@@ -100,8 +100,10 @@ func (c *loggedCH) Query(ctx context.Context, q string, args ...any) (driver.Row
 }
 
 type fixture struct {
-	readerSignIn                       func() string
-	readerToken                        string
+	readerSignIn func() string
+	readerToken  string
+	// auth presents the reader's DPoP-bound session (authtest.Authorize).
+	auth                               *authkit.Client
 	pg                                 *pgTrace
 	t                                  *testing.T
 	app, kind, schema, db, tenant, out string
@@ -239,6 +241,7 @@ func newFixture(t *testing.T, app, out string) *fixture {
 	scope := ck.Scope{TenantID: ctid, AppID: aid}
 	f.tenant = aid.String()
 	reader := authtest.NewUser(t, ta)
+	f.auth = ta
 	f.readerSignIn = func() string { return authtest.SignIn(t, ta, reader).AccessToken }
 	policy, e := ckauth.NewAuthorization(t.Context(), ak, ckauth.AuthorizationConfig{Scope: scope, Issuer: authtest.Issuer, AppScope: scopeAuth})
 	must(t, e)
