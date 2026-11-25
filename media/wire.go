@@ -162,10 +162,6 @@ type ReadResult struct {
 	State string `json:"state,omitempty"`
 	// Status is a whole-manifest processing snapshot for editors only.
 	Status *MediaStatus `json:"status,omitempty"`
-	// Full (editors): the item's manifest cannot hold more outputs, so
-	// processing stopped; remove uploads (any commit that shrinks it) to
-	// resume. Uploads left unprocessed stay pending.
-	Full bool `json:"full,omitempty"`
 	// Uploads (editors) are the kind's upload paths and their rules.
 	Uploads []UploadRule `json:"uploads,omitempty"`
 	Files   []FileInfo   `json:"files"`
@@ -243,10 +239,9 @@ type UploadRule struct {
 }
 
 // PresetRule is a kind's public preset: its upload, name template, widths
-// and crop bounds. Published files carry a generation suffix, so
-// {base}/v1/{namespace}/{kind}/{id}/public/{to} ({w} each of Widths) names
-// the kind's default image (only when Default), never an item's current
-// one: a read's Public lists those.
+// and crop bounds. Files are named by their hash, so no URL is built from a
+// template: a read's Public lists an item's current image, and
+// DefaultImage is the kind's default shown while it has none.
 type PresetRule struct {
 	Kind      string `json:"kind"`
 	Name      string `json:"name"`
@@ -261,10 +256,7 @@ type PresetRule struct {
 	Aspect Aspect `json:"aspect,omitzero"`
 	// MinWidth is the narrowest edit the preset accepts.
 	MinWidth int `json:"min_width,omitempty"`
-	// Default: the gateway serves the kind's default image at the template's
-	// names while an item has no publication (Registry.DefaultImage).
-	Default bool `json:"default"`
-	// Stable: the template's names are also the current image's
-	// (Public.Stable), so clients build its URLs from an item's id.
-	Stable bool `json:"stable,omitempty"`
+	// DefaultImage is the kind's default image (Public.Default), absent
+	// when it has none or none was published (media-worker publish-defaults).
+	DefaultImage *PublicImage `json:"default_image,omitempty"`
 }

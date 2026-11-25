@@ -23,7 +23,6 @@ import (
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/importer"
-	"github.com/open-rails/contentkit/kinds"
 )
 
 // accountColumns counts, per table.column of the catalog schema, the rows
@@ -60,12 +59,7 @@ func accountColumns(t *testing.T, w *world, id string) map[string]int {
 // purge of an account that authored, uploaded, owned, interacted and
 // administered location rules.
 func TestPurgeLeavesNoAccountID(t *testing.T) {
-	// Upload limits give media its quota ledger, so uploads record their owner.
-	w := newWorld(t, func(cfg *ck.Config) {
-		limited := *cfg.Content.Channels
-		limited.Uploads = kinds.UploadLimits{QuotaBytes: 1 << 30}
-		cfg.Content.Channels = &limited
-	})
+	w := newWorld(t)
 	a := w.apps[0]
 	attachMedia(t, w, a)
 	startPublicationRuntime(t, a)
@@ -105,7 +99,6 @@ func TestPurgeLeavesNoAccountID(t *testing.T) {
 
 	before := accountColumns(t, w, user.ID)
 	for _, held := range []string{"content_items.created_by", "content_creators.user_id", "content_entities.owner_user_id", "content_comments.user_id",
-		"content_media_commits.actor_id", "content_media_commits.effects", "content_media_usage.owner_id",
 		"content_location_rules.created_by", "content_location_rule_history.actor", "content_location_rule_history.snapshot"} {
 		if before[held] == 0 {
 			t.Fatalf("fixture did not store the account in %s: %v", held, before)

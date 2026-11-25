@@ -23,11 +23,6 @@ func (s *Service) applyCover(ctx context.Context, k *mediastore.RegisteredKind, 
 	if err != nil {
 		return err
 	}
-	unlock, err := mediastore.PGLocker(s.o.Pool).Lock(ctx, "contentkit:covers:"+s.o.Tenant+":"+t.Version)
-	if err != nil {
-		return err
-	}
-	defer unlock()
 	m, _, err := s.m.Manifests.Get(ctx, ref)
 	if err != nil && !errors.Is(err, mediastore.ErrNotFound) {
 		return err

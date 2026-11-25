@@ -5,6 +5,7 @@ package contentkit
 // restrictions and token claims stay on the server.
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"time"
@@ -26,9 +27,9 @@ type ContentModel struct {
 	// that is down comes back (history, similar and recommendations answer
 	// unavailable meanwhile), one never configured answers not_configured.
 	Signals bool `json:"signals"`
-	// Avatars is people's avatar preset (Stable): an avatar's URLs are its
-	// names at {base}/v1/{namespace}/{kind}/{user id}/public/, and its
-	// uploads target {kind, user id}. Absent: people have none.
+	// Avatars is people's avatar preset with its default image; uploads
+	// target {kind, user id}. Absent: people have none. Another person's
+	// avatar is listed beside what they wrote.
 	Avatars *media.PresetRule `json:"avatars,omitempty"`
 }
 
@@ -59,12 +60,12 @@ func publicModel(c kinds.Config, signals bool, avatars *media.PresetRule) Conten
 
 type kindsServer struct {
 	content kinds.Config
-	avatars *media.PresetRule
+	avatars func(context.Context) *media.PresetRule
 	signals func() bool
 }
 
 // kindsHandler serves the content model and the current domain’s configured buckets.
-func kindsHandler(guard httpapi.Guard, c kinds.Config, signals func() bool, avatars *media.PresetRule) http.Handler {
+func kindsHandler(guard httpapi.Guard, c kinds.Config, signals func() bool, avatars func(context.Context) *media.PresetRule) http.Handler {
 	srv := &kindsServer{content: c, signals: signals, avatars: avatars}
 	mux := http.NewServeMux()
 	httpapi.Mount(mux, guard, srv, kindsRoutes)
@@ -80,7 +81,7 @@ var kindsRoutes = []httpapi.Route[*kindsServer]{
 }
 
 func (s *kindsServer) handle(w http.ResponseWriter, r *http.Request) {
-	model := publicModel(s.content, s.signals(), s.avatars)
+	model := publicModel(s.content, s.signals(), s.avatars(r.Context()))
 	domain, _ := s.content.DomainFor(r.Host)
 	for name, kind := range model.Kinds {
 		buckets := make([]kinds.PopularityBucket, 0, len(kind.Popularity))

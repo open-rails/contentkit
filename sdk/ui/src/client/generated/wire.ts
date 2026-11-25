@@ -358,7 +358,6 @@ export interface Channels {
   entities?: string[];
   entitled?: boolean;
   max_per_owner?: number;
-  uploads?: UploadLimits;
 }
 
 export interface Chip {
@@ -1663,8 +1662,7 @@ export interface PresetRule {
   widths: number[];
   aspect?: string;
   min_width?: number;
-  default: boolean;
-  stable?: boolean;
+  default_image?: PublicImage;
 }
 
 export interface PresetStatus {
@@ -1770,7 +1768,6 @@ export interface ReadResult {
   hls?: string[];
   state?: ItemState;
   status?: MediaStatus;
-  full?: boolean;
   uploads?: UploadRule[];
   files: FileInfo[];
 }
@@ -2028,12 +2025,6 @@ export interface UnmappedDelete {
   index: number;
   entity: string;
   external_id: string;
-}
-
-export interface UploadLimits {
-  files_per_hour?: number;
-  bytes_per_day?: number;
-  quota_bytes?: number;
 }
 
 export interface UploadRule {

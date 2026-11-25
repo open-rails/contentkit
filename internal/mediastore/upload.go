@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -28,15 +29,12 @@ import (
 // UploadOptions configure Uploads.
 type UploadOptions struct {
 	Store     media.Store
-	Manifests *Manifests  // Hooks authorize uploads; its journal supplies the transactional processing queue
-	Tickets   *token.Ring // signs multipart tickets (domain-separated from access tokens); required above MaxSinglePut
-	Limiter   *PGLimiter  // optional; must share the journal's pool and ContentKit schema
+	Manifests *Manifests   // Hooks authorize uploads
+	Processes ProcessQueue // places and processes committed uploads; optional
+	Tickets   *token.Ring  // signs multipart tickets (domain-separated from access tokens); required above MaxSinglePut
 	// PresignTTL bounds PUT and part URLs; default 15m. TicketTTL bounds a
 	// multipart ticket; default 24h, the bucket's abort-incomplete rule.
 	PresignTTL, TicketTTL time.Duration
-	// Grace bounds the commit deadline below the lifetime of unfinished
-	// private allocations (JobsConfig.Grace). Default 24h.
-	Grace time.Duration
 	// ProcessOnUpload tells the SDK to commit each upload unattached as
 	// soon as it lands, so the worker processes it while the user arranges
 	// the rest; an attach op makes it part of the item.
@@ -46,6 +44,10 @@ type UploadOptions struct {
 	// limited.
 	Commits RateLimit
 }
+
+// TemporaryRetention is how long tmp/ keeps a staged upload: the bucket's
+// tag-based expiry (s3.Store.Configure).
+const TemporaryRetention = 7 * 24 * time.Hour
 
 // Uploads presigns direct-to-bucket uploads and commits them. It keeps no
 // state: a multipart upload is its S3 UploadId, carried in a signed ticket.
@@ -59,12 +61,6 @@ func NewUploads(o UploadOptions) (*Uploads, error) {
 	if o.Store == nil || o.Manifests == nil {
 		return nil, errors.New("media: Uploads needs a Store and Manifests")
 	}
-	if o.Manifests.journal.queue == nil {
-		return nil, errors.New("media: Uploads needs a journal with a transactional processing queue")
-	}
-	if o.Limiter != nil && (o.Limiter.pool != o.Manifests.journal.pool || o.Limiter.usage != o.Manifests.journal.limiter.usage) {
-		return nil, errors.New("media: upload quota must use the journal's pool and ContentKit schema")
-	}
 	reg := o.Manifests.Registry()
 	if reg.hooks.CanUpload == nil {
 		return nil, errors.New("media: Uploads needs Hooks.CanUpload")
@@ -77,9 +73,6 @@ func NewUploads(o UploadOptions) (*Uploads, error) {
 	}
 	if o.PresignTTL > TemporaryRetention || o.TicketTTL > TemporaryRetention {
 		return nil, errors.New("media: upload capabilities cannot outlive seven-day temporary storage")
-	}
-	if o.Grace <= 0 {
-		o.Grace = 24 * time.Hour
 	}
 	return &Uploads{o: o, reg: reg,
 		commits: newRateLimiter(o.Commits, commitLimit, "commit", time.Now, slog.Default())}, nil
@@ -107,13 +100,13 @@ func (u *Uploads) Presign(ctx context.Context, actor access.Actor, r media.Presi
 	if err != nil {
 		return media.Presigned{}, err
 	}
-	if err := RequireConditionalPut(ctx, u.o.Store); err != nil {
+	if err := RequireWritable(ctx, u.o.Store); err != nil {
 		return media.Presigned{}, err
 	}
 	out := media.Presigned{Path: path, SourceName: r.Path, ProcessOnUpload: u.o.ProcessOnUpload}
-	// An identical current allocation needs no upload. Unreferenced objects
-	// are never reused. Anything else is staged: nothing a client sends is
-	// ever written under a private blob name.
+	// Bytes the item already holds in its upload area need no upload.
+	// Anything else is staged: nothing a client sends is ever written under
+	// a hash name, since the bucket does not verify checksums.
 	current, err := u.current(ctx, item)
 	if err != nil {
 		return media.Presigned{}, err
@@ -130,43 +123,23 @@ func (u *Uploads) Presign(ctx context.Context, actor access.Actor, r media.Presi
 			return media.Presigned{}, err
 		}
 		if err == nil && obj.Size == r.Size && obj.ContentType == r.Type {
-			if err := u.o.Manifests.checkAllocations(ctx, item, []string{key}); err != nil {
-				return media.Presigned{}, err
-			}
 			out.Blob, out.Exists = blob, true
 			return out, nil
 		}
 	}
+	_ = grant
 	out.Blob = NewStaged()
 	key, _ := item.Staged(out.Blob)
-	res := Reservation{Tenant: r.Ref.TenantID, Uploader: uploaderID(actor), Owner: grant.Owner, Key: key, Size: r.Size}
-	limited := u.o.Limiter != nil && !grant.Exempt
-	if limited {
-		if err := u.o.Limiter.Reserve(ctx, res); err != nil {
-			return media.Presigned{}, err
-		}
-	}
-	if err := u.o.Manifests.allocate(ctx, item, []string{key}); err != nil {
-		if limited {
-			_ = u.o.Limiter.Settle(context.WithoutCancel(ctx), Settlement{Tenant: r.Ref.TenantID, Keys: []string{key}})
-		}
-		return media.Presigned{}, err
-	}
-	if err := u.presign(ctx, item, key, res.Uploader, r, &out); err != nil {
-		_ = u.o.Manifests.retireAllocations(context.WithoutCancel(ctx), item, []string{key})
-		if limited {
-			_ = u.o.Limiter.Settle(context.WithoutCancel(ctx), Settlement{Tenant: r.Ref.TenantID, Keys: []string{key}})
-		}
+	if err := u.presign(ctx, item, key, uploaderID(actor), r, &out); err != nil {
 		return media.Presigned{}, err
 	}
 	return out, nil
 }
 
-// CallerOperation is the journal key of a caller's commit operation_id. The
-// journal's own operations take UUIDv7s derived from public inputs (a folder,
-// a parent id); hashing a caller's id keeps every one of them out of its
-// reach, so no commit can claim the key an erasure or purge needs. The key is
-// dated at the id's own instant, the Unix epoch for a UUIDv4.
+// CallerOperation is the manifest op of a caller's commit operation_id.
+// ContentKit's own edits take ops derived from public inputs (an item, a
+// source); hashing a caller's id keeps every one of them out of its reach.
+// The op is dated at the id's own instant, the Unix epoch for a UUIDv4.
 func CallerOperation(id uuid.UUID) uuid.UUID {
 	return uuidv7.Name(uuidv7.At(id.String()), uuid.Nil, "caller-commit:"+id.String())
 }
@@ -233,10 +206,6 @@ func (u *Uploads) PresignParts(ctx context.Context, actor access.Actor, sealed s
 	if err != nil {
 		return nil, err
 	}
-	item, _ := u.reg.Item(t.Ref)
-	if err := u.o.Manifests.checkAllocations(ctx, item, []string{key}); err != nil {
-		return nil, err
-	}
 	if len(parts) == 0 || len(parts) > 100 {
 		return nil, uploadErr(media.CodeInvalid, "presign 1 to 100 parts at a time")
 	}
@@ -287,10 +256,6 @@ func (u *Uploads) Complete(ctx context.Context, actor access.Actor, sealed strin
 	if err != nil {
 		return UploadedBlob{}, err
 	}
-	item, _ := u.reg.Item(t.Ref)
-	if err := u.o.Manifests.checkAllocations(ctx, item, []string{key}); err != nil {
-		return UploadedBlob{}, err
-	}
 	done := UploadedBlob{Blob: t.Blob, Type: t.Type, Size: t.Size}
 	parts, err := u.listParts(ctx, key, t.UploadID)
 	if err != nil {
@@ -329,7 +294,7 @@ func (u *Uploads) Complete(ctx context.Context, actor access.Actor, sealed strin
 	return done, nil
 }
 
-// Abort cancels a multipart upload and drops its reservation.
+// Abort cancels a multipart upload.
 func (u *Uploads) Abort(ctx context.Context, actor access.Actor, sealed string) error {
 	t, key, err := u.open(actor, sealed)
 	if err != nil {
@@ -341,9 +306,6 @@ func (u *Uploads) Abort(ctx context.Context, actor access.Actor, sealed string) 
 func (u *Uploads) abort(ctx context.Context, t ticket, key string, cause error) error {
 	ctx = context.WithoutCancel(ctx)
 	err := u.o.Store.AbortMultipart(ctx, key, t.UploadID)
-	if u.o.Limiter != nil {
-		err = errors.Join(err, u.o.Limiter.Settle(ctx, Settlement{Tenant: t.Ref.TenantID, Keys: []string{key}}))
-	}
 	if cause != nil {
 		return cause
 	}
@@ -351,22 +313,15 @@ func (u *Uploads) abort(ctx context.Context, t ticket, key string, cause error) 
 }
 
 // Commit applies ops to ref's manifest in one conditional write. operationID
-// is a caller-stable UUIDv4 or UUIDv7 for the complete ordered batch: reuse it after an
-// uncertain response, but never for different inputs. Replays authorize again
-// and return the current manifest without repeating the original edit. Every op
-// is authorized against what it writes (Hooks.CanUpload), before any copy
-// and again under the item's lock, so a grant revoked while the commit waited
-// writes nothing. A put names a
-// staged upload or a blob in the folder, HEAD-checked against its Upload;
-// copies are copied server-side first. The owner is charged the change in
-// upload sizes; growth past its quota fails with CodeQuota (not for exempt
-// grants). Then the worker places staged uploads and processes the item.
-// Declared public presets are processed independently of visibility.
-// Successful removes finish public cleanup before returning;
-// unreferenced private blobs go when a grace period old, or at once for a
-// takedown (Op.Takedown).
-// A successful commit records processing and notification effects durably
-// with the manifest mutation.
+// is a caller-stable UUIDv4 or UUIDv7 for the complete ordered batch: reuse it
+// after an uncertain response, but never for different inputs; it is the
+// write's op, so a retry recognises a write that landed. Every op is
+// authorized against what it writes (Hooks.CanUpload), before any copy and
+// again on every attempt, so a grant revoked while the commit retried writes
+// nothing. A put names a staged upload or a blob in the folder, HEAD-checked
+// against its Upload; copies are copied server-side first. Then the worker
+// places staged uploads and processes the item. What the commit stops
+// referencing is retired (a grace period, or at once for a takedown).
 func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref.ContentRef, operationID string, ops []media.Op) (*Manifest, error) {
 	item, err := u.item(ref)
 	if err != nil {
@@ -404,7 +359,7 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 	if err != nil {
 		return nil, err
 	}
-	if err := RequireConditionalPut(ctx, u.o.Store); err != nil {
+	if err := RequireWritable(ctx, u.o.Store); err != nil {
 		return nil, err
 	}
 	if !grant.Exempt {
@@ -417,63 +372,37 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 			}
 		}
 	}
-	// The journal owns the growth claim before S3 PUT and settles it only
-	// after a definite success or a recovery fence. An uncertain response
-	// must not refund quota or consume the upload's reservations.
-	input, err := json.Marshal(ops)
-	if err != nil {
-		return nil, uploadErr(media.CodeInvalid, "commit operations must be JSON")
-	}
-	mutation := &manifestMutation{commit: manifestCommit{ID: id, Ref: ref, Folder: item.Prefix(),
-		Actor: string(actor.Kind) + ":" + uploaderID(actor), Fingerprint: sha256.Sum256(input)}}
-	if man, replayed, err := u.o.Manifests.replayCommit(ctx, item, mutation.commit); err != nil || replayed {
-		if err != nil {
-			return nil, err
-		}
-		if err := u.o.Manifests.notifyCommit(ctx, mutation.commit); err != nil {
-			return nil, err
-		}
-		return man, nil
-	}
 	frames, err := u.frameVideos(ctx, item, ops)
 	if err != nil {
 		return nil, err
 	}
-	copies, copied, err := u.copies(ctx, actor, grant, item, ops)
+	copies, err := u.copies(ctx, actor, grant, item, ops)
 	if err != nil {
 		return nil, err
 	}
-	var keys []string
-	editCtx, cancel := context.WithTimeout(ctx, commitMargin(u.o.Grace)/2)
-	defer cancel()
-	var prior *Manifest
-	man, err := u.o.Manifests.editOperation(editCtx, ref, false, bound{project: item.Kind().Unwritten}, mutation, func(m *Manifest) error {
-		// Authority may change while the commit waits for the lock.
-		current, err := u.authorizeOps(editCtx, actor, item, ops)
+	takedown := slices.ContainsFunc(ops, func(op media.Op) bool { return op.Takedown })
+	var renames map[string]string
+	var removed []string
+	var cancel bool
+	sum, err := opsDigest(ops)
+	if err != nil {
+		return nil, err
+	}
+	edit := EditOptions{Op: id.String(), Sum: sum}
+	if takedown {
+		edit.Grace = -1
+	}
+	man, err := u.o.Manifests.EditWith(ctx, ref, edit, func(m *Manifest) error {
+		// Authority may change while the commit retries.
+		current, err := u.authorizeOps(ctx, actor, item, ops)
 		if err != nil {
 			return err
 		}
-		if current.Owner != grant.Owner || current.Exempt != grant.Exempt {
+		if current.Exempt != grant.Exempt {
 			return uploadErr(media.CodeConflict, "the upload grant changed during the commit: try again")
 		}
-		prior = m.Clone()
+		prior := m.Clone()
 		o := &opRun{k: item.Kind(), m: m, ref: ref, copies: copies, frames: frames, exempt: grant.Exempt, trusted: trusted}
-		var charge *media.SourceAdmission
-		o.charge = func() (*media.SourceAdmission, error) {
-			if charge == nil {
-				c := &media.SourceAdmission{Generation: id.String(), Owner: grant.Owner, Enforce: u.o.Limiter != nil && !grant.Exempt, Accounting: u.o.Limiter != nil}
-				if c.Enforce {
-					quota, err := u.o.Limiter.Quota(editCtx, ref.TenantID, grant.Owner)
-					if err != nil {
-						return nil, err
-					}
-					c.Quota = quota
-				}
-				charge = c
-			}
-			c := *charge
-			return &c, nil
-		}
 		o.renames = map[string]string{}
 		for _, file := range prior.Files {
 			if file.IsUpload() {
@@ -482,12 +411,12 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 		}
 		o.archiveAllowed = func(source, destination string) error {
 			stem, _ := splitExt(source)
-			delegated, err := u.authorize(editCtx, actor, media.UploadTarget{Ref: ref, Path: stem})
+			delegated, err := u.authorize(ctx, actor, media.UploadTarget{Ref: ref, Path: stem})
 			if err != nil {
 				return err
 			}
-			if delegated.ArchiveTo != destination || delegated.Owner != grant.Owner || delegated.Exempt != grant.Exempt {
-				return uploadErr(media.CodeForbidden, "ZIP expansion requires an explicitly approved destination with the same owner and quota policy")
+			if delegated.ArchiveTo != destination || delegated.Exempt != grant.Exempt {
+				return uploadErr(media.CodeForbidden, "ZIP expansion requires an explicitly approved destination")
 			}
 			return nil
 		}
@@ -500,29 +429,21 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 			if err := o.archiveAllowed(source, destination); err != nil {
 				return nil, err
 			}
-			admission := &media.SourceAdmission{Generation: id.String(), Owner: grant.Owner, Enforce: u.o.Limiter != nil && !grant.Exempt, Target: destination, Accounting: u.o.Limiter != nil}
-			if admission.Enforce {
-				quota, err := u.o.Limiter.Quota(editCtx, ref.TenantID, grant.Owner)
-				if err != nil {
-					return nil, err
-				}
-				admission.Quota = quota
-			}
+			admission := &media.SourceAdmission{Generation: operationID, Target: destination}
 			admissions[key] = admission
 			return admission, nil
 		}
 		o.authorizePath = func(path string) error {
 			stem, _ := splitExt(path)
-			allocated, err := u.authorize(editCtx, actor, media.UploadTarget{Ref: ref, Path: stem})
+			allocated, err := u.authorize(ctx, actor, media.UploadTarget{Ref: ref, Path: stem})
 			if err != nil {
 				return err
 			}
-			if allocated.Owner != grant.Owner || allocated.Exempt != grant.Exempt {
-				return uploadErr(media.CodeForbidden, "allocated page has a different upload owner")
+			if allocated.Exempt != grant.Exempt {
+				return uploadErr(media.CodeForbidden, "the page has a different upload grant")
 			}
 			return nil
 		}
-		keys = keys[:0]
 		var names []string
 		for _, op := range ops {
 			if op.Op != media.OpPut {
@@ -534,24 +455,13 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 			if !created && conflict == nil && !slices.Contains(names, op.Blob) {
 				names = append(names, op.Blob)
 			}
-			key, err := item.Staged(op.Blob)
-			if err != nil {
-				key, _ = item.Blob(op.Blob)
-			}
-			if !slices.Contains(keys, key) {
-				keys = append(keys, key)
-			}
 		}
-		objects, err := u.verify(editCtx, item, m, names)
+		objects, err := u.verify(ctx, item, m, names)
 		if err != nil {
 			return err
 		}
-		if err := u.copied(editCtx, item, copies); err != nil {
-			return err
-		}
 		o.objects = objects
-		before, uploads := m.uploadBytes(), m.uploads()
-		var applied []string
+		uploads := m.uploads()
 		for n, op := range ops {
 			if op.Op == media.OpPut {
 				created, err := o.created(op)
@@ -565,109 +475,70 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 				}
 				if _, ok := o.objects[op.Blob]; !ok {
 					// An earlier op in this batch removed or replaced the receipt.
-					objects, err := u.verify(editCtx, item, m, []string{op.Blob})
+					objects, err := u.verify(ctx, item, m, []string{op.Blob})
 					if err != nil {
 						return err
 					}
 					o.objects[op.Blob] = objects[op.Blob]
 				}
-				key, err := item.Staged(op.Blob)
-				if err != nil {
-					key, _ = item.Blob(op.Blob)
-				}
-				applied = append(applied, key)
 			}
 			if err := o.apply(n, op); err != nil {
 				return err
 			}
 		}
-		// Apply the sweep's staged expiry so a commit does not keep a dead temporary allocation.
-		priorStaged := prior.StagedNames()
-		var inherited []string
-		for _, name := range m.StagedNames() {
-			if slices.Contains(priorStaged, name) {
-				key, _ := item.Staged(name)
-				if !slices.Contains(applied, key) {
-					inherited = append(inherited, key)
-				}
-			}
-		}
-		expired, err := u.o.Manifests.expiredStaged(editCtx, item, inherited, m.Incarnation)
-		if err != nil {
-			return err
-		}
-		var expiredPaths []string
-		var expiredBytes int64
-		for _, f := range m.Files {
-			if !f.IsUpload() || f.Staged == "" {
-				continue
-			}
-			key, _ := item.Staged(f.Staged)
-			if slices.Contains(expired, key) {
-				expiredPaths = append(expiredPaths, f.Path)
-				expiredBytes += max(f.Size, uploadFloor)
-			}
-		}
-		o.dropUploads(expiredPaths)
-		mutation.effects.Renames = map[string]string{}
+		renames = map[string]string{}
 		for before, after := range o.renames {
 			if before != after {
-				mutation.effects.Renames[before] = after
+				renames[before] = after
 			}
 		}
-		mutation.effects.RemovedPaths = o.removed
+		removed = o.removed
 		if n := m.uploads(); n > media.MaxUploads && n > uploads {
 			return tooManyFiles(media.MaxUploads, "an item holds at most %d uploads", media.MaxUploads)
 		}
-		mutation.effects.Cancel = removesPending(prior, ops)
-		job := ProcessJob{Ref: ref, Place: len(m.StagedNames()) > 0 || item.Kind().pendingArchives(m)}
-		for _, op := range ops {
-			if op.Op == media.OpRegenerate {
-				job.Preset, job.Force = op.Preset, op.Force
-			}
-		}
-		mutation.effects.Process = &job
-		if u.o.Limiter != nil {
-			mutation.effects.Settlement = Settlement{Tenant: ref.TenantID, Owner: grant.Owner,
-				Keys: append(slices.Clone(keys), copied...), Delta: m.uploadBytes() - before + expiredBytes, Enforce: !grant.Exempt}
-			if mutation.effects.Settlement.Delta > 0 && !grant.Exempt {
-				// Resolve host policy before the journal opens its transaction.
-				// Shrinks and ordering edits must not depend on quota availability.
-				mutation.quota, err = u.o.Limiter.Quota(editCtx, ref.TenantID, grant.Owner)
-				if err != nil {
-					return err
-				}
-			}
-		}
-
-		if slices.ContainsFunc(ops, func(op media.Op) bool { return op.Takedown }) {
-			drop := Unreferenced{All: grant.Exempt, Staged: missing(prior.StagedNames(), m.StagedNames())}
-			if !drop.All {
-				drop.Blobs = missing(prior.Blobs(), m.Blobs())
-				now := u.reg.editorViews(m)
-				for view := range u.reg.editorViews(prior) {
-					if !now[view] {
-						drop.Blobs = append(drop.Blobs, view)
-					}
-				}
-			}
-			mutation.effects.Private, err = u.o.Manifests.unreferenced(editCtx, item, m, drop)
-			if err != nil {
-				return err
-			}
+		cancel = removesPending(prior, ops)
+		if hook := u.reg.hooks.ValidatePathsChanged; hook != nil && (len(renames) > 0 || len(removed) > 0) {
+			return hook(ctx, ref, renames, removed)
 		}
 		return nil
 	})
 	if errors.Is(err, ErrManifestTooLarge) {
 		err = uploadErr(media.CodeTooLarge, "the item, processed, would pass its manifest's %d MiB: remove uploads or meta first", media.MaxManifestBytes>>20)
+	} else if errors.Is(err, ErrOpReused) {
+		err = uploadErr(media.CodeConflict, "operation_id was used for a different batch")
 	}
 	if err != nil {
 		return nil, err
 	}
-	notifyCtx, notifyCancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
-	defer notifyCancel()
-	if err := u.o.Manifests.notifyCommit(notifyCtx, mutation.commit); err != nil {
-		return nil, err
+	if hook := u.reg.hooks.PathsChanged; hook != nil && (len(renames) > 0 || len(removed) > 0) {
+		if err := hook(ctx, ref, renames, removed); err != nil {
+			return nil, err
+		}
+	}
+	if u.o.Processes != nil {
+		if canceler, ok := u.o.Processes.(interface {
+			Cancel(context.Context, contentref.ContentRef) (int, error)
+		}); ok && cancel {
+			if _, err := canceler.Cancel(ctx, ref); err != nil {
+				return nil, err
+			}
+		}
+		job := ProcessJob{Ref: ref, Place: len(man.StagedNames()) > 0 || item.Kind().pendingArchives(man)}
+		for _, op := range ops {
+			if op.Op == media.OpRegenerate {
+				job.Preset, job.Force = op.Preset, op.Force
+			}
+		}
+		if job.Place || job.Force || item.Kind().NeedsProcessing(man) {
+			if err := u.o.Processes.Enqueue(ctx, job); err != nil {
+				return nil, err
+			}
+		}
+	}
+	if hook := u.reg.hooks.ItemCommitted; hook != nil {
+		if err := hook(ctx, ref); err != nil {
+			return nil, fmt.Errorf("media: ItemCommitted: %w", err)
+		}
 	}
 	return man, nil
 }
@@ -718,8 +589,8 @@ func (u *Uploads) authorizeOps(ctx context.Context, actor access.Actor, item Ite
 		if t.Ref.Equal(item.Ref()) {
 			if grant == nil {
 				grant = &g
-			} else if g.Owner != grant.Owner || g.Exempt != grant.Exempt {
-				return media.UploadGrant{}, uploadErr(media.CodeForbidden, "the commit's paths have different owners")
+			} else if g.Exempt != grant.Exempt {
+				return media.UploadGrant{}, uploadErr(media.CodeForbidden, "the commit's paths have different grants")
 			}
 		}
 		seen[key] = g
@@ -802,9 +673,9 @@ func (u *Uploads) frameVideos(ctx context.Context, item Item, ops []media.Op) (m
 }
 
 // verify HEAD-checks the put names in item's folder: staged uploads in
-// temp/, and blobs in private/ the sweep cannot take first. A blob's bytes
-// were hashed when it was placed or produced, so they are not read again; a
-// name from another item's folder is simply absent here.
+// tmp/, and blobs the item references now. A blob's bytes were hashed when
+// they were placed or produced, so they are not read again; a name from
+// another item's folder is simply absent here.
 func (u *Uploads) verify(ctx context.Context, item Item, m *Manifest, names []string) (map[string]media.Object, error) {
 	out := make(map[string]media.Object, len(names))
 	var missing []string
@@ -816,12 +687,6 @@ func (u *Uploads) verify(ctx context.Context, item Item, m *Manifest, names []st
 		}
 		obj, err := u.o.Store.Head(ctx, key)
 		if errors.Is(err, ErrNotFound) {
-			missing = append(missing, n)
-			continue
-		} else if err != nil {
-			return nil, err
-		}
-		if err := u.o.Manifests.checkAllocations(ctx, item, []string{key}); errors.Is(err, ErrAllocationRetired) {
 			missing = append(missing, n)
 			continue
 		} else if err != nil {
@@ -840,8 +705,8 @@ func (u *Uploads) verify(ctx context.Context, item Item, m *Manifest, names []st
 	return out, nil
 }
 
-// reusable accepts only current allocations, excluding editor-only views.
-// An unreferenced allocation must never be adopted after cleanup selected it.
+// reusable accepts only blobs the item references, excluding editor-only
+// views: an unreferenced one may be due for collection.
 func (u *Uploads) reusable(m *Manifest, views map[string]bool, blob string) bool {
 	if views[blob] {
 		return false
@@ -851,183 +716,90 @@ func (u *Uploads) reusable(m *Manifest, views map[string]bool, blob string) bool
 
 // current is item's manifest, empty when it has none.
 func (u *Uploads) current(ctx context.Context, item Item) (*Manifest, error) {
-	m, _, err := u.o.Manifests.Get(ctx, item.Ref())
-	if errors.Is(err, ErrNotFound) {
-		return &Manifest{}, nil
+	m, _, err := u.o.Manifests.GetAny(ctx, item.Ref())
+	switch {
+	case errors.Is(err, ErrNotFound):
+		return &Manifest{}, nil // a new item
+	case err == nil && m.Deleted != nil:
+		return nil, ErrNotFound // deleted or erased: no uploads
 	}
 	return m, err
 }
 
-// commitMargin bounds the time between a commit's check of a blob and its
-// manifest edit landing (the edit runs under half of it): a quarter of the
-// grace period, at most 1 h.
-func commitMargin(grace time.Duration) time.Duration { return min(grace/4, time.Hour) }
-
 // copies reads each copy op's source files from the other item and copies
-// their blobs into fresh destination allocations, all allocated in one step,
-// keyed by op index. Each copy op that moves bytes is reserved once, like an
-// upload of its source (rate limits and pending quota; the commit charges
-// it), so a failed commit leaves no unmetered bytes; it returns the reserved
-// keys.
-func (u *Uploads) copies(ctx context.Context, actor access.Actor, grant media.UploadGrant, item Item, ops []media.Op) (map[int][]media.File, []string, error) {
-	type copyKey struct {
-		op        int
-		key, area string
-	}
-	type source struct {
-		n     int
-		from  Item
-		files []media.File
-		todo  []string // blobs this op copies first
-		first int      // the index of todo[0] in the allocations
-	}
-	var (
-		sources  []source
-		sums     [][]byte
-		srcKeys  []string
-		areas    []string
-		manifest = map[contentref.ContentKey]*Manifest{}
-		names    = map[copyKey]string{} // one allocation per copy, source and area
-	)
+// their bytes server-side into this item under the same hashes, each in the
+// area its destination file lands in, keyed by op index.
+func (u *Uploads) copies(ctx context.Context, actor access.Actor, grant media.UploadGrant, item Item, ops []media.Op) (map[int][]media.File, error) {
+	type copyJob struct{ src, dst string }
+	var jobs []copyJob
+	seen := map[string]bool{}
+	manifest := map[contentref.ContentKey]*Manifest{}
+	out := map[int][]media.File{}
 	for n, op := range ops {
 		if op.Op != media.OpCopy {
 			continue
 		}
 		src, err := u.reg.VersionRef(item.Kind().Name, op.From.ID, op.From.Version)
 		if err != nil {
-			return nil, nil, uploadErr(media.CodeInvalid, "copy from %q: not a media item of this kind", op.From.ID)
+			return nil, uploadErr(media.CodeInvalid, "copy from %q: not a media item of this kind", op.From.ID)
 		}
 		if src.Equal(item.Ref()) {
-			continue // read the source under the destination's manifest lock
+			continue // read from the destination's own manifest by the edit
 		}
 		from, _ := u.reg.Item(src)
 		m, ok := manifest[src.Key()]
 		if !ok {
 			if m, _, err = u.o.Manifests.Get(ctx, src); errors.Is(err, ErrNotFound) {
-				return nil, nil, uploadErr(media.CodeNotFound, "item %s has no media", op.From.ID)
+				return nil, uploadErr(media.CodeNotFound, "item %s has no media", op.From.ID)
 			} else if err != nil {
-				return nil, nil, err
+				return nil, err
 			}
 			manifest[src.Key()] = m
 		}
 		files := copyFiles(m, op.From.Path)
 		if len(files) == 0 {
-			return nil, nil, uploadErr(media.CodeNotFound, "no upload %q in item %s", op.From.Path, op.From.ID)
+			return nil, uploadErr(media.CodeNotFound, "no upload %q in item %s", op.From.Path, op.From.ID)
 		}
 		to, _, _, _, _ := item.Kind().upload(cmpOr(op.To, op.From.Path))
 		group, _, _, _, _ := item.Kind().upload(op.From.Path)
 		if to != group || op.Edit != nil {
 			files = files[:1]
 		}
-		sc := source{n: n, from: from, files: files, first: len(sums)}
-		for _, b := range copyBlobs(item.Kind(), files) {
-			srcKey, _ := from.Blob(b[0])
-			if _, seen := names[copyKey{n, srcKey, b[1]}]; seen {
-				continue
+		for i := range files {
+			f := &files[i]
+			f.Editor = nil // editor views belong to their original item
+			if !f.Gone && f.Blob != "" {
+				dst := layout.MoveRef(f.Blob, copyArea(item.Kind(), i, *f))
+				if key := keyOf(item, dst); !seen[key] {
+					seen[key] = true
+					jobs = append(jobs, copyJob{keyOf(from, f.Blob), key})
+				}
+				f.Blob = dst
 			}
-			sum, ok := layout.BlobDigest(b[0])
-			if !ok {
-				return nil, nil, fmt.Errorf("media: invalid copy source %q", b[0])
-			}
-			names[copyKey{n, srcKey, b[1]}] = ""
-			sc.todo, sums, srcKeys, areas = append(sc.todo, b[0]), append(sums, sum), append(srcKeys, srcKey), append(areas, b[1])
-		}
-		sources = append(sources, sc)
-	}
-	// Each copy lands in its destination file's area.
-	allocated := make([]string, len(sums))
-	for _, area := range []string{layout.AreaPrivate, layout.AreaOriginals, layout.AreaInternal} {
-		var at []int
-		var of [][]byte
-		for i, a := range areas {
-			if a == area {
-				at, of = append(at, i), append(of, sums[i])
+			if f.Track != nil && f.Track.Index != "" {
+				track := *f.Track
+				dst := layout.MoveRef(track.Index, copyIndexArea(item.Kind()))
+				if key := keyOf(item, dst); !seen[key] {
+					seen[key] = true
+					jobs = append(jobs, copyJob{keyOf(from, track.Index), key})
+				}
+				track.Index = dst
+				f.Track = &track
 			}
 		}
-		if len(at) == 0 {
-			continue
-		}
-		refs, err := u.o.Manifests.NewBlobs(ctx, item.Ref(), area, of)
-		if err != nil {
-			return nil, nil, err
-		}
-		for j, i := range at {
-			allocated[i] = refs[j]
-		}
-	}
-	for _, sc := range sources {
-		for j := range sc.todo {
-			i := sc.first + j
-			names[copyKey{sc.n, srcKeys[i], areas[i]}] = allocated[i]
-		}
-	}
-	var reserved []string
-	if u.o.Limiter != nil && !grant.Exempt {
-		// One reservation per copy, for the upload's bytes: what the commit
-		// charges (outputs are not charged).
-		for _, sc := range sources {
-			if len(sc.todo) == 0 {
-				continue
-			}
-			key, _ := item.Blob(allocated[sc.first])
-			if err := u.o.Limiter.Reserve(ctx, Reservation{Tenant: item.Ref().TenantID, Uploader: uploaderID(actor),
-				Owner: grant.Owner, Key: key, Size: sc.files[0].Size}); err != nil {
-				return nil, reserved, err
-
-			}
-			reserved = append(reserved, key)
-		}
+		out[n] = files
 	}
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(8)
-	for i, srcKey := range srcKeys {
+	for _, j := range jobs {
 		g.Go(func() error {
-			dstKey, _ := item.Blob(allocated[i])
-			if _, err := u.o.Store.Copy(gctx, srcKey, dstKey, media.CopyOptions{}); err != nil {
-				return fmt.Errorf("media: copy %s: %w", srcKey, err)
+			if _, err := u.o.Store.Copy(gctx, j.src, j.dst, media.CopyOptions{}); err != nil {
+				return fmt.Errorf("media: copy %s: %w", j.src, err)
 			}
 			return nil
 		})
 	}
-	if err := g.Wait(); err != nil {
-		return nil, reserved, err
-	}
-	out := make(map[int][]media.File, len(sources))
-	for _, sc := range sources {
-		files := sc.files
-		for i := range files {
-			files[i].Editor = nil // editor views belong to their original item's allocation
-			if !files[i].Gone && files[i].Blob != "" {
-				from, _ := sc.from.Blob(files[i].Blob)
-				files[i].Blob = names[copyKey{sc.n, from, copyArea(item.Kind(), i, files[i])}]
-			}
-			if files[i].Track != nil && files[i].Track.Index != "" {
-				track := *files[i].Track
-				from, _ := sc.from.Blob(track.Index)
-				track.Index = names[copyKey{sc.n, from, copyIndexArea(item.Kind())}]
-				files[i].Track = &track
-			}
-		}
-		out[sc.n] = files
-	}
-	return out, reserved, nil
-}
-
-// fileBlobs are the blobs files reference.
-// copyBlobs are the blobs of a copy's files, each with the area it lands in
-// at the destination: the upload's, an output's by its preset; track indexes
-// in the destination's prepared-output area.
-func copyBlobs(k *RegisteredKind, files []media.File) [][2]string {
-	var out [][2]string
-	for i, f := range files {
-		if f.Blob != "" && !f.Gone {
-			out = append(out, [2]string{f.Blob, copyArea(k, i, f)})
-		}
-		if f.Track != nil && f.Track.Index != "" {
-			out = append(out, [2]string{f.Track.Index, copyIndexArea(k)})
-		}
-	}
-	return out
+	return out, g.Wait()
 }
 
 func copyIndexArea(k *RegisteredKind) string {
@@ -1043,45 +815,6 @@ func copyArea(k *RegisteredKind, i int, f media.File) string {
 		return k.Area("")
 	}
 	return k.Area(f.Preset)
-}
-
-func fileBlobs(files []media.File) []string {
-	var blobs []string
-	for _, f := range files {
-		if f.Blob != "" && !f.Gone {
-			blobs = append(blobs, f.Blob)
-		}
-		if f.Track != nil && f.Track.Index != "" {
-			blobs = append(blobs, f.Track.Index)
-		}
-	}
-	return blobs
-}
-
-// copied checks, under the manifest lock, that the blobs copies put in
-// item's folder are still there: a takedown since may have taken them.
-func (u *Uploads) copied(ctx context.Context, item Item, copies map[int][]media.File) error {
-	g, ctx := errgroup.WithContext(ctx)
-	g.SetLimit(8)
-	seen := map[string]bool{}
-	for _, files := range copies {
-		for _, b := range fileBlobs(files) {
-			if seen[b] {
-				continue
-			}
-			seen[b] = true
-			g.Go(func() error {
-				key, _ := item.Blob(b)
-				if _, err := u.o.Store.Head(ctx, key); errors.Is(err, ErrNotFound) {
-					return uploadErr(media.CodeConflict, "the item changed during the copy: try again")
-				} else if err != nil {
-					return err
-				}
-				return nil
-			})
-		}
-	}
-	return g.Wait()
 }
 
 func (u *Uploads) item(ref contentref.ContentRef) (Item, error) {
@@ -1114,24 +847,6 @@ func uploaderID(a access.Actor) string {
 }
 
 func maxParts(size int64) int { return int((size + media.MinPartSize - 1) / media.MinPartSize) }
-
-// uploadFloor is the least an upload is charged: its share of the manifest
-// and its outputs, so tiny files cannot grow an item for free.
-const uploadFloor = 64 << 10
-
-// uploadBytes is the storage charged for a manifest: the size of every
-// upload in it, staged, placed or a grabbed frame, at least uploadFloor. A
-// frame not grabbed yet is charged the floor; the worker's edit recording
-// the still charges the rest (Manifests.EditCharged).
-func (m *Manifest) uploadBytes() int64 {
-	var n int64
-	for _, f := range m.Files {
-		if f.IsUpload() {
-			n += max(f.Size, uploadFloor)
-		}
-	}
-	return n
-}
 
 // uploads counts the manifest's uploads.
 func (m *Manifest) uploads() int {
@@ -1189,4 +904,14 @@ func (u *Uploads) open(actor access.Actor, sealed string) (ticket, string, error
 		return ticket{}, "", invalid
 	}
 	return t, key, nil
+}
+
+// opsDigest is a commit's request digest (EditOptions.Sum).
+func opsDigest(ops []media.Op) (string, error) {
+	body, err := json.Marshal(ops)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(body)
+	return hex.EncodeToString(sum[:]), nil
 }

@@ -31,7 +31,6 @@ import (
 	"golang.org/x/text/language"
 
 	"github.com/open-rails/contentkit/media"
-	"github.com/open-rails/contentkit/media/layout"
 )
 
 // cleanRecipe versions cleanVTT and the conversions before it: a change
@@ -97,7 +96,7 @@ func (e *Encoder) subtitle(ctx context.Context, item mediastore.Item, f media.Fi
 	if err := os.WriteFile(path, vtt, 0o600); err != nil {
 		return err
 	}
-	blob, size, err := e.put(ctx, item, layout.AreaPrivate, path, "text/vtt", nil)
+	blob, size, err := e.put(ctx, item, outputArea(item), path, "text/vtt", nil)
 	if err != nil {
 		return err
 	}

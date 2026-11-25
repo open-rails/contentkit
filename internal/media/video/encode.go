@@ -22,12 +22,11 @@ import (
 	"github.com/open-rails/contentkit/media"
 )
 
-// hlsRecipe and mp4Recipe identify the encodes: a preset's outputs carry
+// hlsRecipe identifies the encodes: a preset's outputs carry
 // their hash with the source and the preset's spec (media.SpecFP) and are
 // redone when it changes. The encoders (CPU or NVENC) are not part of them.
 const (
 	hlsRecipe = "codecs:%s|h264-high,hevc-main-hvc1-x265-closed,av1-svt-p%d|capped-crf:%s|k4-sc0|short-side:%s|native-below-%d|aspect:%g-%g|lanczos|max-4096-3840x2160|lvl51-52|max60fps|sar1|aac-128k-48k-2ch|sprite-10x10-short90-jpg|stage-per-rung|pt-top|v6"
-	mp4Recipe = "h264-high|capped-crf:%s|k4-sc0|lanczos|max-4096-3840x2160|lvl51-52|max60fps|sar1|aac-128k-48k-2ch-default|faststart|v1"
 )
 
 // hlsFP is the fingerprint of an HLS preset's renditions, audio tracks and
@@ -44,11 +43,6 @@ func (e *Encoder) hlsFP(src media.File, h *media.HLS) string {
 	lo, hi := h.Aspects()
 	return mediastore.SpecFP(src, h, fmt.Sprintf(hlsRecipe, strings.Join(codecs, ","), svtAV1Preset, rateTable(e.c.Codecs),
 		strings.Join(ladder, ","), nativeBelow, lo, hi))
-}
-
-// mp4FP is the fingerprint of an MP4 preset's file from upload src.
-func mp4FP(src media.File, m *media.MP4) string {
-	return mediastore.SpecFP(src, m, fmt.Sprintf(mp4Recipe, rateTable([]media.Codec{media.CodecH264})))
 }
 
 // rateTable lists each codec's capped CRF per rung class.

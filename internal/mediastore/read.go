@@ -3,6 +3,7 @@ package mediastore
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -169,28 +170,13 @@ func (r *Reader) Grant(ctx context.Context, ref contentref.ContentRef, actor acc
 			return nil, err
 		}
 	}
-	var man *Manifest
-	if item.Kind().Versions && !editorRead && !inspectionRead {
-		if r.reg.hooks.ReaderManifest == nil {
-			return nil, fmt.Errorf("%w: version reader manifest is not configured", ErrResolve)
-		}
-		man, err = r.reg.hooks.ReaderManifest(ctx, ref, actor)
-		if err != nil {
-			return nil, err
-		}
-		if man == nil {
-			return nil, ErrNotVisible
-		}
-	} else {
-		man, _, err = r.o.Manifests.Get(ctx, ref)
-		if errors.Is(err, ErrNotFound) {
-			man = &Manifest{V: media.ManifestVersion}
-		} else if err != nil {
-			return nil, err
-		}
-		if item.Kind().Versions && !editorRead && !man.PublicationLayoutReady() {
-			return nil, ErrPublicationLayoutRequired
-		}
+	// Readers list what the manifest has released into served areas;
+	// unreleased files stay in internal/, which no grant opens.
+	man, _, err := r.o.Manifests.Get(ctx, ref)
+	if errors.Is(err, ErrNotFound) {
+		man = &Manifest{V: media.ManifestVersion}
+	} else if err != nil {
+		return nil, err
 	}
 	g := &Grant{Item: item, Resolution: res, Manifest: man, actor: actor, editorRead: editorRead, inspectionRead: inspectionRead, ctx: ctx, r: r,
 		Expires: token.Expiry(r.o.Now(), r.o.Delivery.TTL, r.o.Delivery.Window)}
@@ -247,8 +233,7 @@ func (g *Grant) inspectionFile(f media.File) bool {
 	if f.Gone || f.Blob == "" || f.Fail() != nil {
 		return false
 	}
-	area, _, valid := layout.SplitBlobRef(f.Blob)
-	if !valid || area != layout.AreaOriginals && area != layout.AreaInternal && area != layout.AreaPrivate && area != layout.AreaPublic {
+	if !layout.ValidBlobRef(f.Blob) {
 		return false
 	}
 	if f.IsUpload() {
@@ -257,18 +242,7 @@ func (g *Grant) inspectionFile(f media.File) bool {
 		return !f.Unattached && f.Admission == nil && f.Type != "application/zip" && f.Type != "application/x-zip-compressed" && !strings.EqualFold(path.Ext(f.Path), ".zip") &&
 			g.Item.Kind().AudioUpload(f)
 	}
-	if area == layout.AreaOriginals {
-		return false
-	}
-	preset := g.Item.Kind().private(f.Preset)
-	if preset == nil || preset.HostOnly || preset.Zip != "" {
-		return false
-	}
-	download := g.Item.Kind().Download
-	if publication := g.Item.Kind().Publish; publication != nil && publication.Download != "" {
-		download = publication.Download
-	}
-	if archive := g.Item.Kind().private(download); archive != nil && archive.HostOnly && archive.Zip != "" && strings.HasPrefix(f.Path, archive.Zip) {
+	if g.Item.Kind().private(f.Preset) == nil || !g.Item.Kind().ReaderOutput(g.Manifest, f) {
 		return false
 	}
 	source, exists := g.Manifest.Get(f.From)
@@ -405,9 +379,9 @@ func (g *Grant) url(blob, download string, dl, cookie bool) (string, error) {
 }
 
 // DownloadURL serves a published public/private file as an attachment named
-// name. Private downloads use an exact-file token after the caller's access
-// and quota checks. Originals and internal preparation objects
-// are never exposed through the reader gateway.
+// name. A private download carries the item's token, signed after the
+// caller's access and quota checks. Unreleased internal objects are never
+// exposed through the reader gateway.
 func (r *Reader) DownloadURL(item Item, f media.File, name string, ttl time.Duration) (string, time.Time, error) {
 	key, err := item.Blob(f.Blob)
 	if err != nil {
@@ -420,7 +394,7 @@ func (r *Reader) DownloadURL(item Item, f media.File, name string, ttl time.Dura
 	exp := time.Unix(r.o.Now().Add(ttl).Unix(), 0)
 	q := url.Values{}
 	if area == layout.AreaPrivate {
-		q.Set("t", r.ring.Sign(token.PrivateFileScope(key), exp))
+		q.Set("t", r.ring.Sign(token.ItemScope(item.Prefix()), exp))
 	}
 	if name != "" {
 		q.Set("dl", name)
@@ -470,7 +444,7 @@ func editorView(f media.File, spec []byte) string {
 		return ""
 	}
 	sum := sha256.Sum256([]byte(f.Blob + "|" + string(spec)))
-	return layout.SHA256Name(sum[:])
+	return hex.EncodeToString(sum[:])
 }
 
 // editorViews are the names of m's editor views.
@@ -573,7 +547,7 @@ func (r *Reader) read(ctx context.Context, ref contentref.ContentRef, actor acce
 		out.Access = media.AccessPartial
 	}
 	k := g.Item.Kind()
-	out.Public = r.reg.publicImages(g.Item, g.Manifest)
+	out.Public = r.reg.PublicImages(g.Item, g.Manifest)
 	if editor && k.Versions {
 		out.Public, err = g.editorPublicImages()
 		if err != nil {
@@ -581,15 +555,15 @@ func (r *Reader) read(ctx context.Context, ref contentref.ContentRef, actor acce
 		}
 	}
 	if editor {
-		out.State, out.Full, out.Uploads = k.Readiness(g.Manifest).State, g.Manifest.Full, k.UploadRules()
+		out.State, out.Uploads = k.Readiness(g.Manifest).State, k.UploadRules()
 		if (out.State == media.StateReady || out.State == media.StateMissing) && slices.ContainsFunc(g.Manifest.Files, func(f media.File) bool { return !f.Unattached && statusArchivePending(k, f) }) {
 			out.State = media.StateProcessing
 		}
 	}
 	views := &editorViews{g: g}
 	for _, f := range g.Manifest.Files {
-		if !strings.HasPrefix(f.Path, o.Prefix) {
-			continue
+		if !strings.HasPrefix(f.Path, o.Prefix) || !f.IsUpload() && k.public(f.Preset) != nil {
+			continue // public preset outputs are the read's Public
 		}
 		// A viewer is listed only what it opens: without access nothing, so
 		// no path, size or count tells what the item holds.
@@ -638,12 +612,6 @@ func (r *Reader) read(ctx context.Context, ref contentref.ContentRef, actor acce
 	if editor {
 		progress := r.statusProgress(ctx, ref, g.Manifest)
 		out.Status = statusOf(k, g.Manifest, progress)
-		if pending, admitted, err := r.o.Manifests.admittedManifest(ctx, g.Item); err != nil {
-			return nil, nil, err
-		} else if admitted {
-			out.Status = statusOf(k, pending, media.EncodeStatus{})
-			out.Status.State, out.State = media.StateProcessing, media.StateProcessing
-		}
 		r.addProgress(out.Files, progress)
 	}
 	return out, g, nil
@@ -662,7 +630,7 @@ func (g *Grant) listed(f media.File) bool {
 		}
 		return !f.Unattached && g.Item.Kind().AudioUpload(f) && f.Blob != "" && !f.Gone
 	}
-	if p := g.Item.Kind().private(f.Preset); p != nil && p.HostOnly {
+	if !g.Item.Kind().ReaderOutput(g.Manifest, f) {
 		return false
 	}
 	src, ok := g.Manifest.Get(f.From)
@@ -697,24 +665,27 @@ func (e *editorViews) url(ctx context.Context, f media.File) (string, error) {
 	return e.g.editorURL(name)
 }
 
+// editorPublicImages are a version's public images as editors see them:
+// those not yet in public/ through exact editor URLs.
 func (g *Grant) editorPublicImages() ([]media.PublicImage, error) {
 	var images []media.PublicImage
+	k := g.Item.Kind()
 	for _, file := range g.Manifest.Files {
-		for _, publication := range file.Public {
-			if !publication.Ready() || len(publication.Blobs) == 0 {
+		if !file.IsUpload() {
+			continue
+		}
+		for _, p := range k.PublicFor(file.Path) {
+			outs := k.PublicOutputs(g.Manifest, file, p)
+			if len(outs) == 0 {
 				continue
 			}
-			image := media.PublicImage{From: file.Path, Preset: publication.Preset}
-			for i, blob := range publication.Blobs {
-				address, err := g.editorURL(blob)
+			image := media.PublicImage{From: file.Path, Preset: p.Name}
+			for _, o := range outs {
+				address, err := g.url(o.Blob, "", false, g.cookie())
 				if err != nil {
 					return nil, err
 				}
-				rendition := media.PublicRendition{URL: address}
-				if i < len(publication.Dims) {
-					rendition.W, rendition.H = publication.Dims[i].W, publication.Dims[i].H
-				}
-				image.Renditions = append(image.Renditions, rendition)
+				image.Renditions = append(image.Renditions, media.PublicRendition{URL: address, W: o.W, H: o.H})
 			}
 			images = append(images, image)
 		}

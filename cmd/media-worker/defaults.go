@@ -13,13 +13,11 @@ import (
 	"github.com/open-rails/contentkit/internal/media/image"
 	"github.com/open-rails/contentkit/internal/media/worker"
 	"github.com/open-rails/contentkit/media/avatar"
-	"github.com/open-rails/contentkit/media/layout"
 )
 
 // publishDefaults renders the images the kinds' public presets name
-// (Public.Default) to their create-only objects, then prints each new key
-// and the gateway's MEDIA_GATEWAY_DEFAULTS. Deploy that value only after
-// it succeeds.
+// (Public.Default) into each kind's _default item and its manifest, then
+// prints the kinds it wrote. Rendering again changes nothing.
 func publishDefaults(ctx context.Context, out io.Writer) error {
 	kinds, err := readKinds(os.Getenv("MEDIA_KINDS_FILE"))
 	if err != nil {
@@ -40,23 +38,22 @@ func publishDefaults(ctx context.Context, out io.Writer) error {
 	if err != nil {
 		return err
 	}
-	// Learns the bucket's conditional-PUT support, which create-only writes need.
+	// Learns the bucket's capabilities, which manifest writes need.
 	if err := store.Check(ctx); err != nil {
 		return fmt.Errorf("media store: %w", err)
 	}
-	published, publishErr := image.PublishDefaults(ctx, store, reg)
+	manifests, err := mediastore.NewManifests(store, reg, mediastore.ManifestOptions{})
+	if err != nil {
+		return err
+	}
+	kindsWritten, publishErr := image.PublishDefaults(ctx, manifests)
 	// Report what was written even when publication stopped part way.
-	for _, key := range published.Written {
-		if _, err := fmt.Fprintln(out, key); err != nil {
+	for _, kind := range kindsWritten {
+		if _, err := fmt.Fprintln(out, kind); err != nil {
 			return errors.Join(publishErr, err)
 		}
 	}
-	if publishErr != nil {
-		return publishErr
-	}
-	_, err = fmt.Fprintf(out, "Published %d default rendition(s).\nMEDIA_GATEWAY_DEFAULTS=%s\n",
-		len(published.Written), layout.FormatDefaults(published.Defaults))
-	return err
+	return publishErr
 }
 
 // layered opens a name from the first file system that has it.

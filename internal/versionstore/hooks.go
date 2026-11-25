@@ -2,9 +2,7 @@ package versionstore
 
 import (
 	"context"
-	"errors"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/gate"
@@ -151,7 +149,7 @@ func (u uploads) CanUpload(ctx context.Context, actor access.Actor, t media.Uplo
 	case k.Name == s.reg.Config().Avatars.Kind:
 		writer, err := s.avatarEditor(ctx, actor, t.Ref.ContentID)
 		self := actor.Member() && actor.AccountID() == t.Ref.ContentID
-		return media.UploadGrant{Allowed: writer, Owner: t.Ref.ContentID, Exempt: writer && !self, ArchiveTo: k.ArchiveDestination(t.Path)}, err
+		return media.UploadGrant{Allowed: writer, Exempt: writer && !self, ArchiveTo: k.ArchiveDestination(t.Path)}, err
 	case s.o.Others != nil:
 		return s.o.Others.CanUpload(ctx, actor, t)
 	}
@@ -186,37 +184,7 @@ func (s *Service) canEdit(ctx context.Context, actor access.Actor, k *mediastore
 	if err != nil {
 		return media.UploadGrant{}, err
 	}
-	return media.UploadGrant{Allowed: true, Owner: actor.AccountID(), Exempt: staff}, nil
-}
-
-// itemCommitted records a changed version's facts and queues its publication.
-func (s *Service) itemCommitted(ctx context.Context, ref contentref.ContentRef) error {
-	if ctx.Value(releaseMutationContextKey{}) == true {
-		return nil
-	}
-	k, err := s.reg.Kind(ref.ContentKind)
-	if err != nil || !k.Versions || ref.Version() == "" {
-		return nil
-	}
-	v := versions.Target{Content: ref.ContentID, Version: ref.Version()}
-	vk := k
-	return pgx.BeginFunc(ctx, s.o.Pool, func(tx pgx.Tx) error {
-		// Lock v, then read the manifest: a delayed callback then records the
-		// newest snapshot, not the one current when it was called.
-		if err := s.lockTarget(ctx, tx, v); err != nil {
-			return err
-		}
-		m, _, err := s.m.Manifests.GetTx(ctx, tx, ref)
-		if errors.Is(err, mediastore.ErrNotFound) {
-			return nil
-		} else if err != nil {
-			return err
-		}
-		if err := s.recordFacts(ctx, tx, vk, v, m); err != nil {
-			return err
-		}
-		return s.SchedulePublicationTx(ctx, tx, []versions.Target{v})
-	})
+	return media.UploadGrant{Allowed: true, Exempt: staff}, nil
 }
 
 func (s *Service) failed(ctx context.Context, ref contentref.ContentRef, path string, err error) {

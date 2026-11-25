@@ -283,7 +283,6 @@ Clients branch on `code`; `error` is a message for people and may change.
 | `not_joinable` | 409 | The group has no free offer to join: it sells its membership, or nothing. |
 | `not_ready` | 409 | A version that would go live still has files processing or a publication not yet current; `error` says what. Retry once processing finishes. |
 | `not_uploaded` | 409 | A commit names an upload that has not landed; `blobs` lists the ones to upload again. |
-| `quota_exceeded` | 413 | The uploader's storage quota is used up. |
 | `rate_limited` | 429 | Too many requests; retry after `retry_after` seconds (also the Retry-After header). |
 | `tenant_mismatch` | 500 | A host port answered with another tenant's data: a configuration fault. |
 | `too_large` | 413 | The file is larger than its upload path allows; `details` has `size` and `max_bytes`. |

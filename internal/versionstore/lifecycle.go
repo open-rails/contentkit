@@ -7,16 +7,15 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/contentkit/contentref"
 	mediastore "github.com/open-rails/contentkit/internal/mediastore"
-	"github.com/open-rails/contentkit/media"
 	versions "github.com/open-rails/contentkit/media/versions"
 )
 
-// DeleteTx permanently fences targets while their catalog rows are locked.
-// The caller commits this claim before Delete erases storage, so retirement
-// hooks never wait on catalog locks held by the erasing transaction.
+// DeleteTx claims targets' media erasure while their catalog rows are
+// locked: purge_claimed_at, which a restore checks under the same locks and
+// refuses from then on. It touches no storage; Delete erases the bytes after
+// the caller commits.
 func (s *Service) DeleteTx(ctx context.Context, tx pgx.Tx, targets []versions.Target) error {
-	// Lock the versions after their contents, as catalog writes and media
-	// callbacks do.
+	// Lock the versions after their contents, as catalog writes do.
 	contents, ids := make([]string, len(targets)), make([]string, len(targets))
 	for i, t := range targets {
 		contents[i], ids[i] = t.Content, t.Version
@@ -24,47 +23,36 @@ func (s *Service) DeleteTx(ctx context.Context, tx pgx.Tx, targets []versions.Ta
 	if _, err := tx.Exec(ctx, `SELECT FROM `+s.t.items+` WHERE tenant_id = $1 AND id = ANY($2) ORDER BY id FOR UPDATE`, s.o.Tenant, contents); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(ctx, `SELECT FROM `+s.t.versions+` v JOIN unnest($2::text[], $3::text[]) AS t(content, version)
-ON v.content_id = t.content AND (t.version = '' OR v.id = t.version) WHERE v.tenant_id = $1 ORDER BY v.id FOR UPDATE OF v`, s.o.Tenant, contents, ids); err != nil {
-		return err
-	}
-	refs, _, err := s.itemRefs(ctx, tx, targets)
-	if err != nil {
-		return err
-	}
-	for _, ref := range refs {
-		if err := s.m.Jobs.ClaimErasureTx(ctx, tx, ref); err != nil {
-			return err
-		}
-	}
-	return nil
+	_, err := tx.Exec(ctx, `UPDATE `+s.t.versions+` v SET purge_claimed_at = coalesce(v.purge_claimed_at, now())
+FROM (SELECT v.id FROM `+s.t.versions+` v JOIN unnest($2::text[], $3::text[]) AS t(content, version)
+ ON v.content_id = t.content AND (t.version = '' OR v.id = t.version) WHERE v.tenant_id = $1 ORDER BY v.id FOR UPDATE OF v) claimed
+WHERE v.tenant_id = $1 AND v.id = claimed.id`, s.o.Tenant, contents, ids)
+	return err
 }
 
-// Delete erases the already-fenced exact versions. A stable operation ID
-// preserves the original cleanup targets when a purge retries after failure.
+// Delete erases the claimed exact versions' media: each item's permanent
+// fence, tombstone manifest and bytes. Retrying repeats it.
 func (s *Service) Delete(ctx context.Context, targets []versions.Target) error {
 	for _, target := range targets {
 		if target.Version == "" {
 			return errors.New("versions: storage erasure requires exact versions")
 		}
 	}
-	refs, _, err := s.itemRefs(ctx, s.o.Pool, targets)
-	if err != nil {
+	// Refuse a mistaken direct call before erasing any member of the batch.
+	vers := make([]string, len(targets))
+	for i, t := range targets {
+		vers[i] = t.Version
+	}
+	var claimed int
+	if err := s.o.Pool.QueryRow(ctx, `SELECT count(*) FROM `+s.t.versions+` WHERE tenant_id = $1 AND id = ANY($2) AND purge_claimed_at IS NOT NULL`,
+		s.o.Tenant, vers).Scan(&claimed); err != nil {
 		return err
 	}
-	// Refuse a mistaken direct call before erasing any member of the batch.
-	if err := pgx.BeginFunc(ctx, s.o.Pool, func(tx pgx.Tx) error {
-		for _, ref := range refs {
-			claimed, err := s.m.Jobs.ErasureStartedTx(ctx, tx, ref)
-			if err != nil {
-				return err
-			}
-			if !claimed {
-				return errors.New("versions: storage erasure requires a committed claim")
-			}
-		}
-		return nil
-	}); err != nil {
+	if claimed != len(targets) {
+		return errors.New("versions: storage erasure requires a committed claim")
+	}
+	refs, _, err := s.itemRefs(ctx, s.o.Pool, targets)
+	if err != nil {
 		return err
 	}
 	var failures error
@@ -72,37 +60,48 @@ func (s *Service) Delete(ctx context.Context, targets []versions.Target) error {
 		if err := ctx.Err(); err != nil {
 			return errors.Join(failures, err)
 		}
-		if err := s.m.Jobs.Erase(ctx, media.Deletion{Ref: ref, OperationID: "content-purge:" + ref.Version()}); err != nil {
+		if err := s.m.Jobs.Erase(ctx, ref); err != nil {
 			failures = errors.Join(failures, err)
 		}
 	}
 	return failures
 }
 
-// CheckRestorableTx refuses a version after its permanent erasure claim,
-// including a claim whose storage response or catalog transaction failed.
-// Callers hold the same parent/version locks as DeleteTx.
+// CheckRestorableTx refuses a version whose erasure was claimed, or whose
+// media was erased. Callers hold the same parent/version locks as DeleteTx.
 func (s *Service) CheckRestorableTx(ctx context.Context, tx pgx.Tx, targets []versions.Target) error {
+	contents, vers := make([]string, len(targets)), make([]string, len(targets))
+	for i, t := range targets {
+		contents[i], vers[i] = t.Content, t.Version
+	}
+	var claimed bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM `+s.t.versions+` v JOIN unnest($2::text[], $3::text[]) AS t(content, version)
+ ON v.content_id = t.content AND (t.version = '' OR v.id = t.version) WHERE v.tenant_id = $1 AND v.purge_claimed_at IS NOT NULL)`,
+		s.o.Tenant, contents, vers).Scan(&claimed); err != nil {
+		return err
+	}
+	if claimed {
+		return mediastore.ErrNotFound
+	}
 	refs, _, err := s.itemRefs(ctx, tx, targets)
 	if err != nil {
 		return err
 	}
 	for _, ref := range refs {
-		started, err := s.m.Jobs.ErasureStartedTx(ctx, tx, ref)
+		erased, err := s.m.Jobs.Erased(ctx, ref)
 		if err != nil {
 			return err
 		}
-		if started {
+		if erased {
 			return mediastore.ErrNotFound
 		}
 	}
 	return nil
 }
 
-// ResumeDeletes keeps late-write cleanup in the content purge operation.
-func (s *Service) ResumeDeletes(ctx context.Context, limit int) (int, error) {
-	return s.m.Jobs.PurgeRetired(ctx, limit)
-}
+// ResumeDeletes has nothing to drain: each erased item's garbage collection
+// takes what lands after its erasure.
+func (s *Service) ResumeDeletes(ctx context.Context, limit int) (int, error) { return 0, nil }
 
 // itemRefs are targets' versions' media items, and their versions by kind.
 func (s *Service) itemRefs(ctx context.Context, q querier, targets []versions.Target) ([]contentref.ContentRef, map[string][]string, error) {

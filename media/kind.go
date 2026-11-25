@@ -61,12 +61,3 @@ const (
 const (
 	MaxSubtitleTracks = 16
 )
-
-// DownloadState is how far an item's Download file is.
-type DownloadState int
-
-const (
-	DownloadNone    DownloadState = iota // nothing to serve: no source, a failed or dropped one
-	DownloadPending                      // still being placed or produced
-	DownloadReady
-)

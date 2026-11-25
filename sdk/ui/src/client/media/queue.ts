@@ -33,7 +33,7 @@ export interface QueueItem {
 
 export interface QueueSnapshot {
   readonly items: readonly QueueItem[];
-  /** A rate, quota or permission refusal: no new uploads start until start(). */
+  /** A rate or permission refusal: no new uploads start until start(). */
   readonly blocked?: ContentKitError;
   /** Every item is uploaded (or committed) and none is in flight. */
   readonly ready: boolean;

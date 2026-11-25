@@ -100,7 +100,7 @@ export class ReadStore {
             let completed = false;
             for (const slot of matching()) {
               const before = slot.entry.read;
-              const read = slot.options.status ? update.read : before ? { ...before, status: update.read.status, state: update.read.state, full: update.read.status?.state === "full" } : null;
+              const read = slot.options.status ? update.read : before ? { ...before, status: update.read.status, state: update.read.state } : null;
               if (read) this.update(slot, { read, error: undefined, ...(slot.options.status ? { loading: false, loaded: true } : {}) });
               if (read && slot.ctl) slot.stale = true;
               if (!slot.options.status) this.load(slot.key, "changed");

@@ -167,7 +167,7 @@ func (f *faults) storageParent(path string) string {
 		return ""
 	}
 	parsed, ok := layout.Parse(key)
-	if !ok || parsed.Scope != mediaScope || parsed.Version != "" {
+	if !ok || parsed.Scope != mediaScope {
 		return ""
 	}
 	return f.h.items.versionOwner(parsed.Kind, parsed.ID)
@@ -240,11 +240,7 @@ func (f *faults) expire(r *http.Request) *http.Request {
 		return r
 	}
 	q := r.URL.Query()
-	scope := strings.TrimSuffix(parsed.Folder(), "/")
-	if f.h.ring.VerifyScope(q.Get("t"), token.PrivateFileScope(key), time.Now()) == nil {
-		scope = token.PrivateFileScope(key)
-	}
-	q.Set("t", f.h.ring.Sign(scope, time.Now().Add(-time.Hour)))
+	q.Set("t", f.h.ring.Sign(token.ItemScope(parsed.Folder()), time.Now().Add(-time.Hour)))
 	r.URL.RawQuery = q.Encode()
 	return r
 }

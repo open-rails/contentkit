@@ -15,43 +15,20 @@ import (
 	versions "github.com/open-rails/contentkit/media/versions"
 )
 
-// WithChapterLocks settles admitted media changes before catalog marker
-// authoring. The caller holds source locks first and takes catalog rows inside
-// fn; uploads/recovery take manifest then catalog locks in the same order.
+// WithChapterLocks runs fn, which authors chapter markers, once every target
+// exists. Markers name virtual paths; a commit that renames or removes one
+// validates against them in every attempt and moves them after it lands.
 func (s *Service) WithChapterLocks(ctx context.Context, targets []versions.Target, fn func() error) error {
 	vs, err := s.versions(ctx, s.o.Pool, targets)
 	if err != nil {
 		return err
 	}
-	refs := map[string]contentref.ContentRef{}
 	for _, target := range targets {
-		v, ok := vs[target]
-		if !ok {
+		if _, ok := vs[target]; !ok {
 			return ErrNotFound
 		}
-		ref, err := s.ref(v.Kind, target)
-		if err != nil {
-			return err
-		}
-		item, err := s.reg.Item(ref)
-		if err != nil {
-			return err
-		}
-		refs[item.Prefix()] = ref
 	}
-	keys := make([]string, 0, len(refs))
-	for key := range refs {
-		keys = append(keys, key)
-	}
-	slices.Sort(keys)
-	var locked func(int) error
-	locked = func(index int) error {
-		if index == len(keys) {
-			return fn()
-		}
-		return s.m.Manifests.WithRecoveredLock(ctx, refs[keys[index]], func() error { return locked(index + 1) })
-	}
-	return locked(0)
+	return fn()
 }
 
 func validateChapterPaths(ctx context.Context, q querier, table, tenant, version string, renames map[string]string, removed []string) error {
@@ -130,19 +107,20 @@ func (s *Service) validatePathsChanged(ctx context.Context, ref contentref.Conte
 	return validateChapterPaths(ctx, s.o.Pool, s.t.segments, s.o.Tenant, ref.Version(), renames, removed)
 }
 
-func (s *Service) pathsChanged(ctx context.Context, tx pgx.Tx, ref contentref.ContentRef, renames map[string]string, removed []string) error {
+func (s *Service) pathsChanged(ctx context.Context, ref contentref.ContentRef, renames map[string]string, removed []string) error {
 	k, err := s.reg.Kind(ref.ContentKind)
 	if err != nil || !k.Versions {
 		return err
 	}
-	if err := applyChapterPaths(ctx, tx, s.t.segments, s.o.Tenant, ref.Version(), renames, removed); err != nil {
-		return err
-	}
-	return s.SchedulePublicationTx(ctx, tx, []versions.Target{{Content: ref.ContentID, Version: ref.Version()}})
+	return pgx.BeginFunc(ctx, s.o.Pool, func(tx pgx.Tx) error {
+		if err := applyChapterPaths(ctx, tx, s.t.segments, s.o.Tenant, ref.Version(), renames, removed); err != nil {
+			return err
+		}
+		return s.SchedulePublicationTx(ctx, tx, []versions.Target{{Content: ref.ContentID, Version: ref.Version()}})
+	})
 }
 
-// ChapterPathHooks installs the same marker contract in stock worker recovery.
-// The journal must not settle a recovered rename without its catalog update.
+// ChapterPathHooks installs the same marker contract in stock workers.
 func ChapterPathHooks(pool *pgxpool.Pool, schema string, registry *mediastore.Registry, wake func(context.Context, pgx.Tx, contentref.ContentRef) error) mediastore.Hooks {
 	table := pgxIdent(schema, "content_segments")
 	tenant := func(ctx context.Context, q querier, ref contentref.ContentRef) (string, error) {
@@ -169,18 +147,20 @@ func ChapterPathHooks(pool *pgxpool.Pool, schema string, registry *mediastore.Re
 			}
 			return validateChapterPaths(ctx, pool, table, partition, ref.Version(), renames, removed)
 		},
-		PathsChanged: func(ctx context.Context, tx pgx.Tx, ref contentref.ContentRef, renames map[string]string, removed []string) error {
-			partition, err := tenant(ctx, tx, ref)
-			if err != nil || partition == "" {
-				return err
-			}
-			if err := applyChapterPaths(ctx, tx, table, partition, ref.Version(), renames, removed); err != nil {
-				return err
-			}
-			if wake == nil {
-				return errors.New("versions: chapter mutation needs durable publisher")
-			}
-			return wake(ctx, tx, ref)
+		PathsChanged: func(ctx context.Context, ref contentref.ContentRef, renames map[string]string, removed []string) error {
+			return pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
+				partition, err := tenant(ctx, tx, ref)
+				if err != nil || partition == "" {
+					return err
+				}
+				if err := applyChapterPaths(ctx, tx, table, partition, ref.Version(), renames, removed); err != nil {
+					return err
+				}
+				if wake == nil {
+					return errors.New("versions: chapter mutation needs durable publisher")
+				}
+				return wake(ctx, tx, ref)
+			})
 		},
 	}
 }

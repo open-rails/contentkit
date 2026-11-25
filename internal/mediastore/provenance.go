@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"path"
 	"slices"
-	"strings"
 
 	media "github.com/open-rails/contentkit/media"
 )
@@ -28,44 +27,6 @@ func Fingerprint(parts ...string) string {
 func SpecFP(src media.File, spec any, recipe string) string {
 	b, _ := json.Marshal(spec)
 	return Fingerprint(src.Blob, src.Edit.Hash(), string(b), recipe)
-}
-
-// ZipInputs are the files a Zip preset packs: the files under its prefix
-// whose upload is attached, in manifest order.
-func (k *RegisteredKind) ZipInputs(m *Manifest, p *media.Private) []media.File {
-	var out []media.File
-	for _, f := range m.Files {
-		if strings.HasPrefix(f.Path, p.Zip) && f.Blob != "" && !f.Gone && k.attached(m, f) {
-			out = append(out, f)
-		}
-	}
-	return out
-}
-
-// ZipFP is the fingerprint of a Zip preset's current inputs.
-func ZipFP(inputs []media.File) string {
-	parts := []string{media.ZipRecipe}
-	for _, f := range inputs {
-		parts = append(parts, f.Path, f.Blob)
-	}
-	return Fingerprint(parts...)
-}
-
-// LazyZip reports a reader download archive assembled on demand, rather than
-// a processing output. Other Zip presets still build with their producer.
-func (k *RegisteredKind) LazyZip(p *media.Private) bool {
-	return p.Zip != "" && k.Publish != nil && k.Publish.Download == p.Name
-}
-
-// ZipStale reports a Zip preset whose output does not pack its current
-// inputs: missing with inputs, kept without, or another fingerprint.
-func (k *RegisteredKind) ZipStale(m *Manifest, p *media.Private) bool {
-	in := k.ZipInputs(m, p)
-	outs := m.Outputs(p.Zip, p.Name)
-	if len(in) == 0 {
-		return len(outs) > 0
-	}
-	return len(outs) != 1 || outs[0].FP != ZipFP(in)
 }
 
 // attached reports a file that is part of the item: an attached upload, or
@@ -102,20 +63,12 @@ func (k *RegisteredKind) readiness(m *Manifest, includeUnattached bool) media.Re
 		switch {
 		case f.Fail() != nil && !k.audioOriginal(f):
 			r.Failed = append(r.Failed, f.Path)
-		case f.Blob == "" || measure || slices.ContainsFunc(f.Pending, func(p string) bool { return k.private(p) != nil || public && k.public(p) != nil }) ||
-			public && slices.ContainsFunc(f.Public, func(p media.Publication) bool { return !p.Ready() }):
+		case f.Blob == "" || measure || slices.ContainsFunc(f.Pending, func(p string) bool { return k.private(p) != nil || public && k.public(p) != nil }):
 			r.Processing = append(r.Processing, f.Path)
-		}
-	}
-	for i := range k.Private {
-		if p := &k.Private[i]; p.Zip != "" && !k.LazyZip(p) && k.ZipStale(m, p) {
-			r.Processing = append(r.Processing, p.To)
 		}
 	}
 	r.Missing = k.Missing(m)
 	switch {
-	case m.Full && len(r.Processing) > 0:
-		r.State = media.StateFull
 	case len(r.Processing) > 0:
 		r.State = media.StateProcessing
 	case len(r.Failed) > 0:
@@ -158,13 +111,6 @@ func (k *RegisteredKind) Normalize(m *Manifest) {
 			if len(f.Pending) == 0 {
 				f.Pending = nil
 			}
-			f.Public = slices.DeleteFunc(slices.Clone(f.Public), func(pub media.Publication) bool {
-				p := k.public(pub.Preset)
-				return p == nil || !k.owned(*f, p, pub)
-			})
-			if len(f.Public) == 0 {
-				f.Public = nil
-			}
 			f.Gone = f.Gone || k.droppable(m, *f)
 			continue
 		}
@@ -196,9 +142,9 @@ func (k *RegisteredKind) droppable(m *Manifest, f media.File) bool {
 
 // order sorts m.Files canonically: each Upload's files in declaration
 // order (attached before unattached, otherwise as they are), then each
-// private preset's outputs in their uploads' order, then unknown files.
+// preset's outputs in their uploads' order, then unknown files.
 func (k *RegisteredKind) order(m *Manifest) {
-	unknown := 2*len(k.Uploads) + len(k.Private)
+	unknown := 2*len(k.Uploads) + len(k.Private) + len(k.Public)
 	ranks := make(map[string]int, len(m.Files))
 	var uploads []media.File
 	for _, f := range m.Files {
@@ -240,6 +186,8 @@ func (k *RegisteredKind) rank(f media.File, unknown int) int {
 		}
 	} else if p := slices.IndexFunc(k.Private, func(p media.Private) bool { return p.Name == f.Preset }); p >= 0 {
 		return 2*len(k.Uploads) + p
+	} else if p := slices.IndexFunc(k.Public, func(p media.Public) bool { return p.Name == f.Preset }); p >= 0 {
+		return 2*len(k.Uploads) + len(k.Private) + p
 	}
 	return unknown
 }

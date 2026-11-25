@@ -84,7 +84,6 @@ export {
   acceptOf,
   acceptsFile,
   defaultImage,
-  stableImage,
   filesFor,
   isPattern,
   ratioLabel,

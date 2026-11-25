@@ -83,6 +83,9 @@ type Part struct {
 type Capabilities struct {
 	ConditionalPut bool // If-Match / If-None-Match on PUT
 	ChecksumSHA256 bool // x-amz-checksum-sha256 enforced on PUT
+	// NeverVersioned: the bucket never had versioning, so a conditional PUT
+	// compares atomically with its write (Ceph RGW guards only such buckets).
+	NeverVersioned bool
 }
 
 // Store is the bucket. Item builds keys and enforces ownership. A backend may
@@ -93,6 +96,8 @@ type Store interface {
 	Head(ctx context.Context, key string) (Object, error)
 	Delete(ctx context.Context, key string) error
 	List(ctx context.Context, prefix string) iter.Seq2[Object, error]
+	// Folders lists the common prefixes ending in "/" directly under prefix.
+	Folders(ctx context.Context, prefix string) iter.Seq2[string, error]
 	// Copy copies src to dst server-side, keeping its content type (unless
 	// o.ContentType), cache control and metadata; objects past the backend's single-copy limit
 	// (5 GiB on S3) copy in parts. The returned Object has dst's size.
@@ -109,6 +114,10 @@ type Store interface {
 	ListParts(ctx context.Context, key, uploadID string) ([]Part, error)
 	CompleteMultipart(ctx context.Context, key, uploadID string, parts []Part) (Object, error)
 	AbortMultipart(ctx context.Context, key, uploadID string) error
+
+	// Versioning is the bucket's versioning status: "" when it was never
+	// enabled, else "Enabled" or "Suspended".
+	Versioning(ctx context.Context) (string, error)
 
 	// Capabilities are the backend's, probed on first use when not given; an
 	// error (ErrUnavailable) means they are not known yet.

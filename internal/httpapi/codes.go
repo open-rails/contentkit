@@ -56,7 +56,6 @@ var codes = []ErrorCode{
 	{"too_many_files", http.StatusConflict, "The commit would put more files in an upload path, or the item, than allowed; `details.max` is the limit.", "Too many files."},
 	{"gone", http.StatusGone, "The content was removed.", "This content was removed."},
 	{"too_large", http.StatusRequestEntityTooLarge, "The file is larger than its upload path allows; `details` has `size` and `max_bytes`.", "The file is too large."},
-	{"quota_exceeded", http.StatusRequestEntityTooLarge, "The uploader's storage quota is used up.", "Your storage is full."},
 	{"image_too_large", http.StatusRequestEntityTooLarge, "The image has more pixels or frames than the processor decodes.", "The image is too large to process."},
 	{"type_not_allowed", http.StatusUnsupportedMediaType, "The file type is not allowed in the upload path; `details.allowed` lists the types.", "This file type is not allowed here."},
 	{"animation_unsupported", http.StatusUnsupportedMediaType, "An AVIF or HEIF image sequence, which is decoded as one frame.", "Animated AVIF and HEIF images are not supported."},

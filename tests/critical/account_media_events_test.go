@@ -10,8 +10,6 @@ import (
 	"testing"
 	"time"
 
-	mediastore "github.com/open-rails/contentkit/internal/mediastore"
-
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	ck "github.com/open-rails/contentkit"
@@ -46,24 +44,6 @@ func TestAccountMediaEventReader(t *testing.T) {
 		user, credential := w.person(t, 0)
 		client := a.client(credential)
 		ref := media.RefBody{Kind: "user", ID: user.ID}
-		// Hold the observation transaction while the actual image processor can
-		// finish its manifest. Readiness and event visibility are separate commits.
-		mediaConfig, err := a.cfg.MediaKinds()
-		must(t, err)
-		registry, err := mediastore.NewRegistry(mediaConfig, mediastore.Hooks{})
-		must(t, err)
-		accountRef, err := registry.Ref("user", user.ID)
-		must(t, err)
-		item, err := registry.Item(accountRef)
-		must(t, err)
-		storage, _, err := a.cfg.AccountMedia()
-		must(t, err)
-		barrier, err := pgx.ConnectConfig(t.Context(), w.pool.Config().ConnConfig.Copy())
-		must(t, err)
-		defer barrier.Close(context.Background())
-		key := storage.Schema + "/media-processing/" + item.Prefix()
-		_, err = barrier.Exec(t.Context(), "SELECT pg_advisory_lock(hashtextextended($1,0))", key)
-		must(t, err)
 		_, err = client.IngestMedia(t.Context(), nil, ref, uuid.NewString(), []ck.MediaFile{{Path: "avatar.png", Type: "image/png", Body: bytes.NewReader(imageBytes(t))}})
 		must(t, err)
 		ready := errors.New("avatar finished")
@@ -79,20 +59,9 @@ func TestAccountMediaEventReader(t *testing.T) {
 			t.Fatalf("actual account processor did not finish: %v", err)
 		}
 		query.After = before.NextCursor
-		page, err := reader.ListEvents(t.Context(), query)
-		must(t, err)
-		if len(page.Events) != 0 {
-			t.Fatalf("processing event crossed its held commit barrier: %+v", page)
-		}
-		waitForWithin(t, 10*time.Second, func() bool {
-			var blocked bool
-			must(t, w.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid)))`, int32(barrier.PgConn().PID())).Scan(&blocked))
-			return blocked
-		})
-		_, err = barrier.Exec(t.Context(), "SELECT pg_advisory_unlock(hashtextextended($1,0))", key)
-		must(t, err)
-		// The ready snapshot is not an acknowledgement of the observation
-		// transaction. Wait for that durable fact before comparing event readers.
+		var page eventlog.Page
+		// The ready snapshot is read from the bucket; its fact is recorded
+		// with the item cache. Wait for it before comparing event readers.
 		waitForWithin(t, 30*time.Second, func() bool {
 			page, err = reader.ListEvents(t.Context(), query)
 			must(t, err)

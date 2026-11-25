@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/open-rails/contentkit/content"
 	mediastore "github.com/open-rails/contentkit/internal/mediastore"
 
 	"github.com/open-rails/contentkit/internal/gate"
@@ -26,9 +27,21 @@ import (
 // engineAvatars is how the engine shows people's avatars (Config.Accounts.Avatars),
 // and on a site that is not the primary, forwards their writes to it.
 type engineAvatars struct {
-	urls    *mediastore.Registry // builds avatar URLs: the primary's registry, else one of the avatar kind alone
-	rule    *media.PresetRule    // the content model's
-	forward *avatarForward       // nil on the primary
+	images  content.Avatars      // people's current avatars, from the tenant's account item cache
+	reg     *mediastore.Registry // the avatar kind's registry
+	kind    string
+	preset  string
+	forward *avatarForward // nil on the primary
+}
+
+// rule is the content model's avatar preset, with its default image.
+func (a *engineAvatars) rule(ctx context.Context) *media.PresetRule {
+	for _, r := range a.reg.PresetRulesWithDefaults(ctx) {
+		if r.Kind == a.kind && r.Name == a.preset {
+			return &r
+		}
+	}
+	return nil
 }
 
 // newAvatars builds Config.Accounts.Avatars over the engine's media.
@@ -40,21 +53,25 @@ func (e *Engine) newAvatars(deps Deps) (*engineAvatars, error) {
 	kind, preset := a.kind()
 	kind.Namespace = ""
 	kind.Account = true
-	out := &engineAvatars{urls: e.media.reg}
+	out := &engineAvatars{images: e.media.cache, reg: e.media.reg, kind: kind.Name, preset: preset}
 	if a.Primary != "" {
 		// Its media host serves the primary's files: URLs are built at it.
+		// The primary records avatars in the tenant's account item cache,
+		// which this site reads; the kind's defaults are read from the bucket.
 		var err error
-		if out.urls, err = mediastore.NewRegistry(media.Config{Namespace: e.media.reg.Config().Namespace, Scope: e.media.reg.Config().Scope, BaseURL: e.media.reg.Config().BaseURL,
+		if out.reg, err = mediastore.NewRegistry(media.Config{Namespace: e.media.reg.Config().Namespace, Scope: e.media.reg.Config().Scope, BaseURL: e.media.reg.Config().BaseURL,
 			Kinds: []media.Kind{kind}, Avatars: media.Avatars{Kind: kind.Name, Preset: preset}}, mediastore.Hooks{}); err != nil {
 			return nil, fmt.Errorf("contentkit: Config.Accounts.Avatars: %w", err)
 		}
-		if out.forward, err = newAvatarForward(e, deps, kind, a); err != nil {
+		if _, err = mediastore.NewManifests(e.media.store, out.reg, mediastore.ManifestOptions{}); err != nil {
 			return nil, err
 		}
-	}
-	for _, r := range out.urls.PresetRules() {
-		if r.Kind == kind.Name && r.Name == preset {
-			out.rule = &r
+		schema, _ := e.accountStorage()
+		if out.images, err = mediastore.NewPGCache(e.pool, schema, out.reg, mediastore.CacheOptions{}); err != nil {
+			return nil, err
+		}
+		if out.forward, err = newAvatarForward(e, deps, kind, a); err != nil {
+			return nil, err
 		}
 	}
 	return out, nil

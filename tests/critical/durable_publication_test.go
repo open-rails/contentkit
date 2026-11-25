@@ -47,30 +47,23 @@ func TestDurableTextPublication(t *testing.T) {
 	if queued.Live || queued.PublishedAt != nil {
 		t.Fatal("accepted publication was reported as completed before its worker ran")
 	}
-	var jobs int
-	must(t, w.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+w.schema+`_river.river_job j
- JOIN `+w.schema+`.content_publication_requests r ON r.id::text=j.args->>'id'
- WHERE j.kind='contentkit_publication' AND r.content_id=$1 AND j.scheduled_at=$2`, item.ID, due).Scan(&jobs))
-	if jobs != 1 {
-		t.Fatalf("accepted publication has %d durable scheduled jobs, want one", jobs)
+	// One release job per version: accepting publication wakes it, and its
+	// run plans the due time from the catalog.
+	unfinished := func(version string) (jobs int) {
+		t.Helper()
+		must(t, w.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+w.schema+`_river.river_job
+ WHERE kind='contentkit_publication' AND args->>'version'=$1 AND state NOT IN ('completed','cancelled','discarded')`, version).Scan(&jobs))
+		return jobs
 	}
 	request := currentPublicationJob(t, a, item.Versions[0].ID)
-	if !request.Due.Equal(due) {
-		t.Fatalf("accepted request due=%v, want %v", request.Due, due)
+	if request.ID == 0 || unfinished(item.Versions[0].ID) != 1 {
+		t.Fatalf("accepted publication has %d release jobs, want one", unfinished(item.Versions[0].ID))
 	}
 	for _, at := range []time.Time{due.Add(time.Hour), due.Add(-30 * time.Minute)} {
 		_, err = admin.PostContentPublish(t.Context(), item.ID, catalog.PublishInput{PublishAt: &at})
 		must(t, err)
-		next := currentPublicationJob(t, a, item.Versions[0].ID)
-		if next.ID != request.ID || !next.Due.Equal(at) {
-			t.Fatalf("rescheduled request=%+v, want %s due %v", next, request.ID, at)
-		}
-		var scheduled time.Time
-		var priority int
-		must(t, w.pool.QueryRow(t.Context(), `SELECT count(*),min(scheduled_at),min(priority) FROM `+w.schema+`_river.river_job
- WHERE kind='contentkit_publication' AND args->>'id'=$1 AND state NOT IN ('completed','cancelled','discarded')`, request.ID).Scan(&jobs, &scheduled, &priority))
-		if jobs != 1 || scheduled.After(at) || priority != 1 {
-			t.Fatalf("rescheduled publication: jobs=%d scheduled=%v priority=%d, want one job by %v with priority 1", jobs, scheduled, priority, at)
+		if next := currentPublicationJob(t, a, item.Versions[0].ID); next.ID != request.ID || unfinished(item.Versions[0].ID) != 1 {
+			t.Fatalf("rescheduling made job %+v, want the version's one job %d", next, request.ID)
 		}
 	}
 	actual := due.Add(2 * time.Hour)
@@ -128,12 +121,8 @@ func TestDurableTextPublication(t *testing.T) {
 	}
 	must(t, fleet.Stop(t.Context()))
 	must(t, admin.DeleteContentVersion(t.Context(), item.ID, edition.ID))
-	withdrawal := currentPublicationJob(t, a, edition.ID)
-	var priority int
-	must(t, w.pool.QueryRow(t.Context(), `SELECT priority FROM `+w.schema+`_river.river_job
- WHERE kind='contentkit_publication' AND args->>'id'=$1 AND state NOT IN ('completed','cancelled','discarded')`, withdrawal.ID).Scan(&priority))
-	if withdrawal.ID == request.ID || priority != 1 {
-		t.Fatalf("withdrawal request=%s priority=%d, want a new request with priority 1", withdrawal.ID, priority)
+	if currentPublicationJob(t, a, edition.ID).ID == 0 || unfinished(edition.ID) != 1 {
+		t.Fatalf("deletion woke %d release jobs, want one", unfinished(edition.ID))
 	}
 	must(t, fleet.Start(t.Context()))
 	awaitDuePublications(t, a)
@@ -170,9 +159,9 @@ func TestDurableTextPublication(t *testing.T) {
 	}
 }
 
-// A manifest that fails validation fails every attempt alike. Its publication
-// job is cancelled after the first failure instead of retrying, and the
-// request keeps its failed row and error for the editor.
+// A manifest that fails validation fails every attempt alike. Its release
+// job is cancelled after the first failure instead of retrying, keeping the
+// error.
 func TestInvalidManifestPublicationIsNotRetried(t *testing.T) {
 	w := newWorld(t)
 	a := w.apps[0]
@@ -198,9 +187,8 @@ func TestInvalidManifestPublicationIsNotRetried(t *testing.T) {
 	var manifest *mediastore.Manifest
 	var i int
 	// The editor view is written after the page is ready, and other derivative
-	// work may still be editing the manifest through its journal: read it only
-	// once no media job is in flight, as a raw rewrite under an in-flight edit
-	// wedges the folder.
+	// work may still be editing the manifest: read it only once no media job is
+	// in flight, so the raw rewrite below is the last write.
 	waitFor(t, func() bool {
 		jobs, err := queue.JobList(t.Context(), river.NewJobListParams().Kinds((workqueue.IngestArgs{}).Kind(), (workqueue.DerivativeArgs{}).Kind()).States(
 			rivertype.JobStateAvailable, rivertype.JobStateRunning, rivertype.JobStateRetryable, rivertype.JobStateScheduled, rivertype.JobStatePending).First(1))
@@ -226,20 +214,22 @@ func TestInvalidManifestPublicationIsNotRetried(t *testing.T) {
 	must(t, err)
 	_, err = storage.store.Put(t.Context(), item.ManifestKey(), bytes.NewReader(rewritten), int64(len(rewritten)), media.PutOptions{ContentType: "application/json"})
 	must(t, err)
+	// Reads trust the item cache's revision: drop its row so the release
+	// reads the rewritten manifest.
+	_, err = w.pool.Exec(t.Context(), `DELETE FROM `+pgx.Identifier{w.schema, "content_media_items"}.Sanitize()+` WHERE content_version_id=$1`, ref.Version)
+	must(t, err)
 
 	_, err = admin.PostContentPublish(t.Context(), ref.ID, catalog.PublishInput{})
 	must(t, err)
-	request := currentPublicationJob(t, a, ref.Version).ID
-	var job, row, failure string
+	var job, failure string
 	var attempts int
 	waitForWithin(t, 45*time.Second, func() bool {
 		wakeDuePublicationJobs(t, a)
-		must(t, w.pool.QueryRow(t.Context(), `SELECT j.state,j.attempt,r.state,coalesce(r.error,'') FROM `+pgx.Identifier{publicationRiverSchema(a), "river_job"}.Sanitize()+` j
- JOIN `+pgx.Identifier{w.schema, "content_publication_requests"}.Sanitize()+` r ON r.id::text=j.args->>'id'
- WHERE j.kind='contentkit_publication' AND r.id=$1 ORDER BY j.id DESC LIMIT 1`, request).Scan(&job, &attempts, &row, &failure))
+		must(t, w.pool.QueryRow(t.Context(), `SELECT state,attempt,coalesce(errors[array_length(errors,1)]->>'error','') FROM `+pgx.Identifier{publicationRiverSchema(a), "river_job"}.Sanitize()+`
+ WHERE kind='contentkit_publication' AND args->>'version'=$1 ORDER BY id DESC LIMIT 1`, ref.Version).Scan(&job, &attempts, &failure))
 		return job != "available" && job != "running"
 	})
-	if job != "cancelled" || attempts != 1 || row != "failed" || !strings.Contains(failure, "invalid editor view") {
-		t.Fatalf("invalid manifest publication: job %s after %d attempts, request %s with error %q; want a cancelled job after one attempt and a failed request keeping its error", job, attempts, row, failure)
+	if job != "cancelled" || attempts != 1 || !strings.Contains(failure, "editor") {
+		t.Fatalf("invalid manifest publication: job %s after %d attempts, error %q; want a cancelled job after one attempt keeping its error", job, attempts, failure)
 	}
 }

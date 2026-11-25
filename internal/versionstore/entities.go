@@ -2,6 +2,7 @@ package versionstore
 
 import (
 	"context"
+	"errors"
 	"slices"
 	"strings"
 
@@ -13,6 +14,7 @@ import (
 	"github.com/open-rails/contentkit/internal/edition"
 	entitystore "github.com/open-rails/contentkit/internal/entitystore"
 	"github.com/open-rails/contentkit/internal/gate"
+	mediastore "github.com/open-rails/contentkit/internal/mediastore"
 	"github.com/open-rails/contentkit/internal/resolve"
 	"github.com/open-rails/contentkit/media"
 	versions "github.com/open-rails/contentkit/media/versions"
@@ -116,17 +118,7 @@ func (s *Service) canEditEntity(ctx context.Context, actor access.Actor, t media
 	if !ok || !r.active || !r.editor {
 		return media.UploadGrant{}, nil
 	}
-	return media.UploadGrant{Allowed: true, Exempt: r.staff, Owner: EntityOwner(t.Ref.ContentKind, t.Ref.ContentID)}, nil
-}
-
-// EntityOwner is the quota owner of an entity's uploads: "{kind}:{id}".
-func EntityOwner(kind, id string) string { return kind + ":" + id }
-
-// ParseEntityOwner is EntityOwner's kind and id; ok is false for any other
-// owner.
-func ParseEntityOwner(owner string) (kind, id string, ok bool) {
-	kind, id, ok = strings.Cut(owner, ":")
-	return kind, id, ok && kind != "" && id != ""
+	return media.UploadGrant{Allowed: true, Exempt: r.staff}, nil
 }
 
 // Covers resolves covers to their public renditions, per cover in order,
@@ -204,7 +196,7 @@ JOIN `+s.t.versions+` v ON v.tenant_id = $1 AND v.id = f.version_id`, s.o.Tenant
 		}
 		qs, put = append(qs, q), append(put, i)
 	}
-	images, err := s.m.Manifests.Images(ctx, qs...)
+	images, err := s.m.Cache.Images(ctx, qs...)
 	if err != nil {
 		return nil, err
 	}
@@ -213,7 +205,7 @@ JOIN `+s.t.versions+` v ON v.tenant_id = $1 AND v.id = f.version_id`, s.o.Tenant
 		if ok {
 			image = images[j][0]
 		} else {
-			image, ok = s.reg.DefaultImage(qs[j].Ref, qs[j].Preset)
+			image, ok = s.reg.DefaultImage(ctx, qs[j].Ref, qs[j].Preset)
 		}
 		if ok {
 			out[i] = image.Renditions
@@ -270,7 +262,7 @@ func (s *Service) EntityFolders() entitystore.Folders { return entityFolders{s} 
 
 type entityFolders struct{ s *Service }
 
-// FenceDeleted is mediastore.Jobs.FenceDeleted for the entity's media item.
+// FenceDeleted soft-deletes or restores the entity's media item.
 func (g entityFolders) FenceDeleted(ctx context.Context, r entities.Ref, deleted bool) error {
 	if g.s.m.Jobs == nil {
 		return nil
@@ -279,23 +271,25 @@ func (g entityFolders) FenceDeleted(ctx context.Context, r entities.Ref, deleted
 	if err != nil {
 		return err
 	}
-	return g.s.m.Jobs.FenceDeleted(ctx, ref, deleted)
+	return g.s.m.Jobs.SetDeleted(ctx, ref, deleted)
 }
 
-// RetireTx commits each entity media item's retirement intent in tx.
+// RetireTx makes each entity media item's erasure irreversible (its
+// tombstone and permanent fence) while tx holds the entity's row.
 func (g entityFolders) RetireTx(ctx context.Context, tx pgx.Tx, refs []entities.Ref) error {
-	del := make([]media.Deletion, 0, len(refs))
+	if g.s.m.Jobs == nil {
+		return nil
+	}
 	for _, r := range refs {
 		ref, err := g.s.reg.Ref(r.Kind, string(r.ID))
 		if err != nil {
 			return err
 		}
-		del = append(del, media.Deletion{Ref: ref, Owner: EntityOwner(r.Kind, string(r.ID))})
+		if err := g.s.m.Jobs.Tombstone(ctx, ref); err != nil {
+			return err
+		}
 	}
-	if len(del) == 0 || g.s.m.Jobs == nil {
-		return nil
-	}
-	return g.s.m.Jobs.RetireItemsTx(ctx, tx, del...)
+	return nil
 }
 
 func (g entityFolders) RetirementStartedTx(ctx context.Context, tx pgx.Tx, r entities.Ref) (bool, error) {
@@ -303,17 +297,23 @@ func (g entityFolders) RetirementStartedTx(ctx context.Context, tx pgx.Tx, r ent
 	if err != nil {
 		return false, err
 	}
-	return g.s.m.Jobs.RetirementStartedTx(ctx, tx, ref)
+	return g.s.m.Jobs.Erased(ctx, ref)
 }
 
+// RetirementComplete erases the entity's media and reports it gone.
 func (g entityFolders) RetirementComplete(ctx context.Context, r entities.Ref) (bool, error) {
 	ref, err := g.s.reg.Ref(r.Kind, string(r.ID))
 	if err != nil {
 		return false, err
 	}
-	return g.s.m.Jobs.RetirementComplete(ctx, ref)
+	if err := g.s.m.Jobs.Erase(ctx, ref); errors.Is(err, mediastore.ErrErasurePending) {
+		return false, nil
+	} else if err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
-func (g entityFolders) PurgeRetired(ctx context.Context, limit int) (int, error) {
-	return g.s.m.Jobs.PurgeRetired(ctx, limit)
-}
+// PurgeRetired has nothing to drain: erasure deletes at once, and each
+// item's garbage collection takes what lands later.
+func (g entityFolders) PurgeRetired(context.Context, int) (int, error) { return 0, nil }

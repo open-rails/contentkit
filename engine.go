@@ -39,6 +39,7 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 	riverhelpers "github.com/open-rails/helpers/river"
 	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/riverdriver/riverpgxv5"
 
 	"github.com/open-rails/authkit/auth"
 
@@ -54,7 +55,6 @@ import (
 	"github.com/open-rails/contentkit/internal/locationpolicy"
 	"github.com/open-rails/contentkit/internal/media/workqueue"
 	"github.com/open-rails/contentkit/internal/migrations"
-	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/token"
 	"github.com/open-rails/contentkit/signal"
@@ -109,6 +109,7 @@ type engineMedia struct {
 	versions *versionstore.Service
 	reg      *mediastore.Registry
 	store    media.Store
+	cache    *mediastore.PGCache
 	jobs     *mediastore.Jobs
 	uploads  *mediastore.Uploads
 	reader   *mediastore.Reader
@@ -407,33 +408,35 @@ func (e *Engine) newMedia(ctx context.Context, deps Deps, now func() time.Time) 
 	if m.queue, err = workqueue.NewWithAccounts(e.pool, m.reg, mc.WorkerSchema, accountQueue); err != nil {
 		return nil, err
 	}
-	journal, err := mediastore.NewPGJournal(e.pool, e.schema, m.queue)
+	// Every manifest write lands in the item cache, which wakes releases and
+	// garbage collection on the engine's River schema.
+	host, err := river.NewClient(riverpgxv5.New(e.pool), &river.Config{Schema: e.riverSchema})
 	if err != nil {
+		return nil, err
+	}
+	recorded, err := versionstore.Recorded(e.pool, e.riverSchema, e.schema, m.reg)
+	if err != nil {
+		return nil, err
+	}
+	// Commits enqueue their own processing; the cache wakes releases and GC.
+	cacheOptions := mediastore.CacheOptions{Lock: recorded.Lock, Recorded: recorded.Recorded, GC: mediastore.RiverGC{Client: host}, Now: now}
+	if m.cache, err = mediastore.NewPGCache(e.pool, e.schema, m.reg, cacheOptions); err != nil {
 		return nil, err
 	}
 	if sharedAccounts {
-		accountJournal, err := mediastore.NewPGJournal(e.pool, accountStorage.Schema, m.queue)
+		account, err := mediastore.NewPGCache(e.pool, accountStorage.Schema, m.reg, cacheOptions)
 		if err != nil {
 			return nil, err
 		}
-		journal, err = mediastore.RouteJournal(journal, accountJournal, e.accountMediaPartition())
-		if err != nil {
+		if m.cache, err = mediastore.RouteCache(m.cache, account, e.accountMediaPartition()); err != nil {
 			return nil, err
 		}
 	}
-	limiter, err := e.entityLimiter()
+	manifests, err := mediastore.NewManifests(deps.Store, m.reg, mediastore.ManifestOptions{Written: m.cache.Record, Current: m.cache.ETag, Now: now})
 	if err != nil {
 		return nil, err
 	}
-	if sharedAccounts && limiter != nil {
-		accountLimiter, err := mediastore.NewPGLimiter(e.pool, accountStorage.Schema, mediastore.PGLimits{})
-		if err != nil {
-			return nil, err
-		}
-		limiter = mediastore.RouteLimiter(limiter, accountLimiter, e.accountMediaPartition())
-	}
-	if m.jobs, err = mediastore.NewJobs(mediastore.JobsConfig{Store: deps.Store, Registry: m.reg, Locker: mediastore.PGLocker(e.pool), Journal: journal,
-		Processes: m.queue, Logger: e.log, Now: now, Limiter: limiter}); err != nil {
+	if m.jobs, err = mediastore.NewJobs(mediastore.JobsConfig{Manifests: manifests, Processes: m.queue, Logger: e.log, Now: now}); err != nil {
 		return nil, err
 	}
 	d := mc.Delivery
@@ -456,8 +459,8 @@ func (e *Engine) newMedia(ctx context.Context, deps Deps, now func() time.Time) 
 	rate := func(r RateLimitConfig) mediastore.RateLimit {
 		return mediastore.RateLimit{PerSecond: r.PerSecond, Burst: r.Burst, Disabled: r.Disabled, Redis: deps.Redis}
 	}
-	if m.uploads, err = mediastore.NewUploads(mediastore.UploadOptions{Store: deps.Store, Manifests: m.jobs.Manifests(), Tickets: &ring,
-		ProcessOnUpload: mc.ProcessOnUpload, Commits: rate(mc.CommitLimit), Limiter: limiter}); err != nil {
+	if m.uploads, err = mediastore.NewUploads(mediastore.UploadOptions{Store: deps.Store, Manifests: m.jobs.Manifests(), Processes: m.queue, Tickets: &ring,
+		ProcessOnUpload: mc.ProcessOnUpload, Commits: rate(mc.CommitLimit)}); err != nil {
 		return nil, err
 	}
 	if m.progress, err = workqueue.NewProgressSourceWithAccounts(e.pool, m.reg, mc.WorkerSchema, accountQueue); err != nil {
@@ -474,35 +477,10 @@ func (e *Engine) newMedia(ctx context.Context, deps Deps, now func() time.Time) 
 		return nil, err
 	}
 	m.limit = rate(mc.ReadLimit)
-	if err := m.versions.Bind(versionstore.Media{Manifests: m.jobs.Manifests(), Uploads: m.uploads, Jobs: m.jobs, Reader: m.reader}); err != nil {
+	if err := m.versions.Bind(versionstore.Media{Manifests: m.jobs.Manifests(), Cache: m.cache, Uploads: m.uploads, Jobs: m.jobs, Reader: m.reader}); err != nil {
 		return nil, err
 	}
 	return m, nil
-}
-
-// groupLimiter limits uploads to user-owned entities by their kind's
-// kinds.UploadLimits, keyed by the entity (versions.EntityOwner); nil when no
-// kind sets any.
-func (e *Engine) entityLimiter() (*mediastore.PGLimiter, error) {
-	limits := map[string]kinds.UploadLimits{}
-	for name, gk := range e.cfg.Content.StorageModel().EntityKinds {
-		if gk.Uploads != (kinds.UploadLimits{}) {
-			limits[name] = gk.Uploads
-		}
-	}
-	if len(limits) == 0 {
-		return nil, nil
-	}
-	of := func(owner string) kinds.UploadLimits {
-		kind, _, _ := versionstore.ParseEntityOwner(owner)
-		return limits[kind]
-	}
-	return mediastore.NewPGLimiter(e.pool, e.schema, mediastore.PGLimits{
-		Quota: func(_ context.Context, _, owner string) (int64, error) { return of(owner).QuotaBytes, nil },
-		Rates: func(_ context.Context, _, owner string) (int, int64, error) {
-			l := of(owner)
-			return l.FilesPerHour, l.BytesPerDay, nil
-		}})
 }
 
 func (e *Engine) contentOptions(deps Deps) contentstore.Options {
@@ -528,10 +506,10 @@ func (e *Engine) contentOptions(deps Deps) contentstore.Options {
 		Logger: e.log,
 	}
 	if e.media != nil {
-		o.Media = &contentstore.Media{Namespace: e.media.reg.Namespace(), Images: e.media.jobs.Manifests(), Folders: e.media.jobs, Reader: e.media.reader}
+		o.Media = &contentstore.Media{Namespace: e.media.reg.Namespace(), Images: e.media.cache, Folders: e.media.jobs, Reader: e.media.reader}
 	}
-	if e.avatars != nil {
-		o.Avatars = e.avatars.urls
+	if e.avatars != nil && e.avatars.images != nil {
+		o.Avatars = e.avatars.images
 	}
 	return o
 }
@@ -580,7 +558,7 @@ func (e *Engine) mount(deps Deps) error {
 	if err := e.mountDiscovery(deps); err != nil {
 		return err
 	}
-	var avatars *media.PresetRule
+	avatars := func(context.Context) *media.PresetRule { return nil }
 	if e.avatars != nil {
 		avatars = e.avatars.rule
 	}
@@ -817,7 +795,7 @@ func (e *Engine) eraseAvatars(ctx context.Context, users []string) error {
 		if err != nil {
 			return err
 		}
-		if err = e.media.jobs.Erase(ctx, media.Deletion{Ref: ref, Owner: u, OperationID: "account-erasure:" + u}); err != nil {
+		if err = e.media.jobs.Erase(ctx, ref); err != nil {
 			return err
 		}
 	}

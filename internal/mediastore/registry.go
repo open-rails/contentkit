@@ -1,11 +1,13 @@
 package mediastore
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/open-rails/contentkit/contentref"
@@ -30,6 +32,35 @@ type Registry struct {
 	declared int // cfg.Kinds[:declared] are c's
 	kinds    map[string]*RegisteredKind
 	all      []*RegisteredKind // declared storage kinds
+	// defaults reads a kind's default images (Manifests sets it).
+	defaults func(ctx context.Context, k *RegisteredKind, p *media.Public) (media.PublicImage, bool)
+	// shown memoizes defaults for defaultTTL: they change only when
+	// publish-defaults runs.
+	shown sync.Map // kind/preset -> shownDefault
+}
+
+const defaultTTL = time.Minute
+
+type shownDefault struct {
+	image media.PublicImage
+	ok    bool
+	until time.Time
+}
+
+// defaultImage is preset p's default image of k, memoized.
+func (r *Registry) defaultImage(ctx context.Context, k *RegisteredKind, p *media.Public) (media.PublicImage, bool) {
+	if r.defaults == nil || !hasDefault(p) {
+		return media.PublicImage{}, false
+	}
+	key := k.Name + "/" + p.Name
+	if v, ok := r.shown.Load(key); ok && time.Now().Before(v.(shownDefault).until) {
+		return v.(shownDefault).image, v.(shownDefault).ok
+	}
+	image, ok := r.defaults(ctx, k, p)
+	if ctx.Err() == nil {
+		r.shown.Store(key, shownDefault{image: image, ok: ok, until: time.Now().Add(defaultTTL)})
+	}
+	return image, ok
 }
 
 // NewRegistry validates c and its version reader configuration.
@@ -98,8 +129,8 @@ func NewRegistry(c media.Config, hooks Hooks) (*Registry, error) {
 	}
 	if a := c.Avatars; a != (media.Avatars{}) {
 		k, ok := r.kinds[a.Kind]
-		if !ok || k.public(a.Preset) == nil || !k.public(a.Preset).Stable {
-			return nil, fmt.Errorf("media: Avatars: kind %q has no Stable public preset %q", a.Kind, a.Preset)
+		if !ok || k.public(a.Preset) == nil {
+			return nil, fmt.Errorf("media: Avatars: kind %q has no public preset %q", a.Kind, a.Preset)
 		}
 	}
 	return r, nil
@@ -226,19 +257,11 @@ func (i Item) PrivatePrefix() string { return i.prefix + layout.AreaPrivate + "/
 
 func (i Item) PublicPrefix() string { return i.prefix + layout.AreaPublic + "/" }
 
-func (i Item) OriginalsPrefix() string { return i.prefix + layout.AreaOriginals + "/" }
-
 func (i Item) InternalPrefix() string { return i.prefix + layout.AreaInternal + "/" }
 
-func (i Item) TempPrefix() string {
-	if i.kind.Versions {
-		return i.prefix + layout.AreaTmp + "/"
-	}
-	return i.prefix + layout.AreaTemp + "/"
-}
+func (i Item) TempPrefix() string { return i.prefix + layout.AreaTmp + "/" }
 
-// Blob is the key of an allocation by its reference: "sha256-{hex}-{uuid}"
-// in private/, "{area}/sha256-{hex}-{uuid}" in another area.
+// Blob is the key of a blob reference, "{area}/{sha256}".
 func (i Item) Blob(ref string) (string, error) {
 	area, name, ok := layout.SplitBlobRef(ref)
 	if !ok {
@@ -247,16 +270,16 @@ func (i Item) Blob(ref string) (string, error) {
 	return i.prefix + area + "/" + name, nil
 }
 
-// BlobRef is the reference of key, an allocation in the folder.
+// BlobRef is the reference of key, a stored file in the folder.
 func (i Item) BlobRef(key string) (string, bool) {
 	k, ok := layout.Parse(key)
-	if !ok || k.Folder() != i.prefix || !layout.ValidBlobRef(layout.BlobRef(k.Area, k.Name)) {
+	if !ok || k.Folder() != i.prefix || !layout.ValidBlobRef(k.Area+"/"+k.Name) {
 		return "", false
 	}
-	return layout.BlobRef(k.Area, k.Name), true
+	return k.Area + "/" + k.Name, true
 }
 
-// Staged is the key of a staged upload ("u-{uuid}"), in temp/ until placed.
+// Staged is the key of a staged upload ("u-{uuid}"), in tmp/ until placed.
 func (i Item) Staged(name string) (string, error) {
 	if !layout.ValidStagedName(name) {
 		return "", fmt.Errorf("media: invalid staged upload name %q", name)
@@ -264,42 +287,26 @@ func (i Item) Staged(name string) (string, error) {
 	return i.TempPrefix() + name, nil
 }
 
-// Public is the key of a public name.
-func (i Item) Public(name string) (string, error) {
-	if !layout.ValidPublicName(name) {
-		return "", fmt.Errorf("media: invalid public name %q", name)
-	}
-	return i.PublicPrefix() + name, nil
-}
-
-// PublicationKey locates one prepared public-preset rendition. Versions keep
-// their hash-named preparation in internal; non-version assets retain their
-// independent public-preset lifecycle.
-func (i Item) PublicationKey(p media.Publication, index int) (string, error) {
-	if index < 0 || index >= len(p.Names) {
-		return "", fmt.Errorf("media: invalid publication index")
-	}
-	if len(p.Blobs) > 0 {
-		return i.Blob(p.Blobs[index])
-	}
-	return i.Public(p.NamesOnDisk()[index])
-}
-
-// DefaultKey is the key of the kind's default public image name.
-func (k *RegisteredKind) DefaultKey(name string) string {
-	return k.prefix(layout.DefaultID, "") + layout.AreaPublic + "/" + name
+// DefaultsItem is the item holding the kind's default images, with its
+// own manifest (image.PublishDefaults).
+func (k *RegisteredKind) DefaultsItem() Item {
+	return Item{ref: contentref.New(k.ns, k.Name, layout.DefaultID), kind: k, prefix: k.prefix(layout.DefaultID, "")}
 }
 
 // NS is the namespace the kind's items live in.
 func (k *RegisteredKind) NS() string { return k.ns }
 
-// PublicURL is the URL of item ref's public name at the registry's BaseURL.
-func (r *Registry) PublicURL(ref contentref.ContentRef, name string) string {
+// PublicURL is the URL of item ref's public file hash at the registry's BaseURL.
+func (r *Registry) PublicURL(ref contentref.ContentRef, hash string) string {
 	item, err := r.Item(ref)
 	if err != nil {
 		return ""
 	}
-	return strings.TrimRight(r.cfg.BaseURL, "/") + layout.URLPrefix + item.Prefix() + layout.AreaPublic + "/" + name
+	return r.publicURL(item, hash)
+}
+
+func (r *Registry) publicURL(item Item, hash string) string {
+	return strings.TrimRight(r.cfg.BaseURL, "/") + layout.URLPrefix + item.Prefix() + layout.AreaPublic + "/" + hash
 }
 
 // PresetRules lists every kind's public presets, in registry order.
@@ -309,7 +316,25 @@ func (r *Registry) PresetRules() []media.PresetRule {
 		for _, p := range k.Public {
 			out = append(out, media.PresetRule{Kind: k.Name, Name: p.Name, From: p.From, Base: strings.TrimRight(r.cfg.BaseURL, "/"),
 				Namespace: k.ns, Root: k.root(), To: p.To, Widths: append([]int{}, p.Widths...), Aspect: p.Image.Aspect, MinWidth: p.Image.MinWidth,
-				Default: hasDefault(&p), Stable: p.Stable})
+			})
+		}
+	}
+	return out
+}
+
+// PresetRulesWithDefaults is PresetRules with each preset's default image
+// read from its kind's defaults manifest.
+func (r *Registry) PresetRulesWithDefaults(ctx context.Context) []media.PresetRule {
+	out := r.PresetRules()
+	for i := range out {
+		k, err := r.Kind(out[i].Kind)
+		if err != nil {
+			continue
+		}
+		if p := k.public(out[i].Name); p != nil {
+			if image, ok := r.defaultImage(ctx, k, p); ok {
+				out[i].DefaultImage = &image
+			}
 		}
 	}
 	return out
@@ -340,18 +365,12 @@ func (k *RegisteredKind) root() string {
 
 func (k *RegisteredKind) prefix(id, version string) string {
 	if k.Versions && version != "" {
-		id, version = version, ""
+		id = version
 	}
-	return k.nestedPrefix(id, version)
-}
-
-// nestedPrefix is the historical path shape, used only to verify migrations
-// and cleanup receipts. A version's live storage owner is its version ID.
-func (k *RegisteredKind) nestedPrefix(id, version string) string {
 	if !k.scope.IsZero() {
-		return k.scope.Prefix(k.Name, id, version)
+		return k.scope.Prefix(k.Name, id)
 	}
-	return layout.Prefix(k.ns, k.Name, id, version)
+	return layout.Prefix(k.ns, k.Name, id)
 }
 
 // canonicalUUID accepts lowercase hyphenated UUID text of any version, except

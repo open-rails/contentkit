@@ -126,7 +126,9 @@ func TestFavoritesMigrateToBinaryKeys(t *testing.T) {
  SELECT app_id::text, user_id::text, content_kind, content_id::text, content_version_id::text, value, revision,
  created_at, updated_at, anonymous_actor_id, import_source FROM ` + table("critical_converted"))
 		exec(`DROP TABLE ` + table("critical_converted"))
-		exec(`DELETE FROM public.migrations WHERE app='contentkit' AND schema=$1 AND sequence >= $2`, w.schema, sequence)
+		last, err := migratekit.Sequence(steps[first+2].Name)
+		must(t, err)
+		exec(`DELETE FROM public.migrations WHERE app='contentkit' AND schema=$1 AND sequence BETWEEN $2 AND $3`, w.schema, sequence, last)
 		account := func(n int) string { return fmt.Sprintf("00000000-0000-4000-8000-%012d", n) }
 		for id, accounts := range ranked {
 			exec(`INSERT INTO `+table("content_favorites")+` (tenant_id, content_kind, content_id, user_id, value, revision, created_at)

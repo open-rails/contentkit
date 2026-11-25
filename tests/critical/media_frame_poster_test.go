@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/authkit/authtest"
 	"github.com/open-rails/authkit/iam"
 	ck "github.com/open-rails/contentkit"
@@ -43,7 +42,6 @@ func withPosters(c *ck.Config) {
 func TestMediaFramePosters(t *testing.T) {
 	f := newTinyHLSConfiguredFixture(t, false, func(c *ck.Config) {
 		withPosters(c)
-		c.Content.Channels.Uploads.QuotaBytes = 1 << 30 // enable the shared usage ledger
 	})
 	admin := f.app.engine.Client()
 	frame := func(n int) image.Image { return sourceFrame(t, f.Source, n) }
@@ -170,33 +168,6 @@ func TestMediaFramePosters(t *testing.T) {
 		}
 	})
 
-	t.Run("CK-J12-S06_a_frame_is_charged_its_still_and_refunded_once", func(t *testing.T) {
-		person, token := f.world.person(t, 0)
-		authtest.GrantRole(t, f.world.tenant[0], f.app.group, iam.UserSubject(person.ID), f.world.contributor)
-		owner := f.app.client(token)
-		own := newClip(t, owner, "Charged poster")
-		_, err := owner.IngestMedia(t.Context(), http.DefaultClient, own, uuid.NewString(), []ck.MediaFile{{Path: "source.mp4", Type: "video/mp4", Body: bytes.NewReader(f.Source)}})
-		must(t, err)
-		awaitMediaReady(t, owner, own)
-		target, err := f.config.Kinds.VersionRef(own.Kind, own.ID, own.Version)
-		must(t, err)
-		usage := func() int64 {
-			var used int64
-			must(t, f.pool.QueryRow(t.Context(), `SELECT used_bytes FROM `+pgx.Identifier{f.schema, "content_media_usage"}.Sanitize()+` WHERE tenant_id=$1 AND owner_id=$2`, target.TenantID, string(person.ID)).Scan(&used))
-			return used
-		}
-		before := usage()
-		must(t, commit(owner, own, media.Op{Op: media.OpFrame, Path: "poster", T: seconds(1)}))
-		poster := awaitPoster(t, owner, own)
-		charged := max(poster.Size, 64<<10) // each upload is charged at least 64 KiB
-		if got := usage(); got != before+charged {
-			t.Fatalf("a %d-byte still moved usage from %d to %d, want %d", poster.Size, before, got, before+charged)
-		}
-		must(t, commit(owner, own, media.Op{Op: media.OpRemove, Path: poster.Path}))
-		if got := usage(); got != before {
-			t.Fatalf("removing the still left usage at %d, want %d", got, before)
-		}
-	})
 }
 
 // sourceFrame decodes frame n of a tiny fixture's 12 fps source.

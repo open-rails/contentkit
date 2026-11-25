@@ -99,9 +99,10 @@ func (h readHandler) read(w http.ResponseWriter, req *http.Request) {
 	h.log.Debug("media read", "path", req.URL.Path, "duration", time.Since(start))
 }
 
-// presets lists the preset rules: the same for every viewer, so cacheable.
+// presets lists the preset rules with their default images: the same for
+// every viewer, so cacheable.
 func (h readHandler) presets(w http.ResponseWriter, req *http.Request) {
-	writeJSON(w, http.StatusOK, h.r.reg.PresetRules())
+	writeJSON(w, http.StatusOK, h.r.reg.PresetRulesWithDefaults(req.Context()))
 }
 
 func (h readHandler) playlist(w http.ResponseWriter, req *http.Request) {
@@ -188,8 +189,6 @@ func fail(w http.ResponseWriter, req *http.Request, log *slog.Logger, err error)
 		status, code, msg = http.StatusBadRequest, "invalid_request", "invalid request"
 	case errors.Is(err, media.ErrUnavailable):
 		status, code, msg = http.StatusServiceUnavailable, "unavailable", "media storage is unavailable"
-	case errors.Is(err, ErrPublicationLayoutRequired):
-		status, code, msg = http.StatusServiceUnavailable, media.CodeUpgrade, "media publication is being restored"
 	case errors.Is(err, ErrEditorReadUnsupported):
 		status, code, msg = http.StatusServiceUnavailable, "unavailable", "editor media delivery is unavailable"
 	default:

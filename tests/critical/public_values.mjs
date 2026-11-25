@@ -45,7 +45,7 @@ check("transportFailure", () => {
   assert.equal(sdk.transportFailure(new DOMException("Canceled", "AbortError")), undefined);
 });
 check("readContentKitError", async () => {
-  const body = { code: "quota_exceeded", error: "Quota is full", retry_after: 7, details: { max_bytes: 12 }, blobs: ["b1"], ban: { scope: "owner:x", reason: "policy" }, action: "upload", reason: "release_window", available_at: "2030-01-01T00:00:00Z" };
+  const body = { code: "rate_limited", error: "Too many uploads", retry_after: 7, details: { max_bytes: 12 }, blobs: ["b1"], ban: { scope: "owner:x", reason: "policy" }, action: "upload", reason: "release_window", available_at: "2030-01-01T00:00:00Z" };
   const error = await sdk.readContentKitError(new Response(JSON.stringify(body), { status: 429, headers: { "Retry-After": "11" } }));
   assert.equal(error.code, body.code); assert.equal(error.message, body.error); assert.equal(error.status, 429); assert.equal(error.retryAfter, 7);
   assert.deepEqual(error.details, body.details); assert.deepEqual(error.blobs, body.blobs); assert.deepEqual(error.ban, body.ban);
@@ -71,15 +71,15 @@ check("ContentKitError.refusal", () => {
   assert.equal(new sdk.ContentKitError("internal_error", "Server", { status: 500 }).refusal, false);
 });
 check("ContentKitError.isLimit", () => {
-  for (const code of ["rate_limited", "quota_exceeded"]) assert.equal(new sdk.ContentKitError(code, "Limit").isLimit, true);
+  assert.equal(new sdk.ContentKitError("rate_limited", "Limit").isLimit, true);
   assert.equal(new sdk.ContentKitError("too_large", "One file").isLimit, false);
 });
 check("ContentKitError.isCeiling", () => {
   assert.equal(new sdk.ContentKitError("too_many_files", "Remove a file", { status: 409 }).isCeiling, true);
-  assert.equal(new sdk.ContentKitError("quota_exceeded", "Storage limit").isCeiling, false);
+  assert.equal(new sdk.ContentKitError("rate_limited", "Rate limit").isCeiling, false);
 });
 check("ContentKitError.blocksQueue", () => {
-  for (const code of ["quota_exceeded", "rate_limited", "unauthorized", "forbidden"]) assert.equal(new sdk.ContentKitError(code, "Stop").blocksQueue, true);
+  for (const code of ["rate_limited", "unauthorized", "forbidden"]) assert.equal(new sdk.ContentKitError(code, "Stop").blocksQueue, true);
   assert.equal(new sdk.ContentKitError("too_large", "Only this file").blocksQueue, false);
 });
 check("ContentKitError.transient", () => {
@@ -167,8 +167,7 @@ check("isProcessing", () => {
 check("processing", () => {
   assert.equal(sdk.processing({ state: "processing", files: [] }), true);
   assert.equal(sdk.processing({ state: "ready", files: [{ upload: true, staged: true }] }), true);
-  assert.equal(sdk.processing({ state: "processing", full: true, files: [] }), false);
-  assert.equal(sdk.processing({ status: { state: "full" }, files: [{ upload: true, staged: true }] }), false);
+  assert.equal(sdk.processing({ status: { state: "failed" }, files: [{ upload: true, staged: true }] }), false);
   assert.equal(sdk.processing(null), false);
 });
 check("statusKind", () => {

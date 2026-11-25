@@ -5,12 +5,11 @@ import "maps"
 // Channels declares authoring channels, independently from descriptive entities.
 // Every channel has an AuthKit authoring group; paid reader membership is optional.
 type Channels struct {
-	Creation    string       `json:"creation" yaml:"creation"`
-	Route       string       `json:"route,omitempty" yaml:"route"`
-	Entities    []string     `json:"entities,omitempty" yaml:"entities"`
-	Entitled    bool         `json:"entitled,omitempty" yaml:"entitled"`
-	MaxPerOwner int          `json:"max_per_owner,omitempty" yaml:"max_per_owner"`
-	Uploads     UploadLimits `json:"uploads,omitzero" yaml:"uploads"`
+	Creation    string   `json:"creation" yaml:"creation"`
+	Route       string   `json:"route,omitempty" yaml:"route"`
+	Entities    []string `json:"entities,omitempty" yaml:"entities"`
+	Entitled    bool     `json:"entitled,omitempty" yaml:"entitled"`
+	MaxPerOwner int      `json:"max_per_owner,omitempty" yaml:"max_per_owner"`
 }
 
 // ChannelPolicy associates a content kind with channels. Fixed selects and
@@ -36,7 +35,7 @@ func (c Config) StorageModel() Config {
 	if ch.Creation == "users" {
 		owner = "user"
 	}
-	c.EntityKinds["channel"] = EntityKind{Route: ch.Route, Owner: owner, AuthScope: true, Entitled: ch.Entitled, Avatar: true, MaxPerOwner: ch.MaxPerOwner, Uploads: ch.Uploads}
+	c.EntityKinds["channel"] = EntityKind{Route: ch.Route, Owner: owner, AuthScope: true, Entitled: ch.Entitled, Avatar: true, MaxPerOwner: ch.MaxPerOwner}
 	c.channelStorage = true
 	return c
 }

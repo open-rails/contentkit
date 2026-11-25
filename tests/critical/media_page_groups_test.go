@@ -93,79 +93,6 @@ func TestMediaPageGroups(t *testing.T) {
 		}
 	})
 
-	t.Run("new_outputs_are_checked_before_the_group_lock", func(t *testing.T) {
-		m := newResilientMedia(t, func(c *ck.Config) {
-			c.Media.Kinds[0].Uploads[0].Max = 32
-			c.Media.Kinds[0].Private = append(c.Media.Kinds[0].Private,
-				media.Private{Name: "thumb", From: "pages/{name}", To: "thumb/{name}.webp", Image: &media.Image{Width: 16}},
-				media.Private{Name: "low", From: "pages/{name}", To: "low/{name}.webp", Image: &media.Image{Width: 32}})
-		})
-		g := newPageGroups(t, m, "Checks outside the lock", landscapePages(t, 32, 71))
-		must(t, g.processor(t, mediaimage.Config{Workers: 2, GroupSize: 32, GroupWait: time.Minute}).Process(g.job(t.Context()), mediastore.ProcessJob{Ref: g.target}))
-		if g.store.lockedHeads != 0 || len(g.store.checked) != 96 {
-			t.Fatalf("output HEADs: %d keys checked, %d under the lock", len(g.store.checked), g.store.lockedHeads)
-		}
-		for key, heads := range g.store.checked {
-			if heads != 1 {
-				t.Errorf("%s checked %d times, want once before locking", key, heads)
-			}
-		}
-	})
-
-	t.Run("publication_names_are_checked_before_the_group_lock", func(t *testing.T) {
-		pages := landscapePages(t, 3, 73)
-		pages = append(pages, pageSource{path: "cover", data: imageBytes(t)})
-		g := newPageGroups(t, m, "Publication checks outside the lock", pages)
-		must(t, g.processor(t, mediaimage.Config{Workers: 1, GroupSize: 32, GroupWait: time.Minute}).Process(g.job(t.Context()), mediastore.ProcessJob{Ref: g.target}))
-		if g.store.lockedHeads != 0 || len(g.store.checked) != 5 {
-			t.Fatalf("3 private and 2 public outputs: %d keys checked, %d HEADs under lock", len(g.store.checked), g.store.lockedHeads)
-		}
-		snapshot, _ := g.readers(t)
-		cover, _ := snapshot.Get("cover.png")
-		pub, ok := cover.Publication("cover")
-		if !ok || !pub.Ready() {
-			t.Fatalf("cover was not published: %+v", cover)
-		}
-	})
-
-	t.Run("cleanup_between_check_and_edit_does_not_adopt_a_missing_output", func(t *testing.T) {
-		g := newPageGroups(t, m, "Cleanup after preflight", landscapePages(t, 5, 72))
-		var removed string
-		g.store.beforeLock = func() {
-			removed = g.store.written()[0]
-			blob, ok := g.item.BlobRef(removed)
-			if !ok {
-				t.Fatal("output is not a blob")
-			}
-			must(t, g.manifests.DropUnreferenced(g.job(t.Context()), g.target, mediastore.Unreferenced{Blobs: []string{blob}}))
-			// Retirement and deletion are separate cleanup steps. Deliver the
-			// exact retired key's DELETE before the worker acquires its lock.
-			must(t, m.storage.store.Delete(t.Context(), removed))
-			if _, err := m.storage.store.Head(t.Context(), removed); !errors.Is(err, mediastore.ErrNotFound) {
-				t.Fatalf("cleanup left output in place: %v", err)
-			}
-		}
-		before := g.manifestEdits(t)
-		must(t, g.processor(t, mediaimage.Config{Workers: 1, GroupSize: 32, GroupWait: time.Minute}).Process(g.job(t.Context()), mediastore.ProcessJob{Ref: g.target}))
-		if removed == "" || g.store.lockedHeads != 1 || g.store.checked[removed] != 2 {
-			t.Fatalf("retired output %q: %d locked HEADs, checks=%v", removed, g.store.lockedHeads, g.store.checked)
-		}
-		if edits := g.manifestEdits(t) - before; edits != 2 {
-			t.Fatalf("cleanup took %d edits; want one group and one regenerated page", edits)
-		}
-		_, readers := g.readers(t)
-		if len(readers) != 5 {
-			t.Fatalf("cleanup left %d readers, want 5", len(readers))
-		}
-		for _, f := range readers {
-			key, err := g.item.Blob(f.Blob)
-			must(t, err)
-			if key == removed {
-				t.Fatal("adopted the missing output")
-			}
-		}
-	})
-
 	t.Run("the_group_wait_records_a_partial_group", func(t *testing.T) {
 		pages := landscapePages(t, 6, 80)
 		g := newPageGroups(t, m, "Partial group after the wait", pages)
@@ -194,7 +121,7 @@ func TestMediaPageGroups(t *testing.T) {
 		}
 	})
 
-	t.Run("halving_isolates_one_unrecordable_page_of_32_in_eleven_edits", func(t *testing.T) {
+	t.Run("halving_isolates_one_unrecordable_page_of_32_in_five_writes", func(t *testing.T) {
 		pages := landscapePages(t, 32, 90)
 		g := newPageGroups(t, m, "One page that cannot be recorded", pages)
 		bad := pages[20].path
@@ -205,10 +132,10 @@ func TestMediaPageGroups(t *testing.T) {
 		if !errors.Is(err, errOutputRefused) {
 			t.Fatalf("processing returned %v, want the bad page's error", err)
 		}
-		// The group and the halves holding the bad page fail: 32, 16, 8, 4, 2
-		// and 1 pages. The five halves beside them are kept.
-		if edits := g.manifestEdits(t) - before; edits != 11 {
-			t.Fatalf("isolating one page of 32 took %d manifest edits, want 11", edits)
+		// The group and the halves holding the bad page fail before writing:
+		// 32, 16, 8, 4, 2 and 1 pages. The five halves beside them are written.
+		if edits := g.manifestEdits(t) - before; edits != 5 {
+			t.Fatalf("isolating one page of 32 took %d manifest writes, want 5", edits)
 		}
 		snapshot, readers := g.readers(t)
 		if _, ok := readers[bad]; ok || len(readers) != 31 {
@@ -309,19 +236,12 @@ func TestMediaPageGroups(t *testing.T) {
 		if _, readers := g.readers(t); len(readers) != 0 {
 			t.Fatalf("cancelled group recorded %d of its pages", len(readers))
 		}
-		// Written but unrecorded outputs stay owned by their allocations, which
-		// the existing sweep retires once they expire unreferenced.
-		unrecorded := g.store.written()
-		for _, key := range unrecorded {
+		// Written but unrecorded outputs stay: the retry records the same
+		// bytes under the same names, and the orphan pass removes the rest.
+		for _, key := range g.store.written() {
 			if _, err := m.storage.store.Head(t.Context(), key); err != nil {
 				t.Fatalf("unrecorded output %s: %v", key, err)
 			}
-		}
-		var owned int
-		must(t, m.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+pgx.Identifier{m.schema, "content_media_allocations"}.Sanitize()+`
-WHERE tenant_id=$1 AND folder_prefix=$2 AND object_key=ANY($3) AND retired_at IS NULL`, g.target.TenantID, g.item.Prefix(), unrecorded).Scan(&owned))
-		if owned != len(unrecorded) {
-			t.Fatalf("%d of %d unrecorded outputs keep their allocation", owned, len(unrecorded))
 		}
 		must(t, g.processor(t, mediaimage.Config{Workers: 2, GroupSize: 32, GroupWait: time.Minute}).Process(g.job(t.Context()), mediastore.ProcessJob{Ref: g.target}))
 		if edits := g.manifestEdits(t) - before; edits != 1 {
@@ -330,13 +250,6 @@ WHERE tenant_id=$1 AND folder_prefix=$2 AND object_key=ANY($3) AND retired_at IS
 		_, readers := g.readers(t)
 		if len(readers) != 6 {
 			t.Fatalf("retry recorded %d of 6 pages", len(readers))
-		}
-		for _, out := range readers {
-			key, err := g.item.Blob(out.Blob)
-			must(t, err)
-			if slices.Contains(unrecorded, key) {
-				t.Fatalf("retry recorded the cancelled run's output %s", key)
-			}
 		}
 	})
 
@@ -365,27 +278,6 @@ WHERE tenant_id=$1 AND folder_prefix=$2 AND object_key=ANY($3) AND retired_at IS
 		}
 	})
 
-	t.Run("a_group_over_the_manifest_bound_keeps_what_fits_and_marks_it_full", func(t *testing.T) {
-		// Measure what recording one page adds, on a gallery of the same shape.
-		sample := newPageGroups(t, m, "Manifest growth sample", landscapePages(t, 6, 40))
-		empty := sample.size(t)
-		must(t, sample.processor(t, mediaimage.Config{Workers: 2, GroupSize: 32, GroupWait: time.Minute}).Process(sample.job(t.Context()), mediastore.ProcessJob{Ref: sample.target}))
-		perPage := (sample.size(t) - empty) / 6
-		// Leave room for three and a half pages under the edit bound
-		// (MaxManifestBytes less mediastore's 4 KiB editHeadroom).
-		g := newPageGroups(t, m, "Nearly full gallery", landscapePages(t, 6, 50))
-		g.pad(t, media.MaxManifestBytes-4<<10-perPage*7/2)
-		must(t, g.processor(t, mediaimage.Config{Workers: 2, GroupSize: 32, GroupWait: time.Minute}).Process(g.job(t.Context()), mediastore.ProcessJob{Ref: g.target}))
-		snapshot, readers := g.readers(t)
-		if !snapshot.Full || len(readers) != 3 {
-			t.Fatalf("full=%v with %d of 6 pages recorded; alone, three fit before the bound", snapshot.Full, len(readers))
-		}
-		for _, f := range snapshot.Files {
-			if f.IsUpload() && f.Fail() != nil {
-				t.Fatalf("%s failed instead of waiting for room: %+v", f.Path, f.Fail())
-			}
-		}
-	})
 }
 
 func TestMediaPageTransientDatabaseError(t *testing.T) {
@@ -400,11 +292,11 @@ func TestMediaPageTransientDatabaseError(t *testing.T) {
 					_, err := g.client.PostMediaUploadCommit(t.Context(), media.CommitBody{Ref: g.ref, OperationID: uuid.NewString(), Ops: []media.Op{stageFile(t, g.client, g.ref, page, pageImage(t, 96, 64, 1))}})
 					must(t, err)
 				}
-				// Fail the actual database call that reserves a placed or rendered blob.
-				// Manifest reads and edits still work, including a permanent failure edit.
+				// Fail the database call that records a written manifest. The
+				// bucket keeps working: the write lands, its record does not.
 				function := pgx.Identifier{m.schema, "critical_image_db_refusal"}.Sanitize()
-				table := pgx.Identifier{m.schema, "content_media_allocations"}.Sanitize()
-				_, err := m.pool.Exec(t.Context(), "CREATE FUNCTION "+function+"() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'too many connections for role' USING ERRCODE = '53300'; END $$; CREATE TRIGGER critical_image_db_refusal BEFORE INSERT ON "+table+" FOR EACH ROW EXECUTE FUNCTION "+function+"()")
+				table := pgx.Identifier{m.schema, "content_media_items"}.Sanitize()
+				_, err := m.pool.Exec(t.Context(), "CREATE FUNCTION "+function+"() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'too many connections for role' USING ERRCODE = '53300'; END $$; CREATE TRIGGER critical_image_db_refusal BEFORE INSERT OR UPDATE ON "+table+" FOR EACH ROW EXECUTE FUNCTION "+function+"()")
 				must(t, err)
 				restore := func() {
 					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -413,6 +305,19 @@ func TestMediaPageTransientDatabaseError(t *testing.T) {
 					must(t, err)
 				}
 				t.Cleanup(restore)
+				t.Cleanup(func() {
+					if !t.Failed() {
+						return
+					}
+					jobs, err := g.jobs.JobList(context.Background(), river.NewJobListParams().First(20))
+					if err != nil {
+						t.Logf("media jobs: %v", err)
+						return
+					}
+					for _, job := range jobs.Jobs {
+						t.Logf("media job %d %s %s attempt=%d metadata=%s errors=%+v", job.ID, job.Kind, job.State, job.Attempt, job.Metadata, job.Errors)
+					}
+				})
 				stop := startVideoFailureWorker(t, m)
 				defer stop()
 				var retry *rivertype.JobRow
@@ -429,10 +334,9 @@ func TestMediaPageTransientDatabaseError(t *testing.T) {
 						if len(job.Errors) == 0 || !strings.Contains(job.Errors[len(job.Errors)-1].Error, "SQLSTATE 53300") {
 							t.Fatalf("job lost the transient database error: %+v", job.Errors)
 						}
-						snapshot, readers := g.readers(t)
-						file, ok := snapshot.Get(page)
-						if !ok || file.Fail() != nil || !slices.Contains(file.Pending, "reader") || len(readers) != 0 {
-							t.Fatalf("transient failure did not leave the page pending: file=%+v readers=%v", file, readers)
+						snapshot, _ := g.readers(t)
+						if file, ok := snapshot.Get(page); !ok || file.Fail() != nil {
+							t.Fatalf("a transient failure failed the page: %+v", file)
 						}
 						var meta struct {
 							TransientAttempts int `json:"contentkit_transient_attempts"`
@@ -465,8 +369,7 @@ func TestMediaPageTransientDatabaseError(t *testing.T) {
 						return job.State == rivertype.JobStateScheduled && job.Attempt == retry.Attempt
 					})
 					snapshot, _ := g.readers(t)
-					file, ok := snapshot.Get(page)
-					if !ok || file.Fail() != nil || !slices.Contains(file.Pending, "reader") {
+					if file, ok := snapshot.Get(page); !ok || file.Fail() != nil {
 						t.Fatalf("final transient attempt failed its page: %+v", file)
 					}
 				}
@@ -509,7 +412,7 @@ SET attempt = attempt + $2, errors = errors || ARRAY(
 }
 
 func TestMediaIngestContentFailure(t *testing.T) {
-	for _, fault := range []string{"content", "unavailable-object"} {
+	for _, fault := range []string{"unavailable-object"} { // a content failure needs no database: the bucket keeps the files
 		t.Run(fault, func(t *testing.T) {
 			m := newResilientMedia(t)
 			client := m.app.engine.Client()
@@ -517,7 +420,7 @@ func TestMediaIngestContentFailure(t *testing.T) {
 			op := stageFile(t, client, ref, "pages/one.png", imageBytes(t))
 			_, err := client.PostMediaUploadCommit(t.Context(), media.CommitBody{Ref: ref, OperationID: uuid.NewString(), Ops: []media.Op{op}})
 			must(t, err)
-			wantMessage := "SQLSTATE 22000"
+			var wantMessage string
 			if fault == "unavailable-object" {
 				wantMessage = media.ErrUnavailable.Error()
 				target, err := m.config.Kinds.VersionRef(ref.Kind, ref.ID, ref.Version)
@@ -542,11 +445,6 @@ func TestMediaIngestContentFailure(t *testing.T) {
 				m.config.Store, err = medias3.New(medias3.Config{Bucket: m.storage.bucket, Endpoint: wire.URL, PublicEndpoint: endpoint.String(), AccessKeyID: os.Getenv("CONTENTKIT_CRITICAL_S3_USER"), SecretAccessKey: os.Getenv("CONTENTKIT_CRITICAL_S3_PASSWORD"), UsePathStyle: true})
 				must(t, err)
 				must(t, m.config.Store.Check(t.Context()))
-			} else {
-				function := pgx.Identifier{m.schema, "critical_ingest_refusal"}.Sanitize()
-				table := pgx.Identifier{m.schema, "content_media_allocations"}.Sanitize()
-				_, err = m.pool.Exec(t.Context(), "CREATE FUNCTION "+function+"() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'invalid source data' USING ERRCODE = '22000'; END $$; CREATE TRIGGER critical_ingest_refusal BEFORE INSERT ON "+table+" FOR EACH ROW EXECUTE FUNCTION "+function+"()")
-				must(t, err)
 			}
 			startVideoFailureWorker(t, m)
 			queue := m.queue(t)
@@ -630,9 +528,10 @@ func newPageGroups(t *testing.T, m *resilientMedia, title string, pages []pageSo
 	must(t, err)
 	g.item, err = m.config.Kinds.Item(g.target)
 	must(t, err)
-	journal, err := mediastore.NewPGJournal(m.pool, m.schema, nil)
+	// Every write is recorded in the item cache, which reports processing.
+	cache, err := mediastore.NewPGCache(m.pool, m.schema, m.config.Kinds, mediastore.CacheOptions{})
 	must(t, err)
-	g.manifests, err = mediastore.NewManifests(g.store, m.config.Kinds, mediastore.ManifestOptions{Locker: &pageLocker{Locker: mediastore.PGLocker(m.pool), store: g.store}, Journal: journal})
+	g.manifests, err = mediastore.NewManifests(g.store, m.config.Kinds, mediastore.ManifestOptions{Written: cache.Record})
 	must(t, err)
 	ops := make([]media.Op, len(pages))
 	for i, page := range pages {
@@ -681,14 +580,12 @@ func (g *pageGroups) blobKey(t *testing.T, path string) string {
 	return key
 }
 
-// manifestEdits counts the folder's manifest edits in the journal: every
-// commit but the allocation and retirement records.
+// manifestEdits is the item manifest's revision: one per write.
 func (g *pageGroups) manifestEdits(t *testing.T) int {
 	t.Helper()
-	var n int
-	must(t, g.m.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+pgx.Identifier{g.m.schema, "content_media_commits"}.Sanitize()+`
-WHERE tenant_id=$1 AND folder_prefix=$2 AND NOT coalesce((effects->>'cleanup')::boolean, false)`, g.target.TenantID, g.item.Prefix()).Scan(&n))
-	return n
+	m, _, err := g.manifests.Get(t.Context(), g.target)
+	must(t, err)
+	return int(m.Rev)
 }
 
 // readers returns the pages' reader outputs, failing on one that is not the
@@ -883,37 +780,4 @@ func (s *pageStore) Put(ctx context.Context, key string, body io.Reader, size in
 		s.mu.Unlock()
 	}
 	return object, err
-}
-
-// pageLocker observes output HEADs during real PostgreSQL lock holds and can
-// run cleanup after preflight but before the recording edit acquires its lock.
-type pageLocker struct {
-	mediastore.Locker
-	store *pageStore
-}
-
-func (l *pageLocker) Lock(ctx context.Context, key string) (func(), error) {
-	s := l.store
-	s.mu.Lock()
-	var before func()
-	if len(s.checked) > 0 {
-		before, s.beforeLock = s.beforeLock, nil
-	}
-	s.mu.Unlock()
-	if before != nil {
-		before()
-	}
-	unlock, err := l.Locker.Lock(ctx, key)
-	if err != nil {
-		return nil, err
-	}
-	s.mu.Lock()
-	s.locked++
-	s.mu.Unlock()
-	return func() {
-		s.mu.Lock()
-		s.locked--
-		s.mu.Unlock()
-		unlock()
-	}, nil
 }

@@ -6427,7 +6427,6 @@
           "conflict",
           "forbidden",
           "not_found",
-          "quota_exceeded",
           "rate_limited",
           "too_large",
           "too_many_files",
@@ -6482,7 +6481,6 @@
         "x-contentkit-errors": [
           "forbidden",
           "not_found",
-          "quota_exceeded",
           "rate_limited",
           "too_large",
           "type_not_allowed"
@@ -6734,7 +6732,6 @@
           "image_too_small",
           "not_found",
           "not_uploaded",
-          "quota_exceeded",
           "rate_limited",
           "too_large",
           "too_many_files",
@@ -14056,9 +14053,6 @@
           },
           "max_per_owner": {
             "type": "integer"
-          },
-          "uploads": {
-            "$ref": "#/components/schemas/UploadLimits"
           }
         },
         "required": [
@@ -18439,11 +18433,8 @@
           "min_width": {
             "type": "integer"
           },
-          "default": {
-            "type": "boolean"
-          },
-          "stable": {
-            "type": "boolean"
+          "default_image": {
+            "$ref": "#/components/schemas/PublicImage"
           }
         },
         "required": [
@@ -18453,8 +18444,7 @@
           "base",
           "namespace",
           "to",
-          "widths",
-          "default"
+          "widths"
         ]
       },
       "PresetStatus": {
@@ -18770,9 +18760,6 @@
           },
           "status": {
             "$ref": "#/components/schemas/MediaStatus"
-          },
-          "full": {
-            "type": "boolean"
           },
           "uploads": {
             "type": "array",
@@ -19667,20 +19654,6 @@
           "external_id"
         ]
       },
-      "UploadLimits": {
-        "type": "object",
-        "properties": {
-          "files_per_hour": {
-            "type": "integer"
-          },
-          "bytes_per_day": {
-            "type": "integer"
-          },
-          "quota_bytes": {
-            "type": "integer"
-          }
-        }
-      },
       "UploadRule": {
         "type": "object",
         "properties": {
@@ -20258,7 +20231,6 @@
           "not_joinable",
           "not_ready",
           "not_uploaded",
-          "quota_exceeded",
           "rate_limited",
           "tenant_mismatch",
           "too_large",
@@ -20557,10 +20529,6 @@
     "not_uploaded": {
       "status": 409,
       "meaning": "A commit names an upload that has not landed; `blobs` lists the ones to upload again."
-    },
-    "quota_exceeded": {
-      "status": 413,
-      "meaning": "The uploader's storage quota is used up."
     },
     "rate_limited": {
       "status": 429,

@@ -13,11 +13,18 @@
 // It runs no DDL: the host's migration step applies workqueue.Migrate to
 // MEDIA_WORKER_SCHEMA, so DATABASE_URL can be an unprivileged role.
 //
-// `media-worker publish-defaults` publishes the default images the kinds'
-// public presets name (Public.Default) and prints MEDIA_GATEWAY_DEFAULTS for
-// the gateway. It needs MEDIA_KINDS_FILE and MEDIA_S3_*, no database.
-// MEDIA_DEFAULTS_DIR holds the host's own default images, over ContentKit's
-// (media/avatar). Hosts link no codecs; this is where defaults are rendered.
+// `media-worker publish-defaults` renders the default images the kinds'
+// public presets name (Public.Default) into each kind's _default item. It
+// needs MEDIA_KINDS_FILE and MEDIA_S3_*, no database. MEDIA_DEFAULTS_DIR
+// holds the host's own default images, over ContentKit's (media/avatar).
+// Hosts link no codecs; this is where defaults are rendered.
+//
+// `media-worker rebuild` refills the database's item cache from the
+// bucket's manifests (the same environment as the worker).
+//
+// `media-worker move` copies a pre-v4 bucket into a new never-versioned one
+// (internal/mediamove): MEDIA_MOVE_SOURCE_BUCKET on the same endpoint and
+// key, the worker's environment for the destination.
 package main
 
 import (
@@ -54,8 +61,16 @@ func main() {
 		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 		err = publishDefaults(ctx, os.Stdout)
 		stop()
+	case "rebuild":
+		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+		err = rebuild(ctx, log)
+		stop()
+	case "move":
+		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+		err = move(ctx, log)
+		stop()
 	default:
-		err = fmt.Errorf("unknown command %q: run without arguments, or publish-defaults", strings.Join(args, " "))
+		err = fmt.Errorf("unknown command %q: run without arguments, or publish-defaults, rebuild or move", strings.Join(args, " "))
 	}
 	if err != nil {
 		log.Error("media-worker", "error", err)

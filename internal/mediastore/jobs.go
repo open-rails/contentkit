@@ -1,61 +1,41 @@
 package mediastore
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"iter"
 	"log/slog"
-	"strconv"
+	"slices"
 	"time"
 
-	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/contentkit/contentref"
-	"github.com/open-rails/contentkit/internal/uuidv7"
 	media "github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/layout"
 )
 
-// JobsConfig configures media's River jobs in the host.
+// JobsConfig configures media's lifecycle operations.
 type JobsConfig struct {
-	Store     media.Store
-	Registry  *Registry
-	Locker    Locker       // serializes manifest edits and sweep deletion; required
-	Journal   *PGJournal   // same ContentKit journal used by the uploader and media worker; required
-	Processes ProcessQueue // the worker's queue (workqueue.Queue)
-	// Grace bounds unfinished, recorded private allocations. Default 24 h.
-	Grace time.Duration
-	// LateUploadWindow retains exact-key cleanup after folder deletion or
-	// allocation retirement, catching writes that land after the first pass;
-	// at least the seven-day multipart lifetime plus one hour.
-	LateUploadWindow time.Duration
-	Limiter          *PGLimiter // optional; must share the journal's pool and schema
-	Logger           *slog.Logger
-	Now              func() time.Time
+	Manifests *Manifests
+	Processes ProcessQueue // the worker's queue (workqueue.Queue); optional
+	Logger    *slog.Logger
+	Now       func() time.Time
 }
 
-// Jobs holds synchronous storage operations used by ingest and content purge.
-// It registers no workers, queues, timers, or background loops.
+// Jobs deletes, restores, erases and collects items. Every decision reads
+// the item's manifest: nothing about files lives in Postgres.
 type Jobs struct {
 	cfg       JobsConfig
 	manifests *Manifests
+	store     media.Store
+	reg       *Registry
 }
 
 func NewJobs(cfg JobsConfig) (*Jobs, error) {
-	if cfg.Store == nil || cfg.Registry == nil || cfg.Locker == nil || cfg.Journal == nil {
-		return nil, errors.New("media: Jobs needs a Store, a Registry, a Locker and a Journal")
-	}
-	if cfg.Limiter != nil && (cfg.Limiter.pool != cfg.Journal.pool || cfg.Limiter.usage != cfg.Journal.limiter.usage) {
-		return nil, errors.New("media: deletion quota must use the journal's pool and ContentKit schema")
-	}
-	if cfg.Grace <= 0 {
-		cfg.Grace = 24 * time.Hour
-	}
-	if cfg.LateUploadWindow < minimumLateUploadWindow {
-		cfg.LateUploadWindow = minimumLateUploadWindow
+	if cfg.Manifests == nil {
+		return nil, errors.New("media: Jobs needs Manifests")
 	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
@@ -63,15 +43,10 @@ func NewJobs(cfg JobsConfig) (*Jobs, error) {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
-	j := &Jobs{cfg: cfg}
-	var err error
-	if j.manifests, err = NewManifests(cfg.Store, cfg.Registry, ManifestOptions{Locker: cfg.Locker, Journal: cfg.Journal, CleanupGrace: cfg.Grace, LateUploadWindow: cfg.LateUploadWindow}); err != nil {
-		return nil, err
-	}
-	return j, nil
+	return &Jobs{cfg: cfg, manifests: cfg.Manifests, store: cfg.Manifests.store, reg: cfg.Manifests.reg}, nil
 }
 
-// Manifests is the jobs' manifest store; hosts may share it.
+// Manifests is the jobs' manifest store.
 func (j *Jobs) Manifests() *Manifests { return j.manifests }
 
 // EnqueueProcessing brings an existing item's derived files up to date after
@@ -83,219 +58,430 @@ func (j *Jobs) EnqueueProcessing(ctx context.Context, job ProcessJob) error {
 	return j.cfg.Processes.Enqueue(ctx, job)
 }
 
-// RetireItemsTx records folder deletion with its owning row's transaction.
-// Only the existing content-purge sweep executes these durable intents.
-func (j *Jobs) RetireItemsTx(ctx context.Context, tx pgx.Tx, items ...media.Deletion) error {
-	for _, d := range items {
-		item, err := j.cfg.Registry.Item(d.Ref)
-		if err != nil {
-			return err
-		}
-		m, err := j.manifests.ensureIncarnation(ctx, item)
-		if err != nil {
-			return err
-		}
-		owner := ""
-		if j.cfg.Limiter != nil {
-			owner = d.Owner
-		}
-		if err := j.cfg.Journal.retireItemTx(ctx, tx, item, owner, m.Incarnation, j.cfg.Now()); err != nil {
+// ErrErasurePending reports bytes still present after an erasure. Retry it.
+var ErrErasurePending = errors.New("media: erasure cleanup remains pending")
+
+// SetDeleted soft-deletes ref (deleted) or restores it: the manifest records
+// the deletion and the gateway fence closes the item at once; files are
+// kept. An erased item stays erased: a stale sync changes nothing.
+func (j *Jobs) SetDeleted(ctx context.Context, ref contentref.ContentRef, deleted bool) error {
+	item, err := j.reg.Item(ref)
+	if err != nil {
+		return err
+	}
+	if deleted {
+		if err := j.fenceDeleted(ctx, item); err != nil {
 			return err
 		}
 	}
-	return nil
-}
-
-func (j *PGJournal) retireItemTx(ctx context.Context, tx pgx.Tx, item Item, owner, incarnation string, due time.Time) error {
-	if id, err := uuid.Parse(incarnation); err != nil || id == uuid.Nil {
-		return ErrCommitIdentity
-	}
-	effects, err := json.Marshal(journalEffects{FolderDelete: &folderDeletion{Owner: owner, Incarnation: incarnation}})
-	if err != nil {
-		return err
-	}
-	operation := uuidv7.Name(item.at(incarnation), uuid.NameSpaceURL, "folder-retirement:"+item.Prefix()+incarnation)
-	fingerprint := sha256.Sum256(effects)
-	jr := j.forTenant(item.Ref().TenantID)
-	if err := jr.lockAdmission(ctx, tx, item.Prefix()); err != nil {
-		return err
-	}
-	inserted, err := tx.Exec(ctx, `INSERT INTO `+jr.table+`
-(tenant_id,operation_id,content_kind,content_id,content_version_id,folder_prefix,actor_id,fingerprint,lease_id,state,effects)
-VALUES($1,$2,$3,$4,$5,$6,'',$7,$8,'applied',$9) ON CONFLICT(tenant_id,operation_id) DO NOTHING`,
-		item.Ref().TenantID, operation, item.Ref().ContentKind, item.Ref().ContentID, item.Ref().ContentVersionID, item.Prefix(), fingerprint[:], uuidv7.New(), effects)
-	if err != nil {
-		return err
-	}
-	c, err := jr.load(ctx, tx, item.Ref().TenantID, operation)
-	if err != nil {
-		return err
-	}
-	if !c.Ref.Equal(item.Ref()) || c.Fingerprint != fingerprint || c.Effects.FolderDelete == nil {
-		return ErrCommitIdentity
-	}
-	if inserted.RowsAffected() > 0 {
-		// Only a new claim schedules initial erasure. Retrying the owner claim
-		// must not rewind a failed obligation or change its in-flight revision.
-		// Initial erasure must not wait behind an older late-write deadline.
-		_, err = tx.Exec(ctx, `INSERT INTO `+jr.cleanup+` AS c (tenant_id,folder_prefix,content_kind,due_at,deletion_operations)
-VALUES($1,$2,$3,$4,$5) ON CONFLICT(tenant_id,folder_prefix) DO UPDATE SET due_at=least(c.due_at,EXCLUDED.due_at),
-deletion_operations=ARRAY(SELECT DISTINCT op FROM unnest(c.deletion_operations || EXCLUDED.deletion_operations) op),revision=gen_random_uuid()`,
-			item.Ref().TenantID, item.Prefix(), item.Ref().ContentKind, due, []uuid.UUID{operation})
-		if err != nil {
-			return err
+	_, err = j.manifests.EditWith(ctx, ref, EditOptions{Existing: true, Lifecycle: true}, func(m *Manifest) error {
+		switch {
+		case m.Deleted != nil && m.Deleted.Erased:
+			return ErrUnchanged
+		case deleted && m.Deleted == nil:
+			m.Deleted = &Deletion{At: j.cfg.Now().UTC()}
+		case !deleted && m.Deleted != nil:
+			m.Deleted = nil
+		default:
+			return ErrUnchanged
 		}
-	}
-	return nil
-}
-
-// RetirementStartedTx lets the owner refuse restore after an irreversible
-// folder-retirement claim. Callers hold their ordinary owning-row locks.
-func (j *Jobs) RetirementStartedTx(ctx context.Context, tx pgx.Tx, ref contentref.ContentRef) (bool, error) {
-	item, err := j.cfg.Registry.Item(ref)
-	if err != nil {
-		return false, err
-	}
-	jr := j.cfg.Journal.forTenant(ref.TenantID)
-	var started bool
-	err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM `+jr.table+` WHERE tenant_id=$1 AND folder_prefix=$2 AND effects ? 'folder_delete')`, ref.TenantID, item.Prefix()).Scan(&started)
-	return started, err
-}
-
-// RetirementComplete reports the first physical deletion of every committed
-// lifetime. Exact late-write receipts remain owned by the same purge sweep.
-func (j *Jobs) RetirementComplete(ctx context.Context, ref contentref.ContentRef) (bool, error) {
-	item, err := j.cfg.Registry.Item(ref)
-	if err != nil {
-		return false, err
-	}
-	jr := j.cfg.Journal.forTenant(ref.TenantID)
-	var complete bool
-	err = jr.pool.QueryRow(ctx, `SELECT count(*)>0 AND coalesce(bool_and(coalesce(effects->'folder_delete'->>'completed'='true',false)),false)
-FROM `+jr.table+` WHERE tenant_id=$1 AND folder_prefix=$2 AND effects ? 'folder_delete'`, ref.TenantID, item.Prefix()).Scan(&complete)
-	return complete, err
-}
-
-// Purge clears and resets an item to a fresh incarnation. It needs a caller-
-// stable OperationID, even without quota; retry a failed reset with that ID.
-// Hosts deleting content commit RetireItemsTx and let content purge execute it.
-func (j *Jobs) Purge(ctx context.Context, d media.Deletion) error {
-	ctx = context.WithValue(ctx, synchronousMutationOwnerKey{}, true)
-	item, err := j.cfg.Registry.Item(d.Ref)
-	if err != nil {
-		return err
-	}
-	if d.OperationID == "" {
-		return errors.New("media: purge needs an operation id")
-	}
-	operation := uuidv7.Name(item.at(d.OperationID), uuid.NameSpaceURL, "purge:"+item.Prefix()+d.OperationID)
-	if err := j.deleteItem(ctx, item, d.Owner, operation, "", time.Time{}, false); err != nil {
-		return err
-	}
-	if err := j.repeatDeletion(ctx, item, operation); err != nil {
-		return err
-	}
-	return j.resetItem(ctx, item, operation)
-}
-
-// uploadBytesMeta is the manifest object's metadata key for the quota its
-// uploads were charged.
-const uploadBytesMeta = "upload-bytes"
-
-// uploadBytes is the quota the folder's manifest was charged, read from the
-// manifest object's metadata so a manifest that does not decode (over its
-// bound) is still deleted. One without the record is decoded; one that does
-// not decode releases nothing, and any other error is returned for a retry.
-func (j *Jobs) uploadBytes(ctx context.Context, prefix string) (int64, error) {
-	key := prefix + layout.ManifestName
-	obj, err := j.cfg.Store.Head(ctx, key)
+		return nil
+	})
 	if errors.Is(err, ErrNotFound) {
-		return 0, nil
+		err = nil // no media: only the fence matters
+	}
+	if err != nil {
+		return err
+	}
+	if !deleted {
+		return j.unfence(ctx, item)
+	}
+	return nil
+}
+
+// Erased reports whether ref's media was erased: its tombstone or its
+// permanent fence.
+func (j *Jobs) Erased(ctx context.Context, ref contentref.ContentRef) (bool, error) {
+	item, err := j.reg.Item(ref)
+	if err != nil {
+		return false, err
+	}
+	cur, _, err := j.manifests.GetAny(ctx, ref)
+	if err == nil && cur.Deleted != nil && cur.Deleted.Erased {
+		return true, nil
+	} else if err != nil && !errors.Is(err, ErrNotFound) {
+		return false, err
+	}
+	_, kind, err := j.fence(ctx, item)
+	return kind == layout.FenceErased, err
+}
+
+// Tombstone makes ref's erasure irreversible without deleting bytes yet:
+// the permanent fence, then an empty manifest whose files are all retired
+// and due. Restore refuses from here on; Erase deletes the bytes.
+func (j *Jobs) Tombstone(ctx context.Context, ref contentref.ContentRef) error {
+	item, err := j.reg.Item(ref)
+	if err != nil {
+		return err
+	}
+	if err := j.fenceErasure(ctx, item); err != nil {
+		return err
+	}
+	_, err = j.manifests.EditWith(ctx, ref, EditOptions{Lifecycle: true, Grace: -1}, func(m *Manifest) error {
+		if m.Deleted != nil && m.Deleted.Erased {
+			return ErrUnchanged
+		}
+		now := j.cfg.Now().UTC()
+		m.Deleted = &Deletion{At: now, Erased: true}
+		m.Files, m.Meta = nil, nil
+		for i := range m.Retired {
+			if m.Retired[i].Due.After(now) {
+				m.Retired[i].Due = now // erasure deletes every file at once
+			}
+		}
+		return nil
+	})
+	return err
+}
+
+// Erase tombstones ref and deletes every object it holds but the manifest
+// and the fence, then verifies the folder. Objects that land later (a
+// worker's late write) are deleted by the item's next collection.
+func (j *Jobs) Erase(ctx context.Context, ref contentref.ContentRef) error {
+	if err := j.Tombstone(ctx, ref); err != nil {
+		return err
+	}
+	item, err := j.reg.Item(ref)
+	if err != nil {
+		return err
+	}
+	if _, err := j.Collect(ctx, ref); err != nil {
+		return err
+	}
+	for obj, err := range j.store.List(ctx, item.Prefix()) {
+		if err != nil {
+			return err
+		}
+		if obj.Key == item.ManifestKey() || obj.Key == item.PublicPrefix()+layout.FenceName {
+			continue
+		}
+		return fmt.Errorf("%w: %s", ErrErasurePending, obj.Key)
+	}
+	return nil
+}
+
+// orphanAge protects objects a writer may still be about to reference. The
+// orphan pass is due an hour after that past an item's last write, and runs
+// in every collection for a further day, so a late job still makes it.
+const (
+	orphanAge    = 24 * time.Hour
+	orphanWindow = orphanAge + 25*time.Hour
+)
+
+// Collect runs ref's garbage collection once and returns when it is next
+// due (zero: nothing left). Retired entries past their due time are marked
+// deleting in the manifest (the fence against re-reference), deleted, and
+// dropped once their DELETE has settled. After a write within the last day
+// it also lists the folder for orphans: objects the manifest does not know,
+// older than a day, which a crashed writer left. An erased item's unknown
+// objects are all orphans. Nothing is deleted without the manifest's say.
+func (j *Jobs) Collect(ctx context.Context, ref contentref.ContentRef) (time.Time, error) {
+	item, err := j.reg.Item(ref)
+	if err != nil {
+		return time.Time{}, err
+	}
+	cur, _, err := j.manifests.GetAny(ctx, ref)
+	if errors.Is(err, ErrNotFound) {
+		return time.Time{}, nil
 	} else if err != nil {
-		return 0, err
+		return time.Time{}, err
 	}
-	if n, err := strconv.ParseInt(obj.Metadata[uploadBytesMeta], 10, 64); err == nil && n >= 0 {
-		return n, nil
+	now := j.cfg.Now().UTC()
+	erased := cur.Deleted != nil && cur.Deleted.Erased
+	var tmp []string
+	if erased || now.Sub(cur.WrittenAt) < orphanWindow {
+		orphans, staged, err := j.orphans(ctx, item, cur, now, erased)
+		if err != nil {
+			return time.Time{}, err
+		}
+		tmp = staged
+		if len(orphans) > 0 {
+			if cur, err = j.manifests.EditWith(ctx, ref, EditOptions{Lifecycle: true}, func(m *Manifest) error {
+				live := m.referenced()
+				changed := false
+				for _, blob := range orphans {
+					if _, retired := m.Retiring(blob); !live[blob] && !retired {
+						m.Retired = append(m.Retired, Retired{Blob: blob, At: now, Due: now})
+						changed = true
+					}
+				}
+				if !changed {
+					return ErrUnchanged
+				}
+				return nil
+			}); err != nil {
+				return time.Time{}, err
+			}
+		}
 	}
-	m, err := j.readManifest(ctx, key)
+	if slices.ContainsFunc(cur.Retired, func(r Retired) bool { return r.Deleting == nil && !r.Due.After(now) }) {
+		if cur, err = j.manifests.EditWith(ctx, ref, EditOptions{Lifecycle: true}, func(m *Manifest) error {
+			changed := false
+			for i := range m.Retired {
+				if r := &m.Retired[i]; r.Deleting == nil && !r.Due.After(now) {
+					r.Deleting = &now
+					changed = true
+				}
+			}
+			if !changed {
+				return ErrUnchanged
+			}
+			return nil
+		}); err != nil {
+			return time.Time{}, err
+		}
+	}
+	deleted := map[string]bool{}
+	var errs []error
+	for _, r := range cur.Retired {
+		if r.Deleting == nil {
+			continue
+		}
+		if err := j.delete(ctx, keyOf(item, r.Blob)); err != nil {
+			errs = append(errs, err)
+			continue
+		}
+		deleted[r.Blob] = true
+	}
+	for _, key := range tmp {
+		if err := j.delete(ctx, key); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	settled := func(r Retired) bool {
+		return r.Deleting != nil && deleted[r.Blob] && !r.Deleting.Add(j.manifests.settle).After(now)
+	}
+	if slices.ContainsFunc(cur.Retired, settled) {
+		if cur, err = j.manifests.EditWith(ctx, ref, EditOptions{Lifecycle: true}, func(m *Manifest) error {
+			n := len(m.Retired)
+			m.Retired = slices.DeleteFunc(m.Retired, settled)
+			if len(m.Retired) == n {
+				return ErrUnchanged
+			}
+			return nil
+		}); err != nil {
+			return time.Time{}, err
+		}
+	}
+	if err := errors.Join(errs...); err != nil {
+		return time.Time{}, err
+	}
+	return nextCollection(cur, j.manifests.settle, now), nil
+}
+
+// NextCollection is when m next needs Collect.
+func (j *Jobs) NextCollection(m *Manifest) time.Time {
+	return nextCollection(m, j.manifests.settle, j.cfg.Now().UTC())
+}
+
+// orphans lists item's folder for objects m does not know, and for an
+// erased item its staged uploads too.
+func (j *Jobs) orphans(ctx context.Context, item Item, m *Manifest, now time.Time, erased bool) (blobs, staged []string, err error) {
+	known := m.referenced()
+	for _, r := range m.Retired {
+		known[r.Blob] = true
+	}
+	for obj, err := range j.store.List(ctx, item.Prefix()) {
+		if err != nil {
+			return nil, nil, err
+		}
+		k, ok := layout.Parse(obj.Key)
+		if !ok || k.Folder() != item.Prefix() {
+			continue
+		}
+		switch k.Area {
+		case layout.AreaInternal, layout.AreaPrivate, layout.AreaPublic:
+			blob := k.Area + "/" + k.Name
+			if !layout.ValidBlobRef(blob) {
+				continue // the gateway fence
+			}
+			if !known[blob] && (erased || now.Sub(obj.LastModified) > orphanAge) {
+				blobs = append(blobs, blob)
+			}
+		case layout.AreaTmp:
+			if erased {
+				staged = append(staged, obj.Key)
+			}
+		}
+	}
+	return blobs, staged, nil
+}
+
+// delete sends one DELETE; an absent object is deleted.
+func (j *Jobs) delete(ctx context.Context, key string) error {
+	if err := j.store.Delete(ctx, key); err != nil && !errors.Is(err, ErrNotFound) {
+		return err
+	}
+	return nil
+}
+
+// errFenceConflict: the fence kept changing while erasure replaced it.
+var errFenceConflict = errors.New("media: gateway fence kept changing")
+
+// fence reads item's gateway fence: "" when it has none, else its kind. A
+// fence without the deletion mark is permanent erasure.
+func (j *Jobs) fence(ctx context.Context, item Item) (media.Object, string, error) {
+	obj, err := j.store.Head(ctx, item.PublicPrefix()+layout.FenceName)
 	switch {
 	case errors.Is(err, ErrNotFound):
-		return 0, nil
-	case errors.Is(err, errBadManifest):
-		j.cfg.Logger.WarnContext(ctx, "media: deleting a folder whose manifest does not decode releases no quota", "key", key, "error", err)
-		return 0, nil
+		return obj, "", nil
 	case err != nil:
-		return 0, err
+		return obj, "", err
+	case obj.Metadata[layout.FenceMeta] == layout.FenceDeleted:
+		return obj, layout.FenceDeleted, nil
 	}
-	return m.uploadBytes(), nil
+	return obj, layout.FenceErased, nil
 }
 
-// parseFolder guards every job's prefix: exactly an item folder,
-// "{ns}/{kind}/{id}/" or a version's "{ns}/{kind}/{id}/{version}/". The id is
-// any canonical UUID here; Registry.Item then requires the kind's own.
-func parseFolder(prefix string) (contentref.ContentRef, error) {
-	k, ok := layout.ParseFolder(prefix)
-	if !ok || !canonicalUUID(k.ID) || k.Version != "" && contentref.ValidateID(k.Version) != nil {
-		return contentref.ContentRef{}, fmt.Errorf("media: invalid folder prefix %q", prefix)
+// putFence creates item's fence of kind, or replaces the one whose ETag is match.
+func (j *Jobs) putFence(ctx context.Context, item Item, kind, match string) error {
+	if err := RequireWritable(ctx, j.store); err != nil {
+		return err
 	}
-	return contentref.New(k.Namespace, k.Kind, k.ID).WithVersion(k.Version), nil
+	sum := sha256.Sum256(nil)
+	o := media.PutOptions{IfMatch: match, ContentType: "application/octet-stream", CacheControl: "no-store",
+		ChecksumSHA256: sum[:], Metadata: map[string]string{layout.FenceMeta: kind}}
+	if match == "" {
+		o.IfNoneMatch = "*"
+	}
+	_, err := j.store.Put(ctx, item.PublicPrefix()+layout.FenceName, bytes.NewReader(nil), 0, o)
+	return err
 }
 
-// folderItem also binds the serialized path shape. A legacy-looking path
-// whose namespace equals an internal scoped partition must not alias a new root.
-func (r *Registry) folderItem(prefix string) (Item, error) {
-	ref, err := parseFolder(prefix)
-	if err != nil {
-		return Item{}, err
+// fenceDeleted closes item to the gateway unless it is already fenced.
+func (j *Jobs) fenceDeleted(ctx context.Context, item Item) error {
+	_, kind, err := j.fence(ctx, item)
+	if err != nil || kind != "" {
+		return err
 	}
-	item, err := r.Item(ref)
-	if err != nil {
-		return Item{}, err
+	if err := j.putFence(ctx, item, layout.FenceDeleted, ""); !errors.Is(err, ErrPreconditionFailed) {
+		return err
 	}
-	if item.Prefix() != prefix {
-		return Item{}, fmt.Errorf("media: folder does not match registry scope %q", prefix)
-	}
-	return item, nil
+	return nil
 }
 
-// itemFolders lists the item folders of kind k in key order: each item's,
-// and each content's versions' before its own.
-func (j *Jobs) itemFolders(ctx context.Context, k *RegisteredKind) iter.Seq2[contentref.ContentRef, error] {
-	return func(yield func(contentref.ContentRef, error) bool) {
-		last := ""
-		for o, err := range j.cfg.Store.List(ctx, k.root()+k.Name+"/") {
+// unfence removes a deletion fence, never an erasure's: an erasure that
+// replaced the fence between the check and the DELETE is fenced again.
+func (j *Jobs) unfence(ctx context.Context, item Item) error {
+	_, kind, err := j.fence(ctx, item)
+	if err != nil || kind != layout.FenceDeleted {
+		return err
+	}
+	if err := j.store.Delete(ctx, item.PublicPrefix()+layout.FenceName); err != nil && !errors.Is(err, ErrNotFound) {
+		return err
+	}
+	cur, _, err := j.manifests.GetAny(ctx, item.Ref())
+	if err == nil && cur.Deleted != nil && cur.Deleted.Erased {
+		return j.fenceErasure(ctx, item)
+	}
+	if errors.Is(err, ErrNotFound) {
+		return nil
+	}
+	return err
+}
+
+// fenceErasure makes item's fence permanent, replacing a deletion fence.
+func (j *Jobs) fenceErasure(ctx context.Context, item Item) error {
+	for range 5 {
+		obj, kind, err := j.fence(ctx, item)
+		if err != nil || kind == layout.FenceErased {
+			return err
+		}
+		match := ""
+		if kind == layout.FenceDeleted {
+			match = obj.ETag
+		}
+		if err := j.putFence(ctx, item, layout.FenceErased, match); !errors.Is(err, ErrPreconditionFailed) {
+			return err
+		}
+	}
+	return errFenceConflict
+}
+
+// Items lists the items of kind k that have a manifest, in key order: one
+// delimited listing of the kind's folders and one GET per item, never a
+// listing of the items' files.
+func (j *Jobs) Items(ctx context.Context, k *RegisteredKind) iter.Seq2[ItemManifest, error] {
+	return func(yield func(ItemManifest, error) bool) {
+		for folder, err := range j.store.Folders(ctx, k.root()+k.Name+"/") {
 			if err != nil {
-				yield(contentref.ContentRef{}, err)
+				yield(ItemManifest{}, err)
 				return
 			}
-			key, ok := layout.Parse(o.Key)
-			if !ok || key.Folder() == last {
+			key, ok := layout.ParseFolder(folder)
+			if !ok || key.ID == layout.DefaultID {
 				continue
 			}
-			last = key.Folder()
-			if k.Versions && key.Version != "" {
-				continue // the current layout never writes nested version folders
+			m, etag, err := j.manifests.get(ctx, folder+layout.ManifestName)
+			if errors.Is(err, ErrNotFound) {
+				continue // files whose manifest never landed: no item
 			}
-			item, err := j.itemForFolder(ctx, last)
+			var out ItemManifest
+			if err == nil {
+				out = ItemManifest{Manifest: m, ETag: etag}
+				out.Ref, err = j.reg.RefOf(m.Item)
+			}
 			if err != nil {
-				if !yield(contentref.ContentRef{}, err) {
-					return
-				}
-				continue
+				err = fmt.Errorf("media: %s: %w", folder, err)
 			}
-			if !yield(item.Ref(), nil) {
+			if !yield(out, err) {
 				return
 			}
 		}
 	}
 }
 
-// Regenerate visits every item of kind (in its namespace) and asks the
-// worker to redo its stale outputs of preset ("" for all): after a deploy
-// changed a preset's spec or a producer's recipe. It returns the items
-// visited.
+// ItemManifest is an item's stored manifest.
+type ItemManifest struct {
+	Ref      contentref.ContentRef
+	Manifest *Manifest
+	ETag     string
+}
+
+// Rebuild records every item of kinds in the cache from the bucket: what a
+// database restored from a backup, or dropped, needs. Each recorded item
+// wakes its processing, release and collection again. Rows already at a
+// manifest's revision are left alone. It returns the items recorded and
+// stops at the first error.
+func (j *Jobs) Rebuild(ctx context.Context, cache *PGCache, kinds ...string) (int, error) {
+	n := 0
+	for _, name := range kinds {
+		k, err := j.reg.Kind(name)
+		if err != nil {
+			return n, err
+		}
+		for it, err := range j.Items(ctx, k) {
+			if err != nil {
+				return n, err
+			}
+			item, err := j.reg.Item(it.Ref)
+			if err != nil {
+				return n, err
+			}
+			if err := cache.Record(ctx, item, it.Manifest, it.ETag); err != nil {
+				return n, err
+			}
+			n++
+		}
+	}
+	return n, nil
+}
+
+// Regenerate visits every item of kind and asks the worker to redo its
+// stale outputs of preset ("" for all): after a deploy changed a preset's
+// spec or a producer's recipe. It returns the items visited.
 func (j *Jobs) Regenerate(ctx context.Context, kind, preset string) (int, error) {
-	k, err := j.cfg.Registry.Kind(kind)
+	k, err := j.reg.Kind(kind)
 	if err != nil {
 		return 0, err
 	}
@@ -303,14 +489,11 @@ func (j *Jobs) Regenerate(ctx context.Context, kind, preset string) (int, error)
 		return 0, errors.New("media: Regenerate needs JobsConfig.Processes")
 	}
 	n := 0
-	for ref, err := range j.itemFolders(ctx, k) {
+	for it, err := range j.Items(ctx, k) {
 		if err != nil {
 			return n, err
 		}
-		if _, err := j.cfg.Registry.Item(ref); err != nil {
-			continue
-		}
-		if err := j.cfg.Processes.Enqueue(ctx, ProcessJob{Ref: ref, Preset: preset, Class: media.VideoBackfill}); err != nil {
+		if err := j.cfg.Processes.Enqueue(ctx, ProcessJob{Ref: it.Ref, Preset: preset, Class: media.VideoBackfill}); err != nil {
 			return n, err
 		}
 		n++

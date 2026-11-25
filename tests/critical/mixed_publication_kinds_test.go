@@ -56,7 +56,7 @@ func TestMediaApplicationPublishesTextKinds(t *testing.T) {
 	})
 	waitForChapterPublication(t, func() bool {
 		var ready bool
-		must(t, w.pool.QueryRow(t.Context(), `SELECT released AND release_id IS NOT NULL FROM `+w.schema+`.content_versions
+		must(t, w.pool.QueryRow(t.Context(), `SELECT released FROM `+w.schema+`.content_versions
  WHERE tenant_id=$1 AND id=$2`, a.cfg.Scope.AppID.String(), gallery.Versions[0].ID).Scan(&ready))
 		return ready
 	})
@@ -64,12 +64,11 @@ func TestMediaApplicationPublishesTextKinds(t *testing.T) {
 		waitForChapterPublication(t, func() bool {
 			var complete bool
 			must(t, w.pool.QueryRow(t.Context(), `SELECT EXISTS(SELECT 1 FROM `+w.schema+`.content_versions v
- JOIN `+w.schema+`.content_publication_requests r ON r.tenant_id=v.tenant_id AND r.id=v.release_id
- WHERE v.tenant_id=$1 AND v.id=$2 AND v.released AND r.state='completed')`, publicationTenant(a), item.Versions[0].ID).Scan(&complete))
+ WHERE v.tenant_id=$1 AND v.id=$2 AND v.released)`, publicationTenant(a), item.Versions[0].ID).Scan(&complete))
 			return complete
 		})
 	}
-	// A completed SQL receipt is insufficient if the configured empty post is
+	// A released row is insufficient if the configured empty post is
 	// still hidden or its body is redacted by the public reader.
 	for _, post := range []catalog.Content{emptyPost, attachedPost} {
 		got, err := reader.GetContent(t.Context(), post.ID, ck.GetContentQuery{})
@@ -139,9 +138,8 @@ func TestMediaApplicationPublishesTextKinds(t *testing.T) {
 	})
 	var completedArticles int
 	must(t, w.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+w.schema+`.content_versions v
- JOIN `+w.schema+`.content_publication_requests r ON r.tenant_id=v.tenant_id AND r.id=v.release_id
  JOIN `+w.schema+`.content_items c ON c.tenant_id=v.tenant_id AND c.id=v.content_id
- WHERE v.tenant_id=$1 AND c.kind='article' AND r.state='completed'`, publicationTenant(a)).Scan(&completedArticles))
+ WHERE v.tenant_id=$1 AND c.kind='article' AND v.released`, publicationTenant(a)).Scan(&completedArticles))
 	if completedArticles != 2 {
 		t.Fatalf("unified worker completed %d article editions, want two", completedArticles)
 	}

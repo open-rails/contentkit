@@ -106,7 +106,7 @@ func (g entityFolders) RetirementComplete(ctx context.Context, r entities.Ref) (
 	return g.e.media.versions.EntityFolders().RetirementComplete(ctx, r)
 }
 func (g entityFolders) PurgeRetired(ctx context.Context, limit int) (int, error) {
-	return g.e.media.jobs.PurgeRetired(ctx, limit)
+	return g.e.media.versions.EntityFolders().PurgeRetired(ctx, limit)
 }
 
 // ownedContent deletes and restores user-owned entities' content through the

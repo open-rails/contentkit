@@ -2,10 +2,10 @@ import type { AspectRatio } from "./aspect.js";
 import { sortRenditions, type Rendition } from "./rendition.js";
 
 /**
- * A public file's URL, as media.PublicURL: `{base}/v1/{namespace}/{kind}/{owner}/public/{name}`.
+ * A public file's URL, as Registry.PublicURL: `{base}/v1/{namespace}/{kind}/{owner}/public/{hash}`.
  * The owner is the version when supplied, otherwise the unversioned item ID.
  * A server-provided root selects a scoped tenant/app path; otherwise namespace is used.
- * Pass an actual published name, not a preset template for a current image.
+ * Files are named by their hash: pass one a read listed.
  */
 export function publicURL(base: string, namespace: string, kind: string, id: string, name: string, version?: string, root?: string): string {
   return `${base.replace(/\/+$/, "")}/v1/${root ?? `${namespace}/`}${kind}/${version || id}/public/${name}`;

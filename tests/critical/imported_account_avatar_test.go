@@ -45,7 +45,7 @@ func TestImportedAccountAvatar(t *testing.T) {
 	user, token := importedPerson(t, w)
 	client := a.client(token)
 	ref := media.RefBody{Kind: "user", ID: user.ID}
-	folder := (layout.Scope{TenantID: a.cfg.Scope.TenantID.String()}).Prefix("user", user.ID, "")
+	folder := (layout.Scope{TenantID: a.cfg.Scope.TenantID.String()}).Prefix("user", user.ID)
 	files := func() int {
 		objects, err := m.management.ListObjectsV2(t.Context(), &awss3.ListObjectsV2Input{Bucket: &m.bucket, Prefix: aws.String(folder)})
 		must(t, err)
@@ -119,21 +119,13 @@ func TestImportedAccountAvatar(t *testing.T) {
 		must(t, err)
 		registry, err := mediastore.NewRegistry(config, mediastore.Hooks{})
 		must(t, err)
-		storage, _, err := a.cfg.AccountMedia()
+		later := func() time.Time { return time.Now().Add(48 * time.Hour) }
+		jobs, err := mediastore.NewJobs(mediastore.JobsConfig{Manifests: mustManifests(t, m.store, registry), Now: later})
 		must(t, err)
-		journal, err := mediastore.NewPGJournal(w.pool, storage.Schema, nil)
+		avatar, err := registry.Ref("user", user.ID)
 		must(t, err)
-		later := func() time.Time { return time.Now().Add(time.Hour) }
-		jobs, err := mediastore.NewJobs(mediastore.JobsConfig{Store: m.store, Registry: registry, Locker: mediastore.PGLocker(w.pool), Journal: journal, Now: later})
-		must(t, err)
-		var asked []string
-		report, err := jobs.SweepOrphans(t.Context(), mediastore.OrphanSweep{Kind: "user", Grace: time.Minute, Delete: true, Exists: func(_ context.Context, ids []string) (map[string]bool, error) {
-			asked = append(asked, ids...)
-			return map[string]bool{user.ID: true}, nil
-		}})
-		must(t, err)
-		if report.Folders != 1 || len(report.Orphans) != 0 || len(asked) != 1 || asked[0] != user.ID || files() == 0 {
-			t.Fatalf("sweep took the account's avatar folder for an orphan: %+v asked=%v files=%d", report, asked, files())
+		if _, err := jobs.Collect(t.Context(), avatar); err != nil || files() == 0 {
+			t.Fatalf("collection took the account's avatar for an orphan: %v files=%d", err, files())
 		}
 	})
 

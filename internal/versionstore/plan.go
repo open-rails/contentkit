@@ -5,8 +5,8 @@ import (
 	"errors"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/contentkit/access"
+	mediastore "github.com/open-rails/contentkit/internal/mediastore"
 	"github.com/open-rails/contentkit/internal/resolve"
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
@@ -44,15 +44,16 @@ func (s *Service) decisions(ctx context.Context, actor access.Actor, kind string
 		return nil, err
 	}
 	out := map[versions.Target]decision{}
+	k, _ := s.releaseMedia(kind)
 	for _, v := range vs {
 		snap, ok := snapshots[v]
-		if !ok {
-			active, err := s.activeRelease(ctx, s.o.Pool, v)
-			if err != nil {
-				return nil, err
+		if !ok && k != nil && k.Publish != nil {
+			view, _, err := s.releasedView(ctx, k, v)
+			if err != nil && !errors.Is(err, ErrNotReady) && !errors.Is(err, mediastore.ErrInvalidManifest) {
+				return nil, err // an unreadable manifest releases no pages
 			}
-			if active != nil && active.View != nil {
-				snap = active.Pages
+			if view != nil {
+				snap = view.Pages
 			}
 		}
 		out[v] = decision{res: res[v], segs: snap.Segments, pages: len(snap.Pages), anchored: true, now: s.o.Now()}
@@ -78,17 +79,14 @@ func (s *Service) Plan(ctx context.Context, actor access.Actor, t versions.Targe
 	if verdict := resolved[t]; verdict.Visible && verdict.ReadRestricted && !verdict.Editor {
 		return s.inspectionPlan(ctx, actor, k, t)
 	}
-	active, err := s.activeRelease(ctx, s.o.Pool, t)
-	if err != nil {
+	view, m, err := s.releasedView(ctx, k, t)
+	if err != nil && !errors.Is(err, ErrNotReady) {
 		return nil, err
-	}
-	if active != nil && active.View == nil {
-		active = nil
 	}
 	var snap pagesSnapshot
 	snapshots := map[versions.Target]pagesSnapshot{}
-	if active != nil {
-		snap = active.Pages
+	if view != nil {
+		snap = view.Pages
 		snapshots[t] = snap
 	}
 	ds, err := s.decisions(ctx, actor, v.Kind, []versions.Target{t}, snapshots)
@@ -99,25 +97,12 @@ func (s *Service) Plan(ctx context.Context, actor access.Actor, t versions.Targe
 	if !d.res.Visible {
 		return nil, ErrNotFound
 	}
-	if active == nil {
+	if view == nil {
 		return nil, ErrNotReady
 	}
 	ref, err := s.ref(k.Name, t)
 	if err != nil {
 		return nil, err
-	}
-	m := active.View
-	if d.res.Editor {
-		current, _, err := s.m.Manifests.Get(ctx, ref)
-		if err != nil {
-			return nil, err
-		}
-		if !current.PublicationLayoutReady() {
-			return nil, ErrNotReady
-		}
-	}
-	if !m.PublicationLayoutReady() {
-		return nil, ErrNotReady
 	}
 	paths := map[string]string{}
 	for _, f := range m.Files {
@@ -139,11 +124,7 @@ func (s *Service) Plan(ctx context.Context, actor access.Actor, t versions.Targe
 	}
 	cut := len(snap.Pages)
 	length := d.res.Accessible || d.res.Editor || d.res.ReadRestricted || s.o.Kinds.Kinds[v.Kind].LockedView().Shows(kinds.ShowLength)
-	plan := &versions.ReaderPlan{Content: t.Content, Version: t.Version, Publication: active.ID, Segments: []versions.PlanSegment{}, Previews: []versions.PlanPreview{}}
-	if err := s.o.Pool.QueryRow(ctx, `SELECT scheduled_at FROM `+s.releaseRequestsTable()+`
- WHERE tenant_id=$1 AND version_id=$2 AND current AND state IN ('pending','waiting','running','failed')`, s.o.Tenant, t.Version).Scan(&plan.NextReleaseAt); err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return nil, err
-	}
+	plan := &versions.ReaderPlan{Content: t.Content, Version: t.Version, Publication: m.Op, NextReleaseAt: view.Next, Segments: []versions.PlanSegment{}, Previews: []versions.PlanPreview{}}
 	if length {
 		n := len(snap.Pages)
 		plan.Pages = &n
@@ -182,7 +163,7 @@ func (s *Service) Plan(ctx context.Context, actor access.Actor, t versions.Targe
 	}
 	if !(d.res.Accessible || d.res.Editor || d.res.ReadRestricted) {
 		// Release delivered these renditions publicly: no grant is needed.
-		for i, pg := range snap.Pages[:active.Preview] {
+		for i, pg := range snap.Pages[:view.Preview] {
 			r := pg.Files[0]
 			area, blob, valid := layout.SplitBlobRef(r.Blob)
 			if !valid || area != layout.AreaPublic {
@@ -197,9 +178,9 @@ func (s *Service) Plan(ctx context.Context, actor access.Actor, t versions.Targe
 		}
 	}
 	files := map[string]bool{}
-	if k.Publish.Playback != "" && d.wholeForRead() && len(active.Playback.Tracks) > 0 {
+	if k.Publish.Playback != "" && d.wholeForRead() && len(view.Playback.Tracks) > 0 {
 		plan.Playback = &versions.PlanPlayback{Item: *item}
-		for _, tr := range active.Playback.Tracks {
+		for _, tr := range view.Playback.Tracks {
 			path, ok := paths[tr.File.Blob]
 			if !ok {
 				return nil, ErrNotReady

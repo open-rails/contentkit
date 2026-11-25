@@ -14,16 +14,17 @@ type Reconciled struct {
 	Facets int
 	// Paths: decorative content paths re-derived from their path entities.
 	Paths int
-	// Releases: released versions whose live release lacks a required upload
-	// (media.Upload.Required), queued for a release that withdraws them.
+	// Releases: released versions that lack a required upload
+	// (media.Upload.Required), whose release was woken to withdraw them.
 	Releases int
 }
 
 // Reconcile repairs the catalog's derived state from canonical content,
 // versions and entities: listing facets, current access snapshots,
-// search-document marks and content paths. It also queues the withdrawal of
-// releases that lack a required upload; the process running StartJobs does
-// that work. It starts no workers and may run before Start. It is an explicit
+// search-document marks and content paths. It also wakes the release of
+// released versions that lack a required upload, which withdraws them; the
+// process running StartJobs does that work. It starts no workers and may run
+// before Start. It is an explicit
 // maintenance operation; it must not run on an engine opened for erasure
 // recovery.
 func (e *Engine) Reconcile(ctx context.Context) (Reconciled, error) {
@@ -45,6 +46,6 @@ func (e *Engine) Reconcile(ctx context.Context) (Reconciled, error) {
 	if err != nil {
 		return out, err
 	}
-	out.Releases, err = e.versions.ReplanMissingUploads(ctx, client)
+	out.Releases, err = e.versions.WakeRequiredReleases(ctx, client)
 	return out, err
 }

@@ -7,8 +7,6 @@
 //	-s3-region     MEDIA_GATEWAY_S3_REGION       default us-east-1
 //	-routes        MEDIA_GATEWAY_ROUTES          required: JSON list of {host, scope, bucket, origins}, one per
 //	                                            tenant account or app root a media host serves
-//	-defaults      MEDIA_GATEWAY_DEFAULTS        public names that fall back to the kind's _default item,
-//	                                            e.g. "doujins/gallery: cover-460.webp=sha256-{64 lowercase hex}.webp"
 //	               MEDIA_GATEWAY_S3_ACCESS_KEY_ID, MEDIA_GATEWAY_S3_SECRET_ACCESS_KEY   key reading only */private/* and */public/* of those buckets
 //	               MEDIA_GATEWAY_TOKEN_KEY           current signing key "{kid}:{base64 secret}"
 //	               MEDIA_GATEWAY_TOKEN_KEY_PREVIOUS  previous key, accepted during rotation; optional
@@ -30,7 +28,6 @@ import (
 	"time"
 
 	"github.com/open-rails/contentkit/media/gateway"
-	"github.com/open-rails/contentkit/media/layout"
 	"github.com/open-rails/contentkit/media/token"
 )
 
@@ -48,7 +45,6 @@ func run(log *slog.Logger, args []string) error {
 	endpoint := fs.String("s3-endpoint", env("MEDIA_GATEWAY_S3_ENDPOINT", ""), "S3 endpoint")
 	region := fs.String("s3-region", env("MEDIA_GATEWAY_S3_REGION", "us-east-1"), "S3 region")
 	routes := fs.String("routes", env("MEDIA_GATEWAY_ROUTES", ""), "JSON scoped host, scope, bucket and origins routes")
-	defaults := fs.String("defaults", env("MEDIA_GATEWAY_DEFAULTS", ""), "namespace/kind: logical-name=immutable-name,…; …")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -78,14 +74,10 @@ func run(log *slog.Logger, args []string) error {
 			return fmt.Errorf("MEDIA_GATEWAY_ROUTES: %w", err)
 		}
 	}
-	defs, err := layout.ParseDefaults(*defaults)
-	if err != nil {
-		return fmt.Errorf("MEDIA_GATEWAY_DEFAULTS: %w", err)
-	}
 	h, err := gateway.New(gateway.Config{
 		Endpoint: *endpoint, Region: *region,
 		AccessKeyID: accessKey, SecretAccessKey: secretKey,
-		Ring: ring, Routes: scoped, Defaults: defs, Logger: log,
+		Ring: ring, Routes: scoped, Logger: log,
 	})
 	if err != nil {
 		return err
@@ -105,7 +97,7 @@ func run(log *slog.Logger, args []string) error {
 	defer stop()
 	done := make(chan error, 1)
 	go func() { done <- srv.Serve(ln) }()
-	log.Info("listening", "addr", ln.Addr().String(), "routes", len(scoped), "defaults", layout.FormatDefaults(defs))
+	log.Info("listening", "addr", ln.Addr().String(), "routes", len(scoped))
 	select {
 	case err := <-done:
 		return err

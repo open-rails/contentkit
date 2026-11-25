@@ -92,45 +92,6 @@ func TestMediaAdmissionBoundaries(t *testing.T) {
 		_, err = client.PostMediaUploadPartsList(t.Context(), original)
 		requireError(t, err, 404, "not_found")
 	})
-	t.Run("CK-J09-S05_entity_owner_quota_is_atomic_and_removal_refunds_once", func(t *testing.T) {
-		m := newResilientMedia(t, func(c *ck.Config) {
-			c.Content.Channels.Uploads.QuotaBytes = 64 << 10
-		})
-		_, credential, entity := ownedChannel(t, m.world, m.app, "Quota-owned media")
-		client := m.app.client(credential)
-		ref := media.RefBody{Kind: "channel", ID: string(entity.ID)}
-		first := stageFile(t, client, ref, "cover/first.png", imageBytes(t))
-		second := stageFile(t, client, ref, "cover/second.png", imageBytes(t))
-		_, err := client.PostMediaUploadCommit(t.Context(), media.CommitBody{Ref: ref, OperationID: uuid.NewString(), Ops: []media.Op{first}})
-		must(t, err)
-		batch := media.CommitBody{Ref: ref, OperationID: uuid.NewString(), Ops: []media.Op{second}}
-		_, err = client.PostMediaUploadCommit(t.Context(), batch)
-		requireError(t, err, 413, "quota_exceeded")
-		read, err := client.GetMedia(t.Context(), ref.Kind, ref.ID, ck.GetMediaQuery{Editor: true})
-		must(t, err)
-		requireMediaPaths(t, read, first.Path)
-		remove := media.CommitBody{Ref: ref, OperationID: uuid.NewString(), Ops: []media.Op{{Op: media.OpRemove, Path: first.Path}}}
-		for range 2 {
-			_, err = client.PostMediaUploadCommit(t.Context(), remove)
-			must(t, err)
-		}
-		_, err = client.PostMediaUploadCommit(t.Context(), batch)
-		must(t, err)
-		_, err = client.PostMediaUploadPresign(t.Context(), media.PresignBody{Ref: ref, Path: "cover/third.png", Type: "image/png", Size: int64(len(imageBytes(t))), SHA256: digestBytes(imageBytes(t))})
-		requireError(t, err, 413, "quota_exceeded")
-		read, err = client.GetMedia(t.Context(), ref.Kind, ref.ID, ck.GetMediaQuery{Editor: true})
-		must(t, err)
-		requireMediaPaths(t, read, second.Path)
-		_, otherCredential, otherEntity := ownedChannel(t, m.world, m.app, "Independent media quota")
-		other := m.app.client(otherCredential)
-		otherRef := media.RefBody{Kind: "channel", ID: string(otherEntity.ID)}
-		op := stageFile(t, other, otherRef, "cover/other.png", imageBytes(t))
-		_, err = other.PostMediaUploadCommit(t.Context(), media.CommitBody{Ref: otherRef, OperationID: uuid.NewString(), Ops: []media.Op{op}})
-		must(t, err)
-		otherRead, err := other.GetMedia(t.Context(), otherRef.Kind, otherRef.ID, ck.GetMediaQuery{Editor: true})
-		must(t, err)
-		requireMediaPaths(t, otherRead, op.Path)
-	})
 	t.Run("CK-J09-S03_two_apps_share_storage_without_sharing_upload_allocations", func(t *testing.T) {
 		m := newResilientMedia(t)
 		b := m.apps[1]

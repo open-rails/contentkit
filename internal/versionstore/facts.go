@@ -2,13 +2,14 @@ package versionstore
 
 import (
 	"context"
-	"errors"
 	"math"
+	"slices"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
 	mediastore "github.com/open-rails/contentkit/internal/mediastore"
 	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/media/layout"
 	versions "github.com/open-rails/contentkit/media/versions"
 )
 
@@ -27,6 +28,10 @@ type facts struct {
 func factsOf(k *mediastore.RegisteredKind, m *mediastore.Manifest) facts {
 	var f facts
 	var pages int
+	// Once anything is released, readers count what they are served.
+	served := k.Publish != nil && slices.ContainsFunc(m.Files, func(o media.File) bool {
+		return !o.IsUpload() && slices.Contains(k.Publish.Renditions, o.Preset) && layout.Served(layout.BlobArea(o.Blob))
+	})
 	var first *media.File
 	var video *media.File
 	for i := range m.Files {
@@ -39,6 +44,9 @@ func factsOf(k *mediastore.RegisteredKind, m *mediastore.Manifest) facts {
 		}
 		switch {
 		case k.Publish != nil && inPattern(k.Publish.Pages, file.Path) && media.PageIncluded(*file):
+			if served && !pageServed(k, m, file.Path) {
+				continue
+			}
 			pages++
 			if first == nil {
 				first = file
@@ -86,26 +94,22 @@ func (s *Service) lockTarget(ctx context.Context, tx pgx.Tx, v versions.Target) 
 	return err
 }
 
-// recordFacts writes v's changed media facts.
+// pageServed reports a page whose reader renditions are all in a served
+// area.
+func pageServed(k *mediastore.RegisteredKind, m *mediastore.Manifest, path string) bool {
+	for _, name := range k.Publish.Renditions {
+		outs := m.Outputs(path, name)
+		if len(outs) != 1 || !layout.Served(layout.BlobArea(outs[0].Blob)) {
+			return false
+		}
+	}
+	return true
+}
+
+// recordFacts writes v's changed media facts from its manifest.
 func (s *Service) recordFacts(ctx context.Context, tx pgx.Tx, k *mediastore.RegisteredKind, v versions.Target, m *mediastore.Manifest) error {
-	// Catalog edits lock the parent before the version. Keep that order
-	// while reading the active publication and updating its media facts.
-	var id string
-	err := tx.QueryRow(ctx, `SELECT id FROM `+s.t.items+` WHERE tenant_id = $1 AND id = $2 FOR UPDATE`, s.o.Tenant, v.Content).Scan(&id)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil
-	} else if err != nil {
-		return err
-	}
-	// Prepared internal media is editor state. Reader counts and playability
-	// follow the active storage view once any publication has committed.
-	if active, err := s.activeRelease(ctx, tx, v); err != nil {
-		return err
-	} else if active != nil && active.View != nil {
-		m = active.View
-	}
 	f := factsOf(k, m)
-	_, err = tx.Exec(ctx, `UPDATE `+s.t.versions+` SET pages = $4, duration_ms = $5, width = $6, height = $7, has_audio = $8, updated_at = now()
+	_, err := tx.Exec(ctx, `UPDATE `+s.t.versions+` SET pages = $4, duration_ms = $5, width = $6, height = $7, has_audio = $8, updated_at = now()
 WHERE tenant_id = $1 AND id = $2 AND content_id = $3
 AND (pages, duration_ms, width, height, has_audio) IS DISTINCT FROM ($4, $5, $6, $7, $8)`,
 		s.o.Tenant, v.Version, v.Content, f.Pages, f.Duration, f.Width, f.Height, f.HasAudio)

@@ -33,7 +33,7 @@ func (o *opRun) admitSource(f *media.File, previous int) error {
 		if err != nil {
 			return err
 		}
-		if fresh.Owner == prior.Owner {
+		if fresh.Target == prior.Target {
 			if prior.Generation != "" {
 				fresh.Generation = prior.Generation
 			}
@@ -47,9 +47,6 @@ func (o *opRun) admitSource(f *media.File, previous int) error {
 	admission, err := o.admission(f.Path, o.k.ArchiveDestination(f.Path))
 	if err != nil {
 		return err
-	}
-	if admission.Enforce && admission.Owner == "" {
-		return uploadErr(media.CodeForbidden, "quota-enforced ZIP upload requires an owner")
 	}
 	f.Admission = admission
 	return nil

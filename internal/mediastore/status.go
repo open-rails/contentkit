@@ -9,7 +9,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/resolve"
@@ -30,45 +29,13 @@ func (r *Reader) Status(ctx context.Context, ref contentref.ContentRef, actor ac
 	if !res.Visible || !res.Editor {
 		return nil, ErrNotVisible
 	}
-	m, admitted, err := r.o.Manifests.admittedManifest(ctx, item)
-	if err != nil {
+	m, _, err := r.o.Manifests.Get(ctx, ref)
+	if errors.Is(err, ErrNotFound) {
+		m = &Manifest{V: media.ManifestVersion}
+	} else if err != nil {
 		return nil, err
 	}
-	if !admitted {
-		m, _, err = r.o.Manifests.Get(ctx, ref)
-		if errors.Is(err, ErrNotFound) {
-			m = &Manifest{V: media.ManifestVersion}
-		} else if err != nil {
-			return nil, err
-		}
-	}
-	status := statusOf(item.Kind(), m, r.statusProgress(ctx, ref, m))
-	if admitted {
-		status.State = media.StateProcessing
-	}
-	return status, nil
-}
-
-// admittedManifest observes accepted work before its S3 PUT. Only editor
-// status uses this image: ordinary readers never resolve uncommitted objects.
-func (m *Manifests) admittedManifest(ctx context.Context, item Item) (*Manifest, bool, error) {
-	jr := m.journal.forTenant(item.Ref().TenantID)
-	var body []byte
-	err := jr.pool.QueryRow(ctx, `SELECT effects FROM `+jr.table+` WHERE tenant_id=$1 AND folder_prefix=$2
-AND content_kind=$3 AND content_id=$4 AND content_version_id IS NOT DISTINCT FROM $5::text
-AND state IN ('prepared','frozen') AND effects->>'ingest'='true'`, item.Ref().TenantID, item.Prefix(), item.Ref().ContentKind, item.Ref().ContentID, item.Ref().ContentVersionID).Scan(&body)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return nil, false, nil
-	}
-	if err != nil {
-		return nil, false, err
-	}
-	var effects journalEffects
-	if err := json.Unmarshal(body, &effects); err != nil {
-		return nil, false, err
-	}
-	manifest, err := decodeManifest(effects.Manifest)
-	return manifest, true, err
+	return statusOf(item.Kind(), m, r.statusProgress(ctx, ref, m)), nil
 }
 
 func (r *Reader) statusProgress(ctx context.Context, ref contentref.ContentRef, m *Manifest) media.EncodeStatus {
@@ -115,7 +82,7 @@ func statusOf(k *RegisteredKind, m *Manifest, progress media.EncodeStatus) *medi
 		}
 	}
 	presets := map[string]*media.ProcessingCount{}
-	processing := out.State == media.StateProcessing || out.State == media.StateFull
+	processing := out.State == media.StateProcessing
 	failures := out.State == media.StateFailed
 	for _, f := range m.Files {
 		if !f.IsUpload() {
@@ -187,8 +154,7 @@ func statusOf(k *RegisteredKind, m *Manifest, progress media.EncodeStatus) *medi
 				continue
 			}
 			if public := k.public(name); public != nil {
-				publication, ok := k.Current(f, public)
-				if !ok || !publication.Ready() {
+				if len(k.PublicOutputs(m, f, public)) == 0 {
 					continue
 				}
 			} else if !readyOutputs[[2]string{f.Path, name}] {
@@ -202,8 +168,6 @@ func statusOf(k *RegisteredKind, m *Manifest, progress media.EncodeStatus) *medi
 	}
 	slices.SortFunc(out.Presets, func(a, b media.PresetStatus) int { return strings.Compare(a.Name, b.Name) })
 	switch {
-	case processing && m.Full:
-		out.State = media.StateFull
 	case processing:
 		out.State = media.StateProcessing
 	case failures:

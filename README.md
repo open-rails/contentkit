@@ -314,285 +314,62 @@ See [the ownership decision](docs/adr/0002-openrails-owns-commerce.md).
 
 ## Media
 
-Media is an app-defined file system in one private bucket. Manifests describe
-the files; PostgreSQL records ownership, committed operations and cleanup.
-The app declares its kinds in one registry (`media.Config`);
-HOST_INTEGRATION "Media" covers the registry, commit ops, reads and exposure.
+Media is an app-defined file system in one private bucket. The bucket is the only record of an item's files: each item has one manifest, rewritten in place, and every file is named by the SHA-256 of its bytes in the area that decides who may read it. PostgreSQL keeps only a cache of the manifests, rebuilt from the bucket on demand. The app declares its kinds in one registry (`media.Config`); HOST_INTEGRATION "Media" covers the registry, commit ops, reads and exposure.
 
 ```text
-tenant/{tenant}/app/{app}/{kind}/{owner}/manifest.json
-                                       /private/{blob}
-                                       /public/{name}
-                                       /temp/{name}
+tenant/{tenant}/app/{app}/{kind}/{id}/manifest.json      the item's files; never served
+                                     /internal/{sha256}  unreleased uploads and outputs; never served
+                                     /private/{sha256}   released files, behind the item's token
+                                     /public/{sha256}    covers, free pages; served to anyone
+                                     /tmp/u-{uuid}       staged uploads; never served
+tenant/{tenant}/app/{app}/{kind}/_default/               the kind's default images, an item like any other
 ```
 
-For versioned content, `owner` is the version ID. Its parent content ID exists
-only in the database and has no media folder. Covers, pages and body images
-belong to the version. Domain APIs still use `{kind, content, version}` for
-authorization and relationships; storage addressing does not duplicate that
-parent relationship. Other kinds use their own item ID. Shared account media
-uses `tenant/{tenant}/account/` instead of an app root.
+For versioned content, `id` is the version ID. Its parent content ID exists only in the database and has no media folder. Covers, pages and body images belong to the version. Domain APIs still use `{kind, content, version}` for authorization and relationships. Other kinds use their own item ID. Shared account media uses `tenant/{tenant}/account/` instead of an app root. Media URLs add `/v1/` before the storage key.
 
-Private blobs are content-addressed and immutable; public names carry a
-generation. Media URLs add `/v1/` before the storage key. `media/versions`
-publishes version metadata to viewers (see HOST_INTEGRATION "Media").
+`GET /v1/contents/{id}` reads the database-only parent and reports its selected default edition in `selected_version_id`. `GET /v1/versions/{vid}` reads a specific edition, returning the same parent detail with only that version. Shared entities remain in `Content.entities`; version-specific associations remain in `Version.entities`. Their effective set is the union, without copying shared memberships into each edition.
 
-`GET /v1/contents/{id}` reads the database-only parent and reports its selected
-default edition in `selected_version_id`. `GET /v1/versions/{vid}` reads a
-specific edition, returning the same parent detail with only that version.
-Shared entities remain in `Content.entities`; version-specific associations
-remain in `Version.entities`. Their effective set is the union, without
-copying shared memberships into each edition.
+`Config.Media` is the registry (`media.Config`, without hooks) and how it is served; the engine builds the uploads, reads, cache, worker queue and jobs from it and `Deps.Store`. Every media item is ContentKit's: content kinds' through the catalog's resolver, entities', avatars' and, when the registry declares the `poll` kind, poll images.
 
-`Config.Media` is the registry (`media.Config`, without hooks) and how it is
-served; the engine builds the uploads, reads, journal, worker queue and jobs
-from it and `Deps.Store`. Every media item is ContentKit's: content kinds' through
-the catalog's resolver, entities', avatars' and, when the registry declares
-the `poll` kind, poll images.
+The user-avatar kind comes from `github.com/open-rails/contentkit/media/avatar`; `avatar.User()` includes its upload rules and embedded default silhouette. An avatar's URL names its hash, so the API lists it beside what a person wrote (one cache read per response). `media-worker publish-defaults` renders every kind's default images into its `_default` item as part of deployment; reads and `GET /v1/media/presets` (`default_image`) show them for items without their own.
 
-The user-avatar kind comes from `github.com/open-rails/contentkit/media/avatar`;
-`avatar.User()` includes its upload rules, embedded default silhouette and
-a `Stable` preset (its current image also at fixed names, so its URL is
-built from the person's id). Publish defaults with
-`media-worker publish-defaults` as part of deployment.
+**Manifests.** An edit reads the manifest with its ETag, applies its change and writes it back with `If-Match` (`If-None-Match: *` to create). A `412` re-reads and re-applies, so every change is a re-appliable delta that checks the state it changes; a commit's operation id and request digest are kept for the latest 32 commits, so a retried commit applies once and an id reused for another batch is refused. Each write raises `rev` and names its `op`. Files an edit stops referencing go to the manifest's `retired` list with a due time: 7 days for a replaced file (the undo window), an hour for a release's leftovers, at once for withdrawn, taken-down or erased files. An edit refuses to reference bytes the bucket does not hold, and a hash whose DELETE may still be in flight (GC marks it `deleting` with a conditional write before deleting, one attempt, and the mark settles two minutes). Reads are served from an in-process cache (an LRU bounded by bytes) at the revision `content_media_items` records; the bucket is asked only for a revision the process lacks. Writes always read the bucket. A 2,000-page gallery is about 1.5 MB of JSON and 400 KB stored; a 2-hour video about 5 KB, its segment tables living in index blobs. Every read and write stops at `MaxManifestBytes` (16 MiB of JSON). An item holds at most `MaxUploads` (10,000) uploads, an upload's meta at most 4 KiB of JSON and the item's 16 KiB; names are capped at 200 bytes of JSON.
 
-**Manifests.** Every edit runs under the `Locker` (required: `PGLocker`, a
-Postgres advisory lock shared by every process on the bucket) and writes with
-`If-Match` (or `If-None-Match: *`) once the store reports conditional PUT,
-retrying on conflict. The edit is normalized (canonical order, download
-names, dropped originals) and validated; an unchanged manifest is not
-written. Reads go through an in-process cache bounded by bytes and
-revalidated by ETag, so a read is never stale. A 2,000-page gallery is about
-1.5 MB of JSON and 400 KB stored; a 2-hour video about 5 KB, its segment
-tables living in index blobs. Every read and write stops at
-`MaxManifestBytes` (16 MiB of JSON; the 128 MiB cache holds two).
-Edits stop 4 KiB short of it and only when they grow the manifest, so a
-full item can still shrink and the `hidden` and `full` flags always fit. A
-commit is refused (413 `too_large`) when the item, once processed, would
-pass that: it projects every output its presets have yet to write. When
-outputs still overrun it, the worker marks the item `full` instead of
-recording them: producers then write no private output for it (its public
-files still render), and editor reads report `full` (state `full`), until a
-commit frees the bytes the refused record was short of (`deficit`, counting
-what removed uploads would still have added). An item holds
-at most `MaxUploads` (10,000) uploads, an upload's meta at most 4 KiB of
-JSON and the item's 16 KiB; names are capped at 200 bytes of JSON, written
-unescaped (`<` is one byte). The manifest object records the quota its
-uploads were charged, so deleting an item never needs it to decode, and
-hiding deletes `public/` before touching it.
+**The bucket must never have had versioning.** On a bucket that ever had versioning, Ceph RGW checks `If-Match` apart from the write, so two writers can both land. `s3.New` never dials; register `store.Check(ctx)` as the host's optional S3 dependency probe. The first write probes the bucket's versioning and conditional PUT, and media writes are refused (`ErrBucketVersioned`, `ErrConditionalPutRequired`) unless it never had versioning and honours both conditions. A failed or cut-off probe records nothing, its write is `media.ErrUnavailable` and the next use probes again. An unreachable or 5xx bucket is `media.ErrUnavailable`: 503 `unavailable` over HTTP, and in media jobs a River snooze (not an attempt) while a fresh `Check` confirms the outage, capped by `MaxOutageSnoozes`. Recovery from deletes is the manifests' `retired` grace, not bucket versions.
 
-**The bucket is optional at startup.** `s3.New` never dials; register
-`store.Check(ctx)` as the host's optional S3 dependency probe. Unless
-`Config.Capabilities` declares them, the first use (a write, or `Check`)
-probes the backend's capabilities, one probe at a time; a failed, throttled
-or cut-off probe records nothing, its write is `media.ErrUnavailable` and the
-next use probes again. An unreachable
-or 5xx bucket is `media.ErrUnavailable`: 503 `unavailable` over HTTP, and in
-media jobs a River snooze (not an attempt) while a fresh `Check` confirms the
-outage, capped by `MaxOutageSnoozes` (`media.SnoozeUnavailable`).
+**Cache.** `content_media_items` holds one row per item: its revision and ETag, processing status and public images, written forward-only by `rev` after every manifest write. It drives processing events, version facts, release and garbage-collection wakes, and listings' images. `media-worker rebuild` refills it from the bucket; a dropped table rebuilt this way serves the same lists.
 
-**Uploads** go straight to the bucket, to a staged name: up to 64 MiB is one
-PUT to `temp/u-{uuid}` signed with its type, length and SHA-256, larger files
-are multipart (8–16 MiB parts, each signed with its length and SHA-256,
-resumed through `ListParts`, completed by the server from a signed ticket;
-nothing is stored). The browser's hash only finds an identical blob already
-in the folder (no upload). After the commit, the worker's place job hashes
-each staged upload and writes it to `private/sha256-{hex}` of the bytes it
-read (`Manifests.Place`); an existing blob is never overwritten, so a blob
-always holds the bytes of its name. The upload limiter rate-limits uploaders
-and charges each upload's size (at least 64 KiB) to the grant's `Owner`; growth past the quota fails with 413
-`quota_exceeded`, and deleting an item releases it.
+**Uploads** go straight to the bucket, to a staged name: up to 64 MiB is one PUT to `tmp/u-{uuid}` signed with its type, length and SHA-256, larger files are multipart (8–16 MiB parts, each signed with its length and SHA-256, resumed through `ListParts`, completed by the server from a signed ticket; nothing is stored). The browser's hash only finds identical bytes the item already holds (no upload). After the commit, the worker's place job hashes each staged upload and writes it under its hash: `internal/` for a version (until its release), `private/` for other kinds. The upload limiter rate-limits uploaders; there is no storage quota.
 
-**Media gateway** (`cmd/media-gateway`, `media/gateway`, image `ghcr.io/open-rails/contentkit-media-gateway:{tag}`): `public/` to anyone, falling back to the kind's `_default` for declared names, and `private/sha256-{hex}` with an authorized item token or exact-file token. Private blobs and generation-named public files are cached for a year (`max-age=31536000, immutable`; private ones add `CDN-Cache-Control: no-store`, and every answer `Referrer-Policy: no-referrer`); other public responses, such as `Stable` presets and defaults, use `public, max-age=300, stale-while-revalidate=86400`. An item token opens every private file of its item or none, versioned reader grants included: a version's `private/` holds only released files (prepared outputs wait in `internal/` until their chapter releases), so a grant opens what has been released until it expires. Grants may use the `mt` cookie. `?dl={name}` serves the file as a download under that name when it has the file's type. A soft-deleted or erased item's reserved `public/_contentkit_erased` fence refuses all of its files, checked with one HEAD per read. Everything else and every denial is one `no-store` 404. It keeps no state: rate limit the media host at the ingress; the read API limits the items a viewer opens per hour (`ReaderOptions.Issuance`). It needs `MEDIA_GATEWAY_S3_ENDPOINT`, a key reading only `*/private/*` and `*/public/*`, `MEDIA_GATEWAY_TOKEN_KEY` and `_TOKEN_KEY_PREVIOUS`, `MEDIA_GATEWAY_ROUTES` (a JSON list of `{host, scope, bucket, origins}`, one per tenant account or app root a media host serves) and `MEDIA_GATEWAY_DEFAULTS` (`contentkit-media-worker publish-defaults` prints it).
+**Release is a move.** A version's uploads and outputs wait in `internal/`. Its release job (one per version, woken by every catalog change and manifest write, snoozed until the next chapter or audience deadline) changes nothing while the version's uploads still process (a release is all or nothing); otherwise it copies what is now released to `private/` (`public/` for a free version's pages and a locked version's preview pages), writes the manifest naming the copies, and retires the `internal/` copies. A crash anywhere re-runs from the manifest: copies are idempotent, and until the manifest switches readers see the old areas complete. Withdrawal is the same move back; a withdrawn file's served copy is deleted at once; putting it back before GC marked it takes it out of `retired`, and after that waits only until the delete has settled (two minutes). Areas are decided per file: pages with identical bytes in different chapters reference the same hash in different areas. Public preset outputs (covers) are always in `public/`; a `HostOnly` preset's stay in `internal/`.
 
-**The media worker** (`internal/media/worker`) runs every producer from the host's
-worker River schema (`MEDIA_WORKER_SCHEMA`, per host:
-hosts sharing a database never share one): images, zips, public presets and
-editor views (libvips) and HLS, MP4, subtitles and
-frames (ffmpeg). The host presigns, commits and reads through the engine:
-hosts link no codecs and need no ffmpeg,
-so they build with `CGO_ENABLED=0` (CI checks every package but
-`internal/media/{image,video,worker}` and `cmd/media-worker`). The
-editor's poster picker decodes the encoded video in the browser. The processor appends a retained event and
-directly enqueues version metadata work in `MEDIA_HOST_RIVER_SCHEMA`, so the stock build
-(`cmd/media-worker`, image `ghcr.io/open-rails/contentkit-media-worker`)
-needs only the registry as JSON (`MEDIA_KINDS_FILE`): an engine's is
-`Config.MediaRegistry()`, which `contentkit media-config -config contentkit.yaml`
-prints. Every host runs this image; `MigratePostgres` migrates its queue.
+**Garbage collection** (`contentkit_media_gc`, one River job per item) deletes only what the manifest retired: entries past their due time are first marked `deleting` (fencing re-reference), deleted, and dropped once the DELETE has settled. After a write it lists the item's folder once for orphans older than a day (a crashed writer's), which the manifest does not name. Nothing else lists the bucket.
 
-It never exits for a missing dependency: `Run` takes no jobs until the
-bucket answers, and `MEDIA_METRICS_ADDR` serves `/livez`, `/readyz`,
-`/statusz` and `app_dependency_up` with /metrics. With `Config.Metrics`, the
-worker leading its River schema also exports the queue backlog
-(`media_video_jobs`, `media_video_tenant_backlog`, ...); hosts collect none.
+**Media gateway** (`cmd/media-gateway`, `media/gateway`, image `ghcr.io/open-rails/contentkit-media-gateway:{tag}`) reads no manifest or database. It serves `public/` to anyone and `private/` with the item's token, carried by the `mt` cookie path-scoped to that item's `private/` (or `?t=` for applications); `internal/`, `tmp/` and the manifest are never served. Served names are hashes, so every answer is `max-age=31536000, immutable` (private ones add `CDN-Cache-Control: no-store`, and every answer `Referrer-Policy: no-referrer`). `?dl={name}` serves the file as a download under that name when it has the file's type. A soft-deleted or erased item's reserved `public/_contentkit_erased` fence refuses all of its files, checked with one HEAD per read. Everything else and every denial is one `no-store` 404. It keeps no state: rate limit the media host at the ingress; the read API limits the items a viewer opens per hour (`ReaderOptions.Issuance`). It needs `MEDIA_GATEWAY_S3_ENDPOINT`, a key reading only `*/private/*` and `*/public/*`, `MEDIA_GATEWAY_TOKEN_KEY` and `_TOKEN_KEY_PREVIOUS`, and `MEDIA_GATEWAY_ROUTES` (a JSON list of `{host, scope, bucket, origins}`, one per tenant account or app root a media host serves).
 
-**Images** (`media/image`, CGO over libvips): WebP at each `Image` spec (inside or cover box, quality), through the upload's edit (crop in EXIF-oriented source pixels, then a clockwise quarter rotation); nothing is upscaled: a cover box larger than its source renders the source's largest centred crop at the box's aspect. GIF and WebP animations keep every frame, delay and loop count; `MaxPixels` (100 MP over all frames, lowered per upload by `Upload.MaxPixels`; avatars 25 MP), `MaxFrames` (1000) and `MaxAnimationSeconds` (60) bound sources, every rendering is checked against the same pixel bound (frames × output area) before it decodes, and a stored source over its Upload's `MaxBytes` is refused unread. A JPEG or WebP still rendered small decodes at a fraction of its size. Uploads feeding image presets take only `media.ImageTypes` (JPEG, PNG, WebP, GIF, AVIF, HEIF, TIFF), the declared type binds the decoder, and every other libvips loader is blocked (libvips 8.13 or later). A source-format preset's unchanged copy drops the upload's metadata (EXIF, XMP, IPTC, comments, trailing data) without re-encoding, keeping its orientation and colour profile; `Image.KeepMetadata` keeps it, and is required for AVIF, HEIF and TIFF sources. Public presets render every width through the same spec (a width past the edited image at its width) and carry `from` and `fp` as object metadata.
+**The media worker** (`internal/media/worker`) runs every producer from the host's worker River schema (`MEDIA_WORKER_SCHEMA`, per host: hosts sharing a database never share one): images, public presets and editor views (libvips) and HLS, subtitles and frames (ffmpeg). The host presigns, commits and reads through the engine: hosts link no codecs and need no ffmpeg, so they build with `CGO_ENABLED=0` (CI checks every package but `internal/media/{image,video,worker}` and `cmd/media-worker`). The editor's poster picker decodes the encoded video in the browser. The stock build (`cmd/media-worker`, image `ghcr.io/open-rails/contentkit-media-worker`) needs only the registry as JSON (`MEDIA_KINDS_FILE`): an engine's is `Config.MediaRegistry()`, which `contentkit media-config -config contentkit.yaml` prints. Every host runs this image; `MigratePostgres` migrates its queue. Its subcommands are `publish-defaults`, `rebuild` and `move` (a pre-v4 bucket into a new one; see the migration notes).
 
-A private image preset can instead use `Format: media.ImageFormatSource` and `To: "download-pages/{name}{ext}"` to retain the upload's format. With no edit and an inside fit, files already inside the configured box keep their exact pixels, without their metadata unless `KeepMetadata` is set; zero dimensions leave that side unbounded. `Width: 6000, Height: 6000` proportionally limits the longest edge to 6,000 pixels without cropping or enlarging. Only an oversized or edited image is re-encoded: JPEG, PNG, WebP and GIF support this, including animated GIF and WebP; other accepted codecs can pass through unchanged but cannot currently be resized in source format. `Quality` controls JPEG/WebP re-encoding; unchanged files keep their pixels and PNG stays lossless. `KeepOriginals: true` retains the uploaded source even when a bounded download is generated, and the uploaded ZIP is not rewritten. A `Zip: "download-pages/"` preset packs those files in the selected reading order, excluding pages omitted by ingestion review. Public images, thumbnails and editor previews continue to use WebP.
+It never exits for a missing dependency: `Run` takes no jobs until the bucket answers, and `MEDIA_METRICS_ADDR` serves `/livez`, `/readyz`, `/statusz` and `app_dependency_up` with /metrics. With `Config.Metrics`, the worker leading its River schema also exports the queue backlog (`media_video_jobs`, `media_video_tenant_backlog`, ...); hosts collect none.
 
-Deploy media workers and gateways that understand the source-format registry
-before an app starts declaring it. When replacing an existing download
-preset, queue `Regenerate` for existing items so their new download renditions
-are generated; changing configuration alone does not enqueue every item.
-Reader ZIPs are not generated during placement. Their download grant returns an
-`archive?...` URL that streams the selected source-format pages in virtual
-sequential order. Ordinary archives are spooled to a temporary disk file as they
-stream, then atomically cached only after the complete ZIP succeeds. One cache
-builder and a 512 MiB spool limit bound temporary storage per process. Busy or
-oversized transfers stream without caching; they never wait for another builder.
-The full
-SHA-256 cache key covers the ordered blobs, output extensions, types and archive
-recipe; reorder, exclusion, replacement and output-policy changes select a new
-key plus a seven-day time bucket. Before writing a cache, the allocation ledger
-records its exact key. Cached objects stay under the version's never-public
-`temp/` folder and expire after seven days. Each transfer, including
-a cache hit, repeats current visibility, access, chapter-release and host-policy
-checks, and refuses stale tickets or a draft source order that differs from its
-frozen publication. Personalized watermarked archives are generated fresh with
-`private, no-store` and never share this cache. Generic non-reader ZIP presets
-still produce their declared processing outputs. An editor's signed archive
-URL delegates only that exact transfer for its short lifetime (five minutes by
-default), matching private media URLs. It carries no reusable session or global
-permission; role revocation takes effect when an already-issued editor URL
-expires. Soft deletion, source edits and invalid chapter markers revoke access
-even before expiry. Verified token tiers explicitly configured in `TokenClaims`
-travel as signed entitlement context for this exact archive and its short
-download-ticket lifetime, as a presigned download did before. The archive never
-replays the JWT or creates a session or general permission credential. Ordinary
-audience grants still recheck current access and billing-backed entitlements.
-Both editor and token-tier delegation last until the download ticket expires,
-even if the original JWT expires sooner, matching prior presigned URLs. The
-verified-entitlement contract exposes no credential-expiry accessor; keep
-`Downloads.TTL` short. Current gate configuration, policy, source and deletion
-checks still apply to each transfer.
+**Images** (`media/image`, CGO over libvips): WebP at each `Image` spec (inside or cover box, quality), through the upload's edit (crop in EXIF-oriented source pixels, then a clockwise quarter rotation); nothing is upscaled: a cover box larger than its source renders the source's largest centred crop at the box's aspect. GIF and WebP animations keep every frame, delay and loop count; `MaxPixels` (100 MP over all frames, lowered per upload by `Upload.MaxPixels`; avatars 25 MP), `MaxFrames` (1000) and `MaxAnimationSeconds` (60) bound sources, every rendering is checked against the same pixel bound (frames × output area) before it decodes, and a stored source over its Upload's `MaxBytes` is refused unread. A JPEG or WebP still rendered small decodes at a fraction of its size. Uploads feeding image presets take only `media.ImageTypes` (JPEG, PNG, WebP, GIF, AVIF, HEIF, TIFF), the declared type binds the decoder, and every other libvips loader is blocked (libvips 8.13 or later). A source-format preset's unchanged copy drops the upload's metadata (EXIF, XMP, IPTC, comments, trailing data) without re-encoding, keeping its orientation and colour profile; `Image.KeepMetadata` keeps it, and is required for AVIF, HEIF and TIFF sources. Public presets render every width through the same spec (a width past the edited image at its width). Re-deriving unchanged outputs writes nothing: the same bytes have the same name.
 
-Reader page identity is the SHA-256 digest of the original source image.
-`FileInfo.page_id` and reader-plan page `id` expose that digest; logical names
-are display/path metadata. The manifest's ordered source list determines page
-positions and ZIP entry order. Retained filenames and source blobs do not change
-when pages move. Reader metadata and chapter starts refer to source hashes.
-Upload commits remain asynchronous: a staged file has no verified `page_id`
-until placement finishes. Wait for placement before saving reader metadata or
-chapter starts that reference that source; a filename is not a fallback ID.
+A private image preset can instead use `Format: media.ImageFormatSource` to retain the upload's format. With no edit and an inside fit, files already inside the configured box keep their exact pixels, without their metadata unless `KeepMetadata` is set; zero dimensions leave that side unbounded. `Width: 6000, Height: 6000` proportionally limits the longest edge to 6,000 pixels without cropping or enlarging. Only an oversized or edited image is re-encoded. A reader kind's `Publish.Download` names such a `HostOnly` preset: the ZIP then carries a page's bounded rendition in place of an oversized original.
 
-Reader chapters accept `start_page` and derive their end from the next start,
-or the end of the version. Inserting or reordering unmarked pages does not
-require renumbering markers. Missing, duplicated or out-of-order starts require
-repair; authorization resolves them against the exact published snapshot.
-Legacy numeric ranges remain supported for non-reader content.
+**Downloads.** A kind's `Download` serves `pages` (the readers' default) or `original` (the players'). A pages download is a ZIP streamed by the API from the released pages' originals in reading order: stored entries without timestamps, so its bytes depend only on its entries. The same revision is byte-identical on every request, with an exact `Content-Length`, an `ETag` of that revision and byte ranges, so a CDN can cache it; personalized watermarked ZIPs are `private, no-store`. Each transfer repeats current visibility, access, chapter-release and host-policy checks, and refuses stale tickets. An original download is the video as uploaded, released into `private/` and served by the gateway under the item's token as `{title}` plus its extension. Downloads are charged to the viewer's download quota (`media.downloads`).
 
-Chapters are metadata only. Their boundaries, names and release dates never
-copy, repartition or rename image objects. A ready-file snapshot references the
-version's existing immutable renditions; every chapter reads that same version
-item. The server evaluates released pages and access when a reader asks, signs
-only requested authorized files, and excludes original uploads and archives
-from ordinary reader grants. A locked version's free preview pages (its
-rule's `preview`, else its kind's) are the same for every reader who does not
-open it, so its release copies those leading released pages' renditions to the
-version's public area: the reader plan lists them as plain, cacheable public
-URLs without a grant, and a later release with fewer preview pages (or none)
-retires the copies it no longer lists. Scheduled chapters never contribute
-preview pages before they release.
-Media reads accept up to 64 repeated `path` query parameters to sign the
-selected permitted files without changing their manifest order. The SDK
-batches larger selections and refreshes active grants before expiry.
+Reader page identity is the SHA-256 digest of the original source image. `FileInfo.page_id` and reader-plan page `id` expose that digest; logical names are display/path metadata. The manifest's ordered source list determines page positions and ZIP entry order. Reader metadata and chapter starts refer to source hashes. Upload commits remain asynchronous: a staged file has no verified `page_id` until placement finishes. Wait for placement before saving reader metadata or chapter starts that reference that source; a filename is not a fallback ID.
 
-A ZIP includes only the released, download-authorized pages, in manifest order.
-Its signed page count and selected-file revision keep an existing ticket from
-widening when another chapter opens. A newly requested ZIP then uses a new
-selection and cache key; personalized watermarked ZIPs remain uncached.
+Reader chapters accept `start_page` and derive their end from the next start, or the end of the version. Inserting or reordering unmarked pages does not require renumbering markers. Missing, duplicated or out-of-order starts require repair. Chapters are metadata: their boundaries, names and release dates move no files beyond the release's move of the pages they open. A locked version's free preview pages (its rule's `preview`, else its kind's) are released to `public/`, listed in the reader plan as plain, cacheable URLs; scheduled chapters never contribute preview pages before they release. Media reads accept up to 64 repeated `path` query parameters to sign the selected permitted files without changing their manifest order. The SDK batches larger selections and refreshes active grants before expiry.
 
-The reader migration retires old per-chapter destinations through the existing
-cleanup ledger. Recorded publication/source ownership fixes each retired prefix;
-ambiguous or unfinished legacy operations block migration. Cleanup waits through
-the greater of the configured reader-token lifetime plus rounding window and
-the cleanup grace, then preserves the late-upload pass. Canonical version source
-files are never retirement targets. Interrupted metadata work uses the existing
-publication job once during migration, rather than a chapter-release poller.
+**Video** (`media/video`): the `contentkit_media_derivatives` job on `media_derivatives` owns planning and conversion. It checkpoints bounded encoded ranges, yields between them so shorter videos can run, and resumes successful ranges after shutdown. An `HLS` preset encodes the ladder (rung = short side, default 2160/1080/480, none above the source) in each of the worker's codecs (`MEDIA_WORKER_CODECS`, default `av1,h264`), plus AAC per audio track, WebVTT per text subtitle and a seek sprite. Each rendition is one byte-range fMP4 blob whose segment table is its own index blob; a compliant top rung is stream-copied, and sources outside the aspect bounds fail with `video_aspect_unsupported`. `Subtitles` converts SRT and SSA/ASS to clean WebVTT. Playlists are built per request by the read API, with the worker queue's encode progress. The original is kept as uploaded and is what a download serves.
 
-Personalized, watermarked archives stream per request with
-`Cache-Control: private, no-store`; they are never placed in a shared cache.
-Ordinary reader archives use the bounded, on-demand private cache described
-above; only non-reader ZIP processing presets are generated ahead of time.
+Audio attachments are played as uploaded after verified placement, with no conversion job. A reader kind's `Publish.Playback` names its audio upload pattern, such as `audio/{name}`; page cues keep the same track names. The release moves declared audio with the pages. Audio tracks inside a movie still belong to its video conversion.
 
-**Video** (`media/video`): the unified `contentkit_media_derivatives` job on `media_derivatives` owns
-planning, conversion and publication. It checkpoints bounded encoded ranges,
-yields between them so shorter videos can run, and resumes successful ranges
-after shutdown. An `HLS` preset encodes the ladder (rung = short
-side, default 2160/1080/480, none above the source) in each of the worker's
-codecs (`MEDIA_WORKER_CODECS`, default `av1,h264`), plus AAC per audio
-track, WebVTT per text subtitle and a seek sprite. Each rendition is one
-byte-range fMP4 blob whose segment table is its own index blob; stages are
-published rung by rung (the upload stays pending until the last), a
-compliant top rung is stream-copied, and sources outside the aspect bounds
-fail with `video_aspect_unsupported`. An `MP4` preset muxes H.264 at one rung with the default audio;
-`Subtitles` converts SRT and SSA/ASS to clean WebVTT. Playlists are built per
-request by the read API, with the worker queue's encode progress.
+**Deletion and erasure.** Soft deletion records the deletion in the manifest and writes the gateway fence at once; files are kept, and restore removes the fence. Erasure writes the permanent fence, then an empty manifest whose files are all retired and due, and deletes them; GC deletes any late write. Staged uploads expire by bucket lifecycle (`s3.Store.Configure`: seven-day `tmp/` expiration and incomplete-multipart abort, preserving other applications' rules).
 
-Audio attachments are played as uploaded after verified placement, with no
-conversion job. A reader kind's `Publish.Playback` names its audio upload
-pattern, such as `audio/{name}`; page cues keep the same track names. Media
-grants explicitly allow those declared audio assets without enabling other
-original downloads. The browser reads their duration when metadata loads.
-Existing generated M4A files remain readable for older uploads. Audio tracks
-inside a movie still belong to its video conversion.
+**Paywalls**: media gates each item through the engine's access rules. A version's `private/` holds only released files, so an item token opens what has been released until it expires; originals of readers' pages stay in `internal/` outside the ZIP download.
 
-**Commit ownership**: before a conditional manifest PUT, PostgreSQL commits the
-exact accepted manifest, quota admission and an operation-specific ingest job
-in one transaction. The request attempts the write immediately; that same ingest
-job finishes it after an interrupted request. Retrying an operation does not
-reapply old edits to newer input or charge twice. Editor status observes the
-admitted work even before its S3 manifest lands. Image and video jobs finish
-their own interrupted writes before processing further.
-
-**Cleanup**: edits record exact retired source, rendition, staging and public
-keys and withdraw stale reader snapshots. The existing content-deletion sweep
-performs physical deletion, including live-item discarded allocations, entity
-and poll folders, account assets and bounded late-write retries. It retains each
-intent through storage failure and never discovers garbage by listing the
-bucket. Shared references and new incarnations remain intact. Version media and
-catalog retirement stay in that same sweep after the normal retention period.
-
-Completed temporary uploads and optional ZIP caches expire after seven days;
-unfinished uploads past that deadline must restart. The S3 adapter tags only
-canonical temporary keys and clears that tag when copying to permanent media.
-Copies apply destination tags explicitly before succeeding, including on RGW
-where the copy request's replacement directive alone does not clear source tags.
-Worker credentials need `s3:PutObjectTagging` and `s3:DeleteObjectTagging`.
-`s3.Store.Configure` preserves other applications' lifecycle rules and configures
-seven-day temp expiration and incomplete-multipart abort. Temporary noncurrent
-versions expire after one day; permanent noncurrent versions retain the host's
-configured restore window. Lifecycle execution is asynchronous. Backends that
-do not implement multipart-abort lifecycle rules need equivalent server settings.
-
-Media has two processing jobs: ingest and derivatives. Ingest validates an
-entire ZIP before attaching pages in bounded, replayable batches. The derivative
-job handles image presets and resumable video outputs for the same version,
-recording progress as work completes. Generated outputs wait in `internal/`;
-publication waits for every required output before delivery and activation.
-The gateway's `public/` area stays public and `private/` stays token-protected.
-See [media jobs](docs/media-jobs.md).
-
-`SweepAll` and `SweepOrphans` are explicit repair tools, rather than periodic bucket-wide work. Neither is
-registered as a recurring orphan-discovery job.
-
-A version's files live in its own folder, named by the version ID. The parent
-content item keeps its database identity and has no storage folder.
-
-Version areas are named for who may read them: `public/` everyone, `private/`
-signed readers, `internal/` and `originals/` editors only. The gateway serves
-only `public/` and `private/`; editors read `internal/` and `originals/` through
-short-lived exact-key storage capabilities.
-
-**Paywalls**: media gates each item through the engine's access rules. Reader grants
-cover permitted immutable files, limited by chapter release and access rules;
-source originals remain editor-only outside an authorized download. Existing signed URLs
-retain their normal expiry and revocation-window semantics.
-
-**Browser package** (`sdk/ui`, `@openrails/contentkit-ui` on npm, one version
-per release): the client (uploads, commit ops, reads, `waitFor`, frames, HLS),
-content URLs, React hooks and styled components. See
-[sdk/ui/README.md](sdk/ui/README.md).
+**Browser package** (`sdk/ui`, `@openrails/contentkit-ui` on npm, one version per release): the client (uploads, commit ops, reads, `waitFor`, frames, HLS), content URLs, React hooks and styled components. See [sdk/ui/README.md](sdk/ui/README.md).
 
 ## Entities
 

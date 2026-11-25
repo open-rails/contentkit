@@ -9,6 +9,7 @@ import (
 	"math"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/open-rails/authkit/auth"
@@ -172,15 +173,42 @@ func (h handler) archive(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	w.Header().Set("Content-Type", a.Type)
-	if a.single {
-		w.Header().Set("Content-Type", "application/octet-stream")
-		w.Header().Set("Content-Length", strconv.FormatInt(a.Size, 10))
-	}
-	w.Header().Set("Content-Disposition", layout.Attachment(a.Name))
+	hdr := w.Header()
+	hdr.Set("Content-Type", a.Type)
+	hdr.Set("Content-Disposition", layout.Attachment(a.Name))
 	// The request is read: a server's ReadTimeout must not cut the download.
 	_ = http.NewResponseController(w).SetReadDeadline(time.Time{})
-	w.WriteHeader(http.StatusOK)
+	if a.Marked() {
+		// Personalized: never stored by a cache, no known length.
+		w.WriteHeader(http.StatusOK)
+	} else {
+		// The same revision is the same bytes: a cache may keep it and a
+		// client may resume it.
+		hdr.Set("Cache-Control", "private, max-age=31536000, immutable")
+		hdr.Set("ETag", `"`+a.Revision+`"`)
+		hdr.Set("Accept-Ranges", "bytes")
+		start, end, partial, ok := byteRange(r.Header.Get("Range"), a.Size)
+		if r.Header.Get("If-Range") != "" && r.Header.Get("If-Range") != `"`+a.Revision+`"` {
+			partial = false
+		}
+		if !ok {
+			hdr.Set("Content-Range", "bytes */"+strconv.FormatInt(a.Size, 10))
+			w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
+			return
+		}
+		if partial {
+			hdr.Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, a.Size))
+			hdr.Set("Content-Length", strconv.FormatInt(end-start+1, 10))
+			w.WriteHeader(http.StatusPartialContent)
+			if _, err := a.WriteRange(w, start, end); err != nil && r.Context().Err() == nil {
+				h.log.ErrorContext(r.Context(), "versions: archive range failed", "version", target(r).Version, "error", err)
+				panic(http.ErrAbortHandler)
+			}
+			return
+		}
+		hdr.Set("Content-Length", strconv.FormatInt(a.Size, 10))
+		w.WriteHeader(http.StatusOK)
+	}
 	if _, err := a.WriteTo(w); err != nil {
 		if r.Context().Err() == nil {
 			h.log.ErrorContext(r.Context(), "versions: archive stream failed", "version", target(r).Version, "error", err)
@@ -188,6 +216,44 @@ func (h handler) archive(w http.ResponseWriter, r *http.Request) {
 		// Headers may already be sent. Terminate the transport so clients see
 		// an incomplete transfer instead of a successful truncated ZIP.
 		panic(http.ErrAbortHandler)
+	}
+}
+
+// byteRange parses a single "bytes=a-b" range of a size-byte body: partial
+// for a satisfiable range, ok false for an unsatisfiable one. Anything else
+// (none, several, malformed) serves the whole body.
+func byteRange(header string, size int64) (start, end int64, partial, ok bool) {
+	spec, found := strings.CutPrefix(header, "bytes=")
+	if !found || strings.Contains(spec, ",") {
+		return 0, size - 1, false, true
+	}
+	a, b, found := strings.Cut(spec, "-")
+	if !found {
+		return 0, size - 1, false, true
+	}
+	switch {
+	case a == "":
+		n, err := strconv.ParseInt(b, 10, 64)
+		if err != nil || n <= 0 {
+			return 0, size - 1, false, true
+		}
+		return max(0, size-n), size - 1, true, true
+	default:
+		s, err := strconv.ParseInt(a, 10, 64)
+		if err != nil || s < 0 {
+			return 0, size - 1, false, true
+		}
+		if s >= size {
+			return 0, 0, false, false
+		}
+		e := size - 1
+		if b != "" {
+			if e, err = strconv.ParseInt(b, 10, 64); err != nil || e < s {
+				return 0, size - 1, false, true
+			}
+			e = min(e, size-1)
+		}
+		return s, e, true, true
 	}
 }
 

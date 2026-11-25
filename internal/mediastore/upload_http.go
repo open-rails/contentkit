@@ -243,14 +243,14 @@ func (h uploadHandler) fail(w http.ResponseWriter, r *http.Request, err error) {
 		switch {
 		case errors.Is(err, pglock.ErrContended):
 			ue = &media.UploadError{Code: media.CodeUnavailable, Message: "media is busy; retry the request with the same operation_id if provided", RetryAfter: time.Second}
-		case errors.Is(err, ErrCommitPending), errors.Is(err, ErrManifestConflict):
-			ue = &media.UploadError{Code: media.CodeUnavailable, Message: "commit recovery is pending; retry the same operation_id", RetryAfter: time.Second}
+		case errors.Is(err, ErrManifestConflict):
+			ue = &media.UploadError{Code: media.CodeUnavailable, Message: "the item kept changing; retry the same operation_id", RetryAfter: time.Second}
 		case errors.Is(err, media.ErrUnavailable):
 			h.o.Logger.WarnContext(r.Context(), "media upload", "method", r.Method, "path", r.URL.Path, "error", err)
 			ue = &media.UploadError{Code: media.CodeUnavailable, Message: "media storage is unavailable; retry", RetryAfter: 5 * time.Second}
-		case errors.Is(err, ErrConditionalPutRequired):
+		case errors.Is(err, ErrConditionalPutRequired), errors.Is(err, ErrBucketVersioned):
 			h.o.Logger.ErrorContext(r.Context(), "media upload", "method", r.Method, "path", r.URL.Path, "error", err)
-			ue = &media.UploadError{Code: media.CodeUnavailable, Message: "media storage does not support conditional writes"}
+			ue = &media.UploadError{Code: media.CodeUnavailable, Message: "media storage refuses writes: it needs conditional writes on a never-versioned bucket"}
 		case errors.Is(err, ErrNotFound):
 			ue = &media.UploadError{Code: media.CodeNotFound, Message: "media not found"}
 		default:

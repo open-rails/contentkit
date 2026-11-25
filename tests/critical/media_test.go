@@ -110,6 +110,13 @@ func newMediaStorage(t *testing.T, scope ck.Scope) *mediaWorld {
 
 func attachMedia(t *testing.T, w *world, a *application, configure ...func(*ck.Config)) *mediaWorld {
 	t.Helper()
+	return attachMediaWith(t, w, a, nil, configure...)
+}
+
+// attachMediaWith is attachMedia with the engine's bucket wrapped (faults,
+// counters); the worker keeps the bucket itself.
+func attachMediaWith(t *testing.T, w *world, a *application, wrap func(media.Store) media.Store, configure ...func(*ck.Config)) *mediaWorld {
+	t.Helper()
 	m := newMediaStorage(t, *a.cfg.Scope)
 	var err error
 	a.server.Close()
@@ -140,6 +147,9 @@ func attachMedia(t *testing.T, w *world, a *application, configure ...func(*ck.C
 		})
 	}
 	a.deps.Store = m.store
+	if wrap != nil {
+		a.deps.Store = wrap(m.store)
+	}
 	must(t, ck.MigratePostgres(t.Context(), w.pool, a.cfg))
 	a.cfg.Database.SkipMigrations = true
 	a.engine, err = ck.New(t.Context(), a.cfg, a.deps)

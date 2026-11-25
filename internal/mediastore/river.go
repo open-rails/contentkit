@@ -58,3 +58,38 @@ func WaitFor(ctx context.Context, c *river.Client[pgx.Tx], id int64) error {
 	}
 	return nil
 }
+
+// Wake inserts args to run at at, in tx when given. An equal job already
+// waiting for a later time is brought forward to run now: its worker plans
+// again and snoozes until what is really next. A running equal job gets one
+// follow-up (InsertOnce).
+func Wake(ctx context.Context, client *river.Client[pgx.Tx], tx pgx.Tx, args RerunArgs, o river.InsertOpts, at time.Time) error {
+	o.ScheduledAt = at
+	insert := func(ctx context.Context, args river.JobArgs, o *river.InsertOpts) (*rivertype.JobInsertResult, error) {
+		if tx != nil {
+			return client.InsertTx(ctx, tx, args, o)
+		}
+		return client.Insert(ctx, args, o)
+	}
+	o.UniqueOpts = PendingOnce
+	var next river.JobArgs = args
+	for {
+		res, err := insert(ctx, next, &o)
+		if err != nil || !res.UniqueSkippedAsDuplicate {
+			return err
+		}
+		switch {
+		case res.Job.State == rivertype.JobStateRunning:
+			next = args.FollowUp(res.Job.ID)
+			continue
+		case res.Job.State == rivertype.JobStateScheduled && res.Job.ScheduledAt.After(at):
+			if tx != nil {
+				_, err = client.JobRetryTx(ctx, tx, res.Job.ID)
+			} else {
+				_, err = client.JobRetry(ctx, res.Job.ID)
+			}
+			return err
+		}
+		return nil
+	}
+}

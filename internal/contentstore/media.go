@@ -22,18 +22,18 @@ import (
 // deletion removes the item. Runtime.CanUpload authorizes those uploads.
 type Media struct {
 	Namespace string              // media partition; empty retains the content catalog key
-	Images    content.MediaImages // *media.Manifests
-	Folders   MediaFolders        // *media.Jobs
+	Images    content.MediaImages // *mediastore.PGCache
+	Folders   MediaFolders        // *mediastore.Jobs
 	// Reader reads items as the media read API does; the engine fills it
 	// from its Reader.
 	Reader   content.MediaReader
 	PollKind string // media kind of poll folders; default "poll"
 }
 
-// MediaFolders records exact retirement intents in the poll mutation
-// transaction; the existing content-deletion sweep performs storage erasure.
+// MediaFolders erases a deleted poll's item: its tombstone makes the
+// erasure irreversible, and the item's garbage collection deletes the bytes.
 type MediaFolders interface {
-	RetireItemsTx(ctx context.Context, tx pgx.Tx, items ...media.Deletion) error
+	Tombstone(ctx context.Context, ref contentref.ContentRef) error
 }
 
 var errMediaNotConfigured = errors.New("content: Options.Media is not configured")
@@ -59,12 +59,12 @@ const pollFolder folder = 0
 
 func (m *Media) kind(folder) string { return m.PollKind }
 
-// deleteMediaTx commits a retirement intent with the poll tombstone.
+// deleteMediaTx tombstones the poll's media item while tx holds the poll.
 func (rt *Runtime) deleteMediaTx(ctx context.Context, tx pgx.Tx, f folder, id string) error {
 	if rt.media == nil {
 		return nil
 	}
-	return rt.media.Folders.RetireItemsTx(ctx, tx, media.Deletion{Ref: rt.mediaRef(rt.media.kind(f), id)})
+	return rt.media.Folders.Tombstone(ctx, rt.mediaRef(rt.media.kind(f), id))
 }
 
 // CanUpload is media's UploadAuthorizer for poll items: the actor holds
@@ -95,7 +95,7 @@ var (
 )
 
 var (
-	_ content.MediaImages = (*mediastore.Manifests)(nil)
+	_ content.MediaImages = (*mediastore.PGCache)(nil)
 )
 
 var (

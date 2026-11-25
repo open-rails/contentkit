@@ -7,7 +7,6 @@ import (
 	"net"
 	"strings"
 
-	mediastore "github.com/open-rails/contentkit/internal/mediastore"
 	signalstore "github.com/open-rails/contentkit/internal/signalstore"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
@@ -281,34 +280,6 @@ func (e *Engine) validateDatabase(ctx context.Context) error {
 		return required(err)
 	}
 	return nil
-}
-
-// cleanupStorage resolves only the registry and journal routes; migration and
-// startup validation must not need an object-store connection or live workers.
-func (e *Engine) cleanupStorage() (*mediastore.Registry, *mediastore.PGJournal, error) {
-	cfg, err := e.cfg.MediaKinds()
-	if err != nil {
-		return nil, nil, err
-	}
-	reg, err := mediastore.NewRegistry(cfg, mediastore.Hooks{})
-	if err != nil {
-		return nil, nil, err
-	}
-	journal, err := mediastore.NewPGJournal(e.pool, e.schema, nil)
-	if err != nil {
-		return nil, nil, err
-	}
-	if account, ok := e.accountMediaStorage(); ok {
-		shared, err := mediastore.NewPGJournal(e.pool, account.Schema, nil)
-		if err != nil {
-			return nil, nil, err
-		}
-		journal, err = mediastore.RouteJournal(journal, shared, e.accountMediaPartition())
-		if err != nil {
-			return nil, nil, err
-		}
-	}
-	return reg, journal, nil
 }
 
 // Connectivity, cancellation, resource pressure and server shutdown are retryable

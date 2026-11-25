@@ -6,12 +6,11 @@ soft-deletes its parent. Once retention expires,
 `contentkit_content_purge_deleted` owns both physical media erasure and
 removal of the corresponding catalog records.
 
-The purge first records a permanent erasure intent in the existing media
-journal, under the same parent/version locks used by restoration. It commits
-that claim before writing a storage fence or deleting objects. Storage work
-therefore holds no catalog transaction open. A version remains restorable
-until its claim commits; afterward restoring that version is refused even if
-storage is unavailable or a fence PUT has an ambiguous response. An unclaimed
+The purge first claims each version's erasure (`purge_claimed_at`) in a short
+transaction under the same parent/version locks used by restoration, and
+commits it before any storage call; from then on restoring that version is
+refused. Outside any lock it then writes the item's permanent fence and an
+empty manifest whose files are all retired and due, and deletes them. An unclaimed
 sibling or a newly created version can still revive an automatically deleted
 parent. Parent restoration checks only the versions it actually exposes.
 
@@ -28,19 +27,14 @@ eligible items are not substituted into the captured batch. The small empty mani
 to reject late writers and old access tokens; source files and renditions are
 erased.
 
-The same purge sweep owns recorded cleanup of uploads already in flight, even
-after catalog rows have gone. Its exact-key receipts retain that ownership
-across retries and delayed cleanup deadlines. A failed late cleanup remains
-due for the content purge's own retry/cadence and does not prevent unrelated
-expired content from progressing. There is no separate version-media reaper
-or per-version folder-deletion job.
+A worker's late write into an erased folder is an orphan: the item's
+garbage collection (`contentkit_media_gc`) deletes it, since an erased item's
+manifest names nothing. There is no separate version-media reaper or
+per-version folder-deletion job.
 
-Entity, poll and account media retirement also record exact deletion intents;
-the same sweep drains that shared retirement journal. A deleted entity's media
-is fenced from its deletion; retirement makes that fence permanent before
-deleting the files. Account avatar erasure performs its required synchronous
-erasure first, with any recorded late-write cleanup retained for the sweep. No
-folder-deletion or media-reaper worker is needed.
+Entity, poll and account media retirement tombstone and erase the same way. A
+deleted entity's media is fenced from its deletion; retirement makes that fence
+permanent before deleting the files. Account avatar erasure is synchronous.
 
 The same sweep erases the purged content's ClickHouse engagement and history
 records. Its exact cleanup references are committed with the PostgreSQL purge
@@ -54,7 +48,5 @@ Purge never mutates OpenRails products, prices, purchases or payment history.
 The host manages product archival directly through OpenRails; those billing
 records remain intact after the content's media disappears.
 
-When adopting this lifecycle, retire older catalog writers and purge workers
-together before processing the new claims. Older binaries do not enforce the
-journal claim when restoring a version, so they must not run alongside this
-purge implementation or be rolled back over an active claim.
+Older binaries do not check the purge claim when restoring a version, so
+they must not run alongside this purge implementation.
