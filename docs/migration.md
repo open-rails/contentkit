@@ -41,6 +41,10 @@ DELETE FROM <river_schema>.river_job
 WHERE kind = 'contentkit_version_release' AND finalized_at IS NULL;
 ```
 
+## Event retention
+
+Catalog events are kept fourteen days by default, not ninety (`event_retention`). The next catalog maintenance prunes the older ones. A reader whose cursor is older gets `event_cursor_expired` (`eventlog.ErrExpiredCursor`), resyncs current state and reads on without a cursor, as on any expiry.
+
 ## Channels
 
 Channels are configured under `channels`. A content kind declares

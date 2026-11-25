@@ -52,8 +52,8 @@ cannot exceed 500; at most 100 type filters are accepted. HTTP clients can send
 repeated `type` parameters for exact values (including commas); these take
 precedence over the legacy comma-separated `types` parameter.
 
-The default retention is ninety days. Applications can set `event_retention`
-(a Go duration, for example `2160h`). Reads exclude expired records even before
+The default retention is fourteen days. Applications can set `event_retention`
+(a Go duration, for example `720h`). Reads exclude expired records even before
 maintenance runs, including expired rows after a younger row. Existing catalog maintenance prunes a
 bounded expired prefix independently of reader progress. A cursor that predates
 that retained prefix, or names history replaced by a restore/reset, returns

@@ -2125,6 +2125,19 @@
       ]
     },
     {
+      "id": "CK-J26-S08",
+      "journey": "CK-J26",
+      "behavior": "A position past the default fourteen-day retention resyncs from current state and reads on",
+      "status": "verified",
+      "cases": [
+        "TestExpiredEventPositionResyncs/CK-J26-S08_expired_position_resyncs_from_current_state"
+      ],
+      "evidence": [
+        "A reader built on eventlog.Consumer keeps its position through 13 days, gets ErrExpiredCursor at 15 days before and after maintenance prunes the facts, resyncs the deletion it missed from GET /v1/versions and then receives a later deletion.",
+        "contentkit#298: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
       "id": "CK-J29-S01",
       "journey": "CK-J29",
       "behavior": "Go remote and embedded clients preserve equivalent-principal results",
