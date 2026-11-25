@@ -525,7 +525,7 @@ func (e *Engine) contentOptions(deps Deps) contentstore.Options {
 		Limits: contentstore.Limits{Disabled: l.Disabled, Redis: deps.Redis, Comment: rates(l.Comment), CommentReaction: rates(l.CommentReaction),
 			Reaction: rates(l.Reaction), Favorite: rates(l.Favorite), PollVote: rates(l.PollVote)},
 		Anonymous: in.Anonymous, CommentMaxLength: in.CommentMaxLength, DuplicateWindow: in.DuplicateWindow,
-		Logger: e.log,
+		Logger: e.log, Now: deps.Clock,
 	}
 	if e.media != nil {
 		o.Media = &contentstore.Media{Namespace: e.media.reg.Namespace(), Images: e.media.jobs.Manifests(), Folders: e.media.jobs, Reader: e.media.reader}
