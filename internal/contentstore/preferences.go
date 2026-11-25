@@ -16,20 +16,30 @@ import (
 // maxPreferenceRevisionFloor bounds a seeded revision floor well inside bigint.
 const maxPreferenceRevisionFloor = math.MaxInt64 / 2
 
-const preferencePageSize = 500
+const (
+	// preferenceBatch is the rows of one export batch, sent as one insert.
+	preferenceBatch = 1000
+	// preferenceBudget bounds one sync run; a run also keeps half of the
+	// time to its context's deadline in reserve.
+	preferenceBudget = 30 * time.Second
+)
 
 // preferences exports rows.
 type preferences struct {
 	rt      *Runtime
 	s       *store
 	overlap time.Duration
+	now     func() time.Time
 }
 
-func newPreferences(rt *Runtime, overlap time.Duration) *preferences {
+func newPreferences(rt *Runtime, overlap time.Duration, now func() time.Time) *preferences {
 	if overlap <= 0 {
 		overlap = content.DefaultPreferenceSyncOverlap
 	}
-	return &preferences{rt: rt, s: rt.store, overlap: overlap}
+	if now == nil {
+		now = time.Now
+	}
+	return &preferences{rt: rt, s: rt.store, overlap: overlap, now: now}
 }
 
 // work is the reference a target's preference is stored and exported under:
@@ -38,65 +48,45 @@ func (p *preferences) work(ref contentref.ContentRef) (contentref.ContentRef, bo
 	return ref, ref.ContentKind != content.KindComment
 }
 
-// SyncPreferences sends every exportable row whose revision is past the
-// watermark, in revision order, then records a checkpoint. No connection is
-// held across send. Revisions are allocated before commit, so each scan
-// restarts from the newest checkpoint taken at least Options.PreferenceSyncOverlap
-// before the latest one: a row is delivered as long as its transaction commits
-// within the overlap of allocating its revision (ResyncPreferences covers the
-// rest). A checkpoint is recorded only after its own scan was sent, so
-// overlapping syncs stay correct and only repeat sends. send is required.
+// SyncPreferences sends each exportable row once, in revision order: those
+// past the tenant's cursor and settled, at or below the newest sample of the
+// revision sequence taken at least Options.PreferenceSyncOverlap ago.
+// Revisions are allocated before commit, so a row is delivered as long as its
+// transaction commits within the overlap of allocating its revision. Rows go
+// in bounded batches, one send each, and the cursor advances after every
+// batch, so a run cut short resumes where it stopped and re-sends at most the
+// batch in flight. A run starts no batch past its budget or too close to its
+// deadline, and then reports More. A cursor another run (or
+// ResyncPreferences) moved stops this one. No connection is held across send.
+// send is required.
 func (rt *Runtime) SyncPreferences(ctx context.Context, send content.PreferenceSender) (content.PreferenceSyncReport, error) {
 	p := rt.preferences
 	if send == nil {
 		return content.PreferenceSyncReport{}, fmt.Errorf("content: preference sender is required")
 	}
-	pool := rt.store.pool
-	var mark int64
-	var at time.Time
-	if err := pool.QueryRow(ctx, `SELECT CASE WHEN is_called THEN last_value ELSE 0 END, clock_timestamp() FROM `+rt.store.revisionSeq).Scan(&mark, &at); err != nil {
+	settled, err := p.sample(ctx)
+	if err != nil {
 		return content.PreferenceSyncReport{}, err
 	}
-	var from int64
-	var fromAt time.Time
-	err := pool.QueryRow(ctx, `SELECT revision, taken_at FROM `+rt.store.t.preferenceSync+`
-		WHERE tenant_id = $1 AND taken_at <= (SELECT max(taken_at) FROM `+rt.store.t.preferenceSync+` WHERE tenant_id = $1) - make_interval(secs => $2)
-		ORDER BY taken_at DESC LIMIT 1`, rt.tenant, p.overlap.Seconds()).Scan(&from, &fromAt)
-	found := err == nil
+	var cursor int64
+	err = rt.store.pool.QueryRow(ctx, `SELECT revision FROM `+rt.store.t.preferenceCursor+` WHERE tenant_id = $1`, rt.tenant).Scan(&cursor)
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return content.PreferenceSyncReport{}, err
 	}
-	report, err := p.export(ctx, pool, from, send)
-	if err != nil {
-		return report, err
+	report := content.PreferenceSyncReport{From: cursor}
+	budget, deadline := preferenceBudget, time.Time{}
+	if d, ok := ctx.Deadline(); ok {
+		budget, deadline = min(budget, time.Until(d)/2), d
 	}
-	return report, pgx.BeginFunc(ctx, pool, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, `INSERT INTO `+rt.store.t.preferenceSync+` (tenant_id, taken_at, revision) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING`, rt.tenant, at, mark); err != nil {
-			return err
+	started := time.Now()
+	var slowest time.Duration
+	for cursor < settled {
+		if time.Since(started) >= budget || !deadline.IsZero() && time.Until(deadline) < 2*slowest {
+			report.More = true
+			return report, nil
 		}
-		if found {
-			_, err = tx.Exec(ctx, `DELETE FROM `+rt.store.t.preferenceSync+` WHERE tenant_id = $1 AND taken_at < $2`, rt.tenant, fromAt)
-		}
-		return err
-	})
-}
-
-// ResyncPreferences re-sends every exportable row (zeros included): the
-// periodic safety net for sink loss and slower-than-overlap commits.
-// A sender is required.
-func (rt *Runtime) ResyncPreferences(ctx context.Context, send content.PreferenceSender) (content.PreferenceSyncReport, error) {
-	if send == nil {
-		return content.PreferenceSyncReport{}, fmt.Errorf("content: preference sender is required")
-	}
-	return rt.preferences.export(ctx, rt.store.pool, 0, send)
-}
-
-// export pages rows with revision > from in revision order through send.
-// Anonymous rows and comment threads are skipped.
-func (p *preferences) export(ctx context.Context, q querier, from int64, send content.PreferenceSender) (content.PreferenceSyncReport, error) {
-	report := content.PreferenceSyncReport{From: from}
-	for after := from; ; {
-		page, last, n, err := p.page(ctx, q, after)
+		batchStarted := time.Now()
+		page, last, count, err := p.page(ctx, rt.store.pool, cursor, settled, preferenceBatch)
 		if err != nil {
 			return report, err
 		}
@@ -106,25 +96,71 @@ func (p *preferences) export(ctx context.Context, q querier, from int64, send co
 			}
 			report.Sent += len(page)
 		}
-		if n < preferencePageSize {
-			return report, nil
+		if count < preferenceBatch {
+			last = settled // nothing else up to settled exports
 		}
-		after = last
+		if moved, err := p.advance(ctx, cursor, last); err != nil || !moved {
+			return report, err
+		}
+		cursor = last
+		slowest = max(slowest, time.Since(batchStarted))
 	}
+	return report, nil
 }
 
-func (p *preferences) page(ctx context.Context, q querier, after int64) (page []content.Preference, last int64, n int, err error) {
+// sample records the revision sequence's value now and returns the newest
+// sample at least the overlap old (0 when there is none yet): every revision
+// up to it was allocated at least the overlap ago. Older samples go.
+func (p *preferences) sample(ctx context.Context) (int64, error) {
+	s, now := p.s, p.now().UTC()
+	if _, err := s.pool.Exec(ctx, `INSERT INTO `+s.t.preferenceSync+` (tenant_id, taken_at, revision)
+		SELECT $1, $2, CASE WHEN is_called THEN last_value ELSE 0 END FROM `+s.revisionSeq+` ON CONFLICT DO NOTHING`, s.tenant, now); err != nil {
+		return 0, err
+	}
+	var settled int64
+	var at time.Time
+	err := s.pool.QueryRow(ctx, `SELECT revision, taken_at FROM `+s.t.preferenceSync+`
+		WHERE tenant_id = $1 AND taken_at <= $2 ORDER BY taken_at DESC LIMIT 1`, s.tenant, now.Add(-p.overlap)).Scan(&settled, &at)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, nil
+	} else if err != nil {
+		return 0, err
+	}
+	_, err = s.pool.Exec(ctx, `DELETE FROM `+s.t.preferenceSync+` WHERE tenant_id = $1 AND taken_at < $2`, s.tenant, at)
+	return settled, err
+}
+
+// advance moves the tenant's cursor from one revision to the next; false when
+// another run or a resync moved it first.
+func (p *preferences) advance(ctx context.Context, from, to int64) (bool, error) {
+	tag, err := p.s.pool.Exec(ctx, `INSERT INTO `+p.s.t.preferenceCursor+` AS c (tenant_id, revision) VALUES ($1, $3)
+		ON CONFLICT (tenant_id) DO UPDATE SET revision = EXCLUDED.revision WHERE c.revision = $2`, p.s.tenant, from, to)
+	return tag.RowsAffected() == 1, err
+}
+
+// ResyncPreferences rewinds the tenant's cursor, so the following syncs send
+// every exportable row (zeros included) once more, in the same batches: the
+// repair after the signal plane lost data.
+func (rt *Runtime) ResyncPreferences(ctx context.Context) error {
+	_, err := rt.store.pool.Exec(ctx, `UPDATE `+rt.store.t.preferenceCursor+` SET revision = 0 WHERE tenant_id = $1`, rt.tenant)
+	return err
+}
+
+// page reads up to limit exportable rows with after < revision <= upTo, in
+// revision order. Anonymous rows, comment threads and erased accounts are
+// skipped.
+func (p *preferences) page(ctx context.Context, q querier, after, upTo int64, limit int) (page []content.Preference, last int64, n int, err error) {
 	// Favorites are keyed by app_id and uuids; reactions by tenant_id and text.
 	branch := func(axis, table, app, text string) string {
 		return `(SELECT '` + axis + `' AS axis, user_id` + text + ` AS user_id, content_kind, content_id` + text + ` AS content_id,
 			content_version_id` + text + ` AS content_version_id, value, revision, updated_at FROM ` + table + ` x
-			WHERE ` + app + ` AND revision > $2 AND user_id IS NOT NULL AND content_kind <> '` + content.KindComment + `'
+			WHERE ` + app + ` AND revision > $2 AND revision <= $4 AND user_id IS NOT NULL AND content_kind <> '` + content.KindComment + `'
 			  AND NOT EXISTS (SELECT 1 FROM ` + p.rt.erasedSubjectsTable() + ` f WHERE f.tenant_id = $1 AND f.actor_id = x.user_id` + text + `)
 			ORDER BY revision LIMIT $3)`
 	}
 	rows, err := q.Query(ctx, `SELECT * FROM (`+branch(content.PreferenceAxisReaction, p.s.t.reactions, "tenant_id = $1", "")+` UNION ALL `+
 		branch(content.PreferenceAxisFavorite, p.s.t.favorites, "app_id = $1::text::uuid", "::text")+`) u
-		ORDER BY revision LIMIT $3`, p.s.tenant, after, preferencePageSize)
+		ORDER BY revision LIMIT $3`, p.s.tenant, after, limit, upTo)
 	if err != nil {
 		return nil, 0, 0, err
 	}

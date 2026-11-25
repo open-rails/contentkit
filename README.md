@@ -736,11 +736,7 @@ routes (signals, exposures, history, popular, similar, recommend) land with
 - `AnonymizeAccount` is account deletion with a quorum-written fence; see
   [HOST_INTEGRATION.md](HOST_INTEGRATION.md#signal-plane-account-deletion)
   and, for interaction data, [account lifecycle](HOST_INTEGRATION.md#account-lifecycle-and-interaction-erasure).
-- Reactions and favorites reach the signal plane from their own revisioned
-  rows: the engine's preference job syncs changes every five minutes using a
-  revision watermark with a five-minute commit overlap, and re-sends all rows
-  daily; see
-  [HOST_INTEGRATION.md](HOST_INTEGRATION.md#preference-boundary-reactions-and-favorites-into-the-signal-plane).
+- Reactions and favorites reach the signal plane from their own revisioned rows: the engine's preference job sends each change once, about five minutes after it, in batches behind a per-tenant cursor; `Engine.ResyncPreferences` re-sends everything after a signal-plane loss; see [HOST_INTEGRATION.md](HOST_INTEGRATION.md#preference-boundary-reactions-and-favorites-into-the-signal-plane).
 
 ## Testing
 

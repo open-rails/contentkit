@@ -220,8 +220,9 @@ func (e *Engine) connectSignals(ctx context.Context, host signal.Conn) (signal.C
 	return conn, nil
 }
 
-// signalsBack queues preferences the signal plane missed while it was down.
-// Before Start the periodic preference job's first run does it.
+// signalsBack queues a preference sync now: for what the signal plane missed
+// while it was down, or after ResyncPreferences. Before Start the periodic
+// preference job's first run does it.
 func (e *Engine) signalsBack() {
 	c := e.jobs.bound()
 	if c == nil {

@@ -17,11 +17,7 @@ reads. Do not rewind preference revisions against a retained sink: send
 `POST /v1/import` with `preference_floor` before writers resume, as described in the
 [host integration guide](../HOST_INTEGRATION.md#preference-boundary-reactions-and-favorites-into-the-signal-plane).
 
-After restoring ClickHouse, replay every subject deletion newer than the
-backup from the host's deletion ledger (`Engine.ReplayErasureFences`), then run
-`signal.Store.EnforceErasures` for each tenant. Run `RepairProjections` as
-needed to rebuild derived state from canonical signals. `signal.CheckSchema`
-must pass before serving analytics.
+After restoring ClickHouse, replay every subject deletion newer than the backup from the host's deletion ledger (`Engine.ReplayErasureFences`), then run `signal.Store.EnforceErasures` for each tenant. Call `Engine.ResyncPreferences` so the preference job re-sends every reaction and favorite. Run `RepairProjections` as needed to rebuild derived state from canonical signals. `signal.CheckSchema` must pass before serving analytics.
 
 Erasures never roll back. Replay post-backup deletions and permanent source
 fences before reopening content writes; an AuthKit callback acknowledgement
