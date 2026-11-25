@@ -220,6 +220,9 @@ func TestHostAPIContract(t *testing.T) {
 		// Purge skips locked rows; finish the deletion's publication work so
 		// this single sweep cannot race its locks and leave the edition behind.
 		awaitPublicationJobsIdle(t, w, a)
+		// Past the deleted retention, then back: later facts must not
+		// already be older than the event retention.
+		defer w.clock.set(w.clock.now())
 		w.clock.set(w.clock.now().Add(31 * 24 * time.Hour))
 		producer, err := river.NewClient(riverpgxv5.New(w.pool), &river.Config{Schema: w.schema + "_river"})
 		must(t, err)
