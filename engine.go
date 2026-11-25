@@ -315,7 +315,7 @@ func (e *Engine) migratePostgres(ctx context.Context, options MigrationOptions) 
 	if options.SkipQueues {
 		return nil
 	}
-	if err := riverhelpers.ApplyMigrations(ctx, e.pool, e.riverSchema); err != nil {
+	if err := riverhelpers.ApplyMigrations(ctx, e.pool, riverhelpers.MigrationOptions{Schema: e.riverSchema, Logger: e.log}); err != nil {
 		return fmt.Errorf("contentkit: River migrations: %w", err)
 	}
 	if account, ok := e.accountMediaStorage(); ok {

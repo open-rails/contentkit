@@ -256,7 +256,7 @@ func (e *Engine) validateDatabase(ctx context.Context) error {
 	if err := migrations.ValidateAccounts(ctx, db, accountSchema); err != nil {
 		return required(err)
 	}
-	if err := riverhelpers.ValidateMigrations(ctx, e.pool, e.riverSchema); err != nil {
+	if err := riverhelpers.ValidateMigrations(ctx, e.pool, riverhelpers.MigrationOptions{Schema: e.riverSchema, Logger: e.log}); err != nil {
 		return required(err)
 	}
 	if account, ok := e.accountMediaStorage(); ok {
