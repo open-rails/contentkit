@@ -484,7 +484,7 @@ func (g *Gate) authenticate(r *http.Request) (v auth.Verified, err error) {
 			v, err = nil, errors.Join(auth.ErrUnavailable, fault(fmt.Sprintf("%T.Authenticate panicked: %v", g.Auth, p)))
 		}
 	}()
-	v, err = g.Auth.Authenticate(r)
+	v, err = g.Auth.Authenticate(httpapi.AsSent(r))
 	if err == nil && isNil(v) {
 		return nil, errors.Join(auth.ErrUnavailable, fault(fmt.Sprintf("%T.Authenticate returned neither a Verified nor an error", g.Auth)))
 	}
