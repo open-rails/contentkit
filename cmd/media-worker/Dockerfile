@@ -3,7 +3,7 @@
 # Debian packages come from snapshot.debian.org at DEBIAN_SNAPSHOT, so a rebuild
 # installs the same versions; move it forward to take Debian's fixes. CI's
 # native jobs install from it too (debian-snapshot.sh).
-ARG DEBIAN_SNAPSHOT=20261123T000000Z
+ARG DEBIAN_SNAPSHOT=20261125T000000Z
 
 FROM golang:1.26.11-trixie@sha256:cff05dd6b81c901f2e8249eb6f91c69a60451d0f12c26bfef08e476a85b32d4d AS build
 ARG DEBIAN_SNAPSHOT
