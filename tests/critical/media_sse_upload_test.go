@@ -336,8 +336,7 @@ func TestMediaSSEUpload(t *testing.T) {
 		case <-ctx.Done():
 			t.Fatal("authorized observer received no snapshot")
 		}
-		claims, err := m.tenant[0].Verify(t.Context(), observerToken)
-		must(t, err)
+		claims := tokenClaims(t, observerToken)
 		identity := authtest.Identity(t, m.tenant[0], observerToken)
 		must(t, m.tenant[0].RevokeSession(t.Context(), identity, observer.ID, claims.SessionID))
 		select {

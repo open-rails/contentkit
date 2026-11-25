@@ -74,7 +74,7 @@ func (a *application) accountInbox(token string) *accountInboxClient {
 }
 
 func (a *application) inboxSession(token string) string {
-	subject := tokenSubject(a.test, token)
+	subject := tokenClaims(a.test, token).Subject
 	if session, ok := a.inboxSessions.Load(subject); ok {
 		return session.(string)
 	}
@@ -87,8 +87,15 @@ func (a *application) inboxSession(token string) string {
 	return session
 }
 
-// tokenSubject is a signed-in access token's sub.
-func tokenSubject(t testing.TB, token string) string {
+// sessionClaims are a signed-in access token's account and session.
+type sessionClaims struct {
+	Subject   string `json:"sub"`
+	SessionID string `json:"sid"`
+}
+
+// tokenClaims reads a signed-in access token's claims. A DPoP-bound token
+// verifies only beside a proof, so fixtures read its payload instead.
+func tokenClaims(t testing.TB, token string) sessionClaims {
 	t.Helper()
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
@@ -96,11 +103,12 @@ func tokenSubject(t testing.TB, token string) string {
 	}
 	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
 	must(t, err)
-	var claims struct {
-		Subject string `json:"sub"`
-	}
+	var claims sessionClaims
 	must(t, json.Unmarshal(payload, &claims))
-	return claims.Subject
+	if claims.Subject == "" || claims.SessionID == "" {
+		t.Fatal("fixture access token names no account session")
+	}
+	return claims
 }
 
 func (c *accountInboxClient) call(ctx context.Context, method, path string, out any) error {

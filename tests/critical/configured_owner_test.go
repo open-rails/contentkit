@@ -215,9 +215,10 @@ func configuredOwnerKeylessAdapter(t *testing.T, w *world) {
 	a := w.apps[1]
 	var authConfig authkit.Config
 	// Capture the real fixture's public store configuration; the provisioning
-	// adapter receives only store/role data, no keys or runtime dependencies.
+	// adapter receives only store, tenancy and role data, no keys or runtime
+	// dependencies.
 	_ = authtest.Replica(t, w.auth, authtest.WithConfig(func(c *authkit.Config) {
-		authConfig = authkit.Config{Database: c.Database, Roles: c.Roles}
+		authConfig = authkit.Config{Tenancy: c.Tenancy, Database: c.Database, Roles: c.Roles}
 	}))
 	pc := w.pool.Config()
 	pc.MaxConns = 1
