@@ -28,8 +28,9 @@ func (e *Engine) SetAccountHidden(ctx context.Context, accountID string, hidden 
 
 // AnonymizeAccount is the host consumer's idempotent response to user.purged.
 // It keeps comments and anonymous contributions, unlinks the account and
-// removes its private inbox, avatars, searches and provider data. Errors keep
-// the consumer's checkpoint pending for retry; no periodic job is needed.
+// removes its avatars, searches and provider data; AuthKit's purge has already
+// erased its inbox. Errors keep the consumer's checkpoint pending for retry; no
+// periodic job is needed.
 func (e *Engine) AnonymizeAccount(ctx context.Context, accountID string) error {
 	if strings.TrimSpace(accountID) == "" {
 		return errors.New("contentkit: account id is required")

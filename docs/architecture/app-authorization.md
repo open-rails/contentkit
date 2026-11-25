@@ -123,9 +123,8 @@ remains pending for retry after an outage or restart. Anonymization removes
 account attribution while retaining comments and anonymous contributions.
 
 Each deletion commits an app intent together with its `purging` lifecycle row,
-even with notifications disabled. Intents survive completion. AuthKit's
-`notify_recipients.erased_at` in the shared ContentKit scope also records a purge
-obligation.
+even with notifications disabled. Intents survive completion. AuthKit's purge
+erases the account's inbox itself; ContentKit reads none of it.
 
 A content-only restore must preserve the shared account store. This app's
 completion receipt and local `engine_cleanup_complete` fence commit in one
@@ -150,8 +149,8 @@ jobs, or automatically migrate schemas. Replay repeats `AnonymizeAccount` for
 every recorded deletion, preserving anonymous contributions and clearing restored
 comment, creator and owner attribution, so restored data ends as live deletion
 left it. This also resumes the app's avatar responsibility.
-`ReplayAccountErasures` finishes purges that never completed, including
-receipt-backed obligations without an inbox. Failed anonymization leaves the
+`ReplayAccountErasures` finishes purges that never completed, receipt-backed
+obligations included. Failed anonymization leaves the
 report incomplete and returns the error; retry until complete.
 
 To finish pending purges from an operator command, run

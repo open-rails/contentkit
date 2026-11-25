@@ -14,26 +14,17 @@ var ErrErasureReplayRequired = errors.New("contentkit: erasure replay required; 
 // Pending purges need a running event reader. A receipt without local
 // completion proves a catalog restore, since both commit atomically.
 func (e *Engine) checkErasureReplay(ctx context.Context) error {
-	query, args, err := e.accountErasureSubjectsQuery(ctx)
-	if err != nil {
-		return err
-	}
-	anonymizations, err := e.accountAnonymizationQuery(ctx)
-	if err != nil {
-		return err
-	}
+	query, args := e.accountErasureSubjectsQuery()
 	schema, _ := e.accountStorage()
 	var pending bool
-	err = e.pool.QueryRow(ctx, `WITH anonymizations AS (`+anonymizations+`), subjects AS (`+query+` UNION SELECT actor_id FROM anonymizations)
+	err := e.pool.QueryRow(ctx, `WITH anonymizations AS (`+e.accountAnonymizationQuery()+`), subjects AS (`+query+` UNION SELECT actor_id FROM anonymizations)
 SELECT EXISTS(SELECT 1 FROM subjects r
-WHERE NOT EXISTS(SELECT 1 FROM `+pgx.Identifier{e.schema, "content_erased_subjects"}.Sanitize()+` f WHERE f.tenant_id=$4 AND f.actor_id=r.actor_id AND f.engine_cleanup_complete)
-AND ((EXISTS(SELECT 1 FROM `+pgx.Identifier{schema, "content_account_erasure_intents"}.Sanitize()+` i WHERE i.tenant_id=$1 AND i.app_id=$2::text AND i.actor_id=r.actor_id)
-AND NOT EXISTS(SELECT 1 FROM `+pgx.Identifier{e.schema, "content_account_lifecycle"}.Sanitize()+` a WHERE a.tenant_id=$4 AND a.actor_id=r.actor_id AND a.state IN ('purging','purged')))
+WHERE NOT EXISTS(SELECT 1 FROM `+pgx.Identifier{e.schema, "content_erased_subjects"}.Sanitize()+` f WHERE f.tenant_id=$3 AND f.actor_id=r.actor_id AND f.engine_cleanup_complete)
+AND ((EXISTS(SELECT 1 FROM `+pgx.Identifier{schema, "content_account_erasure_intents"}.Sanitize()+` i WHERE i.tenant_id=$1::uuid AND i.app_id=$2::text AND i.actor_id=r.actor_id)
+AND NOT EXISTS(SELECT 1 FROM `+pgx.Identifier{e.schema, "content_account_lifecycle"}.Sanitize()+` a WHERE a.tenant_id=$3 AND a.actor_id=r.actor_id AND a.state IN ('purging','purged')))
 OR (EXISTS(SELECT 1 FROM anonymizations a WHERE a.actor_id=r.actor_id)
 AND EXISTS(SELECT 1 FROM `+pgx.Identifier{schema, "content_account_erasure_receipts"}.Sanitize()+` c WHERE c.tenant_id=$1 AND c.app_id=$2::uuid AND c.actor_id=r.actor_id)
-AND NOT EXISTS(SELECT 1 FROM `+pgx.Identifier{e.schema, "content_account_lifecycle"}.Sanitize()+` a WHERE a.tenant_id=$4 AND a.actor_id=r.actor_id AND a.state='purged'))
-OR (NOT EXISTS(SELECT 1 FROM anonymizations a WHERE a.actor_id=r.actor_id)
-AND NOT EXISTS(SELECT 1 FROM `+pgx.Identifier{e.schema, "content_account_lifecycle"}.Sanitize()+` a WHERE a.tenant_id=$4 AND a.actor_id=r.actor_id AND a.state IN ('purging','purged')))))`, args...).Scan(&pending)
+AND NOT EXISTS(SELECT 1 FROM `+pgx.Identifier{e.schema, "content_account_lifecycle"}.Sanitize()+` a WHERE a.tenant_id=$3 AND a.actor_id=r.actor_id AND a.state='purged'))))`, args...).Scan(&pending)
 	if err != nil {
 		return fmt.Errorf("contentkit: check erasure replay: %w", err)
 	}
@@ -76,19 +67,11 @@ func (e *Engine) ReplayAccountErasures(ctx context.Context) (signal.ErasureRepor
 			e.signals.attempt(ctx)
 		}
 	}
-	anonymizations, err := e.accountAnonymizationQuery(ctx)
-	if err != nil {
-		return report, err
-	}
-	_, args, err := e.accountErasureSubjectsQuery(ctx)
-	if err != nil {
-		return report, err
-	}
+	_, args := e.accountErasureSubjectsQuery()
 	for after := ""; ; {
-		rows, err := e.pool.Query(ctx, `WITH erasure_scope AS (SELECT $1::uuid, $2::text, $3::text, $4::text)
-SELECT r.actor_id FROM (`+anonymizations+`) r
-WHERE r.actor_id>$5 AND NOT EXISTS(SELECT 1 FROM `+pgx.Identifier{e.schema, "content_account_lifecycle"}.Sanitize()+` a WHERE a.tenant_id=$4 AND a.actor_id=r.actor_id AND a.state='purged')
-ORDER BY r.actor_id LIMIT $6`, append(args, after, min(1000, signal.MaxErasureSubjects))...)
+		rows, err := e.pool.Query(ctx, `SELECT r.actor_id FROM (`+e.accountAnonymizationQuery()+`) r
+WHERE r.actor_id>$4 AND NOT EXISTS(SELECT 1 FROM `+pgx.Identifier{e.schema, "content_account_lifecycle"}.Sanitize()+` a WHERE a.tenant_id=$3 AND a.actor_id=r.actor_id AND a.state='purged')
+ORDER BY r.actor_id LIMIT $5`, append(args, after, min(1000, signal.MaxErasureSubjects))...)
 		if err != nil {
 			return report, err
 		}

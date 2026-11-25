@@ -2526,19 +2526,6 @@
       ]
     },
     {
-      "id": "CK-J25-S19",
-      "journey": "CK-J25",
-      "behavior": "Partially restored account erasure storage fails closed even when publication is disabled",
-      "status": "verified",
-      "evidence": [
-        "Real partial shared-account lineage and a retained ledger with all erasure tables lost are rejected during public constructor startup; fully absent optional storage remains covered separately.",
-        "Both exact cases passed against real PostgreSQL in contentkit-optional-inbox-final.jsonl (package4.386s), after the ledger-only partial-lineage defect was reproduced and fixed; final exhaustive CI remains required."
-      ],
-      "cases": [
-        "TestAccountNotificationsOptional/CK-J25-S19_partial_account_erasure_storage_fails_closed"
-      ]
-    },
-    {
       "id": "CK-J25-S20",
       "journey": "CK-J25",
       "behavior": "Erasure intent survives a catalog restore with notifications omitted",

@@ -277,11 +277,6 @@ func TestAccountAnonymizationRecoveryAcrossStores(t *testing.T) {
 			app.server = mountEngine(lifetime, app.engine)
 			checkAnonymizationProbe(t, app.engine, false)
 		}
-		_, err := w.pool.Exec(t.Context(), `UPDATE contentkit_accounts.notify_recipients SET erased_at=now()-interval '16 minutes' WHERE scope=$1 AND audience='user' AND recipient=$2`, "contentkit:"+(layout.Scope{TenantID: a.cfg.Scope.TenantID.String()}).Partition(), user.ID)
-		must(t, err)
-		for _, app := range []*application{a, sibling} {
-			checkAnonymizationProbe(t, app.engine, true)
-		}
 	})
 	t.Run("CK-J24-S05_database_commit_failure_keeps_attribution_and_retry_pending", func(t *testing.T) {
 		qs := pgx.Identifier{w.schema}.Sanitize()
