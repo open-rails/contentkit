@@ -2125,6 +2125,19 @@
       ]
     },
     {
+      "id": "CK-J26-S08",
+      "journey": "CK-J26",
+      "behavior": "A position past the default fourteen-day retention resyncs from current state and reads on",
+      "status": "verified",
+      "cases": [
+        "TestExpiredEventPositionResyncs/CK-J26-S08_expired_position_resyncs_from_current_state"
+      ],
+      "evidence": [
+        "A reader built on eventlog.Consumer keeps its position through 13 days, gets ErrExpiredCursor at 15 days before and after maintenance prunes the facts, resyncs the deletion it missed from GET /v1/versions and then receives a later deletion.",
+        "contentkit#298: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
       "id": "CK-J29-S01",
       "journey": "CK-J29",
       "behavior": "Go remote and embedded clients preserve equivalent-principal results",
@@ -3011,6 +3024,19 @@
       ],
       "cases": [
         "TestSignalProbeSendsNoQuery/CK-J01-S16_the_ClickHouse_probe_sends_no_query"
+      ]
+    },
+    {
+      "id": "CK-J01-S17",
+      "journey": "CK-J01",
+      "behavior": "Favorites convert to uuid keys without blocking their writers, and toggle, card state, recount, preference sync and rankings read the converted rows",
+      "status": "verified",
+      "cases": [
+        "TestFavoritesMigrateToBinaryKeys/CK-J01-S17_favorites_convert_to_binary_keys_and_stay_readable"
+      ],
+      "evidence": [
+        "The text-keyed table is rebuilt by the previous release's own migrations, filled with real rows and written between the conversion's steps (value change, anonymization, delete, insert); the converted table equals the old one row for row, with uuid keys, the five named indexes and no working tables. Toggle, card state, the reader's list, an import's recount, a preference resync into ClickHouse and an entity ranking refresh then read the converted rows.",
+        "contentkit#298: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
       ]
     },
     {

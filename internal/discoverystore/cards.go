@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
@@ -435,6 +436,45 @@ func person(a access.Actor) string {
 	return ""
 }
 
+// favorited marks the refs account favorited. Favorites are keyed by uuids:
+// an account or ref with another id has none.
+func (s *Service) favorited(ctx context.Context, account string, refs []contentref.ContentRef, out []catalog.ViewerState) error {
+	if !isUUID(account) {
+		return nil
+	}
+	var kinds, ids, versions []string
+	var at []int
+	for i, r := range refs {
+		if isUUID(r.ContentID) && (r.Version() == "" || isUUID(r.Version())) {
+			kinds, ids, versions, at = append(kinds, r.ContentKind), append(ids, r.ContentID), append(versions, r.Version()), append(at, i)
+		}
+	}
+	if len(at) == 0 {
+		return nil
+	}
+	rows, err := s.o.Pool.Query(ctx, `SELECT r.n FROM unnest($3::text[], $4::text[], $5::text[]) WITH ORDINALITY AS r(kind, id, version, n)
+ WHERE EXISTS (SELECT 1 FROM `+s.t.favorites+` f WHERE f.app_id = $1::uuid AND f.user_id = $2::uuid AND f.content_kind = r.kind AND f.content_id = r.id::uuid
+  AND f.content_version_id IS NOT DISTINCT FROM nullif(r.version, '')::uuid AND f.value = 1)`, s.o.Tenant, account, kinds, ids, versions)
+	if err != nil {
+		return err
+	}
+	favorited, err := pgx.CollectRows(rows, pgx.RowTo[int64])
+	if err != nil {
+		return err
+	}
+	for _, n := range favorited {
+		out[at[n-1]].Favorited = true
+	}
+	return nil
+}
+
+// isUUID reports whether s is a UUID in its 36-character form, as Postgres
+// reads one.
+func isUUID(s string) bool {
+	_, err := uuid.Parse(s)
+	return err == nil && len(s) == 36
+}
+
 // viewerState fills a signed-in reader's standing with the cards' items.
 func (s *Service) viewerState(ctx context.Context, actor access.Actor, rows []cardRow) error {
 	if !actor.Member() || len(rows) == 0 {
@@ -471,18 +511,8 @@ func (s *Service) standing(ctx context.Context, actor access.Actor, refs []conte
 	for i, r := range refs {
 		kinds[i], ids[i], versions[i] = r.ContentKind, r.ContentID, r.Version()
 	}
-	fav, err := s.o.Pool.Query(ctx, `SELECT r.n FROM unnest($3::text[], $4::text[], $5::text[]) WITH ORDINALITY AS r(kind, id, version, n)
- WHERE EXISTS (SELECT 1 FROM `+s.t.favorites+` f WHERE f.tenant_id = $1 AND f.user_id = $2 AND f.content_kind = r.kind AND f.content_id = r.id
-  AND f.content_version_id IS NOT DISTINCT FROM nullif(r.version, '') AND f.value = 1)`, s.o.Tenant, actor.AccountID(), kinds, ids, versions)
-	if err != nil {
+	if err := s.favorited(ctx, actor.AccountID(), refs, out); err != nil {
 		return nil, err
-	}
-	favorited, err := pgx.CollectRows(fav, pgx.RowTo[int64])
-	if err != nil {
-		return nil, err
-	}
-	for _, n := range favorited {
-		out[n-1].Favorited = true
 	}
 	// A version's own reaction wins over one on the whole item.
 	reacted, err := s.o.Pool.Query(ctx, `SELECT r.n, x.value FROM unnest($3::text[], $4::text[], $5::text[]) WITH ORDINALITY AS r(kind, id, version, n)

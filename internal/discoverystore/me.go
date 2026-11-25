@@ -17,7 +17,7 @@ import (
 
 // Favorites pages what the signed-in reader favorited, most recent first: the
 // content items their listing shows (one card per item, whichever version
-// they favorited) or the channels.
+// they favorited) or the channels. Favorites are keyed by app_id and uuids.
 func (s *Service) Favorites(ctx context.Context, o discovery.MineOptions) (discovery.InteractionPage, error) {
 	return s.mine(ctx, o, s.t.favorites, "x.value = 1", "x.created_at")
 }
@@ -56,12 +56,16 @@ func (s *Service) mine(ctx context.Context, o discovery.MineOptions, table, valu
 	if err != nil {
 		return out, err
 	}
+	account := o.Actor.AccountID()
+	if !isUUID(account) {
+		return out, nil // an account with another id holds none
+	}
 	limit := pageLimit(o.Limit, 24)
-	args := pgx.NamedArgs{"d_tenant": s.o.Tenant, "d_user": o.Actor.AccountID(), "d_kinds": kinds, "d_limit": limit + 1, "d_after_at": afterAt, "d_after_id": afterID}
+	args := pgx.NamedArgs{"d_tenant": s.o.Tenant, "d_app": s.o.Tenant, "d_user": account, "d_kinds": kinds, "d_limit": limit + 1, "d_after_at": afterAt, "d_after_id": afterID}
 	var q *sel
-	exists := fmt.Sprintf(`EXISTS (SELECT 1 FROM %s g WHERE g.tenant_id = x.tenant_id AND g.id = x.content_id AND g.kind = x.content_kind AND g.state = 'active' AND NOT g.internal)`, s.t.entities)
+	exists := fmt.Sprintf(`EXISTS (SELECT 1 FROM %s g WHERE g.tenant_id = @d_tenant AND g.id = x.content_id::text AND g.kind = x.content_kind AND g.state = 'active' AND NOT g.internal)`, s.t.entities)
 	if o.Target == discovery.TargetChannels {
-		exists += ` AND EXISTS(SELECT 1 FROM ` + s.t.entities + ` channel WHERE channel.tenant_id=x.tenant_id AND channel.id=x.content_id AND channel.kind='channel' AND channel.auth_scope IS NOT NULL)`
+		exists += ` AND EXISTS(SELECT 1 FROM ` + s.t.entities + ` channel WHERE channel.tenant_id=@d_tenant AND channel.id=x.content_id::text AND channel.kind='channel' AND channel.auth_scope IS NOT NULL)`
 	}
 	if o.Target == discovery.TargetContents {
 		if q, err = s.compile(ctx, o.Reader, Filter{Kind: o.Kind}); err != nil {
@@ -70,17 +74,17 @@ func (s *Service) mine(ctx context.Context, o discovery.MineOptions, table, valu
 		for k, v := range q.args {
 			args[k] = v
 		}
-		exists = fmt.Sprintf(`EXISTS (SELECT 1 FROM %s f WHERE f.content_id = x.content_id AND %s)`, s.t.facets, q.predicate())
+		exists = fmt.Sprintf(`EXISTS (SELECT 1 FROM %s f WHERE f.content_id = x.content_id::text AND %s)`, s.t.facets, q.predicate())
 		if o.Summary && o.Cursor == "" {
 			sort, sortErr := s.parseSort(ctx, discovery.SortNewest, Filter{})
 			if sortErr != nil {
 				return out, sortErr
 			}
 			selection := func(selected *sel) *sel {
-				return selected.with(fmt.Sprintf(`EXISTS (SELECT 1 FROM %s x WHERE x.tenant_id = f.tenant_id
- AND x.user_id = @summary_user AND x.content_id = f.content_id AND x.content_kind = f.kind
+				return selected.with(fmt.Sprintf(`EXISTS (SELECT 1 FROM %s x WHERE x.app_id = f.tenant_id::uuid
+ AND x.user_id = @summary_user::uuid AND x.content_id = f.content_id::uuid AND x.content_kind = f.kind
  AND x.content_kind = ANY(@summary_kinds::text[]) AND %s)`, table, value),
-					pgx.NamedArgs{"summary_user": o.Actor.AccountID(), "summary_kinds": kinds})
+					pgx.NamedArgs{"summary_user": account, "summary_kinds": kinds})
 			}
 			out.Summary, err = s.listingSummary(ctx, Filter{Kind: o.Kind}, q, sort, &summaryCandidates{selection: selection})
 			if err != nil {
@@ -89,8 +93,8 @@ func (s *Service) mine(ctx context.Context, o discovery.MineOptions, table, valu
 		}
 	}
 	rows, err := s.o.Pool.Query(ctx, fmt.Sprintf(`SELECT id, value, at FROM (
- SELECT DISTINCT ON (x.content_id) x.content_id AS id, x.value, %[1]s AS at FROM %[2]s x
- WHERE x.tenant_id = @d_tenant AND x.user_id = @d_user AND x.content_kind = ANY(@d_kinds) AND %[3]s AND %[4]s
+ SELECT DISTINCT ON (x.content_id) x.content_id::text AS id, x.value, %[1]s AS at FROM %[2]s x
+ WHERE x.app_id = @d_app::uuid AND x.user_id = @d_user::uuid AND x.content_kind = ANY(@d_kinds) AND %[3]s AND %[4]s
  ORDER BY x.content_id, %[1]s DESC) m
 WHERE @d_after_id = '' OR (at, id) < (@d_after_at, @d_after_id) ORDER BY at DESC, id DESC LIMIT @d_limit`, at, table, value, exists), args)
 	if err != nil {

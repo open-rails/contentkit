@@ -61,7 +61,7 @@ CREATE TRIGGER critical_recount BEFORE UPDATE ON %[1]s.content_interaction_count
 			comment("blank", "   ", nil), comment("three", "Three", nil), comment("reply-two", "Reply two", parent), comment("four", "Four", nil)},
 		Reactions: []importer.ReactionRecord{like("203.0.113.1", 1), like("203.0.113.2", 1), like("203.0.113.3", 5), like("203.0.113.4", 1),
 			{Target: importer.TargetRef{Comment: parent}, IP: "203.0.113.5", Value: 1}},
-		Favorites: []importer.FavoriteRecord{{Target: on, UserID: "legacy-fan-1"}, {Target: on}, {Target: on, UserID: "legacy-fan-2"}},
+		Favorites: []importer.FavoriteRecord{{Target: on, UserID: legacyAccount(1)}, {Target: on}, {Target: on, UserID: legacyAccount(2)}},
 		Polls:     []importer.PollRecord{poll("a"), poll("b")},
 		Votes: []importer.VoteRecord{vote("a", "a-1", "203.0.113.1"), vote("a", "a-1", "203.0.113.2"), vote("a", "b-1", "203.0.113.3"),
 			vote("a", "a-2", "203.0.113.4"), vote("b", "b-1", "203.0.113.5")},

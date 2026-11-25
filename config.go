@@ -72,7 +72,7 @@ type Config struct {
 
 	// Jobs sizes the engine's River queue.
 	Jobs JobsConfig `yaml:"jobs" json:"jobs"`
-	// EventRetention keeps catalog facts independently of readers; zero is ninety days.
+	// EventRetention keeps catalog facts independently of readers; zero is fourteen days.
 	EventRetention time.Duration `yaml:"event_retention,omitempty" json:"event_retention,omitempty"`
 }
 

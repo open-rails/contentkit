@@ -203,11 +203,18 @@ VALUES ($1,$2,false) ON CONFLICT (tenant_id,actor_id) DO NOTHING`, rt.tenant, ac
 			return err
 		}
 		s := rt.store
+		favorites := `UPDATE ` + s.t.favorites + ` SET user_id=NULL,anonymous_actor_id=$3 WHERE app_id=$1::uuid AND user_id=$2::uuid`
+		if !isUUID(actorID) {
+			favorites = "" // only a UUID account holds favorites
+		}
 		for _, q := range []string{
 			`UPDATE ` + s.t.reactions + ` SET user_id=NULL,ip=NULL,anonymous_actor_id=$3 WHERE tenant_id=$1 AND user_id=$2`,
-			`UPDATE ` + s.t.favorites + ` SET user_id=NULL,anonymous_actor_id=$3 WHERE tenant_id=$1 AND user_id=$2`,
+			favorites,
 			`UPDATE ` + s.t.pollVotes + ` SET user_id=NULL,ip=NULL,anonymous_actor_id=$3 WHERE tenant_id=$1 AND user_id=$2`,
 		} {
+			if q == "" {
+				continue
+			}
 			if _, err := tx.Exec(ctx, q, rt.tenant, actorID, anonymousID); err != nil {
 				return err
 			}

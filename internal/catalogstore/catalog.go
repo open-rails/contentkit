@@ -61,7 +61,7 @@ type Options struct {
 	Body catalog.HTMLSanitizer
 	// DeletedRetention: see DefaultDeletedRetention.
 	DeletedRetention time.Duration
-	// EventRetention keeps committed facts independently of reader progress. Zero is ninety days.
+	// EventRetention keeps committed facts independently of reader progress. Zero is fourteen days.
 	EventRetention time.Duration
 	// OnPurge records required application cleanup in the same transaction.
 	OnPurge func(context.Context, pgx.Tx, []contentref.ContentRef) error

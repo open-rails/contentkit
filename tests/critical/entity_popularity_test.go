@@ -65,11 +65,12 @@ func TestEntityPopularity(t *testing.T) {
 				must(t, err)
 				return item.ID
 			}
-			// User IDs are fixture account identifiers; generate_series keeps the floor fixtures cheap.
+			// User IDs are fixture account UUIDs; generate_series keeps the floor fixtures cheap.
 			favorite := func(content string, accounts, days int, version *string) {
 				_, err := w.pool.Exec(t.Context(), `INSERT INTO `+table("content_favorites")+`
- (tenant_id,content_kind,content_id,user_id,content_version_id,value,revision,created_at)
- SELECT $1,'article',$2,'account-'||n,$5,1,1,now()-make_interval(days=>$4) FROM generate_series(1,$3::int) n`,
+ (app_id,content_kind,content_id,user_id,content_version_id,value,revision,created_at)
+ SELECT $1::uuid,'article',$2::uuid,('00000000-0000-4000-8000-'||lpad(n::text,12,'0'))::uuid,$5::uuid,1,1,now()-make_interval(days=>$4)
+ FROM generate_series(1,$3::int) n`,
 					tenant, content, accounts, days, version)
 				must(t, err)
 			}
@@ -95,11 +96,11 @@ func TestEntityPopularity(t *testing.T) {
 				favorite(seed(expired), 200, 181, nil)
 				item := seed(inactive)
 				favorite(item, 60, 1, nil)
-				_, err = w.pool.Exec(t.Context(), `UPDATE `+table("content_favorites")+` SET value=0 WHERE tenant_id=$1 AND content_id=$2`, tenant, item)
+				_, err = w.pool.Exec(t.Context(), `UPDATE `+table("content_favorites")+` SET value=0 WHERE app_id=$1::uuid AND content_id=$2::uuid`, tenant, item)
 				must(t, err)
 				item = seed(anonymous)
 				favorite(item, 60, 1, nil)
-				_, err = w.pool.Exec(t.Context(), `UPDATE `+table("content_favorites")+` SET anonymous_actor_id=gen_random_uuid(),user_id=NULL WHERE tenant_id=$1 AND content_id=$2`, tenant, item)
+				_, err = w.pool.Exec(t.Context(), `UPDATE `+table("content_favorites")+` SET anonymous_actor_id=gen_random_uuid(),user_id=NULL WHERE app_id=$1::uuid AND content_id=$2::uuid`, tenant, item)
 				must(t, err)
 				item = seed(hidden)
 				favorite(item, 60, 1, nil)
