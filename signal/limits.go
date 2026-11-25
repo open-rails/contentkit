@@ -4,16 +4,19 @@ import (
 	"fmt"
 )
 
+// A batch at these limits, every item carrying an activity receipt, fits
+// the 1 MiB request body.
 const (
 	MaxSignalsPerBatch = 500
 )
 
 const (
-	MaxExposuresPerBatch = 200
+	MaxExposuresPerBatch = 8
 )
 
 const (
-	MaxShownPerExposure = 200
+	// MaxShownPerExposure is a full list page.
+	MaxShownPerExposure = 100
 )
 
 const (

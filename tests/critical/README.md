@@ -52,12 +52,9 @@ Provide disposable services through:
 - `CONTENTKIT_CRITICAL_CH_ADDR`, `CONTENTKIT_CRITICAL_CH_USER`,
   `CONTENTKIT_CRITICAL_CH_PASSWORD`, optionally `CONTENTKIT_CRITICAL_CH_CLUSTER`:
   ClickHouse with Keeper and replica macros. Each fixture owns a fresh database.
+- `CONTENTKIT_CRITICAL_CH_TLS_ADDR`, `CONTENTKIT_CRITICAL_CH_CA_FILE`: the same ClickHouse's secure native port and the PEM CA that signs its certificate, valid for that address's host.
 
-Native tests need libvips and the media worker's compatible FFmpeg runtime;
-browser tests need Node, pnpm and Playwright Chromium. CI provisions these in
-`.github/workflows/go.yaml`. `.github/scripts/critical-media-tools.sh` exposes
-the pinned media image's FFmpeg tools to host tests and removes only its owned
-container. It does not replace the worker under test with a released worker.
+Native tests need libvips and FFmpeg as the media worker ships them (FFmpeg 7 with SVT-AV1); browser tests need Node, pnpm and Playwright Chromium. CI runs the suite in the worker's build image, `golang:…-trixie`, and installs them from the worker's Debian snapshot with `cmd/media-worker/debian-snapshot.sh` (see `.github/workflows/go.yaml`); as root in that image, `sh cmd/media-worker/debian-snapshot.sh libvips-dev libheif-plugin-dav1d ffmpeg` does the same.
 
 Build the shipped SDK and browser harness before browser tests:
 

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 )
 
 const (
@@ -163,8 +164,50 @@ type Spec struct {
 	Responses []Reply
 	// Errors lists the route's own codes; ErrorSets names the shared ones.
 	Errors []string
+	// Cache is how caches may keep the route's answers; the zero value is
+	// NoStore. The gate writes it on every answer.
+	Cache Cache
 	// Module is set by Register.
 	Module Module
+}
+
+// NoStore is every answer's caching unless its route declares a Cache.
+const NoStore = "private, no-store"
+
+// Cache lets shared caches keep a GET route's successful answers for MaxAge.
+// The gate answers NoStore instead when the request presents a credential,
+// the visitor's location rules shaped the answer, or it is not a success.
+type Cache struct {
+	MaxAge time.Duration
+	// Vary names the request headers a cached answer depends on:
+	// Accept-Language where that header picks the language.
+	Vary []string
+}
+
+// Public reports whether shared caches may keep the route's answers.
+func (c Cache) Public() bool { return c.MaxAge > 0 }
+
+// Directive is the Cache-Control of a cacheable answer.
+func (c Cache) Directive() string {
+	if !c.Public() {
+		return NoStore
+	}
+	return fmt.Sprintf("public, max-age=%d", int(c.MaxAge/time.Second))
+}
+
+// Writer finds the writer of type T beneath w's wrappers (Unwrap).
+func Writer[T http.ResponseWriter](w http.ResponseWriter) (T, bool) {
+	for {
+		if t, ok := w.(T); ok {
+			return t, true
+		}
+		u, ok := w.(interface{ Unwrap() http.ResponseWriter })
+		if !ok {
+			var zero T
+			return zero, false
+		}
+		w = u.Unwrap()
+	}
 }
 
 // Key is the route's identity within its module: "GET /posts/{id}".
@@ -242,6 +285,12 @@ func (s Spec) check() error {
 		return fmt.Errorf("Perm %q is not root:<resource>:<action>", s.Perm)
 	case s.Auth != Open && s.Auth != Public && s.Auth != User && s.Auth != Person && s.Auth != Staff && s.Auth != Editor:
 		return fmt.Errorf("unknown tier %q", s.Auth)
+	case s.Cache.MaxAge < 0 || s.Cache.MaxAge%time.Second != 0:
+		return fmt.Errorf("Cache.MaxAge must be whole seconds")
+	case s.Cache.Public() && (s.Method != GET || s.Auth != Open && s.Auth != Public):
+		return fmt.Errorf("only an open or public GET route is cacheable")
+	case !s.Cache.Public() && len(s.Cache.Vary) > 0:
+		return fmt.Errorf("Cache.Vary needs a MaxAge")
 	}
 	for _, code := range s.Errors {
 		if _, ok := LookupErrorCode(code); !ok {

@@ -10,6 +10,7 @@ import (
 	"github.com/open-rails/contentkit/access"
 	content "github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/clientaddr"
 	"github.com/open-rails/contentkit/internal/httpapi"
 	"github.com/open-rails/contentkit/kinds"
 )
@@ -266,14 +267,15 @@ func (r *reactions) handleGet(w http.ResponseWriter, req *http.Request, target c
 	writeJSON(w, http.StatusOK, cnt)
 }
 
-// reactionKey returns the dedup identity: a user id when present, else the IP.
-// ok=false when the actor is fully unidentifiable.
+// reactionKey returns the dedup identity: a user id when present, else the
+// address's key (an IPv6 address counts as its /64). ok=false when the actor
+// is fully unidentifiable.
 func reactionKey(a access.Actor) (userID, ip string, ok bool) {
 	if a.Member() {
 		return a.AccountID(), a.IP, true
 	}
 	if a.Anonymous && a.IP != "" {
-		return "", a.IP, true
+		return "", clientaddr.Key(a.IP), true
 	}
 	return "", "", false
 }

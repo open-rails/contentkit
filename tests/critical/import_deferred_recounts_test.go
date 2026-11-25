@@ -76,7 +76,7 @@ CREATE TRIGGER critical_recount BEFORE UPDATE ON %[1]s.content_interaction_count
 		Comments: []importer.CommentRecord{comment("parent", "Parent", nil), comment("two", "Two", nil), comment("reply-one", "Reply one", parent),
 			comment("blank", "   ", nil), comment("three", "Three", nil), comment("reply-two", "Reply two", parent)},
 		Reactions: []importer.ReactionRecord{like("203.0.113.1", 1), like("203.0.113.2", 1), {Target: importer.TargetRef{Comment: parent}, IP: "203.0.113.3", Value: 1}},
-		Favorites: []importer.FavoriteRecord{{Target: on, UserID: "legacy-fan-1"}},
+		Favorites: []importer.FavoriteRecord{{Target: on, UserID: legacyAccount(1)}},
 		Polls:     []importer.PollRecord{poll},
 		Votes:     []importer.VoteRecord{vote("first", "203.0.113.1"), vote("first", "203.0.113.2")},
 	}
@@ -114,7 +114,7 @@ CREATE TRIGGER critical_recount BEFORE UPDATE ON %[1]s.content_interaction_count
 	second := importer.Batch{Source: first.Source, DeferRecounts: true,
 		Comments:  []importer.CommentRecord{comment("four", "Four", nil)},
 		Reactions: []importer.ReactionRecord{like("203.0.113.4", 1)},
-		Favorites: []importer.FavoriteRecord{{Target: on, UserID: "legacy-fan-2"}},
+		Favorites: []importer.FavoriteRecord{{Target: on, UserID: legacyAccount(2)}},
 		Votes:     []importer.VoteRecord{vote("second", "203.0.113.4")},
 		Deletes:   []importer.DeleteRecord{{Entity: importer.RecordComment, ExternalID: "two"}}}
 	result, err = a.engine.Client().PostImport(ctx, second)
@@ -179,7 +179,7 @@ func TestDeferredRecountKeepsRequeuedTarget(t *testing.T) {
 	favorite := func(user string) importer.Batch {
 		return importer.Batch{Source: "requeued-recount", DeferRecounts: true, Favorites: []importer.FavoriteRecord{{Target: on, UserID: user}}}
 	}
-	result, err := a.engine.Client().PostImport(ctx, favorite("legacy-fan-1"))
+	result, err := a.engine.Client().PostImport(ctx, favorite(legacyAccount(1)))
 	must(t, err)
 	if len(result.Failed) != 0 || result.RecountsQueued == nil || *result.RecountsQueued != 1 {
 		t.Fatalf("bulk favorite failed %+v or queued %v", result.Failed, result.RecountsQueued)
@@ -229,7 +229,7 @@ CREATE TRIGGER critical_recount_gate BEFORE UPDATE ON %[1]s.content_interaction_
 		must(t, w.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE $1=ANY(pg_blocking_pids(pid)))`, holder.Conn().PgConn().PID()).Scan(&waiting))
 		return waiting
 	})
-	result, err = a.engine.Client().PostImport(ctx, favorite("legacy-fan-2"))
+	result, err = a.engine.Client().PostImport(ctx, favorite(legacyAccount(2)))
 	must(t, err)
 	if len(result.Failed) != 0 {
 		t.Fatalf("bulk favorite during the recount failed: %+v", result.Failed)
@@ -250,7 +250,7 @@ CREATE TRIGGER critical_recount_gate BEFORE UPDATE ON %[1]s.content_interaction_
 	}
 	// Queued again after the drain, the target takes a mark it never had, so
 	// a drain that read an old mark cannot dequeue it.
-	result, err = a.engine.Client().PostImport(ctx, favorite("legacy-fan-3"))
+	result, err = a.engine.Client().PostImport(ctx, favorite(legacyAccount(3)))
 	must(t, err)
 	if again := mark(); len(result.Failed) != 0 || again <= firstMark {
 		t.Fatalf("queued again with mark %d after %d; marks must not repeat", again, firstMark)
@@ -317,7 +317,7 @@ func TestImportEngagementRemovals(t *testing.T) {
 	}
 	// Simulate imported rows written before provenance existed.
 	for _, table := range []string{"content_favorites", "content_reactions"} {
-		_, err := w.pool.Exec(t.Context(), `UPDATE `+w.schema+`.`+table+` SET import_source=NULL WHERE tenant_id=$1 AND user_id=$2`, a.cfg.Scope.AppID.String(), unknown.ID)
+		_, err := w.pool.Exec(t.Context(), `UPDATE `+w.schema+`.`+table+` SET import_source=NULL WHERE `+appColumn(table)+`=$1 AND user_id=$2`, a.cfg.Scope.AppID.String(), unknown.ID)
 		must(t, err)
 	}
 	users := []string{imported.ID, native.ID, adopted.ID, changed.ID, unknown.ID, other.ID}
@@ -327,7 +327,7 @@ func TestImportEngagementRemovals(t *testing.T) {
 		for _, id := range []string{"", item.Versions[0].ID} {
 			for _, user := range users {
 				var source *string
-				must(t, w.pool.QueryRow(t.Context(), `SELECT import_source FROM `+w.schema+`.`+table+` WHERE tenant_id=$1 AND user_id=$2 AND content_id=$3 AND content_version_id IS NOT DISTINCT FROM NULLIF($4,'')`, a.cfg.Scope.AppID.String(), user, item.ID, id).Scan(&source))
+				must(t, w.pool.QueryRow(t.Context(), `SELECT import_source FROM `+w.schema+`.`+table+` WHERE `+appColumn(table)+`=$1 AND user_id=$2 AND content_id=$3 AND content_version_id::text IS NOT DISTINCT FROM NULLIF($4,'')`, a.cfg.Scope.AppID.String(), user, item.ID, id).Scan(&source))
 				want := ""
 				switch user {
 				case unknown.ID:
@@ -371,7 +371,7 @@ func TestImportEngagementRemovals(t *testing.T) {
 			for _, user := range users {
 				var value int16
 				var source string
-				must(t, w.pool.QueryRow(t.Context(), `SELECT value, import_source FROM `+w.schema+`.`+table+` WHERE tenant_id=$1 AND user_id=$2 AND content_id=$3 AND content_version_id IS NOT DISTINCT FROM NULLIF($4,'')`, a.cfg.Scope.AppID.String(), user, item.ID, id).Scan(&value, &source))
+				must(t, w.pool.QueryRow(t.Context(), `SELECT value, import_source FROM `+w.schema+`.`+table+` WHERE `+appColumn(table)+`=$1 AND user_id=$2 AND content_id=$3 AND content_version_id::text IS NOT DISTINCT FROM NULLIF($4,'')`, a.cfg.Scope.AppID.String(), user, item.ID, id).Scan(&value, &source))
 				want, wantSource := int16(1), ""
 				switch user {
 				case imported.ID, unknown.ID:
@@ -387,9 +387,9 @@ func TestImportEngagementRemovals(t *testing.T) {
 	}
 	for _, table := range []string{"content_favorites", "content_reactions"} {
 		var before, after int64
-		must(t, w.pool.QueryRow(t.Context(), `SELECT max(revision) FROM `+w.schema+`.`+table+` WHERE tenant_id=$1`, a.cfg.Scope.AppID.String()).Scan(&before))
+		must(t, w.pool.QueryRow(t.Context(), `SELECT max(revision) FROM `+w.schema+`.`+table+` WHERE `+appColumn(table)+`=$1`, a.cfg.Scope.AppID.String()).Scan(&before))
 		write("legacy-a", users, true, false)
-		must(t, w.pool.QueryRow(t.Context(), `SELECT max(revision) FROM `+w.schema+`.`+table+` WHERE tenant_id=$1`, a.cfg.Scope.AppID.String()).Scan(&after))
+		must(t, w.pool.QueryRow(t.Context(), `SELECT max(revision) FROM `+w.schema+`.`+table+` WHERE `+appColumn(table)+`=$1`, a.cfg.Scope.AppID.String()).Scan(&after))
 		if before != after {
 			t.Fatalf("%s tombstone replay changed revisions: %d -> %d", table, before, after)
 		}
@@ -463,4 +463,15 @@ func TestImportLegacyReadingRemoval(t *testing.T) {
 	if got := state(legacyOnly)[ref.Key()]; got.MaxProgress != 8 {
 		t.Fatalf("new legacy fact did not restore progress: %+v", got)
 	}
+}
+
+// legacyAccount is a host's imported account id: favorites name UUID accounts.
+func legacyAccount(n int) string { return fmt.Sprintf("00000000-0000-4000-8000-%012d", n) }
+
+// appColumn is a table's app key: favorites' app_id, else tenant_id.
+func appColumn(table string) string {
+	if table == "content_favorites" {
+		return "app_id"
+	}
+	return "tenant_id"
 }

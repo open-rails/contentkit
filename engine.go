@@ -16,7 +16,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"regexp"
 	"slices"
 	"strings"
@@ -47,6 +46,8 @@ import (
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contenturl"
 	"github.com/open-rails/contentkit/entities"
+	"github.com/open-rails/contentkit/internal/clientaddr"
+	"github.com/open-rails/contentkit/internal/endpoint"
 	"github.com/open-rails/contentkit/internal/gate"
 	"github.com/open-rails/contentkit/internal/httpapi"
 	"github.com/open-rails/contentkit/internal/hub"
@@ -224,6 +225,9 @@ func (e *Engine) validate(deps Deps) error {
 	}
 	cfg := &e.cfg
 	var err error
+	if err := clientaddr.CheckTrusted(cfg.TrustedProxies); err != nil {
+		return fmt.Errorf("contentkit: Config.TrustedProxies: %w", err)
+	}
 	if err := signal.ValidateActivityCohorts(cfg.ActivityCohorts); err != nil {
 		return fmt.Errorf("contentkit: Config.ActivityCohorts: %w", err)
 	}
@@ -262,8 +266,8 @@ func (e *Engine) validate(deps Deps) error {
 			return errors.New("contentkit: Config.Accounts.Avatars needs Config.Media")
 		}
 		if a.Primary != "" {
-			if u, err := url.Parse(a.Primary); err != nil || u.Scheme != "https" && u.Scheme != "http" || u.Host == "" {
-				return fmt.Errorf("contentkit: Config.Accounts.Avatars.Primary %q is not an http(s) URL", a.Primary)
+			if _, err := endpoint.Secure(a.Primary); err != nil {
+				return fmt.Errorf("contentkit: Config.Accounts.Avatars.Primary: %w", err)
 			}
 			if strings.TrimSpace(a.Key) == "" {
 				return errors.New("contentkit: Config.Accounts.Avatars.Primary needs Key")
@@ -272,6 +276,9 @@ func (e *Engine) validate(deps Deps) error {
 	}
 	if (deps.ClickHouse != nil || cfg.ClickHouse.Addr != "") && strings.TrimSpace(cfg.ClickHouse.Database) == "" {
 		return errors.New("contentkit: the signal plane needs Config.ClickHouse.Database")
+	}
+	if _, err := cfg.ClickHouse.tlsConfig(); err != nil {
+		return err
 	}
 	return nil
 }
@@ -352,7 +359,7 @@ func (e *Engine) newCatalog(ctx context.Context, deps Deps, now func() time.Time
 	}
 	e.channels = channelstore.FromStore(e.entities)
 	co := catalogstore.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Scope.AppID.String(), Kinds: c, Auth: e.auth, Gate: e.gate, Entities: e.entities, Channels: e.channels,
-		Body: deps.BodyProcessor, Now: now, Logger: e.log,
+		Body: deps.BodySanitizer, Now: now, Logger: e.log,
 		EventRetention: e.cfg.EventRetention, OnPurge: e.forgetPurgedTx, AfterPurge: e.purgeSignals,
 		DocumentsChanged: func(ctx context.Context, q catalogstore.Querier) error { return e.syncDocuments(ctx, q) }}
 	if e.catalog, err = catalogstore.New(ctx, co); err != nil {
@@ -461,7 +468,7 @@ func (e *Engine) newMedia(ctx context.Context, deps Deps, now func() time.Time) 
 		mode = media.DeliveryMode(d.Mode)
 	}
 	if m.reader, err = mediastore.NewReader(mediastore.ReaderOptions{Manifests: m.jobs.Manifests(), Queue: m.queue, Progress: m.progress,
-		Delivery: media.Delivery{Mode: mode, CookieDomain: d.CookieDomain, SigningKey: signing, TTL: d.TTL, Window: d.Window},
+		Delivery: media.Delivery{Mode: mode, CookieDomain: d.CookieDomain, Keys: ring, TTL: d.TTL, Window: d.Window},
 		Issuance: mediastore.Issuance{PerHour: mc.Issuance.PerHour, AnonymousPerHour: mc.Issuance.AnonymousPerHour, Disabled: mc.Issuance.Disabled, Redis: deps.Redis},
 		Now:      now}); err != nil {
 		return nil, err
@@ -510,7 +517,7 @@ func (e *Engine) contentOptions(deps Deps) contentstore.Options {
 	l := in.Limits
 	o := contentstore.Options{
 		Locate: e.geo.Lookup, Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Scope.AppID.String(), Auth: e.auth, UserInfo: deps.Users, Resolver: interactionTargets{e}, Kinds: e.cfg.Content,
-		Processor:             deps.Processor,
+		TextProcessor:         deps.TextProcessor,
 		NotificationPublisher: deps.Notifications,
 		EraseAccountReceipts:  e.eraseAccountReceipts,
 		Accounts:              e,
@@ -578,7 +585,7 @@ func (e *Engine) mount(deps Deps) error {
 	if e.avatars != nil {
 		avatars = e.avatars.rule
 	}
-	e.modules[httpapi.Kinds] = kindsHandler(c, e.hub.SignalPlane, avatars)
+	e.modules[httpapi.Kinds] = kindsHandler((&gate.Gate{Auth: e.auth, Log: e.log}).Guard, c, e.hub.SignalPlane, avatars)
 	if e.importer, err = importstore.New(importstore.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Scope.AppID.String(), Catalog: e.catalog, Entities: e.entities, Channels: e.channels,
 		Content: e.content, Signals: e.discover, Rebuild: e.rebuild, Logger: e.log}); err != nil {
 		return err
@@ -596,7 +603,7 @@ func (e *Engine) mount(deps Deps) error {
 		return err
 	}
 	e.modules[httpapi.Codes] = router.Handler((&gate.Gate{Auth: e.auth, Log: e.log}).Guard)
-	e.inproc = e.dispatch("", e.modules)
+	e.inproc = e.dispatch("", e.modules, nil)
 	return nil
 }
 

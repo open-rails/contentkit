@@ -7,7 +7,8 @@ import re
 import subprocess
 
 SOURCE = ("critical", "scan")
-HEAVY = (*SOURCE, "images")
+# security: govulncheck of every module, with full qualification and dependency changes.
+HEAVY = (*SOURCE, "images", "security")
 # light: build, vet, static guards and generated-file checks, for PRs into a release candidate.
 ALL = (*HEAVY, "light")
 
@@ -44,7 +45,7 @@ def select(changes):
         name = Path(path).name
         if (name in ("go.mod", "go.sum", "package.json", "pnpm-lock.yaml", "package-lock.json", "yarn.lock")
                 or path.startswith((".github/", "scripts/", "tools/"))
-                or name.startswith("Dockerfile") or path == ".dockerignore"):
+                or name.startswith("Dockerfile") or path in (".dockerignore", "cmd/media-worker/debian-snapshot.sh")):
             selected.update(full())
             reasons.append("dependency, CI or image-build input: " + path)
             continue

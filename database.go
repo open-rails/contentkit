@@ -11,6 +11,7 @@ import (
 	signalstore "github.com/open-rails/contentkit/internal/signalstore"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
@@ -67,6 +68,54 @@ func (e *Engine) configureStorage() error {
 		}
 		if err := workqueue.ValidSchema(media.WorkerSchema); err != nil {
 			return err
+		}
+	}
+	return e.schemas().distinct()
+}
+
+// Schemas are the PostgreSQL schemas an engine owns. Catalog and Accounts
+// hold tables; River, MediaWorker and AccountWorker are River queues, each
+// elected and worked on its own. An unconfigured queue is "".
+type Schemas struct {
+	Catalog, River, Accounts, MediaWorker, AccountWorker string
+}
+
+// Schemas resolves c's schema names, defaults included, refusing names that
+// collide. A host sharing the database checks its own (its River schema,
+// AuthKit's) against them.
+func (c Config) Schemas() (Schemas, error) {
+	e := Engine{cfg: c}
+	if err := e.configureStorage(); err != nil {
+		return Schemas{}, err
+	}
+	return e.schemas(), nil
+}
+
+func (e *Engine) schemas() Schemas {
+	s := Schemas{Catalog: e.schema, River: e.riverSchema, Accounts: e.cfg.Accounts.Schema}
+	if e.cfg.Media != nil {
+		s.MediaWorker = e.cfg.Media.WorkerSchema
+	}
+	if a, ok := e.accountMediaStorage(); ok {
+		s.AccountWorker = a.WorkerSchema
+	}
+	return s
+}
+
+// distinct refuses a queue schema that is another schema: queues sharing one
+// share a River leader and each other's jobs. The catalog and account
+// tables may share a schema.
+func (s Schemas) distinct() error {
+	named := []struct{ name, schema string }{{"Database.Schema", s.Catalog}, {"Accounts.Schema", s.Accounts},
+		{"Database.RiverSchema", s.River}, {"Media.WorkerSchema", s.MediaWorker}, {"the account media queue", s.AccountWorker}}
+	for i, q := range named[2:] {
+		if q.schema == "" {
+			continue
+		}
+		for _, other := range named[:i+2] {
+			if other.schema == q.schema {
+				return fmt.Errorf("contentkit: %s and %s are both schema %q", other.name, q.name, q.schema)
+			}
 		}
 	}
 	return nil
@@ -131,8 +180,11 @@ func MigratePostgres(ctx context.Context, pool *pgxpool.Pool, cfg Config, option
 }
 
 // MigrateClickHouse creates the configured signal database before applying its
-// schema. pool is PostgreSQL's migration-ledger pool, not a ClickHouse runtime
-// connection. It is a no-op when ClickHouse is entirely unconfigured.
+// schema, then records in PostgreSQL that this app has a signal plane: from
+// then on an engine without one keeps account erasures pending
+// (ErrSignalPlaneRequired). pool is PostgreSQL's migration-ledger pool, not a
+// ClickHouse runtime connection; MigratePostgres runs first. It is a no-op when
+// ClickHouse is entirely unconfigured.
 func MigrateClickHouse(ctx context.Context, pool *pgxpool.Pool, cfg Config) error {
 	if ctx == nil {
 		return errors.New("contentkit: migration context is required")
@@ -144,7 +196,11 @@ func MigrateClickHouse(ctx context.Context, pool *pgxpool.Pool, cfg Config) erro
 	if pool == nil || strings.TrimSpace(c.Addr) == "" || strings.TrimSpace(c.Database) == "" {
 		return errors.New("contentkit: ClickHouse migrations require a PostgreSQL ledger pool, address and database")
 	}
-	admin, err := clickhouse.Open(&clickhouse.Options{Addr: []string{c.Addr}, Auth: clickhouse.Auth{Database: "default", Username: c.Username, Password: c.Password}})
+	tlsConfig, err := c.tlsConfig()
+	if err != nil {
+		return err
+	}
+	admin, err := clickhouse.Open(&clickhouse.Options{Addr: []string{c.Addr}, TLS: tlsConfig, Auth: clickhouse.Auth{Database: "default", Username: c.Username, Password: c.Password}})
 	if err != nil {
 		return fmt.Errorf("contentkit: open ClickHouse migration connection: %w", err)
 	}
@@ -158,13 +214,33 @@ func MigrateClickHouse(ctx context.Context, pool *pgxpool.Pool, cfg Config) erro
 	}
 	db := stdlib.OpenDBFromPool(pool)
 	defer db.Close()
-	m := chmigrate.New(&chmigrate.Config{ClientAddr: c.Addr, Database: c.Database, Username: c.Username, Password: c.Password, Cluster: c.Cluster, App: "contentkit_signal", PostgresDB: db})
+	m := chmigrate.New(&chmigrate.Config{ClientAddr: c.Addr, Database: c.Database, Username: c.Username, Password: c.Password, Cluster: c.Cluster, TLS: tlsConfig, App: "contentkit_signal", PostgresDB: db})
 	defer m.Close()
 	if err := m.ApplyMigrations(ctx, steps); err != nil {
 		return fmt.Errorf("contentkit: apply signal migrations: %w", err)
 	}
 	if err := signalstore.CheckSchema(ctx, admin, c.Database); err != nil {
 		return fmt.Errorf("contentkit: validate migrated signal schema: %w", err)
+	}
+	return recordSignalPlane(ctx, pool, cfg)
+}
+
+// recordSignalPlane marks the app's signal plane provisioned. The marker is in
+// the account schema, which a catalog restore leaves in place.
+func recordSignalPlane(ctx context.Context, pool *pgxpool.Pool, cfg Config) error {
+	e := &Engine{cfg: cfg, pool: pool}
+	if err := e.configureStorage(); err != nil {
+		return err
+	}
+	schema, _ := e.accountStorage()
+	_, err := pool.Exec(ctx, `INSERT INTO `+pgx.Identifier{schema, "content_signal_planes"}.Sanitize()+` (tenant_id,app_id) VALUES ($1,$2) ON CONFLICT DO NOTHING`,
+		e.scope.TenantID.String(), e.scope.AppID.String())
+	var pg *pgconn.PgError
+	if errors.As(err, &pg) && pg.Code == "42P01" {
+		return fmt.Errorf("contentkit: run MigratePostgres before MigrateClickHouse: %w", err)
+	}
+	if err != nil {
+		return fmt.Errorf("contentkit: record the signal plane: %w", err)
 	}
 	return nil
 }

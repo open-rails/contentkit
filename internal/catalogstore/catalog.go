@@ -57,11 +57,11 @@ type Options struct {
 	// Options.NamesChanged to Store.EntitiesRenamed.
 	Entities Entities
 	Channels *channelstore.Store
-	// Body sanitizes text bodies; nil strips tags.
-	Body catalog.Sanitizer
+	// Body sanitizes HTML bodies; nil strips every tag.
+	Body catalog.HTMLSanitizer
 	// DeletedRetention: see DefaultDeletedRetention.
 	DeletedRetention time.Duration
-	// EventRetention keeps committed facts independently of reader progress. Zero is ninety days.
+	// EventRetention keeps committed facts independently of reader progress. Zero is fourteen days.
 	EventRetention time.Duration
 	// OnPurge records required application cleanup in the same transaction.
 	OnPurge func(context.Context, pgx.Tx, []contentref.ContentRef) error
@@ -87,7 +87,7 @@ type Store struct {
 	accessG        *entitlement.Gate
 	entities       Entities
 	channels       *channelstore.Store
-	body           catalog.Sanitizer
+	body           catalog.HTMLSanitizer
 	media          *Media
 	publicationMu  sync.RWMutex
 	publication    PublicationScheduler

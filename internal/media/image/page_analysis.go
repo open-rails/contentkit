@@ -24,7 +24,7 @@ var _ mediastore.PageAnalyzer = (*Processor)(nil)
 // AnalyzePage examines original pixels before edits, resizes or encoding. It
 // uses the same trusted loaders and source limits as the rendition producer.
 func (p *Processor) AnalyzePage(ctx context.Context, src []byte, contentType string) (media.PageAnalysis, error) {
-	return analyzePage(ctx, src, contentType, p.rules(media.AnimationAllow))
+	return analyzePage(ctx, src, contentType, p.rules(media.Upload{}, media.AnimationAllow))
 }
 
 func analyzePage(ctx context.Context, src []byte, contentType string, limits rules) (media.PageAnalysis, error) {

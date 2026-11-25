@@ -13,12 +13,6 @@ import (
 	"github.com/open-rails/contentkit/access"
 )
 
-// AccountResolver is the legacy dedicated-issuer mapping to an existing
-// account in the requested tenant. Shared multi-tenant issuers use
-// TenantActorResolver instead. Matching email or subject text alone does not
-// establish an association.
-type AccountResolver func(context.Context, contentkit.TenantID, auth.Identity) (string, error)
-
 // TenantActorResolver returns live source-account ownership from a verified
 // credential. AuthKit's Client implements it; it never grants target access.
 type TenantActorResolver interface {
@@ -36,7 +30,9 @@ var ErrScopeMigrationRequired = errors.New("contentkit/authkit: explicit authori
 type AuthorizationConfig struct {
 	Scope contentkit.Scope
 	// Issuer identifies the trusted tenant account directory. For a resource
-	// server it can differ from the authority that owns the permission entities.
+	// server it can differ from the authority that owns the permission entities:
+	// that foreign directory's users must carry a verified tenant_id equal to
+	// Scope.TenantID, and are the subject they name.
 	Issuer string
 	// PermissionAuthority owns AppScope, TenantAdminScope and content group
 	// scopes. Empty preserves the same-issuer behavior by using Issuer.
@@ -45,12 +41,10 @@ type AuthorizationConfig struct {
 	// TenantAdminScope is optional, explicit tenant administration. Native
 	// effective root authority also applies, within the credential's limits.
 	TenantAdminScope auth.Scope
-	// TenantActors defaults to groups when it implements TenantActorResolver.
-	// New multi-tenant hosts use this verified, live ownership boundary.
+	// TenantActors resolves live account ownership. For the permission
+	// authority's own directory it defaults to groups when that implements
+	// TenantActorResolver, and is required.
 	TenantActors TenantActorResolver
-	// Accounts is the legacy dedicated-issuer contract. Do not use it when
-	// one issuer contains accounts from more than one tenant.
-	Accounts AccountResolver
 }
 
 type authorization struct {
@@ -79,13 +73,11 @@ func NewAuthorization(ctx context.Context, groups AuthorizationGroups, cfg Autho
 	if cfg.Issuer == "" || strings.TrimSpace(cfg.Issuer) != cfg.Issuer || cfg.PermissionAuthority == "" || strings.TrimSpace(cfg.PermissionAuthority) != cfg.PermissionAuthority || cfg.AppScope.Authority != cfg.PermissionAuthority || cfg.AppScope.ID == "" {
 		return nil, errors.New("contentkit/authkit: identity issuer and matching app permission authority are required")
 	}
-	if cfg.Accounts != nil && cfg.TenantActors != nil {
-		return nil, errors.New("contentkit/authkit: configure native tenant actors or legacy accounts, not both")
-	}
-	if cfg.Accounts == nil && cfg.TenantActors == nil {
+	native := cfg.Issuer == cfg.PermissionAuthority
+	if native && cfg.TenantActors == nil {
 		cfg.TenantActors, _ = groups.(TenantActorResolver)
 	}
-	if cfg.Accounts == nil && cfg.TenantActors == nil {
+	if native && cfg.TenantActors == nil {
 		return nil, errors.New("contentkit/authkit: verified tenant account resolver is required")
 	}
 	if cfg.TenantAdminScope != (auth.Scope{}) && (cfg.TenantAdminScope.Authority != cfg.PermissionAuthority || cfg.TenantAdminScope.ID == "" || cfg.TenantAdminScope == cfg.AppScope) {
@@ -154,18 +146,6 @@ func validateAuthorizationGroup(ctx context.Context, groups AuthorizationGroups,
 	return nil
 }
 
-// IssuerAccounts binds one entire, dedicated issuer account directory to a
-// tenant, retaining its existing subject IDs. Use a different resolver when
-// one issuer contains accounts from multiple tenants or subject IDs differ.
-func IssuerAccounts(tenant contentkit.TenantID, issuer string) AccountResolver {
-	return func(_ context.Context, requested contentkit.TenantID, id auth.Identity) (string, error) {
-		if tenant.IsZero() || requested != tenant || issuer == "" || id.Issuer != issuer || id.Subject == "" || id.SubjectKind != auth.SubjectUser {
-			return "", auth.ErrForbidden
-		}
-		return id.Subject, nil
-	}
-}
-
 // AppPermission is the AuthKit app permission for a ContentKit staff operation.
 // A limited tenant role may include that same permission; AuthKit scopes its
 // inheritance to the tenant's apps.
@@ -204,14 +184,8 @@ func (a authorization) ResolveActor(ctx context.Context, scope contentkit.Scope,
 		actor, err := a.tenantActor(ctx, v)
 		return actor.AccountID, err
 	}
-	account, err := a.cfg.Accounts(ctx, scope.TenantID, id)
-	if err != nil {
-		return "", err
-	}
-	if strings.TrimSpace(account) == "" {
-		return "", auth.ErrForbidden
-	}
-	return account, nil
+	// A foreign directory's user: admit verified its tenant claim.
+	return id.Subject, nil
 }
 
 // ResolveTenantAccount identifies a real audience account in this target
@@ -234,8 +208,7 @@ func (a authorization) ResolveTenantAccount(ctx context.Context, scope contentki
 		}
 		return actor.AccountID, true, nil
 	}
-	account, err := a.ResolveActor(ctx, scope, v)
-	return account, err == nil && account != "", err
+	return v.Identity().Subject, true, nil
 }
 
 func (a authorization) tenantActor(ctx context.Context, v auth.Verified) (iam.TenantActor, error) {
@@ -261,9 +234,10 @@ func (a authorization) admit(scope contentkit.Scope, v auth.Verified) error {
 	if id.Issuer != a.cfg.Issuer || id.Subject == "" {
 		return auth.ErrForbidden
 	}
-	// A legacy dedicated-issuer mapping cannot override an explicit verified
-	// tenant claim. Cross-tenant operators use the live TenantActors resolver.
-	if a.cfg.TenantActors == nil && id.SubjectKind == auth.SubjectUser && id.TenantID != "" && id.TenantID != scope.TenantID.String() {
+	// A foreign directory's user belongs to the tenant its verified claim
+	// names; one without that claim, or of another tenant, is refused. Native
+	// cross-tenant operators resolve through the live TenantActors.
+	if a.cfg.Issuer != a.cfg.PermissionAuthority && id.SubjectKind == auth.SubjectUser && (id.TenantID == "" || id.TenantID != scope.TenantID.String()) {
 		return auth.ErrForbidden
 	}
 	bound := auth.Scope{}

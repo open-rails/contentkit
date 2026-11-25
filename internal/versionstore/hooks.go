@@ -10,6 +10,7 @@ import (
 	"github.com/open-rails/contentkit/internal/gate"
 	mediastore "github.com/open-rails/contentkit/internal/mediastore"
 	"github.com/open-rails/contentkit/internal/resolve"
+	"github.com/open-rails/contentkit/internal/subjectfence"
 	"github.com/open-rails/contentkit/media"
 	versions "github.com/open-rails/contentkit/media/versions"
 )
@@ -175,6 +176,10 @@ func (s *Service) canEdit(ctx context.Context, actor access.Actor, k *mediastore
 	}
 	if !actor.Member() {
 		return media.UploadGrant{Allowed: true, Exempt: true}, nil
+	}
+	// An erased account stores nothing again: no commit may record it.
+	if erased, err := subjectfence.Erased(ctx, s.o.Pool, s.o.Schema, s.o.Tenant, actor.AccountID()); err != nil || erased {
+		return media.UploadGrant{}, err
 	}
 	// Staff who edit any content are a trusted role, as for entities.
 	staff, err := gate.Can(ctx, s.o.Auth, actor, string(access.ContentWrite))

@@ -168,11 +168,11 @@ normalization and the editor's reversible [page review](docs/api/uploads.md#page
 | `staff` | a person or an application holding the route's permission, one of `access.Permissions()` (`root:<resource>:<action>`), in the Authenticator's root scope, by its `Verified.Can` (403 without it) |
 
 Refusals carry `auth.Refuse`'s status and `WWW-Authenticate`; an auth outage
-is 503. ContentKit names its staff permissions (`access.Permissions()`); the
+is 503, and any other panic while serving is 500 `internal_error`. ContentKit names its staff permissions (`access.Permissions()`); the
 host declares them in its auth's roles from those constants. They are
 root-wide; per-item rights (creators, primary-channel editors) are the catalog's. Behind a
-proxy, set `Request.RemoteAddr` to the client's address before the routes:
-anonymous reactions, votes and limits are keyed by it. No content kind may
+proxy, list it in `Config.TrustedProxies`, or set `Request.RemoteAddr` to the client's address before the routes:
+location rules and anonymous reactions, votes and limits are keyed by it ([client address](HOST_INTEGRATION.md#client-address)). No content kind may
 be named `media`, `codes`, `entities`, `contents`, `kinds`, `catalog` or `notifications`.
 
 Every route is declared once, in its module's route table
@@ -199,12 +199,13 @@ Entity identity, aliases and slug normalization are unchanged.
 
 A full-search score is a match tier: exact title 1, alias 0.9, name prefix
 0.84–0.85, name substring 0.81–0.82, contextual/token matches 0.75–0.77,
-and typo 0.5–0.52. Queries are capped at 256 characters, 16 tokens and two
-seconds. Each search document stores its normalized terms, so a bounded candidate window keeps the strongest
+and typo 0.5–0.52. Queries are capped at 1 KiB, 256 characters, 16 tokens
+of at most 128 normalized characters and two seconds; typos are tried only
+in tokens of up to 16 characters. Each search document stores its normalized terms, so a bounded candidate window keeps the strongest
 name matches. A search sorted by newest, title or popularity orders every
 literal match; typo matches come from the nearest-distance window.
 
-`GET /v1/manage/search-suggestions` is private quick navigation to editors.
+`GET /v1/manage/search-suggestions` (tier `editor`) is private quick navigation to editors.
 Explicitly request `include_contents` and/or `include_entities`, optionally
 limiting `content_kinds` / `entity_kinds`; `limit` defaults to 8 per section
 and is capped at 20. Current draft/held names and internal entities are matched
@@ -402,27 +403,7 @@ always holds the bytes of its name. The upload limiter rate-limits uploaders
 and charges each upload's size (at least 64 KiB) to the grant's `Owner`; growth past the quota fails with 413
 `quota_exceeded`, and deleting an item releases it.
 
-**Media gateway** (`cmd/media-gateway`, `media/gateway`, image
-`ghcr.io/open-rails/contentkit-media-gateway:{tag}`): `public/` to anyone,
-falling back to the kind's `_default` for declared names, and
-`private/sha256-{hex}` with an authorized item token or exact-file token.
-Private blobs and generation-named public files are cached for a year
-(`max-age=31536000, immutable`); other public responses, such as `Stable`
-presets and defaults, use `public, max-age=300, stale-while-revalidate=86400`.
-An item token
-opens every private file of its item or none. Versioned reader grants use exact-file
-tokens in `?t=` so an older grant cannot open newly uploaded or unreleased
-pages; ordinary whole-item grants may use the `mt` cookie. `?dl={name}` serves the file as a download
-under that name when it has the file's type. A soft-deleted or erased item's
-reserved `public/_contentkit_erased` fence refuses all of its files, checked with
-one HEAD per read. Everything else and every denial is one `no-store` 404. It keeps no state: rate limit the media host at the
-ingress; the read API limits the items a viewer opens per hour
-(`ReaderOptions.Issuance`). It needs `MEDIA_GATEWAY_S3_ENDPOINT`, a key
-reading only `*/private/*` and `*/public/*`, `MEDIA_GATEWAY_TOKEN_KEY` and
-`_TOKEN_KEY_PREVIOUS`, `MEDIA_GATEWAY_ROUTES` (a JSON list of
-`{host, scope, bucket, origins}`, one per tenant account or app root a media
-host serves) and `MEDIA_GATEWAY_DEFAULTS`
-(`contentkit-media-worker publish-defaults` prints it).
+**Media gateway** (`cmd/media-gateway`, `media/gateway`, image `ghcr.io/open-rails/contentkit-media-gateway:{tag}`): `public/` to anyone, falling back to the kind's `_default` for declared names, and `private/sha256-{hex}` with an authorized item token or exact-file token. Private blobs and generation-named public files are cached for a year (`max-age=31536000, immutable`; private ones add `CDN-Cache-Control: no-store`, and every answer `Referrer-Policy: no-referrer`); other public responses, such as `Stable` presets and defaults, use `public, max-age=300, stale-while-revalidate=86400`. An item token opens every private file of its item or none, versioned reader grants included: a version's `private/` holds only released files (prepared outputs wait in `internal/` until their chapter releases), so a grant opens what has been released until it expires. Grants may use the `mt` cookie. `?dl={name}` serves the file as a download under that name when it has the file's type. A soft-deleted or erased item's reserved `public/_contentkit_erased` fence refuses all of its files, checked with one HEAD per read. Everything else and every denial is one `no-store` 404. It keeps no state: rate limit the media host at the ingress; the read API limits the items a viewer opens per hour (`ReaderOptions.Issuance`). It needs `MEDIA_GATEWAY_S3_ENDPOINT`, a key reading only `*/private/*` and `*/public/*`, `MEDIA_GATEWAY_TOKEN_KEY` and `_TOKEN_KEY_PREVIOUS`, `MEDIA_GATEWAY_ROUTES` (a JSON list of `{host, scope, bucket, origins}`, one per tenant account or app root a media host serves) and `MEDIA_GATEWAY_DEFAULTS` (`contentkit-media-worker publish-defaults` prints it).
 
 **The media worker** (`internal/media/worker`) runs every producer from the host's
 worker River schema (`MEDIA_WORKER_SCHEMA`, per host:
@@ -445,33 +426,9 @@ bucket answers, and `MEDIA_METRICS_ADDR` serves `/livez`, `/readyz`,
 worker leading its River schema also exports the queue backlog
 (`media_video_jobs`, `media_video_tenant_backlog`, ...); hosts collect none.
 
-**Images** (`media/image`, CGO over libvips): WebP at each `Image` spec
-(inside or cover box, quality), through the upload's edit (crop in
-EXIF-oriented source pixels, then a clockwise quarter rotation); nothing is
-upscaled. GIF and WebP animations keep every frame, delay and loop count;
-`MaxPixels` (100 MP over all frames), `MaxFrames` (1000) and
-`MaxAnimationSeconds` (60) bound sources, and a stored source over its
-Upload's `MaxBytes` is refused unread. Uploads feeding image presets take
-only `media.ImageTypes` (JPEG, PNG, WebP, GIF, AVIF, HEIF, TIFF), the
-declared type binds the decoder, and every other libvips loader is blocked
-(libvips 8.13 or later). Public presets render every width through the same
-spec (a width past the edited image at its width) and carry `from` and `fp`
-as object metadata.
+**Images** (`media/image`, CGO over libvips): WebP at each `Image` spec (inside or cover box, quality), through the upload's edit (crop in EXIF-oriented source pixels, then a clockwise quarter rotation); nothing is upscaled: a cover box larger than its source renders the source's largest centred crop at the box's aspect. GIF and WebP animations keep every frame, delay and loop count; `MaxPixels` (100 MP over all frames, lowered per upload by `Upload.MaxPixels`; avatars 25 MP), `MaxFrames` (1000) and `MaxAnimationSeconds` (60) bound sources, every rendering is checked against the same pixel bound (frames × output area) before it decodes, and a stored source over its Upload's `MaxBytes` is refused unread. A JPEG or WebP still rendered small decodes at a fraction of its size. Uploads feeding image presets take only `media.ImageTypes` (JPEG, PNG, WebP, GIF, AVIF, HEIF, TIFF), the declared type binds the decoder, and every other libvips loader is blocked (libvips 8.13 or later). A source-format preset's unchanged copy drops the upload's metadata (EXIF, XMP, IPTC, comments, trailing data) without re-encoding, keeping its orientation and colour profile; `Image.KeepMetadata` keeps it, and is required for AVIF, HEIF and TIFF sources. Public presets render every width through the same spec (a width past the edited image at its width) and carry `from` and `fp` as object metadata.
 
-A private image preset can instead use `Format: media.ImageFormatSource`
-and `To: "download-pages/{name}{ext}"` to retain the upload's format.
-With no edit and an inside fit, files already inside the configured
-box keep their exact bytes; zero dimensions leave that side unbounded.
-`Width: 6000, Height: 6000` proportionally limits the longest edge to 6,000
-pixels without cropping or enlarging. Only an oversized or edited image is
-re-encoded: JPEG, PNG, WebP and GIF support this, including animated GIF and
-WebP; other accepted codecs can pass through unchanged but cannot currently
-be resized in source format. `Quality` controls JPEG/WebP re-encoding;
-unchanged files keep their bytes and PNG stays lossless. `KeepOriginals: true`
-retains the uploaded source even when a bounded download is generated, and
-the uploaded ZIP is not rewritten. A `Zip: "download-pages/"` preset packs
-those files in the selected reading order, excluding pages omitted by ingestion review. Public
-images, thumbnails and editor previews continue to use WebP.
+A private image preset can instead use `Format: media.ImageFormatSource` and `To: "download-pages/{name}{ext}"` to retain the upload's format. With no edit and an inside fit, files already inside the configured box keep their exact pixels, without their metadata unless `KeepMetadata` is set; zero dimensions leave that side unbounded. `Width: 6000, Height: 6000` proportionally limits the longest edge to 6,000 pixels without cropping or enlarging. Only an oversized or edited image is re-encoded: JPEG, PNG, WebP and GIF support this, including animated GIF and WebP; other accepted codecs can pass through unchanged but cannot currently be resized in source format. `Quality` controls JPEG/WebP re-encoding; unchanged files keep their pixels and PNG stays lossless. `KeepOriginals: true` retains the uploaded source even when a bounded download is generated, and the uploaded ZIP is not rewritten. A `Zip: "download-pages/"` preset packs those files in the selected reading order, excluding pages omitted by ingestion review. Public images, thumbnails and editor previews continue to use WebP.
 
 Deploy media workers and gateways that understand the source-format registry
 before an app starts declaring it. When replacing an existing download

@@ -135,6 +135,15 @@ func (s *Store) Import(ctx context.Context, tx pgx.Tx, in []catalog.ImportConten
 			vids = append(vids, v.ID)
 		}
 	}
+	var accounts []string
+	for _, c := range in {
+		for _, cr := range c.Creators {
+			accounts = append(accounts, cr.UserID)
+		}
+	}
+	if err := s.fenceAccounts(ctx, tx, accounts...); err != nil {
+		return err
+	}
 	items, err := s.lockStamped(ctx, tx, `SELECT id, kind, '', state, publish_at, published_at, deleted_at, created_at, access FROM `+s.t.items+`
  WHERE tenant_id = $1 AND id = ANY($2) ORDER BY id FOR UPDATE`, ids)
 	if err != nil {
@@ -566,11 +575,12 @@ func (s *Store) checkImport(ctx context.Context, c *catalog.ImportContent) error
 		}
 	}
 
-	rule := s.defaultRule(c.Kind)
-	if c.Access != nil {
-		rule = *c.Access
+	// The record is the whole truth: access is never defaulted.
+	if c.Access == nil {
+		return invalid("content %s needs its access", c.ID)
 	}
-	if rule, err = s.checkRule(rule); err != nil {
+	rule, err := s.checkRule(*c.Access)
+	if err != nil {
 		return err
 	}
 	if c.State != catalog.StateDeleted {
@@ -635,7 +645,7 @@ func (s *Store) checkImportVersion(ctx context.Context, kind string, parentDelet
 	}
 	switch v.State {
 	case "":
-		v.State = catalog.StatePublished
+		return invalid("version %s needs its state", v.ID)
 	case catalog.StateDraft, catalog.StatePublished, catalog.StateDeleted:
 	default:
 		return invalid("version state %q must be draft, published or deleted", v.State)

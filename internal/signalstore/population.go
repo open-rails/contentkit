@@ -136,6 +136,8 @@ FROM (%s) WHERE %s`, st.db, strings.Join(parts[start:end], " UNION ALL "), st.no
 // non-personal watermark survives erasure; no activity inside a window is a
 // valid empty daily ranking rather than permission to reuse legacy data.
 func (st *Store) PopulationCoverage(ctx context.Context, tenant, kind string, scope signal.ActivityScope, window signal.Window) (time.Time, bool, error) {
+	ctx, cancel := readContext(ctx)
+	defer cancel()
 	if err := window.Validate(); err != nil {
 		return time.Time{}, false, err
 	}

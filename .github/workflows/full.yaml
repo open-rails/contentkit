@@ -4,7 +4,6 @@ name: full
   workflow_dispatch: {}
 permissions:
   contents: read
-  packages: write
 jobs:
   full:
     uses: ./.github/workflows/ci.yaml

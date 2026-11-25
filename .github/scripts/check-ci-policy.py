@@ -7,9 +7,9 @@ import subprocess
 import tempfile
 
 selector = Path(__file__).with_name("ci-scope.py").resolve()
-heavy = {"critical", "scan", "images"}
+heavy = {"critical", "scan", "images", "security"}
 keys = heavy | {"light"}
-source = heavy - {"images"}
+source = {"critical", "scan"}
 identity = {"GIT_AUTHOR_NAME": "Paul Fidika", "GIT_AUTHOR_EMAIL": "paul@fidika.com",
             "GIT_COMMITTER_NAME": "Paul Fidika", "GIT_COMMITTER_EMAIL": "paul@fidika.com"}
 env = os.environ | identity
@@ -25,6 +25,7 @@ cases = [
     ("generated-doc", [("M", "docs/api/routes.md")], source),
     ("sdk-doc", [("M", "sdk/ui/README.md")], set()),
     ("worker-image", [("M", "media/worker/Dockerfile")], heavy),
+    ("worker-packages", [("M", "cmd/media-worker/debian-snapshot.sh")], heavy),
     ("deleted-doc", [("D", "README.md")], heavy),
     ("renamed-doc", [("R", "README.md")], heavy),
     ("mixed", [("M", "README.md"), ("M", "sdk/ui/src/client/client.ts")], source),

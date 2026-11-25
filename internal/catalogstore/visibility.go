@@ -343,7 +343,7 @@ type facetRow struct {
 func (v *Viewer) live(r facetRow) bool { return r.liveFrom != nil && !r.liveFrom.After(v.now) }
 
 func (v *Viewer) inScope(r facetRow) bool {
-	return (v.management || v.locations.Allows(r.contentID, r.entityIDs)) && v.policies.Allows(r.kind, r.entityIDs)
+	return (v.management || v.locations.Allows(r.contentID, r.entityIDs, r.ownerEntity)) && v.policies.Allows(r.kind, r.entityIDs)
 }
 
 // itemView is the rule's verdict on one content item for the viewer.
@@ -392,7 +392,7 @@ func (v *Viewer) decide(ctx context.Context, ids []string, every bool) (map[stri
 			rows.Close()
 			return nil, fmt.Errorf("catalog: version %s: %w", r.versionID, err)
 		}
-		if !v.management && !v.locations.Allows(r.contentID, r.entityIDs) {
+		if !v.management && !v.locations.Allows(r.contentID, r.entityIDs, r.ownerEntity) {
 			continue
 		}
 		r.rule = r.rule.Previewed(s.cfg.Kinds[r.kind])

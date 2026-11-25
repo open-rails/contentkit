@@ -13,13 +13,13 @@ import (
 // page shows while its item is live for an anonymous visitor of the
 // request's site, is Gone once a live item was deleted (or erased), is a
 // Preview for a signed-in editor of an item not live yet (staff, authenticated authors),
-// and is Hidden otherwise. Other kinds are Visible.
+// and is Hidden otherwise. Codes of other kinds are Hidden: the engine
+// decides its entity kinds, and a code of a removed kind resolves nothing.
 func (s *Store) Visibility(r *http.Request, links []contenturl.Link) ([]contenturl.Visibility, error) {
 	out := make([]contenturl.Visibility, len(links))
 	at := map[string][]int{}
 	var ids, kinds []string
 	for i, l := range links {
-		out[i] = contenturl.Visible
 		if _, ok := s.cfg.Kinds[l.ContentKind]; !ok || l.TenantID != s.tenant {
 			continue
 		}

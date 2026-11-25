@@ -73,13 +73,16 @@ func (w *statusWriter) WriteHeader(code int) {
 	w.ResponseWriter.WriteHeader(code)
 }
 
+// Unwrap lets http.ResponseController reach the connection (deadlines, flush).
+func (w *statusWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+
 // writeErr answers with the mapped status, a public code and a safe message.
 // Every 5xx hands its cause to accessLog through statusWriter and never puts
 // it on the wire.
 func writeErr(w http.ResponseWriter, err error) {
 	status, code, msg := classifyErr(err)
 	if status >= http.StatusInternalServerError {
-		if sw, ok := w.(*statusWriter); ok {
+		if sw, ok := httpapi.Writer[*statusWriter](w); ok {
 			sw.internalErr = err
 		}
 	}

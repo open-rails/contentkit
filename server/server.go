@@ -5,13 +5,19 @@
 package server
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
+	"net/url"
+	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -64,7 +70,16 @@ type Config struct {
 	DrainDelay time.Duration `yaml:"drain_delay"`
 	// ShutdownTimeout bounds finishing in-flight requests; 0 is 30s.
 	ShutdownTimeout time.Duration `yaml:"shutdown_timeout"`
+	// ReadTimeout bounds reading a request's body, from when its headers
+	// are read; 0 is 60s. Once the body is read nothing bounds the answer,
+	// so event streams and archive downloads run as long as they need.
+	ReadTimeout time.Duration `yaml:"read_timeout"`
+	// IdleTimeout bounds a kept-alive connection between requests; 0 is 120s.
+	IdleTimeout time.Duration `yaml:"idle_timeout"`
 }
+
+// maxHeaderBytes caps a request's header block.
+const maxHeaderBytes = 64 << 10
 
 // OpenRailsConfig is the OpenRails server holding the site's merchant.
 type OpenRailsConfig struct {
@@ -91,7 +106,8 @@ type S3Config struct {
 type Deps struct {
 	// Postgres holds ContentKit's, River's and AuthKit's schemas. Required.
 	Postgres *pgxpool.Pool
-	// Redis is optional: shared rate limits and DPoP replay state.
+	// Redis is optional: shared rate limits and DPoP replay state. While
+	// it fails, AuthKit refuses DPoP proofs rather than spend them locally.
 	Redis  redis.UniversalClient
 	Logger *slog.Logger
 }
@@ -147,6 +163,16 @@ func New(ctx context.Context, cfg Config, d Deps) (_ *Server, err error) {
 	if err := validateAuthorizationConfig(cfg, ak); err != nil {
 		return nil, err
 	}
+	if err := distinctSchemas(cfg.Engine, ak.Database); err != nil {
+		return nil, err
+	}
+	if ak.HTTP != nil {
+		h := *ak.HTTP
+		if err := authClientIP(&h, cfg.Engine.TrustedProxies); err != nil {
+			return nil, err
+		}
+		ak.HTTP = &h
+	}
 	ak.Roles = serverRoles(cfg.Engine)
 	if s.auth, err = authkit.New(ctx, ak, authkit.Deps{Postgres: d.Postgres, Redis: d.Redis}); err != nil {
 		return nil, fmt.Errorf("server: AuthKit: %w", err)
@@ -157,6 +183,9 @@ func New(ctx context.Context, cfg Config, d Deps) (_ *Server, err error) {
 		return nil, err
 	}
 	if cfg.OpenRails.BaseURL != "" {
+		if err := secureEndpoint(cfg.OpenRails.BaseURL); err != nil {
+			return nil, fmt.Errorf("server: openrails.base_url: %w", err)
+		}
 		billing, err := openrails.NewRemoteMerchant(cfg.OpenRails.BaseURL, openrails.RemoteCredential{APIKey: cfg.OpenRails.APIKey})
 		if err != nil {
 			return nil, fmt.Errorf("server: OpenRails: %w", err)
@@ -193,8 +222,125 @@ func New(ctx context.Context, cfg Config, d Deps) (_ *Server, err error) {
 	for _, r := range routes {
 		mux.Handle(strings.TrimSpace(r.Method+" "+r.Path), r.Handler)
 	}
-	s.handler = mux
+	s.handler = boundReads(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("X-Content-Type-Options", "nosniff")
+		mux.ServeHTTP(w, r)
+	}), cmp.Or(cfg.ReadTimeout, 60*time.Second))
 	return s, nil
+}
+
+// boundReads bounds reading a request's body to d from when its headers are
+// read. Only a body read to its end lifts the deadline, so the answer after
+// it runs unbounded; a body that stalls or fails keeps it, which also bounds
+// net/http's discard of what is left before it answers. It must wrap
+// net/http's own ResponseWriter, and it hands the handlers a copy of the
+// request, so net/http still sees its own body.
+func boundReads(next http.Handler, d time.Duration) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Body != nil && r.Body != http.NoBody {
+			rc := http.NewResponseController(w)
+			if err := rc.SetReadDeadline(time.Now().Add(d)); err == nil {
+				r = r.WithContext(r.Context())
+				r.Body = &boundedBody{ReadCloser: r.Body, lift: func() { _ = rc.SetReadDeadline(time.Time{}) }}
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// boundedBody lifts the read deadline once the body is read to its end.
+type boundedBody struct {
+	io.ReadCloser
+	once sync.Once
+	lift func()
+}
+
+func (b *boundedBody) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	if err == io.EOF {
+		b.once.Do(b.lift)
+	}
+	return n, err
+}
+
+// distinctSchemas refuses an AuthKit schema that is one of the engine's: they
+// would share tables or a River leader. AuthKit may keep its tables and its
+// River in one schema; that is AuthKit's to allow.
+func distinctSchemas(engine contentkit.Config, auth authkit.DatabaseConfig) error {
+	s, err := engine.Schemas()
+	if err != nil {
+		return err
+	}
+	for _, a := range []struct{ name, schema string }{{"auth.database.schema", auth.Schema}, {"auth.database.river_schema", auth.RiverSchema}} {
+		for _, e := range []struct{ name, schema string }{{"engine.database.schema", s.Catalog}, {"engine.database.river_schema", s.River},
+			{"engine.accounts.schema", s.Accounts}, {"engine.media.worker_schema", s.MediaWorker}, {"the account media queue", s.AccountWorker}} {
+			if e.schema == a.schema {
+				return fmt.Errorf("server: %s and %s are both %q", a.name, e.name, a.schema)
+			}
+		}
+	}
+	return nil
+}
+
+// authClientIP gives AuthKit the engine's client-address posture, its one
+// source: engine.trusted_proxies, or the direct peer when there are none.
+// auth.http may only restate those proxies (split out Cloudflare's, whose
+// CF-Connecting-IP AuthKit reads); direct_peer_ip beside a proxy is refused.
+func authClientIP(h *authkit.HTTPConfig, trusted []netip.Prefix) error {
+	own := append(slices.Clone(h.TrustedProxies), h.CloudflareProxies...)
+	switch {
+	case h.DirectPeerIP && (len(trusted) > 0 || len(own) > 0):
+		return errors.New("server: auth.http.direct_peer_ip says no proxy is in front, but a proxy is declared; declare the proxies only in engine.trusted_proxies")
+	case len(own) == 0:
+		h.TrustedProxies = make([]string, len(trusted))
+		for i, p := range trusted {
+			h.TrustedProxies[i] = p.String()
+		}
+		h.DirectPeerIP = len(trusted) == 0
+	case !sameProxies(own, trusted):
+		return errors.New("server: auth.http's proxies differ from engine.trusted_proxies; declare them once, in engine.trusted_proxies")
+	}
+	return nil
+}
+
+func sameProxies(own []string, trusted []netip.Prefix) bool {
+	a := make([]netip.Prefix, 0, len(own))
+	for _, s := range own {
+		p, err := netip.ParsePrefix(strings.TrimSpace(s))
+		if err != nil {
+			return false
+		}
+		a = append(a, p.Masked())
+	}
+	b := make([]netip.Prefix, 0, len(trusted))
+	for _, p := range trusted {
+		b = append(b, p.Masked())
+	}
+	order := func(x, y netip.Prefix) int {
+		return cmp.Or(x.Addr().Compare(y.Addr()), cmp.Compare(x.Bits(), y.Bits()))
+	}
+	slices.SortFunc(a, order)
+	slices.SortFunc(b, order)
+	return slices.Equal(slices.Compact(a), slices.Compact(b))
+}
+
+// secureEndpoint refuses a plain http URL off loopback: the API key would
+// cross in clear.
+func secureEndpoint(raw string) error {
+	u, err := url.Parse(raw)
+	switch {
+	case err != nil || u.Host == "":
+		return fmt.Errorf("%q is not an absolute URL", raw)
+	case u.Scheme == "https":
+		return nil
+	case u.Scheme == "http":
+		host := u.Hostname()
+		if addr, err := netip.ParseAddr(host); err == nil && addr.Unmap().IsLoopback() || strings.EqualFold(host, "localhost") {
+			return nil
+		}
+		return fmt.Errorf("%q is plain http; use https (http only for loopback)", raw)
+	}
+	return fmt.Errorf("%q is not an http(s) URL", raw)
 }
 
 // Reconcile repairs the engine's derived catalog state (Engine.Reconcile).
@@ -244,7 +390,10 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 		_ = ln.Close()
 		return err
 	}
-	srv := &http.Server{Handler: s.handler, ReadHeaderTimeout: 10 * time.Second}
+	// No server-wide ReadTimeout: it would also cancel a handler still
+	// answering after it, so Handler bounds body reads instead.
+	srv := &http.Server{Handler: s.handler, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: cmp.Or(s.cfg.IdleTimeout, 120*time.Second),
+		MaxHeaderBytes: maxHeaderBytes, ErrorLog: slog.NewLogLogger(s.log.Handler(), slog.LevelWarn)}
 	served := make(chan error, 1)
 	go func() { served <- srv.Serve(ln) }()
 	var serveErr error

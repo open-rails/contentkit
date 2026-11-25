@@ -18,11 +18,11 @@ import (
 )
 
 // How the engine keeps a configured signal plane: New tries once, then a
-// background loop retries with backoff while it is down and checks it while
-// it is up.
+// background loop retries with backoff while it is down and pings it while it
+// is up. The loop is the plane's only prober; the probe reports its state.
 const (
 	signalBootWait   = 10 * time.Second
-	signalCheckEvery = 10 * time.Second
+	signalCheckEvery = 30 * time.Second
 	signalCheckWait  = 5 * time.Second
 	signalRetryMin   = time.Second
 	signalRetryMax   = 30 * time.Second
@@ -86,7 +86,7 @@ func (p *signalPlane) run(ctx context.Context) {
 		}
 		switch {
 		case conn != nil:
-			if err := p.check(ctx); err != nil && ctx.Err() == nil {
+			if err := p.ping(ctx, conn); err != nil && ctx.Err() == nil {
 				p.fail(err)
 				wait = p.retryMin
 			}
@@ -143,14 +143,23 @@ func (p *signalPlane) state() (signal.Conn, error) {
 	return p.conn, p.err
 }
 
-// check is the contentkit_clickhouse probe: nil while the plane answers.
-func (p *signalPlane) check(ctx context.Context) error {
-	conn, err := p.state()
-	if conn == nil {
+// check is the contentkit_clickhouse probe: nil while the plane is up, as
+// its loop last found it. A host supervisor polling it sends ClickHouse nothing.
+func (p *signalPlane) check(context.Context) error {
+	if conn, err := p.state(); conn == nil {
 		return fmt.Errorf("contentkit: signals are off while the signal plane is down: %w", err)
 	}
+	return nil
+}
+
+// ping uses the driver's protocol ping where the connection has one (no query
+// to parse, run or log), else SELECT 1.
+func (p *signalPlane) ping(ctx context.Context, conn signal.Conn) error {
 	ctx, cancel := context.WithTimeout(ctx, p.checkWait)
 	defer cancel()
+	if pinger, ok := conn.(interface{ Ping(context.Context) error }); ok {
+		return pinger.Ping(ctx)
+	}
 	return conn.Exec(ctx, "SELECT 1")
 }
 
@@ -189,7 +198,12 @@ func (e *Engine) connectSignals(ctx context.Context, host signal.Conn) (signal.C
 	if conn == nil {
 		e.chMu.Lock()
 		if e.ownCH == nil {
-			own, err := clickhouse.Open(&clickhouse.Options{Addr: []string{c.Addr},
+			tlsConfig, err := c.tlsConfig()
+			if err != nil {
+				e.chMu.Unlock()
+				return nil, err
+			}
+			own, err := clickhouse.Open(&clickhouse.Options{Addr: []string{c.Addr}, TLS: tlsConfig,
 				Auth: clickhouse.Auth{Database: c.Database, Username: c.Username, Password: c.Password}})
 			if err != nil {
 				e.chMu.Unlock()

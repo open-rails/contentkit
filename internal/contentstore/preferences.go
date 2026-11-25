@@ -114,13 +114,16 @@ func (p *preferences) export(ctx context.Context, q querier, from int64, send co
 }
 
 func (p *preferences) page(ctx context.Context, q querier, after int64) (page []content.Preference, last int64, n int, err error) {
-	branch := func(axis, table string) string {
-		return `(SELECT '` + axis + `' AS axis, user_id, content_kind, content_id, content_version_id, value, revision, updated_at FROM ` + table + ` x
-			WHERE tenant_id = $1 AND revision > $2 AND user_id IS NOT NULL AND content_kind <> '` + content.KindComment + `'
-			  AND NOT EXISTS (SELECT 1 FROM ` + p.rt.erasedSubjectsTable() + ` f WHERE f.tenant_id = $1 AND f.actor_id = x.user_id)
+	// Favorites are keyed by app_id and uuids; reactions by tenant_id and text.
+	branch := func(axis, table, app, text string) string {
+		return `(SELECT '` + axis + `' AS axis, user_id` + text + ` AS user_id, content_kind, content_id` + text + ` AS content_id,
+			content_version_id` + text + ` AS content_version_id, value, revision, updated_at FROM ` + table + ` x
+			WHERE ` + app + ` AND revision > $2 AND user_id IS NOT NULL AND content_kind <> '` + content.KindComment + `'
+			  AND NOT EXISTS (SELECT 1 FROM ` + p.rt.erasedSubjectsTable() + ` f WHERE f.tenant_id = $1 AND f.actor_id = x.user_id` + text + `)
 			ORDER BY revision LIMIT $3)`
 	}
-	rows, err := q.Query(ctx, `SELECT * FROM (`+branch(content.PreferenceAxisReaction, p.s.t.reactions)+` UNION ALL `+branch(content.PreferenceAxisFavorite, p.s.t.favorites)+`) u
+	rows, err := q.Query(ctx, `SELECT * FROM (`+branch(content.PreferenceAxisReaction, p.s.t.reactions, "tenant_id = $1", "")+` UNION ALL `+
+		branch(content.PreferenceAxisFavorite, p.s.t.favorites, "app_id = $1::text::uuid", "::text")+`) u
 		ORDER BY revision LIMIT $3`, p.s.tenant, after, preferencePageSize)
 	if err != nil {
 		return nil, 0, 0, err

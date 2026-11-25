@@ -3,6 +3,8 @@ package critical_test
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"mime"
@@ -243,5 +245,76 @@ func TestZIPDownloadRefusesUnreadablePagesBeforeCharging(t *testing.T) {
 	for range 2 {
 		_, err = reader.GetContentVersionDownload(t.Context(), ref.ID, ref.Version)
 		requireError(t, err, http.StatusConflict, "no_download")
+	}
+}
+
+// Download tickets are signed with the delivery ring's current key and verify
+// under its previous one: a ticket from before a rotation still transfers,
+// and stops once the previous key is dropped.
+func TestDeliveryRotationKeepsTickets(t *testing.T) {
+	f := newTinyHLSConfiguredFixture(t, false, nil)
+	a := f.app
+	restart := func(t *testing.T, signing, previous string) {
+		t.Helper()
+		a.server.Close()
+		must(t, a.engine.Close(t.Context()))
+		a.cfg.Media.Delivery.SigningKey, a.cfg.Media.Delivery.PreviousKey = signing, previous
+		a.deps.Downloads = &transferDownloadPolicy{}
+		var err error
+		a.engine, err = ck.New(t.Context(), a.cfg, a.deps)
+		must(t, err)
+		a.server = mountEngine(t, a.engine)
+		must(t, a.engine.StartJobs(t.Context()))
+	}
+	ticket := func(t *testing.T) string {
+		t.Helper()
+		var grant versions.FileDownload
+		waitForWithin(t, 45*time.Second, func() bool {
+			reply, err := a.client("").GetContentVersionDownload(t.Context(), f.Ref.ID, f.Ref.Version)
+			must(t, err)
+			if reply.Status == http.StatusAccepted {
+				return false
+			}
+			must(t, reply.Decode(&grant))
+			return grant.URL != ""
+		})
+		if !strings.HasPrefix(grant.URL, "archive?") {
+			t.Fatalf("download is not a ticketed transfer: %s", grant.URL)
+		}
+		return grant.URL
+	}
+	transfer := func(t *testing.T, ticket string) int {
+		t.Helper()
+		response, err := http.Get(a.server.URL + "/content/v1/contents/" + f.Ref.ID + "/versions/" + f.Ref.Version + "/" + ticket)
+		must(t, err)
+		_, err = io.Copy(io.Discard, response.Body)
+		response.Body.Close()
+		must(t, err)
+		return response.StatusCode
+	}
+	original := f.storage.signing
+	restart(t, original, "")
+	old := ticket(t)
+	if code := transfer(t, old); code != http.StatusOK {
+		t.Fatalf("fresh ticket transferred HTTP%d", code)
+	}
+	secret := make([]byte, 32)
+	_, err := rand.Read(secret)
+	must(t, err)
+	rotated := "rotated:" + base64.StdEncoding.EncodeToString(secret)
+	restart(t, rotated, original)
+	if code := transfer(t, old); code != http.StatusOK {
+		t.Fatalf("ticket signed before the rotation transferred HTTP%d under its previous key", code)
+	}
+	fresh := ticket(t)
+	if code := transfer(t, fresh); code != http.StatusOK {
+		t.Fatalf("ticket after the rotation transferred HTTP%d", code)
+	}
+	restart(t, rotated, "")
+	if code := transfer(t, old); code != http.StatusNotFound {
+		t.Fatalf("ticket of a dropped key transferred HTTP%d", code)
+	}
+	if code := transfer(t, fresh); code != http.StatusOK {
+		t.Fatalf("current-key ticket transferred HTTP%d", code)
 	}
 }

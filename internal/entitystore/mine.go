@@ -73,7 +73,7 @@ func (s *Store) Mine(ctx context.Context, opts ListOptions) (entities.MyEntityPa
 		ids = append(ids, string(id))
 	}
 	slices.Sort(ids)
-	c, err := s.compile(opts, ids)
+	c, err := s.compile(opts, ids, readScope{})
 	if err != nil {
 		return out, err
 	}

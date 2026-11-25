@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/clientaddr"
 	"github.com/open-rails/contentkit/internal/ratelimit"
 	media "github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/layout"
@@ -343,7 +344,9 @@ func (u *Uploads) abort(ctx context.Context, t ticket, key string, cause error) 
 // is a caller-stable UUIDv4 or UUIDv7 for the complete ordered batch: reuse it after an
 // uncertain response, but never for different inputs. Replays authorize again
 // and return the current manifest without repeating the original edit. Every op
-// is authorized against what it writes (Hooks.CanUpload). A put names a
+// is authorized against what it writes (Hooks.CanUpload), before any copy
+// and again under the item's lock, so a grant revoked while the commit waited
+// writes nothing. A put names a
 // staged upload or a blob in the folder, HEAD-checked against its Upload;
 // copies are copied server-side first. The owner is charged the change in
 // upload sizes; growth past its quota fails with CodeQuota (not for exempt
@@ -434,8 +437,32 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 	defer cancel()
 	var prior *Manifest
 	man, err := u.o.Manifests.editOperation(editCtx, ref, false, bound{project: item.Kind().Unwritten}, mutation, func(m *Manifest) error {
+		// Authority may change while the commit waits for the lock.
+		current, err := u.authorizeOps(editCtx, actor, item, ops)
+		if err != nil {
+			return err
+		}
+		if current.Owner != grant.Owner || current.Exempt != grant.Exempt {
+			return uploadErr(media.CodeConflict, "the upload grant changed during the commit: try again")
+		}
 		prior = m.Clone()
 		o := &opRun{k: item.Kind(), m: m, ref: ref, copies: copies, frames: frames, exempt: grant.Exempt, trusted: trusted}
+		var charge *media.SourceAdmission
+		o.charge = func() (*media.SourceAdmission, error) {
+			if charge == nil {
+				c := &media.SourceAdmission{Generation: id.String(), Owner: grant.Owner, Enforce: u.o.Limiter != nil && !grant.Exempt, Accounting: u.o.Limiter != nil}
+				if c.Enforce {
+					quota, err := u.o.Limiter.Quota(editCtx, ref.TenantID, grant.Owner)
+					if err != nil {
+						return nil, err
+					}
+					c.Quota = quota
+				}
+				charge = c
+			}
+			c := *charge
+			return &c, nil
+		}
 		o.renames = map[string]string{}
 		for _, file := range prior.Files {
 			if file.IsUpload() {
@@ -567,9 +594,7 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 			key, _ := item.Staged(f.Staged)
 			if slices.Contains(expired, key) {
 				expiredPaths = append(expiredPaths, f.Path)
-				if f.Frame == nil {
-					expiredBytes += max(f.Size, uploadFloor)
-				}
+				expiredBytes += max(f.Size, uploadFloor)
 			}
 		}
 		o.dropUploads(expiredPaths)
@@ -1072,7 +1097,7 @@ func (u *Uploads) authorize(ctx context.Context, actor access.Actor, t media.Upl
 
 func uploaderID(a access.Actor) string {
 	if a.Anonymous || a.ID == "" {
-		return "ip:" + a.IP
+		return "ip:" + clientaddr.Key(a.IP)
 	}
 	return a.ID
 }
@@ -1084,12 +1109,13 @@ func maxParts(size int64) int { return int((size + media.MinPartSize - 1) / medi
 const uploadFloor = 64 << 10
 
 // uploadBytes is the storage charged for a manifest: the size of every
-// upload put in it, staged or placed, at least uploadFloor (frames are the
-// worker's).
+// upload in it, staged, placed or a grabbed frame, at least uploadFloor. A
+// frame not grabbed yet is charged the floor; the worker's edit recording
+// the still charges the rest (Manifests.EditCharged).
 func (m *Manifest) uploadBytes() int64 {
 	var n int64
 	for _, f := range m.Files {
-		if f.IsUpload() && f.Frame == nil {
+		if f.IsUpload() {
 			n += max(f.Size, uploadFloor)
 		}
 	}

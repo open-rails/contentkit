@@ -17,7 +17,16 @@ import (
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/media/token"
 )
+
+// deliveryKeys is a reader's ring of one current key.
+func deliveryKeys(t *testing.T, key token.Key) token.Ring {
+	t.Helper()
+	ring, err := token.NewRing(key, nil)
+	must(t, err)
+	return ring
+}
 
 func mountEngine(t *testing.T, engine *ck.Engine) *httptest.Server {
 	t.Helper()

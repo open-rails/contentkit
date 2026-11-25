@@ -4,7 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/netip"
+	"strings"
+	"unicode"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/channels"
@@ -12,6 +16,7 @@ import (
 	"github.com/open-rails/contentkit/discovery"
 	"github.com/open-rails/contentkit/entities"
 	importer "github.com/open-rails/contentkit/importer"
+	"github.com/open-rails/contentkit/internal/clientaddr"
 	"github.com/open-rails/contentkit/internal/codes"
 	contentstore "github.com/open-rails/contentkit/internal/contentstore"
 	"github.com/open-rails/contentkit/signal"
@@ -50,11 +55,11 @@ func (run *batchRun) sections() []section {
 	out := []section{
 		{name: importer.SectionEntities, n: len(b.Entities), prepare: run.entity,
 			write: typed(func(ctx context.Context, tx pgx.Tx, in []entities.ImportEntity) error {
-				return s.o.Entities.ImportEntities(ctx, tx, in, b.ProvisionScopes)
+				return s.o.Entities.ImportEntities(ctx, tx, in)
 			})},
 		{name: importer.SectionChannels, n: len(b.Channels), prepare: run.channel,
 			write: typed(func(ctx context.Context, tx pgx.Tx, in []channels.Import) error {
-				return s.o.Channels.ImportTx(ctx, tx, in, b.ProvisionScopes)
+				return s.o.Channels.ImportTx(ctx, tx, in)
 			})},
 		{name: importer.SectionContents, n: len(b.Contents), prepare: run.content, write: typed(s.o.Catalog.Import)},
 		{name: importer.SectionMemberships, n: len(b.Memberships), prepare: run.memberships,
@@ -143,8 +148,12 @@ func (run *batchRun) channel(r *resolver, i int) (any, string, error) {
 	if err != nil {
 		return nil, c.ExternalID, err
 	}
+	owner, err := account(c.OwnerUserID)
+	if err != nil {
+		return nil, c.ExternalID, err
+	}
 	in := channels.Import{ID: id, Slug: c.Slug, State: entities.State(c.State),
-		OwnerUserID: c.OwnerUserID, AuthScope: c.AuthScope, Names: c.Names, Text: c.Text,
+		OwnerUserID: owner, Names: c.Names, Text: c.Text,
 		Code: c.Code, CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt}
 	if c.Avatar != "" {
 		in.Avatar = &entities.Avatar{Image: c.Avatar}
@@ -170,9 +179,19 @@ func (run *batchRun) content(r *resolver, i int) (any, string, error) {
 	if err != nil {
 		return nil, c.ExternalID, err
 	}
+	creators := c.Creators
+	if creators != nil {
+		creators = make([]catalog.Creator, len(c.Creators))
+		for i, cr := range c.Creators {
+			if cr.UserID, err = account(cr.UserID); err != nil {
+				return nil, c.ExternalID, err
+			}
+			creators[i] = cr
+		}
+	}
 	in := catalog.ImportContent{ID: id, Kind: c.Kind, State: c.State, PublishAt: c.PublishAt, PublishedAt: c.PublishedAt, DeletedAt: c.DeletedAt,
 		Comments: c.Comments, Access: c.Access, Restrictions: c.Restrictions, Attributes: c.Attributes,
-		Creators: c.Creators, Code: c.Code, CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt}
+		Creators: creators, Code: c.Code, CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt}
 	if c.Channel != nil {
 		if in.ChannelID, err = r.ref(importer.RecordChannel, *c.Channel); err != nil {
 			return nil, c.ExternalID, err
@@ -232,7 +251,11 @@ func (run *batchRun) comment(r *resolver, i int) (any, string, error) {
 	if err != nil {
 		return nil, c.ExternalID, err
 	}
-	in := content.ImportComment{ID: id, Ref: t.ref, Language: c.Language, UserID: c.UserID, AnonName: c.AnonName, Body: c.Body, DeletedAt: c.DeletedAt,
+	user, err := account(c.UserID)
+	if err != nil {
+		return nil, c.ExternalID, err
+	}
+	in := content.ImportComment{ID: id, Ref: t.ref, Language: c.Language, UserID: user, AnonName: c.AnonName, Body: c.Body, DeletedAt: c.DeletedAt,
 		CreatedAt: c.CreatedAt, UpdatedAt: c.UpdatedAt}
 	if c.ReplyTo != nil {
 		if in.ReplyToID, err = r.ref(importer.RecordComment, *c.ReplyTo); err != nil {
@@ -248,7 +271,11 @@ func (run *batchRun) reaction(r *resolver, i int) (any, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	return content.ImportReaction{Source: run.b.Source, Ref: t.ref, UserID: x.UserID, IP: x.IP, Value: x.Value, CreatedAt: x.CreatedAt, UpdatedAt: x.UpdatedAt}, "", nil
+	user, ip, err := subject(x.UserID, x.IP)
+	if err != nil {
+		return nil, "", err
+	}
+	return content.ImportReaction{Source: run.b.Source, Ref: t.ref, UserID: user, IP: ip, Value: x.Value, CreatedAt: x.CreatedAt, UpdatedAt: x.UpdatedAt}, "", nil
 }
 
 func (run *batchRun) favorite(r *resolver, i int) (any, string, error) {
@@ -257,7 +284,11 @@ func (run *batchRun) favorite(r *resolver, i int) (any, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	return content.ImportFavorite{Source: run.b.Source, Ref: t.ref, UserID: f.UserID, Removed: f.Removed, CreatedAt: f.CreatedAt}, "", nil
+	user, err := account(f.UserID)
+	if err != nil {
+		return nil, "", err
+	}
+	return content.ImportFavorite{Source: run.b.Source, Ref: t.ref, UserID: user, Removed: f.Removed, CreatedAt: f.CreatedAt}, "", nil
 }
 
 func (run *batchRun) poll(r *resolver, i int) (any, string, error) {
@@ -288,7 +319,11 @@ func (run *batchRun) vote(r *resolver, i int) (any, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	return content.ImportVote{PollID: poll, OptionID: option, UserID: v.UserID, IP: v.IP, CreatedAt: v.CreatedAt}, "", nil
+	user, ip, err := subject(v.UserID, v.IP)
+	if err != nil {
+		return nil, "", err
+	}
+	return content.ImportVote{PollID: poll, OptionID: option, UserID: user, IP: ip, CreatedAt: v.CreatedAt}, "", nil
 }
 
 func (run *batchRun) signal(r *resolver, i int) (any, string, error) {
@@ -297,10 +332,14 @@ func (run *batchRun) signal(r *resolver, i int) (any, string, error) {
 	if err != nil {
 		return nil, x.EventID, err
 	}
-	if (x.UserID == "") == (x.AnonKey == "") {
+	user, err := account(x.UserID)
+	if err != nil {
+		return nil, x.EventID, err
+	}
+	if (user == "") == (x.AnonKey == "") {
 		return nil, x.EventID, fmt.Errorf("%w: a signal names a user_id or an anon_key", errInvalid)
 	}
-	return discovery.ImportSignal{ContentID: t.content, VersionID: t.version, Subject: signal.Subject{UserID: x.UserID, AnonKey: x.AnonKey}, Type: x.Type,
+	return discovery.ImportSignal{ContentID: t.content, VersionID: t.version, Subject: signal.Subject{UserID: user, AnonKey: x.AnonKey}, Type: x.Type,
 		EventID: x.EventID, Revision: x.Revision, OccurredAt: x.OccurredAt}, x.EventID, nil
 }
 
@@ -323,8 +362,8 @@ func (run *batchRun) deletion(r *resolver, i int) (any, string, error) {
 		return nil, "", fmt.Errorf("%w: a delete names an external_id", errInvalid)
 	}
 	id, err := r.ref(d.Entity, importer.Ref{ExternalID: d.ExternalID})
-	// Only an absent import mapping makes this delete a no-op. Store errors
-	// (including other not-found failures) still fail the record normally.
+	// Only an absent import mapping makes this delete unmapped: reported, with
+	// nothing to delete. Store errors still fail the record normally.
 	if errors.Is(err, errNotFound) {
 		return deletion{entity: d.Entity}, d.ExternalID, nil
 	}
@@ -340,9 +379,6 @@ func (run *batchRun) deletion(r *resolver, i int) (any, string, error) {
 func (s *Service) deletes(ctx context.Context, tx pgx.Tx, in []deletion, later *contentstore.Recounts) error {
 	by := map[string][]string{}
 	for _, d := range in {
-		if d.id == "" {
-			continue
-		}
 		by[d.entity] = append(by[d.entity], d.id)
 	}
 	gs := make([]entities.EntityID, len(by[importer.RecordEntity]))
@@ -369,11 +405,54 @@ func (run *batchRun) legacyReading(r *resolver, i int) (any, string, error) {
 	if err != nil {
 		return nil, row.UserID, err
 	}
-	subject := signal.Subject{UserID: row.UserID, AnonKey: row.AnonKey}
+	user, err := account(row.UserID)
+	if err != nil {
+		return nil, row.UserID, err
+	}
+	subject := signal.Subject{UserID: user, AnonKey: row.AnonKey}
 	if err := subject.Validate(); err != nil {
 		return nil, row.UserID, fmt.Errorf("%w: %v", errInvalid, err)
 	}
 	key := subject.Kind() + ":" + subject.Key() + "/" + target.content + "/" + target.version
 	return discovery.ImportLegacyReading{ContentID: target.content, VersionID: target.version, Subject: subject, FirstReadAt: row.FirstReadAt,
 		LastReadAt: row.LastReadAt, Removed: row.Removed, Progress: row.Progress, ProgressMax: row.ProgressMax, Completed: row.Completed, Resume: row.Resume, Revision: row.Revision}, key, nil
+}
+
+// account is an imported account id as an authenticated subject carries it:
+// trimmed, and a UUID in its canonical lowercase form.
+func account(id string) (string, error) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return "", nil
+	}
+	if u, err := uuid.Parse(id); err == nil {
+		return u.String(), nil
+	}
+	if len(id) > 256 || strings.ContainsFunc(id, func(r rune) bool { return unicode.IsSpace(r) || unicode.IsControl(r) }) {
+		return "", fmt.Errorf("%w: %q is not an account id", errInvalid, id)
+	}
+	return id, nil
+}
+
+// address is an anonymous record's address keyed as a live anonymous write
+// keys it (clientaddr.Key), so imported and live rows dedupe.
+func address(ip string) (string, error) {
+	ip = strings.TrimSpace(ip)
+	if ip == "" {
+		return "", nil
+	}
+	if a, err := netip.ParseAddr(ip); err != nil || a.Zone() != "" {
+		return "", fmt.Errorf("%w: %q is not an IP address", errInvalid, ip)
+	}
+	return clientaddr.Key(ip), nil
+}
+
+// subject is a record's canonical user id, or its address when it has none.
+func subject(user, ip string) (string, string, error) {
+	user, err := account(user)
+	if err != nil || user != "" {
+		return user, "", err
+	}
+	ip, err = address(ip)
+	return "", ip, err
 }

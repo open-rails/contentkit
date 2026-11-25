@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"maps"
 	"net/http"
@@ -34,9 +35,11 @@ const archiveExpandedLimit = int64(2 << 30)
 var errArchiveChanged = errors.New("media: archive source changed during ingestion")
 
 // IngestArchives expands the configured ZIP uploads of an item. Placement
-// precedes this call. All entries are validated before any attachment, then
-// bounded batches commit with stable identities inside this same ingest job.
-// Each committed batch records observable progress. The original ZIP remains.
+// precedes this call. All entries are validated in one streaming pass before
+// any attachment, then bounded batches extract their pages again from the
+// ZIP in tempDir and commit with stable identities inside this same ingest
+// job: scratch is the ZIP plus one page. Each committed batch records
+// observable progress. The original ZIP remains.
 func (m *Manifests) IngestArchives(ctx context.Context, ref contentref.ContentRef, tempDir string) error {
 	item, err := m.reg.Item(ref)
 	if err != nil {
@@ -109,7 +112,6 @@ func (m *Manifests) FailIngest(ctx context.Context, ref contentref.ContentRef, c
 }
 
 type archivePageSource struct {
-	file                       string
 	entry                      *zip.File
 	name, typ                  string
 	sum                        []byte
@@ -206,19 +208,12 @@ func (m *Manifests) ingestArchive(ctx context.Context, item Item, source media.F
 		names[i] = path.Base(pages[i].entry.Name)
 	}
 	cleaned := CleanPageBatchNames(names)
-	defer func() {
-		for _, page := range pages {
-			if page.file != "" {
-				_ = os.Remove(page.file)
-			}
-		}
-	}()
 	var expanded int64
-	// Complete validation precedes every blob write and manifest edit. Reading
-	// one image at a time bounds memory and detects a late CRC/type failure.
+	// Complete validation precedes every blob write and manifest edit. One
+	// streaming pass hashes each image, detecting a late CRC/type failure,
+	// without writing it: scratch stays at about the ZIP's size.
 	for i := range pages {
-		decoded, err := spoolArchiveEntry(ctx, pages[i].entry, tempDir, min(rule.MaxBytes, archiveExpandedLimit-expanded))
-		pages[i].file = decoded.file
+		decoded, err := readArchiveEntry(ctx, pages[i].entry, io.Discard, min(rule.MaxBytes, archiveExpandedLimit-expanded))
 		if err != nil {
 			return err
 		}
@@ -333,24 +328,9 @@ func (m *Manifests) ingestArchive(ctx context.Context, item Item, source media.F
 			}
 			pages[i].blob = blob[0]
 			written = append(written, blob[0])
-			input, err := os.Open(pages[i].file)
-			if err != nil {
+			if err := m.putArchivePage(ctx, item, pages[i], tempDir); err != nil {
 				return err
 			}
-			physical, err := item.Blob(blob[0])
-			if err != nil {
-				input.Close()
-				return err
-			}
-			_, writeErr := m.store.Put(ctx, physical, input, pages[i].size, media.PutOptions{ContentType: pages[i].typ, ChecksumSHA256: pages[i].sum, IfNoneMatch: "*"})
-			closeErr := input.Close()
-			if writeErr != nil {
-				return writeErr
-			}
-			if closeErr != nil {
-				return closeErr
-			}
-
 		}
 		_, err = m.editOperation(ctx, item.Ref(), true, bound{project: k.Unwritten}, mutation, func(cur *Manifest) error {
 			i := cur.Find(source.Path)
@@ -513,12 +493,14 @@ func archiveImageName(name string) bool {
 }
 
 type decodedArchiveEntry struct {
-	file, typ string
-	size      int64
-	sum       []byte
+	typ  string
+	size int64
+	sum  []byte
 }
 
-func spoolArchiveEntry(ctx context.Context, entry *zip.File, tempDir string, limit int64) (decodedArchiveEntry, error) {
+// readArchiveEntry decompresses entry into sink, at most limit bytes, and
+// reports its size, digest and sniffed type.
+func readArchiveEntry(ctx context.Context, entry *zip.File, sink io.Writer, limit int64) (decodedArchiveEntry, error) {
 	if limit <= 0 {
 		return decodedArchiveEntry{}, uploadErr(media.CodeTooLarge, "ZIP exceeds its expanded byte limit")
 	}
@@ -531,36 +513,55 @@ func spoolArchiveEntry(ctx context.Context, entry *zip.File, tempDir string, lim
 		return decodedArchiveEntry{}, uploadErr(media.CodeInvalid, "ZIP entry %s: %v", entry.Name, err)
 	}
 	defer rc.Close()
-	output, err := os.CreateTemp(tempDir, "contentkit-archive-page-*")
+	prefix := &prefixWriter{limit: 64 << 10}
+	n, sum, err := copyArchiveEntry(ctx, rc, io.MultiWriter(prefix, sink), limit)
 	if err != nil {
 		return decodedArchiveEntry{}, err
 	}
-	result := decodedArchiveEntry{file: output.Name()}
-	n, sum, copyErr := copyArchiveEntry(ctx, rc, output, limit)
-	closeErr := output.Close()
-	if copyErr != nil {
-		return result, copyErr
-	}
-	if closeErr != nil {
-		return result, closeErr
-	}
 	if n > limit || uint64(n) != entry.UncompressedSize64 {
-		return result, uploadErr(media.CodeTooLarge, "ZIP entry %s exceeds its size limit", entry.Name)
+		return decodedArchiveEntry{}, uploadErr(media.CodeTooLarge, "ZIP entry %s exceeds its size limit", entry.Name)
 	}
-	input, err := os.Open(result.file)
+	return decodedArchiveEntry{typ: archiveContentType(prefix.b), size: n, sum: sum}, nil
+}
+
+// putArchivePage extracts one validated page from the ZIP on disk again and
+// writes it to its allocation: scratch holds at most one page beside the ZIP.
+func (m *Manifests) putArchivePage(ctx context.Context, item Item, page archivePageSource, tempDir string) error {
+	spool, err := os.CreateTemp(tempDir, "contentkit-archive-page-*")
 	if err != nil {
-		return result, err
+		return err
 	}
-	defer input.Close()
-	prefix := make([]byte, 64<<10)
-	read, err := input.Read(prefix)
-	if err != nil && !errors.Is(err, io.EOF) {
-		return result, err
+	defer os.Remove(spool.Name())
+	defer spool.Close()
+	again, err := readArchiveEntry(ctx, page.entry, spool, page.size)
+	if err != nil {
+		return err
 	}
-	result.typ = archiveContentType(prefix[:read])
-	result.size = n
-	result.sum = sum
-	return result, nil
+	if again.size != page.size || !bytes.Equal(again.sum, page.sum) {
+		return fmt.Errorf("media: ZIP entry %s changed on the scratch disk since validation", page.entry.Name)
+	}
+	if _, err := spool.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+	physical, err := item.Blob(page.blob)
+	if err != nil {
+		return err
+	}
+	_, err = m.store.Put(ctx, physical, spool, page.size, media.PutOptions{ContentType: page.typ, ChecksumSHA256: page.sum, IfNoneMatch: "*"})
+	return err
+}
+
+// prefixWriter keeps the first limit bytes written to it.
+type prefixWriter struct {
+	b     []byte
+	limit int
+}
+
+func (w *prefixWriter) Write(p []byte) (int, error) {
+	if room := w.limit - len(w.b); room > 0 {
+		w.b = append(w.b, p[:min(room, len(p))]...)
+	}
+	return len(p), nil
 }
 
 // copyArchiveEntry keeps sink failures separate from malformed compressed

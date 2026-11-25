@@ -11,7 +11,7 @@
         "tags": [
           "kinds"
         ],
-        "summary": "The site's content model: languages, tiers, content kinds, entity kinds, whether signals are recorded now and people's avatar preset. Cacheable for a minute.",
+        "summary": "The site's content model: languages, tiers, content kinds, entity kinds, whether signals are recorded now and people's avatar preset.",
         "responses": {
           "200": {
             "description": "OK",
@@ -35,7 +35,9 @@
         "x-contentkit-errors": [],
         "x-contentkit-error-sets": [
           "module:kinds"
-        ]
+        ],
+        "x-contentkit-cache": "public, max-age=60",
+        "x-contentkit-vary": []
       }
     },
     "/v1/config": {
@@ -4457,6 +4459,53 @@
         ]
       }
     },
+    "/v1/accounts/{id}/erasure": {
+      "get": {
+        "tags": [
+          "accounts"
+        ],
+        "summary": "Reads an account's lifecycle in this app: its state, when its erasure was requested and when it completed.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AccountErasure"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "content",
+        "x-contentkit-auth": "staff",
+        "x-contentkit-permission": "root:accounts:lifecycle",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:content",
+          "auth",
+          "request"
+        ]
+      }
+    },
     "/v1/events": {
       "get": {
         "tags": [
@@ -4545,7 +4594,7 @@
         "tags": [
           "catalog"
         ],
-        "summary": "Each kind's content, in all and per language: how many items an anonymous visitor's listing shows and opens, and how many each tier's holders open. The request's site scope applies. Cacheable for ten minutes.",
+        "summary": "Each kind's content, in all and per language: how many items an anonymous visitor's listing shows and opens, and how many each tier's holders open. The request's site scope applies.",
         "parameters": [
           {
             "name": "kinds",
@@ -4600,7 +4649,9 @@
         "x-contentkit-error-sets": [
           "module:contents",
           "request"
-        ]
+        ],
+        "x-contentkit-cache": "public, max-age=600",
+        "x-contentkit-vary": []
       }
     },
     "/v1/contents/{id}": {
@@ -6728,7 +6779,9 @@
         "x-contentkit-errors": [],
         "x-contentkit-error-sets": [
           "module:media"
-        ]
+        ],
+        "x-contentkit-cache": "public, max-age=300",
+        "x-contentkit-vary": []
       }
     },
     "/v1/media/{kind}/{id}": {
@@ -12685,16 +12738,6 @@
             "schema": {
               "type": "integer"
             }
-          },
-          {
-            "name": "ContentKit-Reader-Preferences",
-            "in": "header",
-            "required": false,
-            "description": "Optional anonymous content-filter choices as JSON: {\"filters\":[{\"group_id\":\"configured entity ID\",\"visible\":false}]}. Applied by reads that use content filters; ignored for authenticated accounts. At most 128 configured filters, no duplicate IDs. Never grants access.",
-            "schema": {
-              "type": "string",
-              "maxLength": 8192
-            }
           }
         ],
         "responses": {
@@ -12713,13 +12756,13 @@
           }
         },
         "security": [
-          {},
           {
             "host": []
           }
         ],
         "x-contentkit-module": "discovery",
-        "x-contentkit-auth": "public",
+        "x-contentkit-auth": "editor",
+        "x-contentkit-permission": "root:content:write",
         "x-contentkit-errors": [
           "unauthorized",
           "forbidden",
@@ -12836,6 +12879,45 @@
             "type": "boolean"
           }
         }
+      },
+      "AccountErasure": {
+        "type": "object",
+        "properties": {
+          "account_id": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "requested_at": {
+            "oneOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "completed_at": {
+            "oneOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "account_id",
+          "state",
+          "requested_at",
+          "completed_at"
+        ]
       },
       "Activity": {
         "type": "object",
@@ -13347,9 +13429,6 @@
           },
           "preference_floor": {
             "type": "integer"
-          },
-          "provision_scopes": {
-            "type": "boolean"
           },
           "entities": {
             "type": "array",
@@ -13887,9 +13966,6 @@
             "type": "string"
           },
           "owner_user_id": {
-            "type": "string"
-          },
-          "auth_scope": {
             "type": "string"
           },
           "code": {
@@ -14741,7 +14817,14 @@
             "type": "string"
           },
           "access": {
-            "$ref": "#/components/schemas/Rule"
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Rule"
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "restrictions": {
             "type": "array",
@@ -19130,6 +19213,12 @@
               "$ref": "#/components/schemas/RecordFailure"
             }
           },
+          "unmapped": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/UnmappedDelete"
+            }
+          },
           "ids": {
             "type": "object",
             "additionalProperties": {
@@ -19559,6 +19648,25 @@
           "entities"
         ]
       },
+      "UnmappedDelete": {
+        "type": "object",
+        "properties": {
+          "index": {
+            "type": "integer"
+          },
+          "entity": {
+            "type": "string"
+          },
+          "external_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "index",
+          "entity",
+          "external_id"
+        ]
+      },
       "UploadLimits": {
         "type": "object",
         "properties": {
@@ -19589,6 +19697,9 @@
             "type": "integer"
           },
           "max": {
+            "type": "integer"
+          },
+          "max_pixels": {
             "type": "integer"
           },
           "named": {

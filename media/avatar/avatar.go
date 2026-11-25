@@ -31,6 +31,8 @@ func User() media.Kind {
 			Path:     "avatar",
 			Types:    []string{"image/jpeg", "image/png", "image/webp"},
 			MaxBytes: 10 << 20,
+			// A 512 px avatar needs no more than a 24 MP camera's photo.
+			MaxPixels: 25_000_000,
 		}},
 		Public: []media.Public{{
 			Name:    "avatar",

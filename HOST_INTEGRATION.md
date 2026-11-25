@@ -16,7 +16,7 @@ ck, _ := contentkit.New(ctx, cfg, contentkit.Deps{
 	Postgres: pool, ClickHouse: ch, Redis: rdb,
 	Auth:  ak.Authenticator(), // who a request is (authkit/auth)
 	Users: ak.UserInfo(),      // authors' names (authkit/userinfo)
-	Store: bucket, Moderator: moderator, BodyProcessor: sanitizer,
+	Store: bucket, Moderator: moderator, BodySanitizer: sanitizer,
 })
 _ = ck.Start(ctx) // serve: requests enqueue jobs
 routes, _ := ck.Routes(contentkit.Routes{Prefix: "/api/contentkit", Groups: contentkit.AllRoutes})
@@ -43,7 +43,9 @@ defer ck.Close(ctx)
 ```
 
 Which process works jobs is code, never configuration. The standalone
-`server/` calls `StartJobs` itself. Media processing is the stock
+`server/` calls `StartJobs` itself.
+
+Each River queue schema is its own: `New` refuses a `Database.RiverSchema`, `Media.WorkerSchema` or account media queue equal to another of them or to the catalog or account schema, since queues sharing a schema share a leader and each other's jobs. `Config.Schemas()` lists what an engine owns, defaults included, so a host sharing the database can check its own River schema and AuthKit's against them. Media processing is the stock
 `contentkit-media-worker` image's ([Media worker schema](#media-worker-schema)).
 `Engine.Reconcile` repairs derived catalog state (facets, access snapshots,
 search marks and content paths) after a model change; the server CLI runs it as
@@ -90,6 +92,8 @@ Hosts import the root package (`New`, `Config`/`Deps`, `Start`/`StartJobs`/
 constructor, job and SQL helper is under `internal/`, which the compiler
 keeps from hosts; `internal/boundaries` enforces the rest. The same code works
 against an embedded engine (`Engine.Client()`) and a remote one (`NewClient`).
+
+`NewClient`'s base is https, or plain http to a loopback host: a call through a plain http base elsewhere fails without sending anything, since the `hc` transport may add a credential. An in-process transport over the routes takes an `https://` base (its scheme is never dialed). The client follows no redirect: a 3xx is an `*Error`, so a credential never leaves its base. The same rule covers every URL ContentKit itself sends a credential or token to: `Config.Accounts.Avatars.Primary`, the media `BaseURL` and the standalone server's `openrails.base_url`. S3 endpoints may stay plain http on a private network: their requests carry SigV4 signatures bound to one method, path and checksum, never the key.
 
 | Before | Now |
 | --- | --- |
@@ -182,14 +186,12 @@ bans) are a person's: an application gets 403 on public routes too. No staff
 action asks for a recent sign-in: they are moderation and editing, all
 reversible. Every refusal has `auth.Refuse`'s status and `WWW-Authenticate`
 (a DPoP challenge stays the provider's) and ContentKit's body; an auth
-outage, a panic or a `Can` error is 503 `unavailable`, and a credential that
+outage, a panic in the auth provider or a `Can` error is 503 `unavailable`, and a credential that
 ended between `Authenticate` and `Can` is 401. Hooks get the actor:
 `access.Actor.Can(ctx, scope, perm)` asks its `Verified`, and `Person()`
 tells a person from an application.
 
-Anonymous actors are keyed by `Request.RemoteAddr` (reactions, votes,
-limits). Behind a proxy, rewrite it to the client's address in a
-trusted-proxy step before the mount, or every anonymous visitor is the proxy.
+Any other panic while serving is 500 `internal_error`, its stack logged at ERROR; once an answer has started the connection is aborted instead (`http.ErrAbortHandler`). Through `ck.Client()` and `ck.VisitorClient` a panic is the call's error, never the host's crash. A host's own in-process transport over the routes should recover the same way. Every answer carries `X-Content-Type-Options: nosniff`.
 
 A host mounting a module alone passes the same Auth: `content.Options.Auth`
 (and `UserInfo`), `media.HandlerOptions.Auth`,
@@ -210,6 +212,18 @@ restores only a parent automatically deleted for having no versions, preserving
 its earlier draft or publication schedule. Moderation and owner deletion remain
 separate embedded lifecycle operations and cannot be bypassed this way. There
 is no ordinary parent-content DELETE route or Go method.
+
+### Client address
+
+The client's address is what location rules match and what anonymous reactions, votes and limits are keyed by. It is the request's peer, `Request.RemoteAddr`, unless the peer is one of `Config.TrustedProxies` (`trusted_proxies`, CIDR prefixes such as an ingress's `10.0.0.0/8`). From a trusted peer, ContentKit reads `Forwarded` or `X-Forwarded-For` right to left, skips every hop in a trusted prefix and takes the first other address; if every hop is trusted, the left-most. What a client sends ahead of the proxy's own entry is never read, so it cannot choose its address. A trusted proxy must write exactly one of the two headers: a request carrying both, or a hop that is not an address where one is read (`unknown`, an obfuscated `Forwarded` node), is 400 `invalid_request`. Write IPv4 proxies as IPv4 prefixes; an IPv4-mapped prefix is refused at `New`.
+
+Leave `TrustedProxies` empty when the host rewrites `RemoteAddr` itself, as `net/http` hosts behind their own trusted-proxy step do: the peer is then the client. Behind a proxy with neither, every visitor is the proxy: location rules match nobody and all anonymous visitors share one key. `ck.VisitorClient(ip, host)` takes the client's address directly; pass the resolved one, never an unverified header. Give the host's AuthKit the same posture (its `HTTPConfig.TrustedProxies`, or `DirectPeerIP` when there are none), so both name the same client.
+
+Anonymous keys count an IPv6 address by its /64, the least a subscriber is handed, so rotating addresses within it is one visitor; an IPv4 address counts alone.
+
+## HTTP caching
+
+Each route declares its caching in the route catalog (`httpapi.Spec.Cache`) and the gate writes it on every answer: `Cache-Control: private, no-store` unless the route is marked **Cached** in [docs/api/routes.md](docs/api/routes.md) (`GET /v1/kinds`, `GET /v1/catalog/totals`, `GET /v1/media/presets`). A cached route answers `public, max-age=N` only to an anonymous request without a credential, with a success, when the visitor's location rules did not shape the answer; otherwise it answers `private, no-store`. A domain with a whole-site location rule therefore caches nothing shared, since a cached answer would reach the visitors the rule covers. A CDN "cache everything" rule must honour these directives for `/v1/*` JSON; nothing else is safe to share, because reads embed signed media URLs and depend on the viewer, the domain and the visitor's location.
 
 ## Content ids
 
@@ -301,7 +315,8 @@ Cards and content reads carry each item's `code` and language-prefixed `path`.
   leaking the slug. `Gone` answers 410. The engine's codes route group answers
   content items' and entities' visibility itself: a deleted entity is `Gone`,
   and merged entities resolve to their survivor. `kinds.Config.Routes()` maps
-  every content and entity kind to its route.
+  every content and entity kind to its route. A code of a kind the
+  configuration no longer has is `Hidden`.
 
 - **Legacy aliases.** The bulk import (`POST /v1/import`, `aliases`; see
   [docs/import.md](docs/import.md)) records the old site's identifiers. Each
@@ -452,7 +467,7 @@ Ports (in `content` unless qualified):
 | `Auth` | yes | `auth.Authenticator` (Auth above); the engine fills it from `Deps.Auth` |
 | `UserInfo` | no | `userinfo.Lookup`: authors' names (Authors below); the engine fills it from `Deps.Users` |
 | `Media` | no | poll images and avatars in ContentKit media (see below); absent = image routes answer 501 |
-| `ContentProcessor` | no | plain-text processor for comment bodies (default only trims whitespace; render as text) |
+| `TextProcessor` | no | `ProcessText`: comment bodies are plain text (default trims whitespace); render them as text, never as HTML |
 | `ContentModerator` | no | `Screen(ModerationInput) → Verdict{Decision, Reason, Model, PromptVersion, Confidence}` before a comment publishes; absent = publish (see Moderation) |
 
 **Authors.** Comments, replies, the latest-comments feed, held items and
@@ -499,7 +514,7 @@ per language.
 Nothing stores an image URL: a public file's name carries a generation that
 changes on every republish. Covers and poll images store the name; a body
 stores a reference, `contentkit:i-{uuid}` (the SDK's `imageRef`), which
-`Deps.BodyProcessor` must keep. Reads resolve a body's references to signed
+`Deps.BodySanitizer` (`catalog.HTMLSanitizer`, `SanitizeHTML`) must keep. Bodies are HTML: every write, the bulk import included, runs them through it, and the default strips every tag. Reads resolve a body's references to signed
 URLs of the opened version's private images, a cover to its current public
 file; one not rendered yet stays as it is.
 
@@ -743,6 +758,7 @@ of a remote ContentKit calls the routes instead, as a service holding
 `PUT /v1/accounts/{id}/deleted` with `{"deleted": true|false}`
 (`Client.PutAccountDeleted`) and `POST /v1/accounts/{id}/anonymize`
 (`Client.PostAccountAnonymize`), both 204 and idempotent.
+`GET /v1/accounts/{id}/erasure` (`Client.GetAccountErasure`, Go `Engine.AccountErasure`) reads one account's state in this app (`active`, `deleted`, `purging`, `purged`) with its erasure's `requested_at` and `completed_at`: an erasure is pending while it has the first and not the second.
 This changes author display to `<Deleted>` without deleting interactions.
 Comment responses use the existing `anon_name` shape without a profile or
 account id, so older UI clients display the same label. Ownership remains in
@@ -786,8 +802,7 @@ and moderator provenance remain host responsibilities; this is not a general
 backup-restore or privileged-write policy.
 
 The signal plane follows the [signal-plane contract](#signal-plane-account-deletion).
-A deliberately disabled signal plane is absent, not unfinished. Any
-configured-plane failure returns an error: keep the deletion pending and retry.
+`MigrateClickHouse` records in the account schema that the app has a signal plane (run `MigratePostgres` first). An app whose plane was never provisioned has no signals to erase; once one was, an engine without ClickHouse returns `ErrSignalPlaneRequired` and the deletion stays pending. Any configured-plane failure returns an error: keep the deletion pending and retry.
 
 Content anonymization commits atomically:
 
@@ -798,7 +813,12 @@ Content anonymization commits atomically:
   owned entities and reposts lose the account id;
 - removal of the subject's comment notifications, creator profile, content
   filter preferences and comment bans of them or in their owner scope (bans
-  they set stay, without their id).
+  they set stay, without their id);
+- location rules and their history keep what changed and when, without the subject as creator, updater or actor.
+
+After the avatar erasure, the subject leaves the media journal and quota ledger: commits keep no actor or quota owner of theirs, and their usage, reservations, releases and upload rates go. An avatar's folder path keeps the account id: it is the permanent storage fence that keeps a purged id's avatar unwritable, and its rows are folder bookkeeping, not attribution.
+
+Every writer that stores an account id takes the subject fence and refuses an erased one: comments, reactions, favorites, votes, reposts, content creation (`created_by`) and creators, channel owners, imports naming them (`erased`) and media upload grants. A purged id is never reactivated.
 
 Other tenants and subjects and externally stored media are untouched.
 Every guarded writer takes the subject fence before other source locks.
@@ -870,6 +890,9 @@ that fits the reader (`display_language` first, then position).
   /typeahead` (direct title/entity-name/alias prefixes only; no contextual
   keywords or typo expansion). `SearchBox` puts matching recent queries first,
   followed by entities and content titles; full search remains broader.
+- A query is at most 1 KiB, 256 characters and 16 words, and each word at most 128 characters once normalized (compatibility characters can spell several letters); anything longer answers `400 invalid_request` on `/search`, `/typeahead` and `/manage/search-suggestions` before any retrieval. Search tolerates a typo only in words of 3 to 16 characters, within a bounded set of spellings per query. Typeahead suggests an entity only when the domain lists one of its works, and entity cards' counts and automatic covers come only from works inside the domain and the visitor's location rules.
+- A `summary` counts at most 10,000 contents; a larger selection answers lower-bound counts with `truncated: true`.
+- Cursors are opaque: one whose value, content id or seed is malformed, or from another sort, answers `400 invalid_request`, as do `tz=Local` and `time_zone=Local`. A `newest`/`oldest` cursor issued before v0.139 is refused once; restart from the first page.
 - `GET /contents/{id}/similar`, `GET /recommendations`: co-engagement
   candidates, admitted through the reader's visibility.
   Recommendations fill from the last 30 days' popularity, then all-time,
@@ -932,9 +955,13 @@ signal plane (no ClickHouse, or one that is down, which fails the
 exposures, popular sorts use what `content_facets` holds, and signal reads
 and writes answer 501 `not_configured`, or 503 `unavailable` while a
 configured one is down. The engine retries a down ClickHouse in the
-background (migrations, connection, schema) and checks a live one every ten
-seconds; signals come back on without a restart, and contentkit-ui reads the
-model again a minute after it last found them off.
+background (migrations, connection, schema) and pings a live one every 30
+seconds with the driver's protocol ping, not a query; the probe reports what
+that loop last found and sends nothing itself. Signals come back on without a
+restart, and contentkit-ui reads the model again a minute after it last found
+them off.
+
+A signal read serving a request (history, states, similar, recommendations, popular lists, stats, attribution) gets a ten-second deadline when its context has none, which the driver also sends as `max_execution_time`, and a 1 GiB `max_memory_usage`; a job's own deadline stands. Set `Config.ClickHouse.TLS` (`tls`) to connect to `Addr` over TLS, ClickHouse's secure native port, verifying the server against the system roots or `ca_file`; `MigrateClickHouse` and the engine's own migrations use the same TLS. Without it the password crosses in clear, so keep a plain connection on a private network.
 
 ## Search job
 
@@ -1044,37 +1071,14 @@ worker, _ := cfg.MediaRegistry() // the stock worker's MEDIA_KINDS_FILE
   its own media without the engine authorizes the kind in `CanUpload`: a
   person their own, staff anyone's (exempt).
 
-- **Uploads** are paths: a literal (`cover`) or a pattern (`originals/{name}`);
-  a file's path adds its extension (`cover.png`), and a put to the same stem
-  replaces it. `Max` caps an Upload's files, `Frames` lets the `frame` op
-  grab the upload from a video upload, `Named` lets the server name it (`i-{uuid}`, inline images;
-  it needs a `Max`). `Required` holds a version back until it has an
-  attached upload there: its media state reads `missing` and its publication
-  waits, and a live release without one is withdrawn when it is re-planned.
+- **Uploads** are paths: a literal (`cover`) or a pattern (`originals/{name}`); a file's path adds its extension (`cover.png`), and a put to the same stem replaces it. `Max` caps an Upload's files, frames included, `MaxPixels` lowers the image processor's decoded-pixel bound for its images (avatars: 25 MP), `Frames` lets the `frame` op grab the upload from a video upload (it must accept `image/png`; no other upload takes frames), `Named` lets the server name it (`i-{uuid}`, inline images; it needs a `Max`). `Required` holds a version back until it has an attached upload there: its media state reads `missing` and its publication waits, and a live release without one is withdrawn when it is re-planned.
 - **Private presets** have one producer: `Image` (with `Shapes`, below),
   `HLS` (byte-range fMP4 ladder, audio and subtitle tracks, seek sprite; each
   track's segment table is its own private blob), `MP4` (one rung, H.264),
   `Zip` (the files under a prefix, in manifest order), `Audio` (an HLS track
   and an M4A) or `Subtitles` (clean WebVTT; a video lists them after its own
   tracks). Nothing is upscaled.
-  Image presets default to WebP. A private preset with
-  `Image.Format: media.ImageFormatSource` must end its `To` with `{ext}`
-  (the upload's original extension), such as `download-pages/{name}{ext}`.
-  With an inside fit and no edit, a source within its width/height box
-  passes through byte-for-byte. `Width: 6000, Height: 6000` bounds either
-  edge proportionally; zero leaves an edge unbounded. Oversized or edited
-  JPEG, PNG, WebP and GIF files retain their codec, including animation;
-  other accepted codecs support unchanged passthrough only. Keep archival
-  uploads with `KeepOriginals: true`; a ZIP preset over `download-pages/`
-  packs the resulting original-format pages in reading order. Upgrade the
-  worker/gateway cohort before declaring this registry, then regenerate
-  existing items to replace an old download rendition.
-  `Shapes` give an image preset another `Image` for uploads of another
-  aspect (width:height), wider than `WiderThan` and no wider than
-  `NoWiderThan` (unset is open). They are data, so the stock worker runs
-  them; they never overlap and keep the preset's format and animation; an
-  upload in none renders `Image`. Tall pages keep more height, wide pages
-  more width:
+  Image presets default to WebP. A private preset with `Image.Format: media.ImageFormatSource` must end its `To` with `{ext}` (the upload's original extension), such as `download-pages/{name}{ext}`. With an inside fit and no edit, a source within its width/height box passes through with its pixels byte-for-byte and its metadata (EXIF, XMP, IPTC, comments, trailing data) dropped, orientation and colour profile kept; `Image.KeepMetadata` keeps all of it and is required for AVIF, HEIF and TIFF uploads. `Width: 6000, Height: 6000` bounds either edge proportionally; zero leaves an edge unbounded. Oversized or edited JPEG, PNG, WebP and GIF files retain their codec, including animation; other accepted codecs support unchanged passthrough only. Keep archival uploads with `KeepOriginals: true`; a ZIP preset over `download-pages/` packs the resulting original-format pages in reading order. Upgrade the worker/gateway cohort before declaring this registry, then regenerate existing items to replace an old download rendition. `Shapes` give an image preset another `Image` for uploads of another aspect (width:height), wider than `WiderThan` and no wider than `NoWiderThan` (unset is open). They are data, so the stock worker runs them; they never overlap and keep the preset's format and animation; an upload in none renders `Image`. Tall pages keep more height, wide pages more width:
 
   ```json
   {"name": "low", "from": "originals/{name}", "to": "low-res/{name}.webp",
@@ -1097,11 +1101,8 @@ worker, _ := cfg.MediaRegistry() // the stock worker's MEDIA_KINDS_FILE
   presets' sources are always kept). Except a version's declared audio
   (`Publish.Playback`), the read API never returns an upload's path or URL
   to viewers.
-- **Host-only presets.** `Private.HostOnly` keeps an output out of generic
-  reads, downloads and playlists.
-- **`private/` is all or nothing.** One token per item opens every private
-  file of it. `HostOnly` decides what reads list, not what the token
-  reaches: a viewer with access who learns a blob's hash can fetch it.
+- **Host-only presets.** `Private.HostOnly` keeps an Image, MP4 or Zip output out of generic reads, downloads and playlists.
+- **`private/` is all or nothing.** One token per item opens every private file of it; a version's `private/` holds only released files. `HostOnly` outputs, of every kind, stay in `internal/`, which no token reaches.
 - **Defaults.** A kind's `Defaults` (an `fs.FS`, e.g. `go:embed`) holds the
   images its public presets name in `Public.Default`; the registry checks
   they exist. A shared kind ships its own, so importing apps merge nothing.
@@ -1182,7 +1183,7 @@ server-side instead, so no byte passes through the importer.
 | `remove {path, takedown?}` | Removes an upload and its outputs (cancelling its processing). With `takedown` it also removes the frames grabbed from the upload and the zips that bundled it, then deletes at once the blobs the commit dropped, the removed uploads' editor views and staged objects, and the item's unused public files. With an exempt grant (`UploadGrant.Exempt`, staff) it instead deletes every private blob the item no longer references, earlier versions and all editor views included, which costs re-rendering them; sent again on the path already gone, it runs that sweep again. If a takedown's deletes fail it says so: staff complete it with the exempt takedown, otherwise the leftovers go at the grace sweep. For anyone else a takedown of a path already gone is `not_found`. |
 | `attach {path, index?, meta?}` | Makes an unattached upload part of the item. |
 | `copy {from: {id, path}, to?, edit?}` | Copies an upload within the kind, including the current item. Copies within an Upload preserve current private outputs; another Upload or a supplied edit renders its own presets from the original. Blobs copied from another item are reserved like uploads (rate limits, pending quota) before they move. |
-| `frame {path, t \| auto, edit?, from?}` | Fills an upload from a frame of its `Frames` video, the one a player shows `t` seconds in; a new video grabs again. With `from: {kind?, id, version?, path}` the frame is of another item's video upload (`kind` defaults to this item's, in its namespace), which the editor must also be able to write; the upload must allow `image/png`, and the worker grabs it once, a still that later changes to that video leave alone. |
+| `frame {path, t \| auto, edit?, from?}` | Fills an upload declaring `Frames` from a frame of that video, the one a player shows `t` seconds in; a new video grabs again. With `from: {kind?, id, version?, path}` the frame is of another item's video upload (`kind` defaults to this item's, in its namespace), which the editor must also be able to write; the worker grabs it once, a still that later changes to that video leave alone. Any other upload takes no frame (400). A frame counts toward the upload's `Max` and is charged to the commit's quota owner: the minimum at commit, the still's size once grabbed (past the quota the frame fails `quota_exceeded`). |
 | `meta {meta}` | Sets the template values (`{title}` in download names). |
 | `regenerate {preset?, force?}` | Asks the worker to redo stale outputs and retry uploads that failed for their current blob and edit, which any writer of the item may do; `force` redoes every output and needs an exempt grant. |
 
@@ -1351,7 +1352,7 @@ public URLs: a body that names one keeps naming a file that goes stale.
   `url`. Cover and poll image routes answer null until the image has a
   public file.
 - Posts carry `cover` (the name) and `images`; `body` is resolved.
-- The host's `PostBodyProcessor` must keep `contentkit:` image URLs.
+- The host's `BodySanitizer` must keep `contentkit:` image URLs.
 - Rewrite stored bodies: replace each image URL of a post's own folder
   (`…/{kind}/{post_id}/public/i-{uuid}….webp`) with `contentkit:i-{uuid}`.
 - SDK: `usePost` stores references (`update`, `storedBody`) and shows them
@@ -1440,17 +1441,7 @@ the host's periodic jobs. The worker migrates its schema itself.
   `_default` item. `Cross-Origin-Resource-Policy` is always `same-site`.
 - **Bucket**: one per app, private (no public ACL or policy); the gateway's
   key reads only `*/private/*` and `*/public/*` of each; only the hosts write.
-- **CDN**: may cache `public/` in a shared cache. Generation-named URLs answer
-  `public, max-age=31536000, immutable`; stable names and default images answer
-  `public, max-age=300, stale-while-revalidate=86400` with ETag revalidation.
-  ContentKit does not enqueue CDN invalidation jobs. Never cache `private/` in
-  a shared cache: the token is not part of a cache key the CDN checks, so a
-  cached object would be served without one. Private blobs are hash-named and
-  answer `private, max-age=31536000, immutable`: tokens guard new reads, not
-  copies a browser already holds, so expiry, key rotation and deletion don't
-  reach those. The gateway sets these headers itself and ignores any
-  `Cache-Control` stored on the object. A CDN hit skips the deletion fence, so
-  a deleted `public/` file can stay served until that copy expires.
+- **CDN**: may cache `public/` in a shared cache. Generation-named URLs answer `public, max-age=31536000, immutable`; stable names and default images answer `public, max-age=300, stale-while-revalidate=86400` with ETag revalidation. ContentKit does not enqueue CDN invalidation jobs. Never cache `private/` in a shared cache: the token is not part of a cache key the CDN checks, so a cached object would be served without one. Private blobs are hash-named and answer `private, max-age=31536000, immutable` with `CDN-Cache-Control: no-store`, so a CDN that ignores `private` still stores none: tokens guard new reads, not copies a browser already holds, so expiry, key rotation and deletion don't reach those. Every media answer carries `Referrer-Policy: no-referrer`, so a page a media file links to never sees its tokened URL. The gateway sets these headers itself and ignores any `Cache-Control` stored on the object. A CDN hit skips the deletion fence, so a deleted `public/` file can stay served until that copy expires.
 - **Denials are 404 by design**: a missing, malformed, expired, wrong-scope
   or unknown-key token on `private/` gets the same response as a
   missing object (status, headers, body; `Cache-Control: no-store`), decided
@@ -1458,14 +1449,7 @@ the host's periodic jobs. The worker migrates its schema itself.
   content exists. The reason is logged at debug (`media-gateway: denied`).
   Clients that re-grant on expiry must treat 404 on these URLs as "refresh
   and retry once"; the SDK player's `refresh` does.
-- **Key rotation**: add the new key to every access worker as
-  `MEDIA_GATEWAY_TOKEN_KEY` with the old one as `_TOKEN_KEY_PREVIOUS`, then
-  switch the hosts' `Delivery.SigningKey`, then drop the previous key after
-  the longest token lifetime (TTL rounded up to the window, about 5 h by default).
-  A scope change does not revoke already-issued item tokens: they remain
-  valid until expiry while their signing key is accepted. If immediate
-  revocation is required, coordinate a key replacement without accepting the
-  old key and have clients refresh their media grants.
+- **Key rotation**: add the new key to every access worker as `MEDIA_GATEWAY_TOKEN_KEY` with the old one as `_TOKEN_KEY_PREVIOUS`, then switch the hosts' `Delivery.SigningKey` with the old key as `Delivery.PreviousKey`, so download tickets and activity receipts signed before the switch still verify, then drop the previous key everywhere after the longest token lifetime (TTL rounded up to the window, about 5 h by default) and, on hosts, after a day, the activity receipts' lifetime. A scope change does not revoke already-issued item tokens: they remain valid until expiry while their signing key is accepted. If immediate revocation is required, coordinate a key replacement without accepting the old key and have clients refresh their media grants.
 - **Scraping** is limited in three places, none of them the media gateway
   (it keeps no state):
   - `ReaderOptions.Issuance` bounds the distinct items a viewer is given the
@@ -1696,6 +1680,8 @@ an address and lists matching enabled rules per configured domain. Rule changes
 and their history snapshots commit together. Rules apply to staff content reads
 too; only the location-rule administration routes are exempt.
 
+A rule targeting entities also covers the content they own: a channel target hides the channel's posts from covered visitors everywhere (detail, lists, feeds, search and counts), as a tag target hides tagged content.
+
 Host middleware can call `block, blocked, err := ck.SiteBlock(ctx, ip, host)` to
 check whole-site rules before rendering host pages. Handle `err` as a failed
 policy read. When `blocked`, `block` contains the matched country/subdivision
@@ -1706,8 +1692,8 @@ The host remains responsible for its response to a whole-site match.
 Use `ck.VisitorClient(ip, host)` for in-process reads on behalf of an anonymous
 visitor. It applies that IP's location rules and the host's content-filter domain.
 `ck.Client()` keeps its host application authority. As with HTTP requests, pass
-the trusted client IP, not an unverified forwarded header. HTTP integrations must
-set `RemoteAddr` after their trusted proxy processing. Each request reads enabled
+the trusted client IP, not an unverified forwarded header. HTTP integrations set
+`Config.TrustedProxies` or rewrite `RemoteAddr` in their own trusted-proxy step ([Client address](#client-address)). Each request reads enabled
 rules for its tenant and domain from Postgres; replicas retain no rule cache.
 Catalog totals and the global precomputed entity popularity ordering remain
 aggregate statistics, while returned content and public entity counts are

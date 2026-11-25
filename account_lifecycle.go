@@ -6,7 +6,10 @@ import (
 	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/internal/hub"
+	mediastore "github.com/open-rails/contentkit/internal/mediastore"
+	"github.com/open-rails/contentkit/internal/subjectfence"
 	"github.com/open-rails/contentkit/signal"
 )
 
@@ -54,9 +57,7 @@ RETURNING state,coalesce(anonymous_key::text,'')`, e.cfg.Scope.AppID.String(), a
 	if err := e.content.AnonymizeAccount(ctx, accountID, anonymous); err != nil {
 		return err
 	}
-	if err := e.hub.AnonymizeSubject(ctx, signal.Subject{UserID: accountID}, signal.Subject{AnonKey: anonymous}); err != nil && !errors.Is(err, hub.ErrSignalPlaneDisabled) {
-		return err
-	} else if errors.Is(err, hub.ErrSignalPlaneDown) {
+	if err := e.anonymizeSignals(ctx, accountID, anonymous); err != nil {
 		return err
 	}
 	if err := e.discover.EraseSearches(ctx, []signal.Subject{{UserID: accountID}}); err != nil {
@@ -65,9 +66,80 @@ RETURNING state,coalesce(anonymous_key::text,'')`, e.cfg.Scope.AppID.String(), a
 	if err := e.eraseAvatars(ctx, []string{accountID}); err != nil {
 		return err
 	}
+	if err := e.eraseMediaBookkeeping(ctx, accountID); err != nil {
+		return err
+	}
 	if err := e.completeErasure(ctx, []string{accountID}); err != nil {
 		return err
 	}
 	_, err = e.pool.Exec(ctx, `UPDATE `+table+` SET state='purged',anonymous_key=NULL WHERE tenant_id=$1 AND actor_id=$2 AND state='purging'`, e.cfg.Scope.AppID.String(), accountID)
 	return err
+}
+
+// ErrSignalPlaneRequired keeps an account erasure pending on an engine without
+// a signal plane when the app's plane was provisioned (MigrateClickHouse):
+// its signals still hold the account.
+var ErrSignalPlaneRequired = errors.New("contentkit: this app's signal plane is provisioned; configure ClickHouse to finish account erasure")
+
+// anonymizeSignals moves the account's signals to its anonymous key. Only an
+// app whose signal plane was never provisioned has none to move.
+func (e *Engine) anonymizeSignals(ctx context.Context, accountID, anonymous string) error {
+	err := e.hub.AnonymizeSubject(ctx, signal.Subject{UserID: accountID}, signal.Subject{AnonKey: anonymous})
+	if err == nil || errors.Is(err, hub.ErrSignalPlaneDown) || !errors.Is(err, hub.ErrSignalPlaneDisabled) {
+		return err
+	}
+	schema, _ := e.accountStorage()
+	var provisioned bool
+	if err := e.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM `+pgx.Identifier{schema, "content_signal_planes"}.Sanitize()+` WHERE tenant_id=$1 AND app_id=$2)`,
+		e.scope.TenantID.String(), e.scope.AppID.String()).Scan(&provisioned); err != nil {
+		return err
+	}
+	if provisioned {
+		return ErrSignalPlaneRequired
+	}
+	return nil
+}
+
+// eraseMediaBookkeeping removes the account from this app's media journal and
+// quota ledger, and from the tenant's account media when this app holds it.
+// Media rows are keyed by the media namespace (the scope's partition), not the
+// catalog's tenant.
+func (e *Engine) eraseMediaBookkeeping(ctx context.Context, accountID string) error {
+	if e.cfg.Media == nil {
+		return nil
+	}
+	return pgx.BeginFunc(ctx, e.pool, func(tx pgx.Tx) error {
+		if _, err := subjectfence.Lock(ctx, tx, e.schema, e.cfg.Scope.AppID.String(), accountID); err != nil {
+			return err
+		}
+		if err := mediastore.EraseAccountTx(ctx, tx, e.schema, e.cfg.Media.Scope.Partition(), accountID); err != nil {
+			return err
+		}
+		if account, ok := e.accountMediaStorage(); ok {
+			return mediastore.EraseAccountTx(ctx, tx, account.Schema, e.accountMediaPartition(), accountID)
+		}
+		return nil
+	})
+}
+
+// AccountErasure is one account's lifecycle in this app: its state, when its
+// erasure was requested and when it completed.
+func (e *Engine) AccountErasure(ctx context.Context, accountID string) (content.AccountErasure, error) {
+	out := content.AccountErasure{AccountID: accountID, State: content.AccountStateActive}
+	if strings.TrimSpace(accountID) == "" {
+		return out, errors.New("contentkit: account id is required")
+	}
+	schema, _ := e.accountStorage()
+	var state string
+	err := e.pool.QueryRow(ctx, `SELECT coalesce((SELECT state FROM `+pgx.Identifier{e.schema, "content_account_lifecycle"}.Sanitize()+` WHERE tenant_id=$3 AND actor_id=$4),''),
+ (SELECT requested_at FROM `+pgx.Identifier{schema, "content_account_erasure_intents"}.Sanitize()+` WHERE tenant_id=$1 AND app_id=$2::text AND actor_id=$4),
+ (SELECT completed_at FROM `+pgx.Identifier{schema, "content_account_erasure_receipts"}.Sanitize()+` WHERE tenant_id=$1 AND app_id=$2::uuid AND actor_id=$4)`,
+		e.scope.TenantID.String(), e.scope.AppID.String(), e.cfg.Scope.AppID.String(), accountID).Scan(&state, &out.RequestedAt, &out.CompletedAt)
+	if err != nil {
+		return out, err
+	}
+	if state != "" {
+		out.State = state
+	}
+	return out, nil
 }

@@ -9,10 +9,12 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/contentkit/access"
@@ -139,8 +141,8 @@ func (s *Service) compileWithViewer(ctx context.Context, r discovery.Reader, f F
 	}
 	q.args["d_display"], q.args["d_langs"] = q.display, s.languages()
 	if f.TimeZone != "" {
-		if q.loc, err = time.LoadLocation(f.TimeZone); err != nil {
-			return nil, fmt.Errorf("%w: time zone %q", ErrInvalid, f.TimeZone)
+		if q.loc, err = zone(f.TimeZone); err != nil {
+			return nil, fmt.Errorf("%w: tz must name an IANA time zone", ErrInvalid)
 		}
 	}
 	owners, err := uniqueIDs("channel_id", f.ChannelIDs)
@@ -505,19 +507,71 @@ func (c cursor) encode() string {
 	return base64.RawURLEncoding.EncodeToString(b)
 }
 
+// maxCursorBytes bounds an encoded cursor: a title sort key is its longest part.
+const maxCursorBytes = 4096
+
+var (
+	seedPattern  = regexp.MustCompile(`^[0-9a-f]{16}$`)
+	floatPattern = regexp.MustCompile(`^(-?[0-9]+(\.[0-9]+)?(e[+-][0-9]+)?|-?Infinity|NaN)$`)
+)
+
+// decodeCursor reads a cursor of sort; a value that is not of the sort's
+// type is refused, never cast by the database.
 func decodeCursor(raw, sort string) (cursor, error) {
 	var c cursor
 	if raw == "" {
 		return c, nil
 	}
+	if len(raw) > maxCursorBytes {
+		return c, fmt.Errorf("%w: cursor", ErrInvalid)
+	}
 	b, err := base64.RawURLEncoding.DecodeString(raw)
 	if err == nil {
 		err = json.Unmarshal(b, &c)
 	}
-	if err != nil || c.ID == "" || c.Sort != sort {
+	switch {
+	case err != nil, c.Sort != sort, contentref.ValidateID(c.ID) != nil, !textValue(c.Value):
 		return c, fmt.Errorf("%w: cursor", ErrInvalid)
+	case c.Seed != "" && (sort != discovery.SortRandom || !seedPattern.MatchString(c.Seed)):
+		return c, fmt.Errorf("%w: cursor seed", ErrInvalid)
 	}
 	return c, nil
+}
+
+// textValue is text the database stores: valid UTF-8 without NUL.
+func textValue(s string) bool { return utf8.ValidString(s) && !strings.ContainsRune(s, 0) }
+
+// cursorValue reports whether v is a sort key of o's type, as keyText renders it.
+func (o order) cursorValue(v string) bool {
+	switch o.cast {
+	case "bigint":
+		_, err := strconv.ParseInt(v, 10, 64)
+		return err == nil
+	case "float8":
+		return floatPattern.MatchString(v)
+	case "timestamptz":
+		_, err := time.Parse(time.RFC3339Nano, v)
+		return err == nil
+	}
+	return true
+}
+
+// keyText renders expr, a sort key of o's type, as a cursor value: instants
+// in UTC RFC 3339, whatever the session's DateStyle and TimeZone.
+func (o order) keyText(expr string) string {
+	if o.cast == "timestamptz" {
+		return `to_char((` + expr + `) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`
+	}
+	return "(" + expr + ")::text"
+}
+
+// zone is an IANA time zone; "Local" names the server's, which the database
+// does not know.
+func zone(name string) (*time.Location, error) {
+	if name == "Local" {
+		return nil, fmt.Errorf("time zone %q is not an IANA zone", name)
+	}
+	return time.LoadLocation(name)
 }
 
 func newSeed() string {
@@ -540,6 +594,9 @@ func (s *Service) page(ctx context.Context, q *sel, o order, after string, limit
 	cur, err := decodeCursor(after, o.raw)
 	if err != nil {
 		return nil, "", err
+	}
+	if cur.ID != "" && !o.cursorValue(cur.Value) {
+		return nil, "", fmt.Errorf("%w: cursor", ErrInvalid)
 	}
 	args := pgx.NamedArgs{"d_limit": limit + 1, "d_offset": offset}
 	for k, v := range q.args {
@@ -573,14 +630,14 @@ func (s *Service) page(ctx context.Context, q *sel, o order, after string, limit
 		if cur.ID != "" {
 			where += fmt.Sprintf(" AND ((%s), f.content_id) %s (@d_cv::%s, @d_cid::text)", o.expr, cmp, o.cast)
 		}
-		sql = fmt.Sprintf(`SELECT f.content_id, (%[1]s)::text FROM (SELECT DISTINCT f.tenant_id, f.kind, f.content_id FROM %[2]s f WHERE %[3]s) f %[4]s
- WHERE %[5]s ORDER BY (%[1]s) %[6]s, f.content_id %[6]s LIMIT @d_limit OFFSET @d_offset`, o.expr, s.t.facets, q.predicate(), o.join, where, dir)
+		sql = fmt.Sprintf(`SELECT f.content_id, %[7]s FROM (SELECT DISTINCT f.tenant_id, f.kind, f.content_id FROM %[2]s f WHERE %[3]s) f %[4]s
+ WHERE %[5]s ORDER BY (%[1]s) %[6]s, f.content_id %[6]s LIMIT @d_limit OFFSET @d_offset`, o.expr, s.t.facets, q.predicate(), o.join, where, dir, o.keyText(o.expr))
 	case o.edition:
 		after := "true"
 		if cur.ID != "" {
 			after = fmt.Sprintf("(c.sk, c.content_id) %s (@d_cv::%s, @d_cid::text)", cmp, o.cast)
 		}
-		sql = fmt.Sprintf(`SELECT c.content_id, c.sk::text FROM (
+		sql = fmt.Sprintf(`SELECT c.content_id, `+o.keyText("c.sk")+` FROM (
  SELECT DISTINCT ON (f.content_id) f.content_id, (%s) AS sk FROM %s f WHERE %s ORDER BY f.content_id, %s) c
 WHERE %s ORDER BY c.sk %s, c.content_id %s LIMIT @d_limit OFFSET @d_offset`, o.expr, s.t.facets, q.predicate(), preference, after, dir, dir)
 	default:
@@ -588,8 +645,8 @@ WHERE %s ORDER BY c.sk %s, c.content_id %s LIMIT @d_limit OFFSET @d_offset`, o.e
 		if cur.ID != "" {
 			ordered = q.with(fmt.Sprintf("((%s), f.content_id) %s (@d_cv::%s, @d_cid::text)", o.expr, cmp, o.cast), nil)
 		}
-		sql = fmt.Sprintf(`SELECT f.content_id, (%[1]s)::text FROM %[2]s f WHERE %[3]s
- GROUP BY (%[1]s), f.content_id ORDER BY (%[1]s) %[4]s, f.content_id %[4]s LIMIT @d_limit OFFSET @d_offset`, o.expr, s.t.facets, ordered.predicate(), dir)
+		sql = fmt.Sprintf(`SELECT f.content_id, %[5]s FROM %[2]s f WHERE %[3]s
+ GROUP BY (%[1]s), f.content_id ORDER BY (%[1]s) %[4]s, f.content_id %[4]s LIMIT @d_limit OFFSET @d_offset`, o.expr, s.t.facets, ordered.predicate(), dir, o.keyText(o.expr))
 	}
 	rows, err := s.o.Pool.Query(ctx, sql, args)
 	if err != nil {

@@ -33,7 +33,7 @@ func TestLocationRequestReaderBoundary(t *testing.T) {
 			w.WriteHeader(http.StatusNoContent)
 		})
 	}
-	h := e.dispatch("", modules)
+	h := e.dispatch("", modules, nil)
 	for _, path := range []string{
 		"/v1/manage", "/v1/manage/article", "/v1/manage/article/count",
 		"/v1/versions?ids=version", "/v1/events", "/v1/comments/admin",

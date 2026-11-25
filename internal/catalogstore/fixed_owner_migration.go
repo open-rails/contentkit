@@ -83,7 +83,7 @@ func InitializeFixedOwners(ctx context.Context, pool *pgxpool.Pool, schema, tena
 				if err := store.ImportEntities(ctx, tx, []entities.ImportEntity{{
 					ID: entities.EntityID(owner.id), Kind: ref.Kind, Slug: ref.Slug, State: entities.StateActive,
 					Names: []entities.Name{{Language: model.Languages[0], Kind: entities.NameCanonical, Name: ref.Slug}},
-				}}, true); err != nil {
+				}}); err != nil {
 					return err
 				}
 			} else if err != nil {

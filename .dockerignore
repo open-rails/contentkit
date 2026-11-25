@@ -1,5 +1,18 @@
-.git
-.github
-docs
+# An allowlist: Go sources, module files, the files they embed (go:embed) and
+# the worker's Debian package script. A new embed outside these paths must be
+# added here. Exclusions name files (dir/**): a directory already excluded by *
+# does not re-exclude them.
+*
+!**/*.go
+!**/go.mod
+!**/go.sum
+!internal/migrations/**
+!internal/media/workqueue/migrations/**
+!media/avatar/avatar.png
+!cmd/media-worker/debian-snapshot.sh
 **/*_test.go
-sdk
+**/testdata/**
+**/node_modules/**
+benchmarks/**
+sdk/**
+tests/**

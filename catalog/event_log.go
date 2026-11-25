@@ -5,8 +5,9 @@ import (
 	"time"
 )
 
-// DefaultEventRetention is independent of readers' progress.
-const DefaultEventRetention = 90 * 24 * time.Hour
+// DefaultEventRetention is independent of readers' progress. A reader whose
+// position expired resyncs current state and starts again.
+const DefaultEventRetention = 14 * 24 * time.Hour
 
 // EventQuery reads one app's retained log. Callers own their continuation.
 type EventQuery struct {

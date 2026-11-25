@@ -1,0 +1,34 @@
+name: native-setup
+description: >-
+  Readies a job that runs in the worker's build image (golang:…-trixie):
+  installs Debian packages from the worker's snapshot
+  (cmd/media-worker/debian-snapshot.sh), lets git read the checkout and caches
+  Go modules and builds.
+inputs:
+  packages:
+    description: Space-separated Debian package names.
+    required: true
+runs:
+  using: composite
+  steps:
+  - name: Install ${{ inputs.packages }}
+    id: go
+    shell: bash
+    env:
+      PACKAGES: ${{ inputs.packages }}
+    run: |
+      read -r -a packages <<<"$PACKAGES"
+      status=0
+      timeout 900 sh "$GITHUB_WORKSPACE/cmd/media-worker/debian-snapshot.sh" "${packages[@]}" || status=$?
+      [ "$status" -ne 124 ] || echo '::error::snapshot.debian.org took over 15 minutes'
+      [ "$status" -eq 0 ] || exit "$status"
+      # The runner's user owns the checkout, not this container's root, and go build stamps it.
+      git config --global --add safe.directory "$GITHUB_WORKSPACE"
+      printf 'mod=%s\nbuild=%s\n' "$(go env GOMODCACHE)" "$(go env GOCACHE)" >> "$GITHUB_OUTPUT"
+  - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+    with:
+      path: |
+        ${{ steps.go.outputs.mod }}
+        ${{ steps.go.outputs.build }}
+      key: go-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-${{ hashFiles('**/go.mod', '**/go.sum') }}
+      restore-keys: go-${{ runner.os }}-${{ runner.arch }}-${{ github.job }}-

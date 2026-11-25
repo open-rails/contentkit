@@ -2,9 +2,14 @@ package contentkit
 
 import (
 	"cmp"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
+	"net/netip"
+	"os"
 	"slices"
 	"time"
 
@@ -17,6 +22,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/discovery"
 	"github.com/open-rails/contentkit/entities"
@@ -31,6 +37,12 @@ import (
 type Config struct {
 	// GeoIPCityPath optionally names a GeoLite2-City .mmdb file.
 	GeoIPCityPath string `yaml:"geoip_city_path" json:"geoip_city_path"`
+	// TrustedProxies are the proxies in front of the routes (an ingress, a
+	// load balancer). A request from one names its client in Forwarded or
+	// X-Forwarded-For, read right to left past trusted hops; a malformed
+	// chain is 400. Empty, the peer is the client: a host that rewrites
+	// Request.RemoteAddr itself leaves it empty.
+	TrustedProxies []netip.Prefix `yaml:"trusted_proxies,omitempty" json:"trusted_proxies,omitempty"`
 	// Scope is the business and app this engine serves. It is a trusted
 	// deployment binding, not request authorization. Required.
 	Scope    *Scope         `yaml:"scope" json:"scope"`
@@ -60,7 +72,7 @@ type Config struct {
 
 	// Jobs sizes the engine's River queue.
 	Jobs JobsConfig `yaml:"jobs" json:"jobs"`
-	// EventRetention keeps catalog facts independently of readers; zero is ninety days.
+	// EventRetention keeps catalog facts independently of readers; zero is fourteen days.
 	EventRetention time.Duration `yaml:"event_retention,omitempty" json:"event_retention,omitempty"`
 }
 
@@ -208,8 +220,9 @@ type DeliveryConfig struct {
 	// CookieDomain is the site's registrable domain; required in cookie mode.
 	CookieDomain string `yaml:"cookie_domain" json:"cookie_domain"`
 	// SigningKey is the media gateway's current token key, "{kid}:{base64
-	// secret}"; PreviousKey the one it still verifies. A secret: the server
-	// reads it from the environment. Required.
+	// secret}"; PreviousKey the one it still verifies, as the engine does for
+	// download tickets and activity receipts signed before a rotation. A
+	// secret: the server reads it from the environment. Required.
 	SigningKey  string `yaml:"signing_key" json:"signing_key"`
 	PreviousKey string `yaml:"previous_key" json:"previous_key"`
 	// TTL is the minimum token lifetime and Window its rounding; zero takes
@@ -247,6 +260,36 @@ type ClickHouseConfig struct {
 	// signal replica set. It must cover one complete shard; pooled connections
 	// must route only to replicas of that shard.
 	Cluster string `yaml:"cluster" json:"cluster"`
+	// TLS connects to Addr over TLS (ClickHouse's secure native port,
+	// usually 9440), verifying the server against the system roots or
+	// CAFile. Without it the password crosses in clear: keep a plain
+	// connection on a private network.
+	TLS bool `yaml:"tls" json:"tls"`
+	// CAFile is a PEM file of the CAs that sign the server's certificate;
+	// it needs TLS.
+	CAFile string `yaml:"ca_file" json:"ca_file"`
+}
+
+// tlsConfig is the connection's TLS; nil without TLS.
+func (c ClickHouseConfig) tlsConfig() (*tls.Config, error) {
+	if !c.TLS {
+		if c.CAFile != "" {
+			return nil, errors.New("contentkit: Config.ClickHouse.CAFile needs TLS")
+		}
+		return nil, nil
+	}
+	t := &tls.Config{MinVersion: tls.VersionTLS12}
+	if c.CAFile != "" {
+		pem, err := os.ReadFile(c.CAFile)
+		if err != nil {
+			return nil, fmt.Errorf("contentkit: Config.ClickHouse.CAFile: %w", err)
+		}
+		t.RootCAs = x509.NewCertPool()
+		if !t.RootCAs.AppendCertsFromPEM(pem) {
+			return nil, fmt.Errorf("contentkit: Config.ClickHouse.CAFile %s holds no PEM certificate", c.CAFile)
+		}
+	}
+	return t, nil
 }
 
 // JobsConfig sizes the engine's own River queue.
@@ -309,9 +352,12 @@ type Deps struct {
 	// ProviderDataEraser erases what a retaining Moderator
 	// keeps; required with one.
 	ProviderDataEraser content.ProviderDataEraser
-	// Processor sanitizes comments, BodyProcessor content items' rich-text
-	// bodies (keeping "contentkit:" image references); nil strips tags.
-	Processor, BodyProcessor content.ContentProcessor
+	// TextProcessor processes comment text on write; readers render it as
+	// text. Nil trims whitespace.
+	TextProcessor content.TextProcessor
+	// BodySanitizer makes content bodies safe to render as HTML, keeping
+	// "contentkit:" image references. Nil strips every tag.
+	BodySanitizer catalog.HTMLSanitizer
 
 	// Clock is the time; nil is time.Now.
 	Clock func() time.Time

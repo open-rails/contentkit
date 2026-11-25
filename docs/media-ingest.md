@@ -22,6 +22,7 @@ The existing upload authorizer must explicitly return `UploadGrant.ArchiveTo` eq
 - Metadata edits to an unchanged ZIP preserve server-owned completion state. Reusing the same blob under another ZIP path has a separate completion receipt.
 - The accepting commit identifies each admitted ZIP generation. Exact retries and metadata edits retain that identity; removing and re-adding a ZIP from a retained alias creates fresh processing work. Copies obtain the destination's own permission and quota policy rather than transferring the source's admission.
 - Unattached ZIP uploads process before Save; their extracted pages remain unattached too. Attaching the ZIP rechecks destination permission and attaches its staged pages atomically. Cancelling or replacing an unattached ZIP removes only its unused pages, preserving pages already adopted by the editor and batches retained by another ZIP alias.
+- Scratch holds the ZIP and one page at a time: validation streams every entry without writing it, and each batch extracts its pages again from the ZIP. Size the worker's scratch directory as [media jobs](media-jobs.md#scratch-disk) describes.
 - Normal cancellation closes and removes local scratch files. Use an isolated worker scratch directory; pod ephemeral-storage limits/lifetime bound scratch left after a hard kill.
 - Scratch-disk failures and interrupted writes remain retryable infrastructure errors; malformed archives are reported as failed source uploads.
 

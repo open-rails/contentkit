@@ -97,9 +97,11 @@ func New(cfg Config) (*Store, error) {
 	if err != nil || (internal.Scheme != "http" && internal.Scheme != "https") || internal.Host == "" {
 		return nil, fmt.Errorf("s3: invalid Endpoint %q", cfg.Endpoint)
 	}
+	// Both may be plain http: requests carry SigV4 signatures bound to
+	// method, path and checksum, never the secret key.
 	pub, err := url.Parse(strings.TrimRight(cfg.PublicEndpoint, "/"))
-	if err != nil || pub.Scheme == "" || pub.Host == "" {
-		return nil, fmt.Errorf("s3: invalid PublicEndpoint %q", cfg.PublicEndpoint)
+	if err != nil || (pub.Scheme != "http" && pub.Scheme != "https") || pub.Host == "" || pub.User != nil || pub.RawQuery != "" || pub.Fragment != "" {
+		return nil, fmt.Errorf("s3: PublicEndpoint %q is not an http(s) URL", cfg.PublicEndpoint)
 	}
 	creds := credentials.NewStaticCredentialsProvider(cfg.AccessKeyID, cfg.SecretAccessKey, "")
 	client := s3.New(s3.Options{

@@ -20,7 +20,7 @@ import (
 	"github.com/open-rails/contentkit/media/versions"
 )
 
-// GetKinds is GET /v1/kinds (open). The site's content model: languages, tiers, content kinds, entity kinds, whether signals are recorded now and people's avatar preset. Cacheable for a minute.
+// GetKinds is GET /v1/kinds (open). The site's content model: languages, tiers, content kinds, entity kinds, whether signals are recorded now and people's avatar preset.
 func (c *Client) GetKinds(ctx context.Context) (ContentModel, error) {
 	var out ContentModel
 	err := c.call(ctx, http.MethodGet, "/v1/kinds", nil, nil, &out)
@@ -1062,6 +1062,13 @@ func (c *Client) PostAccountAnonymize(ctx context.Context, id string) error {
 	return c.call(ctx, http.MethodPost, expand("/v1/accounts/{id}/anonymize", "{id}", url.PathEscape(id)), nil, nil, nil)
 }
 
+// GetAccountErasure is GET /v1/accounts/{id}/erasure (staff). Reads an account's lifecycle in this app: its state, when its erasure was requested and when it completed.
+func (c *Client) GetAccountErasure(ctx context.Context, id string) (content.AccountErasure, error) {
+	var out content.AccountErasure
+	err := c.call(ctx, http.MethodGet, expand("/v1/accounts/{id}/erasure", "{id}", url.PathEscape(id)), nil, nil, &out)
+	return out, err
+}
+
 // GetEventsQuery is the query of GetEvents.
 type GetEventsQuery struct {
 	// opaque continuation from the previous page
@@ -1117,7 +1124,7 @@ func (q GetCatalogTotalsQuery) values() url.Values {
 	return v
 }
 
-// GetCatalogTotals is GET /v1/catalog/totals (open). Each kind's content, in all and per language: how many items an anonymous visitor's listing shows and opens, and how many each tier's holders open. The request's site scope applies. Cacheable for ten minutes.
+// GetCatalogTotals is GET /v1/catalog/totals (open). Each kind's content, in all and per language: how many items an anonymous visitor's listing shows and opens, and how many each tier's holders open. The request's site scope applies.
 func (c *Client) GetCatalogTotals(ctx context.Context, q GetCatalogTotalsQuery) (catalog.Totals, error) {
 	var out catalog.Totals
 	err := c.call(ctx, http.MethodGet, "/v1/catalog/totals", q.values(), nil, &out)
@@ -3779,7 +3786,7 @@ func (q GetManageSearchSuggestionsQuery) values() url.Values {
 	return v
 }
 
-// GetManageSearchSuggestions is GET /v1/manage/search-suggestions (public). Private quick navigation to authorized content/entity editors. Requires a signed-in person or application. Current own titles, names and aliases match literal substrings with prefix bias; includes drafts, held edits and internal entities within management authority. No associated metadata/body matching or public-search fallback. Sections require explicit include flags; forbidden sections are omitted when another section is authorized. Returns lean name targets, with no content body or cover reads.
+// GetManageSearchSuggestions is GET /v1/manage/search-suggestions (editor). Private quick navigation to authorized content/entity editors. Requires a signed-in person or application. Current own titles, names and aliases match literal substrings with prefix bias; includes drafts, held edits and internal entities within management authority. No associated metadata/body matching or public-search fallback. Sections require explicit include flags; forbidden sections are omitted when another section is authorized. Returns lean name targets, with no content body or cover reads.
 func (c *Client) GetManageSearchSuggestions(ctx context.Context, q GetManageSearchSuggestionsQuery) (discovery.Typeahead, error) {
 	var out discovery.Typeahead
 	err := c.call(ctx, http.MethodGet, "/v1/manage/search-suggestions", q.values(), nil, &out)
