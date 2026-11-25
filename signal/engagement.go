@@ -43,7 +43,10 @@ type PageEngagement struct {
 	ActiveMS uint32          `json:"active_ms"`
 }
 
-// WatchedRange is a played timeline interval. Seeking is not watching.
+// WatchedRange is a played timeline interval. Seeking is not watching. A
+// range may end up to two seconds past the version's duration_ms (the probed
+// source), since the encoded rendition a player measures can run that much
+// longer; that overrun is the timeline's end.
 type WatchedRange struct {
 	FromMS uint32 `json:"from_ms"`
 	ToMS   uint32 `json:"to_ms"`
