@@ -1,6 +1,7 @@
 import { ContentKitError, aborted, throwIfAborted, toContentKitError } from "../errors.js";
 import type { FileInfo, Op, RefBody } from "../generated/wire.js";
 import { fill } from "../public.js";
+import { uuidv4, uuidv7 } from "../uuid.js";
 import { samePath, stem, type MediaClient, type Progress, type UploadedFile, type UploadState } from "./client.js";
 
 export type ItemStatus = "queued" | "uploading" | "uploaded" | "failed" | "committed";
@@ -96,7 +97,7 @@ export class ItemUploadQueue {
   ): QueueItem[] {
     const added = [...files].map(
       (file): QueueItem => ({
-        id: crypto.randomUUID(),
+        id: uuidv4(),
         file,
         path: opts.path?.(file) ?? fill(this.o.path, { name: file.name }),
         ...(opts.byName?.(file) ? { byName: true } : {}),
@@ -244,7 +245,7 @@ export class ItemUploadQueue {
     for (const path of strays) ops.push({ op: "attach", path, index: END });
     const sources = Object.fromEntries(ready.map((i) => [i.result!.blob, { file: i.file, type: i.result!.type }]));
     const input = JSON.stringify(ops);
-    if (this.batch?.input !== input) this.batch = { input, operationID: crypto.randomUUID() };
+    if (this.batch?.input !== input) this.batch = { input, operationID: uuidv7() };
     const batch = this.batch;
     const files = await this.client.commit(this.o.ref, ops, {
       signal,

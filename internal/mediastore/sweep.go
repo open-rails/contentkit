@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/uuidv7"
 	media "github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/layout"
 	"golang.org/x/sync/errgroup"
@@ -406,7 +407,7 @@ func (j *Jobs) SweepOrphans(ctx context.Context, s OrphanSweep) (OrphanReport, e
 					if err == nil {
 						incarnation = m.Incarnation
 					}
-					if err := j.deleteItem(ctx, item, "", uuid.New(), incarnation, cutoff, false); errors.Is(err, errOrphanChanged) {
+					if err := j.deleteItem(ctx, item, "", uuidv7.New(), incarnation, cutoff, false); errors.Is(err, errOrphanChanged) {
 						continue
 					} else if err != nil {
 						return rep, err

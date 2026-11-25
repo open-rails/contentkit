@@ -8,9 +8,9 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	mediastore "github.com/open-rails/contentkit/internal/mediastore"
+	"github.com/open-rails/contentkit/internal/uuidv7"
 	"github.com/open-rails/contentkit/media"
 	versions "github.com/open-rails/contentkit/media/versions"
 	"github.com/riverqueue/river"
@@ -214,7 +214,7 @@ func (s *Service) scheduleReleaseAtTx(ctx context.Context, tx pgx.Tx, target ver
 				return err
 			}
 		}
-		id = uuid.NewString()
+		id = uuidv7.NewString()
 		err = tx.QueryRow(ctx, `INSERT INTO `+s.releaseRequestsTable()+` (tenant_id,id,content_id,version_id,scheduled_at)
  VALUES($1,$2,$3,$4,$5) ON CONFLICT(tenant_id,version_id) WHERE current DO NOTHING RETURNING id::text`,
 			s.o.Tenant, id, target.Content, target.Version, at).Scan(&id)

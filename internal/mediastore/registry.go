@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/endpoint"
+	"github.com/open-rails/contentkit/internal/uuidv7"
 	media "github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/layout"
 )
@@ -210,6 +212,13 @@ func (i Item) Kind() *RegisteredKind { return i.kind }
 // Prefix is the physical owner folder. Versioned kinds use the version ID;
 // the parent content ID remains only in Ref and the catalog.
 func (i Item) Prefix() string { return i.prefix }
+
+// at dates an id derived from this folder (uuidv7.Name): the first UUIDv7
+// among ids, else the folder's own id, its version's or its content's. An
+// account's id need not be a UUIDv7; then it is the Unix epoch.
+func (i Item) at(ids ...string) time.Time {
+	return uuidv7.At(append(ids, i.ref.Version(), i.ref.ContentID)...)
+}
 
 func (i Item) ManifestKey() string { return i.prefix + layout.ManifestName }
 

@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/uuidv7"
 	media "github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/layout"
 )
@@ -113,7 +114,7 @@ func (j *PGJournal) retireItemTx(ctx context.Context, tx pgx.Tx, item Item, owne
 	if err != nil {
 		return err
 	}
-	operation := uuid.NewSHA1(uuid.NameSpaceURL, []byte("folder-retirement:"+item.Prefix()+incarnation))
+	operation := uuidv7.Name(item.at(incarnation), uuid.NameSpaceURL, "folder-retirement:"+item.Prefix()+incarnation)
 	fingerprint := sha256.Sum256(effects)
 	jr := j.forTenant(item.Ref().TenantID)
 	if err := jr.lockAdmission(ctx, tx, item.Prefix()); err != nil {
@@ -122,7 +123,7 @@ func (j *PGJournal) retireItemTx(ctx context.Context, tx pgx.Tx, item Item, owne
 	inserted, err := tx.Exec(ctx, `INSERT INTO `+jr.table+`
 (tenant_id,operation_id,content_kind,content_id,content_version_id,folder_prefix,actor_id,fingerprint,lease_id,state,effects)
 VALUES($1,$2,$3,$4,$5,$6,'',$7,$8,'applied',$9) ON CONFLICT(tenant_id,operation_id) DO NOTHING`,
-		item.Ref().TenantID, operation, item.Ref().ContentKind, item.Ref().ContentID, item.Ref().ContentVersionID, item.Prefix(), fingerprint[:], uuid.New(), effects)
+		item.Ref().TenantID, operation, item.Ref().ContentKind, item.Ref().ContentID, item.Ref().ContentVersionID, item.Prefix(), fingerprint[:], uuidv7.New(), effects)
 	if err != nil {
 		return err
 	}
@@ -187,7 +188,7 @@ func (j *Jobs) Purge(ctx context.Context, d media.Deletion) error {
 	if d.OperationID == "" {
 		return errors.New("media: purge needs an operation id")
 	}
-	operation := uuid.NewSHA1(uuid.NameSpaceURL, []byte("purge:"+item.Prefix()+d.OperationID))
+	operation := uuidv7.Name(item.at(d.OperationID), uuid.NameSpaceURL, "purge:"+item.Prefix()+d.OperationID)
 	if err := j.deleteItem(ctx, item, d.Owner, operation, "", time.Time{}, false); err != nil {
 		return err
 	}

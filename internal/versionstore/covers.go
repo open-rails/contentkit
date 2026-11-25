@@ -6,8 +6,8 @@ import (
 	"path"
 	"strings"
 
-	"github.com/google/uuid"
 	mediastore "github.com/open-rails/contentkit/internal/mediastore"
+	"github.com/open-rails/contentkit/internal/uuidv7"
 	"github.com/open-rails/contentkit/media"
 	versions "github.com/open-rails/contentkit/media/versions"
 )
@@ -60,7 +60,7 @@ func (s *Service) applyCover(ctx context.Context, k *mediastore.RegisteredKind, 
 		ops = []media.Op{{Op: media.OpCopy, From: &media.CopyFrom{ID: t.Content, Version: t.Version, Path: page.Path}, To: coverTo(k, cover.From, auto),
 			Meta: map[string]any{media.MetaAutoCover: true}}}
 	}
-	_, err = s.m.Uploads.Commit(ctx, system, ref, uuid.NewString(), ops)
+	_, err = s.m.Uploads.Commit(ctx, system, ref, uuidv7.NewString(), ops)
 	if ue, ok := mediastore.AsUploadError(err); ok && ue.Code != media.CodeUnavailable {
 		// A page the cover upload cannot take (its type, its size, a dropped
 		// original) leaves the version on its kind's default cover.

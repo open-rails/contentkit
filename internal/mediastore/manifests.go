@@ -19,6 +19,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/uuidv7"
 	media "github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/layout"
 )
@@ -206,7 +207,7 @@ func (m *Manifests) EditCharged(ctx context.Context, ref contentref.ContentRef, 
 	if charge == nil || !charge.Accounting || charge.Owner == "" {
 		return m.EditExisting(ctx, ref, fn)
 	}
-	mutation := &manifestMutation{commit: manifestCommit{ID: uuid.New(), Fingerprint: sha256.Sum256([]byte("charged-manifest-edit"))}, quota: charge.Quota}
+	mutation := &manifestMutation{commit: manifestCommit{ID: uuidv7.New(), Fingerprint: sha256.Sum256([]byte("charged-manifest-edit"))}, quota: charge.Quota}
 	return m.editOperation(ctx, ref, true, bound{}, mutation, func(cur *Manifest) error {
 		before := cur.uploadBytes()
 		if err := fn(cur); err != nil {
@@ -417,7 +418,7 @@ func (m *Manifests) cleanupLocked(ctx context.Context, item Item, publicOnly boo
 	if _, _, err := m.recoverLocked(ctx, item); err != nil {
 		return err
 	}
-	c, err := m.journal.begin(ctx, manifestCommit{ID: uuid.New(), Ref: item.Ref(), Folder: item.Prefix(),
+	c, err := m.journal.begin(ctx, manifestCommit{ID: uuidv7.New(), Ref: item.Ref(), Folder: item.Prefix(),
 		Fingerprint: sha256.Sum256([]byte("internal-media-cleanup")), Effects: journalEffects{Cleanup: true}})
 	if err != nil {
 		return err
@@ -625,7 +626,7 @@ func (m *Manifests) editOperation(ctx context.Context, ref contentref.ContentRef
 		return nil, err
 	}
 	if mutation == nil {
-		mutation = &manifestMutation{commit: manifestCommit{ID: uuid.New(),
+		mutation = &manifestMutation{commit: manifestCommit{ID: uuidv7.New(),
 			Fingerprint: sha256.Sum256([]byte("internal-manifest-edit"))}}
 	}
 	mutation.commit.Ref, mutation.commit.Folder = ref, item.Prefix()
@@ -658,12 +659,12 @@ func (m *Manifests) try(ctx context.Context, item Item, existing bool, b bound, 
 	case errors.Is(err, ErrNotFound) && existing:
 		return nil, false, err
 	case errors.Is(err, ErrNotFound):
-		cur, etag = &Manifest{V: media.ManifestVersion, Incarnation: uuid.NewString(), Files: []media.File{}}, ""
+		cur, etag = &Manifest{V: media.ManifestVersion, Incarnation: uuidv7.NewString(), Files: []media.File{}}, ""
 		if item.Kind().Versions {
 			cur.PublicationLayout = media.PublicationLayoutVersion
 		}
 	case errors.Is(err, ErrManifestUnreadable) && mutation.lifecycle:
-		cur = &Manifest{V: media.ManifestVersion, Incarnation: uuid.NewString(), Files: []media.File{}}
+		cur = &Manifest{V: media.ManifestVersion, Incarnation: uuidv7.NewString(), Files: []media.File{}}
 	case err != nil:
 		return nil, false, err
 	}
@@ -743,7 +744,7 @@ func (m *Manifests) try(ctx context.Context, item Item, existing bool, b bound, 
 	if mutation.effects.Process != nil && next.Full && !publicPending(item.Kind(), next) {
 		mutation.effects.Process = nil
 	}
-	mutation.commit.Attempt = uuid.New()
+	mutation.commit.Attempt = uuidv7.New()
 	next.Receipt = mutation.commit.receipt()
 	body, err := encodeManifest(next)
 	if err == nil {

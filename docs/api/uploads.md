@@ -15,7 +15,7 @@ credential and deployment select the app; callers cannot choose another tenant.
 2. Send the bytes to the signed storage URL. Use the returned multipart
    instructions for a large file. Send no ContentKit API credentials to storage.
 3. `POST /v1/media/upload/commit` supplies the same owner reference, a caller-saved
-   operation ID and the exact staged-file operations. The commit durably accepts
+   operation ID (a UUIDv7; a UUIDv4 is accepted) and the exact staged-file operations. The commit durably accepts
    the upload and makes its processing job ready to run immediately.
 
 The commit returns promptly; extraction and rendition generation are background

@@ -1,4 +1,5 @@
 import type { ActivityContext, CoverageRange, EngagementSnapshot, PageEngagement, WatchedRange } from "./generated/wire.js";
+import { uuidv4 } from "./uuid.js";
 
 export interface VisiblePage {
   /** Zero-based index in the version's reading order. */
@@ -31,7 +32,6 @@ export interface EngagementTrackerOptions {
 const MAX_SEGMENT = 120_000;
 const MAX_PENDING = 100;
 const clock = () => typeof performance === "undefined" ? Date.now() : performance.now();
-const randomId = () => crypto.randomUUID();
 const durationOption = (value: number | undefined, fallback: number, max = Infinity) =>
   value !== undefined && Number.isFinite(value) ? Math.max(1000, Math.min(max, Math.floor(value))) : fallback;
 
@@ -84,7 +84,7 @@ export class EngagementTracker {
 
   constructor(private readonly options: EngagementTrackerOptions) {
     this.now = options.now ?? clock;
-    this.id = options.id ?? randomId;
+    this.id = options.id ?? uuidv4;
     this.visitId = options.visitId ?? this.id();
     this.idleAfter = durationOption(options.idleAfter, 60_000);
     this.interval = durationOption(options.checkpointInterval, MAX_SEGMENT, MAX_SEGMENT);

@@ -9,7 +9,7 @@ import (
 	"slices"
 	"time"
 
-	"github.com/google/uuid"
+	"github.com/open-rails/contentkit/internal/uuidv7"
 	media "github.com/open-rails/contentkit/media"
 )
 
@@ -53,7 +53,7 @@ type EditorReadStore interface {
 // missing capability.
 func Probe(ctx context.Context, s media.Store, prefix string) (media.Capabilities, error) {
 	var c media.Capabilities
-	key := prefix + "probe-" + uuid.NewString()
+	key := prefix + "probe-" + uuidv7.NewString()
 	defer func() {
 		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
 		defer cancel()

@@ -6,6 +6,7 @@ import { parseAttributes } from "../../client/entity-fields.js";
 import { toContentKitError } from "../../client/errors.js";
 import type { Content, ContentModel, FileInfo, EntityCard, Membership, NewEntity, RefBody, Version, VersionText } from "../../client/generated/wire.js";
 import { stem } from "../../client/media/client.js";
+import { uuidv4 } from "../../client/uuid.js";
 import { allowsEntityScope } from "../../client/entity-scopes.js";
 import { ruleFor, uploadRules } from "../../client/media/rules.js";
 import { isProcessing, pageRemoved } from "../../client/media/windows.js";
@@ -486,7 +487,7 @@ function ReaderContentWorkspace(p: ContentEditorProps & { model: ContentModel })
   const setThumbnail = async (file: FileInfo) => {
     if (!ref || !item || !version) return;
     const ext = /\.[^./]+$/.exec(file.path)?.[0] ?? "";
-    const path = await client.media.presetPath(p.kind, "cover", new File([], `i-${crypto.randomUUID()}${ext}`, { type: file.type }));
+    const path = await client.media.presetPath(p.kind, "cover", new File([], `i-${uuidv4()}${ext}`, { type: file.type }));
     await client.media.commit(ref, [{ op: "copy", from: { id: item.id, version: version.id, path: file.path }, to: path }]);
     if (!current()) return;
     await client.contents.setCover(item.id, version.id, stem(path).split("/").at(-1)!);

@@ -13,6 +13,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/uuidv7"
 	media "github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/layout"
 )
@@ -323,7 +324,7 @@ func (m *Manifests) Promote(ctx context.Context, ref contentref.ContentRef, oper
 	if err != nil {
 		return nil, ErrCommitIdentity
 	}
-	adoption := uuid.NewSHA1(id, []byte("adopt-delivery"))
+	adoption := uuidv7.Child(id, "adopt-delivery")
 	mutation := &manifestMutation{commit: manifestCommit{ID: adoption, Fingerprint: sha256.Sum256([]byte(prepared.Fingerprint))}}
 	_, err = m.editOperation(ctx, ref, true, bound{}, mutation, func(current *Manifest) error {
 		d := current.delivery(operation)
@@ -427,7 +428,7 @@ func (m *Manifests) WithdrawPromotion(ctx context.Context, ref contentref.Conten
 	if err != nil {
 		return err
 	}
-	retirement := uuid.NewSHA1(id, []byte("withdraw-delivery-pins"))
+	retirement := uuidv7.Child(id, "withdraw-delivery-pins")
 	mutation := &manifestMutation{commit: manifestCommit{ID: retirement, Fingerprint: sha256.Sum256([]byte(operation))}, effects: journalEffects{Withdrawal: true}}
 	ctx = context.WithValue(ctx, synchronousMutationOwnerKey{}, true)
 	_, err = m.editOperation(ctx, ref, true, bound{}, mutation, func(current *Manifest) error {
@@ -454,7 +455,7 @@ func (m *Manifests) WithdrawPromotion(ctx context.Context, ref contentref.Conten
 }
 
 func (m *Manifests) deliveryWithdrawn(ctx context.Context, item Item, operation uuid.UUID) (bool, error) {
-	withdrawal := uuid.NewSHA1(operation, []byte("withdraw-delivery-pins"))
+	withdrawal := uuidv7.Child(operation, "withdraw-delivery-pins")
 	record, err := m.journal.existing(ctx, manifestCommit{ID: withdrawal, Ref: item.Ref(), Folder: item.Prefix(), Fingerprint: sha256.Sum256([]byte(operation.String()))})
 	return record != nil && record.State != "absent", err
 }

@@ -57,6 +57,12 @@ The table is copied, not altered, so writers keep writing during the copy:
 
 At 15.1M rows (2.7 GB of heap, 9.7 GB of indexes) expect about 30–60 s for the check, 1–3 minutes for the copy, 2–5 minutes for the indexes at the default `maintenance_work_mem` and under a second for the swap: 4–9 minutes and 6–8 GB of WAL. The table ends at about 6 GB (2 GB heap, 4 GB indexes). The previous release cannot read it, so roll the hosts forward with the migration.
 
+## Time-ordered ids
+
+ContentKit mints its row, operation and object ids as UUIDv7s, so new rows append to their indexes. Catalog migration `0075` and media-worker migration `0005` change the remaining `gen_random_uuid()` column defaults to `uuidv7()`; existing rows keep their ids. Media lifecycle ids (erasure, purge, folder retirement, delivery adoption and withdrawal, archive ingestion) are deterministic UUIDv7s instead of name-based UUIDv5s, so one retried across the upgrade derives a new id and runs again under it.
+
+The media journal keys a commit by a hash of its `operation_id`, never the id as sent, so no caller can claim an id a lifecycle operation derives. Send a UUIDv7 (`contentref.NewID`, Postgres `uuidv7()`) to keep that index ordered; a UUIDv4 is still accepted.
+
 ## Channels
 
 Channels are configured under `channels`. A content kind declares

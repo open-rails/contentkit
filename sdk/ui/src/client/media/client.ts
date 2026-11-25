@@ -8,6 +8,7 @@ import { sha256Hex } from "./hash.js";
 import { Pacer } from "./pacer.js";
 import { itemRef } from "./ref.js";
 import { defaultTransport, type Transport } from "./transport.js";
+import { uuidv4, uuidv7 } from "../uuid.js";
 
 /** Upload tuning for the media module. */
 export interface MediaOptions {
@@ -250,7 +251,7 @@ export class MediaClient {
     const up = await this.upload(file, o);
     o.onUploaded?.(up);
     const op: Op = { op: "put", path: up.path, source_name: up.sourceName, blob: up.blob };
-    if (o.createOnly) op.create_id = crypto.randomUUID();
+    if (o.createOnly) op.create_id = uuidv4();
     else op.replace = true;
     if (o.edit) op.edit = o.edit;
     if (o.meta) op.meta = o.meta;
@@ -272,7 +273,7 @@ export class MediaClient {
     const emit = this.http.captureChanges();
     // Snapshot the batch once: retries must not pick up edits to the caller's
     // ops while the first request or its response is still in flight.
-    const body: CommitBody = structuredClone({ ref, ops, operation_id: o.operationID ?? crypto.randomUUID() });
+    const body: CommitBody = structuredClone({ ref, ops, operation_id: o.operationID ?? uuidv7() });
     o.onState?.(structuredClone(body));
     let files: FileInfo[];
     try {
@@ -294,7 +295,7 @@ export class MediaClient {
       const retried = body.ops.map((op) => (op.blob && renamed.has(op.blob) ? { ...op, blob: renamed.get(op.blob) } : op));
       // Re-uploading changes the inputs. This is a new batch, not a retry
       // under the old ID; transport retries retain its new identity.
-      const replacement = { ref: body.ref, ops: retried, operation_id: crypto.randomUUID() };
+      const replacement = { ref: body.ref, ops: retried, operation_id: uuidv7() };
       o.onState?.(structuredClone(replacement));
       files = (await this.retry(() => this.api.commit(replacement, o.signal), o.signal)).files;
     }

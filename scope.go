@@ -8,6 +8,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
+	"github.com/open-rails/contentkit/internal/uuidv7"
 	"github.com/open-rails/contentkit/media/layout"
 )
 
@@ -20,8 +21,8 @@ type AppID uuid.UUID
 
 // NewTenantID and NewAppID generate IDs for provisioning. Generate once and
 // persist them; runtime startup must not generate new ownership identities.
-func NewTenantID() TenantID { return TenantID(uuid.New()) }
-func NewAppID() AppID       { return AppID(uuid.New()) }
+func NewTenantID() TenantID { return TenantID(uuidv7.New()) }
+func NewAppID() AppID       { return AppID(uuidv7.New()) }
 
 func (id TenantID) String() string { return uuid.UUID(id).String() }
 func (id AppID) String() string    { return uuid.UUID(id).String() }
