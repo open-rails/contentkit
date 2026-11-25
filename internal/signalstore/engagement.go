@@ -52,21 +52,39 @@ func MeasurePages(pages []signal.PageEngagement, total, activeMS uint32) (signal
 	return m, nil
 }
 
+// playbackOverrunMS is how far past a version's duration a watched range may
+// end. The duration is the probed source video; players measure the encoded
+// rendition, whose timeline can run a little longer (encoder padding, AAC
+// priming, audio that outlasts the video).
+const playbackOverrunMS = 2_000
+
 // MeasurePlayback normalizes only actually played ranges, not the furthest
-// position reached. Timeline units have one-second precision.
+// position reached. Timeline units have one-second precision. A position up
+// to playbackOverrunMS past the duration is its end: ranges are clamped to
+// the duration, so the overrun adds no coverage.
 func MeasurePlayback(watched []signal.WatchedRange, durationMS, activeMS uint32) (signal.Measurement, error) {
 	m := signal.Measurement{ActiveMS: activeMS, Total: (durationMS + 999) / 1000, Scale: 1, Watched: watched, Units: []uint32{}, Attention: [][2]uint64{}}
 	if durationMS == 0 || durationMS > 86_400_000 || activeMS == 0 || activeMS > signal.MaxEngagementMS || len(watched) == 0 || len(watched) > signal.MaxWatchedRanges {
 		return m, fmt.Errorf("signal: invalid playback measurement size or attention")
 	}
 	var until uint32
-	var played uint64
-	perSecond := map[uint32]uint64{}
+	clamped := make([]signal.WatchedRange, 0, len(watched))
 	for i, r := range watched {
-		if r.FromMS >= r.ToMS || r.ToMS > durationMS || i > 0 && r.FromMS <= until {
+		if r.FromMS >= r.ToMS || r.ToMS > durationMS+playbackOverrunMS || i > 0 && r.FromMS <= until {
 			return m, fmt.Errorf("signal: watched ranges must be bounded, merged and ordered")
 		}
 		until = r.ToMS
+		r.FromMS, r.ToMS = min(r.FromMS, durationMS-1), min(r.ToMS, durationMS)
+		if n := len(clamped); n > 0 && r.FromMS <= clamped[n-1].ToMS {
+			clamped[n-1].ToMS = max(clamped[n-1].ToMS, r.ToMS)
+			continue
+		}
+		clamped = append(clamped, r)
+	}
+	m.Watched = clamped
+	var played uint64
+	perSecond := map[uint32]uint64{}
+	for _, r := range clamped {
 		played += uint64(r.ToMS - r.FromMS)
 		for n := r.FromMS / 1000; n < (r.ToMS+999)/1000; n++ {
 			m.Units = append(m.Units, n)
