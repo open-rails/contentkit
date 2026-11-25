@@ -168,6 +168,9 @@ func New(ctx context.Context, cfg Config, d Deps) (_ *Server, err error) {
 	if ak.Database.Schema == "" {
 		ak.Database.Schema = "contentkit_auth"
 	}
+	if ak.Database.RiverSchema == "" {
+		ak.Database.RiverSchema = ak.Database.Schema + "_river"
+	}
 	if err := validateAuthorizationConfig(cfg, ak); err != nil {
 		return nil, err
 	}
@@ -289,13 +292,13 @@ func (b *boundedBody) Read(p []byte) (int, error) {
 
 // distinctSchemas refuses an AuthKit schema that is one of the engine's: they
 // would share tables or a River leader. AuthKit may keep its tables and its
-// River in one schema, its default; that is AuthKit's to allow.
+// River in one schema; that is AuthKit's to allow.
 func distinctSchemas(engine contentkit.Config, auth authkit.DatabaseConfig) error {
 	s, err := engine.Schemas()
 	if err != nil {
 		return err
 	}
-	for _, a := range []struct{ name, schema string }{{"auth.database.schema", auth.Schema}, {"auth.database.river_schema", cmp.Or(auth.RiverSchema, auth.Schema)}} {
+	for _, a := range []struct{ name, schema string }{{"auth.database.schema", auth.Schema}, {"auth.database.river_schema", auth.RiverSchema}} {
 		for _, e := range []struct{ name, schema string }{{"engine.database.schema", s.Catalog}, {"engine.database.river_schema", s.River},
 			{"engine.accounts.schema", s.Accounts}, {"engine.media.worker_schema", s.MediaWorker}, {"the account media queue", s.AccountWorker}} {
 			if e.schema == a.schema {

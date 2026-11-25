@@ -169,6 +169,7 @@ jobs:
         server_mod=$(bash .github/scripts/server-modfile.sh)
         cp "$server_mod" server/go.mod
         cp "${server_mod%.mod}.sum" server/go.sum
+        (cd server && go mod tidy)
         status=0
         for module in . adapters/authkit adapters/openrails sdk/ui/e2e/server server tests/critical; do
           echo "::group::govulncheck $module"
