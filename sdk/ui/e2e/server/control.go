@@ -46,9 +46,9 @@ func (h *harness) routes(static string) http.Handler {
 	if err := h.auth.Mount(mux); err != nil {
 		panic(err)
 	}
-	mux.Handle(apiPrefix+"/", h.faults.api(mount(h.ck, apiPrefix, h.ck.RouteGroups())))
-	mux.Handle(membersPrefix+"/", h.faults.api(mount(h.members, membersPrefix, h.members.RouteGroups())))
-	mux.Handle(onUploadPrefix+"/", h.faults.api(mount(h.onUpload, onUploadPrefix, contentkit.UploadRoutes)))
+	mux.Handle(apiPrefix+"/", h.withProofs(h.faults.api(mount(h.ck, apiPrefix, h.ck.RouteGroups()))))
+	mux.Handle(membersPrefix+"/", h.withProofs(h.faults.api(mount(h.members, membersPrefix, h.members.RouteGroups()))))
+	mux.Handle(onUploadPrefix+"/", h.withProofs(h.faults.api(mount(h.onUpload, onUploadPrefix, contentkit.UploadRoutes))))
 	// The bucket, for presigned uploads and the media worker (its S3 endpoint).
 	bucket := h.faults.bucket(h.s3Endpoint)
 	mux.Handle("/"+h.bucket, bucket)
@@ -117,7 +117,7 @@ func decode(r *http.Request, v any) error {
 func (h *harness) config(w http.ResponseWriter, _ *http.Request) {
 	reply(w, http.StatusOK, map[string]any{
 		"origin": h.origin, "media": h.media, "namespace": mediaScope.Partition(), "bucket": h.bucket,
-		"api": apiPrefix, "on_upload_api": onUploadPrefix, "members_api": membersPrefix, "auth_api": authAPIPath + "/v1",
+		"api": apiPrefix, "on_upload_api": onUploadPrefix, "members_api": membersPrefix, "auth_api": authAPIPath,
 	})
 }
 

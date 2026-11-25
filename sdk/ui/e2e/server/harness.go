@@ -125,7 +125,7 @@ func newHarness(ctx context.Context, c config, mediaOrigin string) (_ *harness, 
 	if h.auth, h.outbox, err = newAuth(ctx, c.origin, h.pool); err != nil {
 		return nil, fmt.Errorf("authkit: %w", err)
 	}
-	if err := riverkit.ApplyMigrations(ctx, h.pool, riverSchema); err != nil {
+	if err := riverkit.ApplyMigrations(ctx, h.pool, riverkit.MigrationOptions{Schema: riverSchema}); err != nil {
 		return nil, err
 	}
 	if h.store, err = openBucket(ctx, c); err != nil {

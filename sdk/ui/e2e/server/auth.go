@@ -6,8 +6,9 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"fmt"
+	"net/http"
+	"strings"
 	"testing"
-	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/open-rails/authkit"
@@ -19,8 +20,8 @@ import (
 	ckauth "github.com/open-rails/contentkit/adapters/authkit"
 )
 
-// AuthKit's JSON API is served at {authAPIPath}/v1.
-const authAPIPath = "/api/auth"
+// AuthKit's issuer is the app origin, so its JSON API is at /auth/v1.
+const authAPIPath = "/auth/v1"
 
 const accountTenantID = "00000000-0000-4000-8000-000000000201"
 
@@ -50,11 +51,6 @@ var (
 )
 
 func newAuth(ctx context.Context, origin string, pool *pgxpool.Pool) (*authkit.Client, *authtest.Outbox, error) {
-	return newAuthInDatabase(ctx, origin, pool, authkit.DatabaseConfig{Schema: authSchema, RiverSchema: authRiver})
-}
-
-// The runtime and its isolated-schema smoke test share the same native setup.
-func newAuthInDatabase(ctx context.Context, origin string, pool *pgxpool.Pool, database authkit.DatabaseConfig) (*authkit.Client, *authtest.Outbox, error) {
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		return nil, nil, err
@@ -67,27 +63,26 @@ func newAuthInDatabase(ctx context.Context, origin string, pool *pgxpool.Pool, d
 	if _, err := rand.Read(totp); err != nil {
 		return nil, nil, err
 	}
-	limits := authkit.DefaultRateLimits()
-	for bucket := range limits {
-		limits[bucket] = authkit.RateLimit{Limit: 100000, Window: time.Minute}
-	}
 	outbox := &authtest.Outbox{}
 	tenantID, err := iam.ParseTenantID(accountTenantID)
 	if err != nil {
 		return nil, nil, err
 	}
-	auth, err := authkit.New(ctx, authkit.Config{
+	cfg := authkit.Config{
+		Issuer: origin,
+		// The account tenant is a fixed ID the media gateway's routes and the
+		// media registry name, which a single-tenant AuthKit would mint itself.
+		Tenancy:         authkit.TenancyMulti,
 		DefaultTenantID: tenantID,
-		HTTP:            &authkit.HTTPConfig{DirectPeerIP: true, APIPath: authAPIPath, RefreshCookie: true, RateLimits: limits},
-		Database:        database,
+		HTTP:            &authkit.HTTPConfig{DirectPeerIP: true},
+		Database:        authkit.DatabaseConfig{Schema: authSchema, RiverSchema: authRiver},
 		Roles:           rbac,
-		// Shared test accounts sign in from many pages at once: no session cap.
-		Token:     authkit.TokenConfig{Issuer: origin, IssuedAudiences: []string{"contentkit-e2e"}, SessionMaxPerUser: -1},
-		SignIn:    authkit.SignInConfig{AccountsPerDevice: -1, AccountsPerAddress: -1, NewDevicesPerAccount: -1},
-		TwoFactor: authkit.TwoFactorConfig{TOTPSecretKey: totp},
-	}, authkit.Deps{
+	}
+	// Shared test accounts sign in from many pages at once: no limits, no session cap.
+	authtest.LiftLimits(&cfg)
+	auth, err := authkit.New(ctx, cfg, authkit.Deps{
 		Postgres:  pool,
-		KeySource: keys.Static{Active: signer, Public: map[string]crypto.PublicKey{signer.KID(): signer.Public()}},
+		KeySource: keys.Static{Active: signer, Public: map[string]crypto.PublicKey{signer.KID(): signer.Public()}, TOTP: totp},
 		Email:     outbox.Email(),
 		SMS:       outbox.SMS(),
 	})
@@ -102,6 +97,20 @@ func newAuthInDatabase(ctx context.Context, origin string, pool *pgxpool.Pool, d
 		return nil, nil, err
 	}
 	return auth, outbox, nil
+}
+
+// withProofs presents a test user's token sent as Bearer (by the Node seeds
+// and the bench) as DPoP with a fresh proof: AuthKit binds every sign-in
+// session to a key, and only this process holds the keys of the sessions it
+// signed in. Any other credential passes unchanged.
+func (h *harness) withProofs(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if scheme, token, ok := strings.Cut(r.Header.Get("Authorization"), " "); ok && strings.EqualFold(scheme, "Bearer") && r.Header.Get("DPoP") == "" {
+			r = r.Clone(r.Context())
+			authtest.Authorize(requestTB{}, h.auth, r, token)
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // testUser is a signed-in account the control surface hands a test.
