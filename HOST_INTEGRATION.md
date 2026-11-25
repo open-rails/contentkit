@@ -955,9 +955,11 @@ signal plane (no ClickHouse, or one that is down, which fails the
 exposures, popular sorts use what `content_facets` holds, and signal reads
 and writes answer 501 `not_configured`, or 503 `unavailable` while a
 configured one is down. The engine retries a down ClickHouse in the
-background (migrations, connection, schema) and checks a live one every ten
-seconds; signals come back on without a restart, and contentkit-ui reads the
-model again a minute after it last found them off.
+background (migrations, connection, schema) and pings a live one every 30
+seconds with the driver's protocol ping, not a query; the probe reports what
+that loop last found and sends nothing itself. Signals come back on without a
+restart, and contentkit-ui reads the model again a minute after it last found
+them off.
 
 A signal read serving a request (history, states, similar, recommendations, popular lists, stats, attribution) gets a ten-second deadline when its context has none, which the driver also sends as `max_execution_time`, and a 1 GiB `max_memory_usage`; a job's own deadline stands. Set `Config.ClickHouse.TLS` (`tls`) to connect to `Addr` over TLS, ClickHouse's secure native port, verifying the server against the system roots or `ca_file`; `MigrateClickHouse` and the engine's own migrations use the same TLS. Without it the password crosses in clear, so keep a plain connection on a private network.
 
