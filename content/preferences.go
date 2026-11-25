@@ -29,13 +29,15 @@ type Preference struct {
 	UpdatedAt time.Time
 }
 
-// PreferenceSender durably writes one page of preferences; an error aborts the
-// sync without advancing the watermark. Re-sends must be idempotent.
+// PreferenceSender durably writes one batch of preferences; an error aborts the
+// sync without advancing its cursor past the batch. Re-sends must be
+// idempotent.
 type PreferenceSender func(ctx context.Context, page []Preference) error
 
-// PreferenceSyncReport reports one sync: the revision it scanned after and the
-// rows it sent.
+// PreferenceSyncReport reports one sync run: the cursor it started after, the
+// rows it sent and whether settled rows remain for another run.
 type PreferenceSyncReport struct {
 	From int64
 	Sent int
+	More bool
 }
