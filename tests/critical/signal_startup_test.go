@@ -121,3 +121,44 @@ func TestClickHouseOverTLS(t *testing.T) {
 		}
 	})
 }
+
+// A host supervisor polls contentkit_clickhouse every few seconds; the probe
+// reports the plane's state and sends ClickHouse no query of its own.
+func TestSignalProbeSendsNoQuery(t *testing.T) {
+	w := newWorld(t)
+	a := w.apps[0]
+	configureDiscoverySignals(t, w, a)
+	config := a.cfg.ClickHouse
+	client := "ck-probe-" + w.schema
+	conn, err := clickhouse.Open(&clickhouse.Options{Addr: []string{config.Addr}, Auth: clickhouse.Auth{Database: config.Database, Username: config.Username, Password: config.Password},
+		ClientInfo: clickhouse.ClientInfo{Products: []struct{ Name, Version string }{{Name: client, Version: "1"}}}, DialTimeout: time.Second})
+	must(t, err)
+	defer func() { must(t, conn.Close()) }()
+	t.Run("CK-J01-S16_the_ClickHouse_probe_sends_no_query", func(t *testing.T) {
+		cfg, deps := a.cfg, a.deps
+		cfg.Database.SkipMigrations = true
+		deps.ClickHouse = conn
+		engine, err := ck.New(t.Context(), cfg, deps)
+		must(t, err)
+		defer func() { must(t, engine.Close(context.Background())) }()
+		var check func(context.Context) error
+		for _, probe := range engine.Probes() {
+			if probe.Name == "contentkit_clickhouse" {
+				check = probe.Check
+			}
+		}
+		if check == nil {
+			t.Fatal("configured signal plane was silently disabled")
+		}
+		for range 20 {
+			must(t, check(t.Context()))
+		}
+		must(t, conn.Exec(t.Context(), "SYSTEM FLUSH LOGS"))
+		var probes uint64
+		must(t, conn.QueryRow(t.Context(), `SELECT count() FROM system.query_log WHERE event_date >= yesterday()
+			AND type = 'QueryFinish' AND position(client_name, ?) > 0 AND match(query, '^\\s*SELECT\\s+1\\s*$')`, client).Scan(&probes))
+		if probes != 0 {
+			t.Fatalf("20 probe checks sent ClickHouse %d queries", probes)
+		}
+	})
+}
