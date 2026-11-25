@@ -33,7 +33,7 @@ func TestScheduledPolicyPublishesWithoutStorageAreaChange(t *testing.T) {
 	must(t, err)
 	gold, err := b.merchant.CreateProduct(t.Context(), billing.CreateProductParams{Key: "scheduled-policy-gold", DisplayName: "Gold", Entitlements: []string{"gold"}})
 	must(t, err)
-	_, err = b.merchant.CreateProductAccess(t.Context(), billing.CreateProductAccessBatchParams{Items: []billing.CreateProductAccessParams{{CustomerID: customer, ProductID: gold.ID}}})
+	_, err = b.merchant.CreateProductAccess(t.Context(), uuid.NewString(), []billing.CreateProductAccessParams{{CustomerID: customer, ProductID: gold.ID}})
 	must(t, err)
 	due := w.clock.now().Add(time.Hour)
 	create := func(title string, release access.Release) catalog.Content {

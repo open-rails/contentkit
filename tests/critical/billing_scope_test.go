@@ -98,7 +98,7 @@ func TestCommerceEntitlementBoundaries(t *testing.T) {
 		return a.client(credential), id
 	}
 	grant := func(t *testing.T, customer billing.CustomerID, p billing.Product, hours *int) billing.ProductAccessGrant {
-		rows, err := b.merchant.CreateProductAccess(t.Context(), billing.CreateProductAccessBatchParams{IdempotencyKey: uuid.NewString(), Items: []billing.CreateProductAccessParams{{CustomerID: customer, ProductID: p.ID, Hours: hours}}})
+		rows, err := b.merchant.CreateProductAccess(t.Context(), uuid.NewString(), []billing.CreateProductAccessParams{{CustomerID: customer, ProductID: p.ID, Hours: hours}})
 		must(t, err)
 		if len(rows) != 1 {
 			t.Fatalf("grant returned %d windows", len(rows))

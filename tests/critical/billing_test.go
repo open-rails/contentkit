@@ -23,6 +23,7 @@ import (
 	"github.com/open-rails/openrails"
 	openrailshttp "github.com/open-rails/openrails/adapters/http"
 	"github.com/open-rails/openrails/billing"
+	orcatalog "github.com/open-rails/openrails/catalog"
 	"github.com/open-rails/openrails/openrailstest/stripemock"
 )
 
@@ -49,14 +50,13 @@ func attachBilling(t *testing.T, w *world, a *application, configure ...func(*op
 		_, err := w.pool.Exec(ctx, "DROP SCHEMA IF EXISTS "+pgx.Identifier{schema}.Sanitize()+" CASCADE")
 		must(t, err)
 	})
-	cfg := openrails.Config{Database: openrails.DatabaseConfig{Schema: schema, RiverSchema: schema},
-		ProviderWriteMode: openrails.ProviderWritesFull, CatalogReconciliationInterval: "0", ReturnOrigins: []string{"https://critical.invalid"},
-		Merchants: map[string]openrails.MerchantDeclaration{"reader": {DisplayName: "Reader", Issuer: authtest.Issuer, PSPs: map[string]openrails.PSPConfig{
-			"stripe": openrails.StripePSP{AccountID: "acct_ckcritical", Environment: openrails.EnvironmentTest, SecretKey: "sk_test_critical", WebhookSigningSecret: "whsec_critical", PublishableKey: "pk_test_critical"}.PSPConfig(),
-		}}}}
-	merchant := cfg.Merchants["reader"]
-	merchant.CardVault = "stripe"
-	cfg.Merchants["reader"] = merchant
+	// A declared merchant's provider writes are full unless an operator lowers them.
+	cfg := openrails.Config{Database: billing.DatabaseConfig{Schema: schema, RiverSchema: schema},
+		Merchants: []billing.MerchantDeclaration{{Issuer: authtest.Issuer, MerchantDocument: billing.MerchantDocument{Slug: "reader", DisplayName: "Reader",
+			PSPs: billing.PSPs{
+				"stripe": openrails.StripePSP{AccountID: "acct_ckcritical", Environment: billing.EnvironmentTest, SecretKey: "sk_test_critical", WebhookSigningSecret: "whsec_critical", PublishableKey: "pk_test_critical"}.PSPConfig(),
+			},
+			MerchantSettings: billing.MerchantSettings{CardVault: "stripe"}}}}}
 	var err error
 	deps := openrails.Deps{Postgres: w.pool, Clock: b.clock, FXTransport: fixedFXWire(t), StripeTransport: b.stripe.Transport(), UserInfo: w.tenant[0].UserInfo()}
 	for _, apply := range configure {
@@ -65,7 +65,9 @@ func attachBilling(t *testing.T, w *world, a *application, configure ...func(*op
 	b.engine, err = openrails.New(t.Context(), cfg, deps)
 	must(t, err)
 	t.Cleanup(func() { must(t, b.engine.Close(context.Background())) })
-	b.merchant, err = b.engine.MerchantBySlug("reader")
+	id, err := b.engine.DeclaredMerchant("reader")
+	must(t, err)
+	b.merchant, err = b.engine.Merchant(id)
 	must(t, err)
 	mux := http.NewServeMux()
 	must(t, openrailshttp.Mount(mux, b.engine, openrails.Routes{Prefix: "/billing", Auth: w.auth.Authenticator()}))
@@ -104,8 +106,8 @@ func fixedFXWire(t *testing.T) http.RoundTripper {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		base := strings.TrimSuffix(r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:], ".json")
 		rates := map[string]int{}
-		for _, currency := range billing.Currencies() {
-			rates[strings.ToLower(currency.Code)] = 1
+		for _, currency := range orcatalog.Currencies() {
+			rates[strings.ToLower(string(currency.Code))] = 1
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"date": time.Now().UTC().Format(time.DateOnly), base: rates})
@@ -141,9 +143,9 @@ func TestCommerceControlsContentAccess(t *testing.T) {
 		must(t, err)
 		total, reusable := int64(10_000_000), true
 		paymentMethod := b.stripe.NewPaymentMethod(stripemock.Card{Brand: "visa", Last4: "4242"})
-		body, err := json.Marshal(billing.CreateMyOrderParams{Lines: []billing.OrderLineParams{{PriceID: price.ID}}, ExpectedTotal: &total, Reusable: &reusable, Payment: &billing.OrderPaymentParams{Token: paymentMethod}})
+		body, err := json.Marshal(billing.CreateMyInvoiceParams{Lines: []billing.InvoiceLineParams{{PriceID: price.ID}}, ExpectedTotal: &total, Reusable: &reusable, Payment: &billing.InvoicePaymentParams{Token: paymentMethod}})
 		must(t, err)
-		req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, b.server.URL+"/billing/v1/me/orders", bytes.NewReader(body))
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, b.server.URL+"/billing/v1/me/invoices", bytes.NewReader(body))
 		must(t, err)
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set("Idempotency-Key", "ck-paid-membership")
@@ -156,17 +158,17 @@ func TestCommerceControlsContentAccess(t *testing.T) {
 		if res.StatusCode != 201 {
 			t.Fatalf("real customer purchase returned %d: %s", res.StatusCode, data)
 		}
-		var order billing.Order
-		must(t, json.Unmarshal(data, &order))
-		if order.Status != billing.OrderComplete || len(order.Lines) != 1 || order.Lines[0].SubscriptionID == nil || order.Payment.PaymentID == nil {
-			t.Fatalf("purchase did not settle an actual subscription: %+v", order)
+		var invoice billing.Invoice
+		must(t, json.Unmarshal(data, &invoice))
+		if invoice.Status != billing.InvoiceComplete || len(invoice.Lines) != 1 || invoice.Lines[0].SubscriptionID == nil || invoice.Payment.PaymentID == nil {
+			t.Fatalf("purchase did not settle an actual subscription: %+v", invoice)
 		}
-		payment, err := b.merchant.GetPayment(t.Context(), *order.Payment.PaymentID)
+		payment, err := b.merchant.GetPayment(t.Context(), *invoice.Payment.PaymentID)
 		must(t, err)
 		if payment.Status != billing.PaymentSucceeded || payment.Amount != 10_000_000 {
 			t.Fatalf("unexpected settled payment: %+v", payment)
 		}
-		sub, err := b.merchant.CancelSubscription(t.Context(), *order.Lines[0].SubscriptionID, billing.CancelSubscriptionParams{Reason: "Stop renewal; keep paid access", RevokeAccess: false})
+		sub, err := b.merchant.CancelSubscription(t.Context(), *invoice.Lines[0].SubscriptionID, billing.CancelSubscriptionParams{Reason: "Stop renewal; keep paid access", RevokeAccess: false})
 		must(t, err)
 		if sub.CurrentPeriodEndsAt == nil {
 			t.Fatal("cancel lost the purchased access deadline")

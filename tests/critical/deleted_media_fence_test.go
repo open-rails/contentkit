@@ -71,7 +71,7 @@ func TestDeletedMediaFence(t *testing.T) {
 	must(t, err)
 	product, err := b.merchant.CreateProduct(t.Context(), billing.CreateProductParams{Key: uuid.NewString(), DisplayName: "Fenced edition", Entitlements: []string{key.String()}})
 	must(t, err)
-	purchase, err := b.merchant.CreateProductAccess(t.Context(), billing.CreateProductAccessBatchParams{IdempotencyKey: uuid.NewString(), Items: []billing.CreateProductAccessParams{{CustomerID: customer, ProductID: product.ID}}})
+	purchase, err := b.merchant.CreateProductAccess(t.Context(), uuid.NewString(), []billing.CreateProductAccessParams{{CustomerID: customer, ProductID: product.ID}})
 	must(t, err)
 	if len(purchase) != 1 {
 		t.Fatalf("purchase returned %d grants", len(purchase))

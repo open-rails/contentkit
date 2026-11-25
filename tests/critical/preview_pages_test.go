@@ -220,7 +220,7 @@ func TestLockedPreviewPages(t *testing.T) {
 		must(t, err)
 		_, err = b.merchant.UpdateCustomer(t.Context(), customer, billing.UpdateCustomerParams{})
 		must(t, err)
-		_, err = b.merchant.CreateProductAccess(t.Context(), billing.CreateProductAccessBatchParams{Items: []billing.CreateProductAccessParams{{CustomerID: customer, ProductID: product.ID}}})
+		_, err = b.merchant.CreateProductAccess(t.Context(), uuid.NewString(), []billing.CreateProductAccessParams{{CustomerID: customer, ProductID: product.ID}})
 		must(t, err)
 		got := plan(a.client(credential), ref)
 		pages := 0
