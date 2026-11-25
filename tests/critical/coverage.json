@@ -3001,6 +3001,19 @@
       ]
     },
     {
+      "id": "CK-J01-S16",
+      "journey": "CK-J01",
+      "behavior": "The contentkit_clickhouse probe reports the signal plane's state and sends ClickHouse no query",
+      "status": "verified",
+      "evidence": [
+        "An engine on its own named ClickHouse connection answers 20 probe checks; after SYSTEM FLUSH LOGS, system.query_log holds no SELECT 1 from that client.",
+        "Fails on the base, where each check ran SELECT 1. Not yet an execution receipt; qualification runs the case."
+      ],
+      "cases": [
+        "TestSignalProbeSendsNoQuery/CK-J01-S16_the_ClickHouse_probe_sends_no_query"
+      ]
+    },
+    {
       "id": "CK-J31-S05",
       "journey": "CK-J31",
       "behavior": "A remote host delivers account deletion, restore and purge over HTTP",
