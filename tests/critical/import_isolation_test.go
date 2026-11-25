@@ -20,7 +20,7 @@ import (
 
 // isolation is a schema's record of imported favorite writes: every insert
 // statement (rolled back or not) and each committed favorite row. Favorites
-// of poison-* users fail at their insert, as only a write can tell.
+// of poisoned accounts fail at their insert, as only a write can tell.
 type isolation struct {
 	t    *testing.T
 	ctx  context.Context
@@ -37,8 +37,8 @@ CREATE TRIGGER critical_favorite_write BEFORE INSERT ON %[1]s.content_favorites 
 CREATE SEQUENCE %[1]s.critical_flaky;
 CREATE TABLE %[1]s.critical_favorites (content_id text, user_id text);
 CREATE FUNCTION %[1]s.critical_favorite() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN
- IF NEW.user_id LIKE 'poison-%%' THEN RAISE EXCEPTION 'poisoned favorite' USING ERRCODE = 'check_violation'; END IF;
- IF NEW.user_id = 'flaky' THEN
+ IF NEW.user_id::text LIKE '0badf00d-%%' THEN RAISE EXCEPTION 'poisoned favorite' USING ERRCODE = 'check_violation'; END IF;
+ IF NEW.user_id::text = '`+flakyAccount+`' THEN
   IF nextval('%[1]s.critical_flaky') = 1 THEN RAISE EXCEPTION 'flaky favorite' USING ERRCODE = 'serialization_failure'; END IF;
  END IF;
  INSERT INTO %[1]s.critical_favorites VALUES (NEW.content_id, NEW.user_id); RETURN NEW; END$$;
@@ -50,6 +50,15 @@ CREATE TRIGGER critical_recount BEFORE UPDATE ON %[1]s.content_interaction_count
 	must(t, err)
 	return &isolation{t: t, ctx: ctx, pool: w.pool, qs: qs}
 }
+
+// Favorites name UUID accounts: a poisoned one fails at its insert, the flaky
+// one at its first, and the erased one before any.
+const (
+	flakyAccount  = "0f1a0000-0000-4000-8000-000000000001"
+	erasedAccount = "0e7a5ed0-0000-4000-8000-000000000001"
+)
+
+func poisonAccount(n int) string { return fmt.Sprintf("0badf00d-0000-4000-8000-%012d", n) }
 
 // writes is how many favorite insert statements ran so far.
 func (s *isolation) writes() int {
@@ -130,7 +139,7 @@ func TestImportIsolatesBadRecords(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
 	defer cancel()
 	s := newIsolation(t, ctx, w)
-	const erased = "legacy-erased"
+	erased := erasedAccount
 	must(t, a.engine.AnonymizeAccount(ctx, erased))
 
 	for _, deferred := range []bool{false, true} {
@@ -187,7 +196,7 @@ func TestImportIsolatesBadRecords(t *testing.T) {
 			// Two chunks: 997 written with two poisoned, then 200 with one.
 			fans := map[string]int{}
 			for i := range 1200 {
-				f := importer.FavoriteRecord{Target: on, UserID: fmt.Sprintf("fan-%d", i)}
+				f := importer.FavoriteRecord{Target: on, UserID: legacyAccount(10000 + i)}
 				switch i {
 				case 10:
 					f.UserID = erased
@@ -199,7 +208,7 @@ func TestImportIsolatesBadRecords(t *testing.T) {
 					f.Target = missing
 					bad(importer.SectionFavorites, i, importer.CodeNotFound)
 				case 333, 999, 1100:
-					f.UserID = fmt.Sprintf("poison-%d", i)
+					f.UserID = poisonAccount(i)
 					bad(importer.SectionFavorites, i, importer.CodeInvalid)
 				default:
 					fans[f.UserID] = 1
@@ -268,7 +277,7 @@ func TestImportIsolatesBadRecords(t *testing.T) {
 			qs := s.qs
 			must(t, w.pool.QueryRow(ctx, `SELECT count(*) FROM `+qs+`.content_favorites WHERE content_id=$1`, item.ID).Scan(&stored))
 			must(t, w.pool.QueryRow(ctx, `SELECT (SELECT count(*) FROM `+qs+`.content_comments WHERE user_id=$1) + (SELECT count(*) FROM `+qs+`.content_reactions WHERE user_id=$1)
- + (SELECT count(*) FROM `+qs+`.content_favorites WHERE user_id=$1) + (SELECT count(*) FROM `+qs+`.content_poll_votes WHERE user_id=$1)`, erased).Scan(&byErased))
+ + (SELECT count(*) FROM `+qs+`.content_favorites WHERE user_id::text=$1) + (SELECT count(*) FROM `+qs+`.content_poll_votes WHERE user_id=$1)`, erased).Scan(&byErased))
 			if stored != len(fans) || byErased != 0 {
 				t.Fatalf("stored %d favorites and %d rows of the erased person; want %d and 0", stored, byErased, len(fans))
 			}
@@ -324,7 +333,7 @@ func TestImportSingleRecordRetry(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), time.Minute)
 	defer cancel()
 	s := newIsolation(t, ctx, w)
-	must(t, a.engine.AnonymizeAccount(ctx, "legacy-erased"))
+	must(t, a.engine.AnonymizeAccount(ctx, erasedAccount))
 	item := publishedArticle(t, a, "Single record retry")
 	on := importer.TargetRef{Content: &importer.Ref{ID: item.ID}}
 	for _, c := range []struct {
@@ -333,9 +342,9 @@ func TestImportSingleRecordRetry(t *testing.T) {
 		writes int
 		after  importCounts
 	}{
-		{user: "poison-1", failed: []importFailure{{importer.SectionFavorites, 0, importer.CodeInvalid}}, writes: 2},
-		{user: "flaky", failed: []importFailure{}, writes: 2, after: importCounts{favorites: 1}},
-		{user: "legacy-erased", failed: []importFailure{{importer.SectionFavorites, 0, importer.CodeErased}}, after: importCounts{favorites: 1}},
+		{user: poisonAccount(1), failed: []importFailure{{importer.SectionFavorites, 0, importer.CodeInvalid}}, writes: 2},
+		{user: flakyAccount, failed: []importFailure{}, writes: 2, after: importCounts{favorites: 1}},
+		{user: erasedAccount, failed: []importFailure{{importer.SectionFavorites, 0, importer.CodeErased}}, after: importCounts{favorites: 1}},
 		{user: "", failed: []importFailure{{importer.SectionFavorites, 0, importer.CodeInvalid}}, after: importCounts{favorites: 1}},
 	} {
 		before, rewrites := s.writes(), s.recounts(item.ID)

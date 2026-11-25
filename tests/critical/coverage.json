@@ -3027,6 +3027,19 @@
       ]
     },
     {
+      "id": "CK-J01-S17",
+      "journey": "CK-J01",
+      "behavior": "Favorites convert to uuid keys without blocking their writers, and toggle, card state, recount, preference sync and rankings read the converted rows",
+      "status": "verified",
+      "cases": [
+        "TestFavoritesMigrateToBinaryKeys/CK-J01-S17_favorites_convert_to_binary_keys_and_stay_readable"
+      ],
+      "evidence": [
+        "The text-keyed table is rebuilt by the previous release's own migrations, filled with real rows and written between the conversion's steps (value change, anonymization, delete, insert); the converted table equals the old one row for row, with uuid keys, the five named indexes and no working tables. Toggle, card state, the reader's list, an import's recount, a preference resync into ClickHouse and an entity ranking refresh then read the converted rows.",
+        "contentkit#298: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
       "id": "CK-J31-S05",
       "journey": "CK-J31",
       "behavior": "A remote host delivers account deletion, restore and purge over HTTP",
