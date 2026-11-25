@@ -41,6 +41,22 @@ DELETE FROM <river_schema>.river_job
 WHERE kind = 'contentkit_version_release' AND finalized_at IS NULL;
 ```
 
+## Event retention
+
+Catalog events are kept fourteen days by default, not ninety (`event_retention`). The next catalog maintenance prunes the older ones. A reader whose cursor is older gets `event_cursor_expired` (`eventlog.ErrExpiredCursor`), resyncs current state and reads on without a cursor, as on any expiry.
+
+## Favorites keys
+
+Catalog migrations `0072`–`0074` rebuild `content_favorites` with `uuid` keys: `app_id` replaces the text `tenant_id`, and `user_id`, `content_id` and `content_version_id` become `uuid`. The five indexes keep their names, led by `app_id`. A favorite needs a UUID account id, live and imported. `0072` refuses a row whose id is not a canonical lowercase UUID and names it; correct or delete such rows and migrate again.
+
+The table is copied, not altered, so writers keep writing during the copy:
+
+1. `0072` checks every id, creates the new table and a trigger that notes each key written to the old one. Its scan holds only `ACCESS SHARE`; creating the trigger waits for in-flight writes (`lock_timeout` 10s).
+2. `0073` runs outside a transaction: it copies the rows in batches of 4096 pages, each committed on its own, rewrites the noted keys and indexes the copy. Nothing waits on it. If it fails, resolve it with `migratekit repair resolve` and migrate again; it starts over.
+3. `0074` locks the old table (`ACCESS EXCLUSIVE`, `lock_timeout` 10s), rewrites the keys written since `0073`, drops it and renames the copy. The lock lasts as long as those keys take, normally well under a second; a timeout fails only this step.
+
+At 15.1M rows (2.7 GB of heap, 9.7 GB of indexes) expect about 30–60 s for the check, 1–3 minutes for the copy, 2–5 minutes for the indexes at the default `maintenance_work_mem` and under a second for the swap: 4–9 minutes and 6–8 GB of WAL. The table ends at about 6 GB (2 GB heap, 4 GB indexes). The previous release cannot read it, so roll the hosts forward with the migration.
+
 ## Channels
 
 Channels are configured under `channels`. A content kind declares
