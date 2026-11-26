@@ -51,10 +51,10 @@ type EditorImage struct {
 }
 
 // Frame is an upload grabbed from a frame of its Upload.Frames video: the
-// one a player shows T seconds in; Auto lets the worker choose T. Of is the video blob it was
-// grabbed from: a new video grabs again. From names another item's video
-// instead (Kind always set): grabbed once, it is a still that video's
-// changes leave alone.
+// one a player shows T seconds in; Auto lets the worker choose T. Of is the
+// video's master blob it was grabbed from: a new video, or a new master of
+// it, grabs again. From names another item's video instead (Kind always
+// set): grabbed once, it is a still that video's changes leave alone.
 type Frame struct {
 	T    float64   `json:"t,omitempty"`
 	Auto bool      `json:"auto,omitempty"`

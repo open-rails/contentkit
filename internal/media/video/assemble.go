@@ -51,7 +51,7 @@ func (c WorkerConfig) assemble(ctx context.Context, run encodeRun, jobID int64) 
 			return err
 		}
 		defer os.RemoveAll(dir)
-		url, err := e.store.PresignGet(ctx, run.SourceKey, 2*time.Hour)
+		url, err := e.store.PresignGet(ctx, w.key, 2*time.Hour)
 		if err != nil {
 			return err
 		}

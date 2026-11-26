@@ -12,10 +12,10 @@ import (
 	"github.com/open-rails/contentkit/internal/media/video"
 )
 
-// Metrics records work attempts, video encode passes and the worker schema's
+// metrics records work attempts, video encode passes and the worker schema's
 // queue backlog. Register it once per worker process. The backlog gauges come
 // only from the worker holding River leadership of its schema.
-type Metrics struct {
+type metrics struct {
 	river.MiddlewareDefaults
 	queue    *queueCollector
 	attempts *prometheus.HistogramVec
@@ -26,9 +26,9 @@ type Metrics struct {
 	coreRate *prometheus.HistogramVec
 }
 
-// NewMetrics registers one worker process's metrics with registerer.
-func NewMetrics(registerer prometheus.Registerer) (*Metrics, error) {
-	m := &Metrics{
+// newMetrics registers one worker process's metrics with registerer.
+func newMetrics(registerer prometheus.Registerer) (*metrics, error) {
+	m := &metrics{
 		queue: &queueCollector{},
 		attempts: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name: "media_video_attempt", Help: "Attempt number of executed media jobs.",
@@ -63,7 +63,7 @@ func NewMetrics(registerer prometheus.Registerer) (*Metrics, error) {
 
 // Work wraps the full River execution, including WorkBegin and argument
 // decoding, which can fail before WorkEnd is called.
-func (m *Metrics) Work(ctx context.Context, job *rivertype.JobRow, doInner func(context.Context) error) (err error) {
+func (m *metrics) Work(ctx context.Context, job *rivertype.JobRow, doInner func(context.Context) error) (err error) {
 	started := time.Now()
 	defer func() {
 		if p := recover(); p != nil {
@@ -90,12 +90,12 @@ func workOutcome(ctx context.Context, err error) string {
 	}
 }
 
-func (m *Metrics) recordWork(job *rivertype.JobRow, outcome string, duration time.Duration) {
+func (m *metrics) recordWork(job *rivertype.JobRow, outcome string, duration time.Duration) {
 	m.attempts.WithLabelValues(job.Queue, outcome).Observe(float64(job.Attempt))
 	m.duration.WithLabelValues(job.Queue, outcome).Observe(duration.Seconds())
 }
 
-func (m *Metrics) ObserveEncode(o video.EncodeObservation) {
+func (m *metrics) observeEncode(o video.EncodeObservation) {
 	outcome := "error"
 	if o.Succeeded {
 		outcome = "success"

@@ -105,7 +105,7 @@ against an embedded engine (`Engine.Client()`) and a remote one (`NewClient`).
 | `catalog.RefreshPaths`, `Engine.ReconcileFacets` | `Engine.Reconcile` (`contentkit reconcile`) |
 | `Engine.RiverJobs`, `WithRiverClient` | `Start` in API processes, `StartJobs` in the worker process ([Jobs](#jobs)) |
 | `Engine.SetAccountDeleted`/`AnonymizeAccount` from a remote host | `PutAccountDeleted`, `PostAccountAnonymize` |
-| `media.NewRegistry`, `media.Hooks`, `media/worker`, `media/workqueue`, `media/image`, `media/video` | the stock `contentkit-media-worker` image, `MEDIA_KINDS_FILE` from `Config.MediaRegistry()` |
+| `media.NewRegistry`, `media.Hooks`, `media/worker`, `media/workqueue`, `media/image`, `media/video` | the stock `contentkit-media-worker` image, `MEDIA_KINDS_FILE` from `Config.MediaRegistry()`; with master hooks, a worker binary of the host's own over `media/worker.Main` ([Masters](#masters-mediakindmaster)) |
 | `workqueue.Migrate`, `migrations.Postgres` | `MigratePostgres` |
 | `access.WithMemo`, `access.NewGate` | none: the engine memoizes each request |
 | `catalog.ErrNotFound`, `entities.ErrConflict`, … | `*contentkit.Error` `Code` (`contentkit.CodeNotFound`, …) |
@@ -1403,15 +1403,47 @@ media:
       master: {steps: [{hook: deskew, version: "2", params: {max_degrees: 3}}]}
 ```
 
-A hook implements `media.MasterHook` (`Version`, and `Process`, which reads
-`MasterInput.Path` and writes `Out`, or answers `Unchanged`; it may hand the
-file to an external job) and is registered in the media worker's `Masters`
-under its name. A worker refuses a recipe naming a hook it lacks or at another
-version, so a hook's new behaviour is a version bump; the stock image
-registers none. A changed result must be lossless: WebP lossless (`image/webp`), PNG
-past 16,383 px, or FFV1 in Matroska. While a hook fails the upload keeps its
-previous master and renditions. After changing a recipe or a preset's spec,
-run `contentkit regenerate -kind gallery` (`Engine.RegenerateMedia`).
+A hook implements `media.MasterHook`: `Name` (what recipes call it), `Version`,
+and `Process`, which reads `MasterInput.Path` and writes `Out`, or answers
+`Unchanged`; it may hand the file to an external job. A changed result must be
+lossless: WebP lossless (`image/webp`), PNG past 16,383 px, or FFV1 in
+Matroska. A video hook writes the whole file, audio and subtitle tracks
+included. While a hook fails the upload keeps its previous master and
+renditions.
+
+The stock image registers no hooks. A host with hooks builds its own worker
+binary from `media/worker`, which is the stock command with them:
+
+```go
+package main
+
+import "github.com/open-rails/contentkit/media/worker"
+
+func main() { worker.Main(deskew.Hook{}, upscale.New()) }
+```
+
+It takes the stock image's environment and subcommands. Build it against the
+libvips the stock image ships and run it on that image:
+
+```dockerfile
+FROM golang:1.26-trixie AS build
+RUN apt-get update && apt-get install -y --no-install-recommends libvips-dev
+WORKDIR /src
+COPY . .
+RUN CGO_ENABLED=1 go build -trimpath -o /out/media-worker ./cmd/media-worker
+
+FROM ghcr.io/open-rails/contentkit-media-worker:vX.Y.Z
+COPY --from=build /out/media-worker /media-worker
+```
+
+A worker refuses to start while a recipe names a hook it lacks or at another
+version, so the stock image never runs a hooked kind's jobs, and a hook's new
+behaviour is a version bump. In process, `worker.New` takes the same hooks in
+`Config.Hooks`. After changing a recipe or a preset's spec, run
+`contentkit regenerate -kind gallery` (`Engine.RegenerateMedia`): masters
+whose recipe changed are made again, then everything derived from them: image
+renditions, and for a video its HLS renditions, seek sprite, grabbed frames
+(posters) and their renditions.
 
 ## Media worker schema
 

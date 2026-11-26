@@ -19,9 +19,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/contentref"
-	"github.com/open-rails/contentkit/internal/media/worker"
 	"github.com/open-rails/contentkit/internal/media/workqueue"
 	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/media/worker"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
 )
@@ -250,9 +250,9 @@ func startVideoFailureWorker(t *testing.T, m *resilientMedia) func() {
 
 func failureManifests(t *testing.T, m *resilientMedia, ref media.RefBody) (*mediastore.Manifests, contentref.ContentRef) {
 	t.Helper()
-	logical, err := m.config.Kinds.VersionRef(ref.Kind, ref.ID, ref.Version)
+	logical, err := m.registry.VersionRef(ref.Kind, ref.ID, ref.Version)
 	must(t, err)
-	manifests, err := mediastore.NewManifests(m.storage.store, m.config.Kinds, mediastore.ManifestOptions{})
+	manifests, err := mediastore.NewManifests(m.storage.store, m.registry, mediastore.ManifestOptions{})
 	must(t, err)
 	return manifests, logical
 }

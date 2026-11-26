@@ -23,9 +23,9 @@ import (
 	"github.com/open-rails/authkit/iam"
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/catalog"
-	"github.com/open-rails/contentkit/internal/media/worker"
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/media/worker"
 )
 
 // HDR uploads keep their range in 10-bit AV1 with its metadata; their
