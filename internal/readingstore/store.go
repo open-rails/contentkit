@@ -26,7 +26,7 @@ type Store struct {
 }
 
 type tables struct {
-	state, history, links, active, job, erased, reactions, searches, items, memberships, favorites string
+	state, history, links, active, job, erased, reactions, searches, items, memberships, favorites, feedback string
 }
 
 // New is app's store in schema; now is the engine's clock.
@@ -35,7 +35,7 @@ func New(pool *pgxpool.Pool, schema string, app uuid.UUID, now func() time.Time)
 	return &Store{pool: pool, app: app, tenant: app.String(), now: now, t: tables{state: q("reading_state"), history: q("reading_history"),
 		links: q("anonymous_links"), active: q("anonymous_activity"), job: q("analytics_job"), erased: q("content_erased_subjects"),
 		reactions: q("content_reactions"), searches: q("content_searches"), items: q("content_items"), memberships: q("content_memberships"),
-		favorites: q("content_favorites")}}
+		favorites: q("content_favorites"), feedback: q("content_reaction_feedback")}}
 }
 
 // Outcome ordinals of reading_state.best_outcome.
@@ -321,6 +321,8 @@ func (s *Store) Erase(ctx context.Context, account uuid.UUID, anonymous []uuid.U
 			{`DELETE FROM ` + s.t.active + ` WHERE app_id = $1 AND subject = ANY($2)`, []any{s.app, subjects}},
 			{`UPDATE ` + s.t.reactions + ` SET anonymous_subject = NULL WHERE tenant_id = $1 AND anonymous_subject = ANY($2)`, []any{s.tenant, subjects}},
 			{`DELETE FROM ` + s.t.searches + ` WHERE tenant_id = $1 AND subject = ANY($2)`, []any{s.tenant, texts}},
+			// Feedback of the anonymous ids folded in; the account's own goes with its interactions.
+			{`DELETE FROM ` + s.t.feedback + ` WHERE app_id = $1 AND anonymous_actor_id = ANY($2)`, []any{s.app, anonymous}},
 		} {
 			if _, err := tx.Exec(ctx, q.sql, q.args...); err != nil {
 				return fmt.Errorf("readingstore: erase: %w", err)

@@ -59,6 +59,7 @@ export { anonymousId, renewAnonymousId } from "./anonymous.js";
 export { LETTERS, attributeInput, entityDisplayName, fold, fromLocalInput, humanize, letterOf, parseAttribute, parseAttributes, slugify, toLocalInput } from "./entity-fields.js";
 export { CodesClient } from "./codes.js";
 export { ReaderPreferencesClient, type LanguagePreference, type ReaderPreferenceState } from "./reader-preferences.js";
+export { FeedbackClient, type FeedbackAnswerInput, type FeedbackReaction, type FeedbackReason, type FeedbackTarget } from "./feedback.js";
 export { BrowserReaderPreferences, type GuestReaderPreferences, type ReaderFilters, type ReaderFilterChoice } from "./browser-reader-preferences.js";
 export { call, routeURL, type CallOptions, type Method, type PageQuery, type PathParams, type RouteQuery, type RoutePath } from "./route.js";
 export { MediaApi, type ReadOptions } from "./media/api.js";

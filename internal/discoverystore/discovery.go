@@ -73,8 +73,10 @@ type Options struct {
 	// Tenure supplies elapsed access to configured tiers; nil omits it from
 	// account statistics. Billing adapters may implement access.TenureReader.
 	Tenure access.TenureReader
-	Logger *slog.Logger
-	Now    func() time.Time
+	// Feedback is when readers are asked why they reacted.
+	Feedback discovery.FeedbackConfig
+	Logger   *slog.Logger
+	Now      func() time.Time
 }
 
 // Service serves discovery for one tenant.
@@ -86,7 +88,7 @@ type Service struct {
 }
 
 type tables struct {
-	facets, items, versions, versionText, codes, memberships, entities, prefs, favorites, reactions, counts, searches, erased, creators, comments, entityNames, normalize, rankings, entityRankings, reposts, reading string
+	facets, items, versions, versionText, codes, memberships, entities, prefs, favorites, reactions, counts, searches, erased, creators, comments, entityNames, normalize, rankings, entityRankings, reposts, reading, feedback string
 }
 
 // New validates o.
@@ -99,6 +101,13 @@ func New(o Options) (*Service, error) {
 	}
 	if err := o.Kinds.Validate(); err != nil {
 		return nil, fmt.Errorf("discovery: Kinds: %w", err)
+	}
+	kindEntities := map[string][]string{}
+	for name, k := range o.Kinds.Kinds {
+		kindEntities[name] = k.Entities
+	}
+	if err := o.Feedback.Validate(kindEntities); err != nil {
+		return nil, fmt.Errorf("discovery: %w", err)
 	}
 	if o.Logger == nil {
 		o.Logger = slog.Default()
@@ -117,7 +126,7 @@ func New(o Options) (*Service, error) {
 		searches: q("content_searches"), erased: q("content_erased_subjects"), creators: q("content_creators"),
 		comments:    q("content_comments"),
 		entityNames: q("content_entity_names"), normalize: q("contentkit_keyword_normalize"), rankings: q("content_popular_rankings"),
-		entityRankings: q("content_entity_popular_rankings"), reposts: q("content_channel_reposts"), reading: q("reading_state")}}
+		entityRankings: q("content_entity_popular_rankings"), reposts: q("content_channel_reposts"), reading: q("reading_state"), feedback: q("content_reaction_feedback")}}
 	return s, nil
 }
 

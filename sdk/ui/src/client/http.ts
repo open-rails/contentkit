@@ -130,6 +130,11 @@ export class Http {
       .catch(() => { /* Best effort: unlinked reading stays anonymous. */ });
   }
 
+  /** An account is signed in, as the host last said (preferences.configure). */
+  signedIn(): boolean {
+    return !!this.viewer;
+  }
+
   acceptGuestFilters(filters: readonly { entity: { id: string } }[]): void {
     this.filterIDs = new Set(filters.map((row) => row.entity.id));
   }

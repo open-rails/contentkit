@@ -11,6 +11,7 @@ import { ReactionsClient } from "./content/reactions.js";
 import type { Batch, Config, ContentModel, RefBody, Result } from "./generated/wire.js";
 import { DiscoveryClient } from "./discovery.js";
 import { EntitiesClient } from "./entities.js";
+import { FeedbackClient } from "./feedback.js";
 import { StatsClient } from "./stats.js";
 import { VersionsClient } from "./versions.js";
 import { Http, type ContentKitChange, type ContentKitModule, type HttpOptions } from "./http.js";
@@ -56,6 +57,8 @@ export interface ContentKitClient {
   readonly channels: ChannelsClient;
   /** Lists, search, typeahead, rails, release dates, content filters, purchase library, history, continue reading, hiding and activity. */
   readonly discovery: DiscoveryClient;
+  /** Feedback prompts after likes, favorites and dislikes, their answers and hide suggestions. */
+  readonly feedback: FeedbackClient;
   /** Content versions: reader plans, reader metadata, forks and downloads. */
   readonly versions: VersionsClient;
   /** Content-code lookup. */
@@ -63,7 +66,7 @@ export interface ContentKitClient {
   /** Staff activity and rankings; the signed-in reader's own statistics. */
   readonly stats: StatsClient;
   /** The signed-in person's account inbox; transport may be supplied by AuthKit. */
-  /** Browser guest preferences and explicit registration inheritance. */
+  /** Browser guest preferences, their carry-over at sign-in and registration inheritance of the language. */
   readonly preferences: ReaderPreferencesClient;
 
   /** What the content module allows: which interactions signed-out visitors may make. */
@@ -84,6 +87,8 @@ export function createContentKitClient(options: ContentKitClientOptions): Conten
   const { media: mediaOptions, folders, ...http } = options;
   const h = new Http(http);
   const media = new MediaClient(h, mediaOptions, folders);
+  const discovery = new DiscoveryClient(h);
+  const preferences = new ReaderPreferencesClient(h);
   return {
     media,
     contents: new ContentsClient(h),
@@ -96,11 +101,12 @@ export function createContentKitClient(options: ContentKitClientOptions): Conten
     moderation: new ModerationClient(h),
     entities: new EntitiesClient(h, media),
     channels: new ChannelsClient(h, media),
-    discovery: new DiscoveryClient(h),
+    discovery,
+    feedback: new FeedbackClient(h, discovery, preferences),
     versions: new VersionsClient(h),
     codes: new CodesClient(h),
     stats: new StatsClient(h),
-    preferences: new ReaderPreferencesClient(h),
+    preferences,
     config: (signal) => call(h, "GET", "/config", { signal }),
     kinds: (signal) =>
       call(h, "GET", "/kinds", { signal }).then((model: ContentModel) => {

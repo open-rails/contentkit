@@ -612,7 +612,8 @@ func (e *Engine) mount(deps Deps) error {
 // mountDiscovery builds the public read routes over the catalog's rule.
 func (e *Engine) mountDiscovery(deps Deps) error {
 	o := discoverystore.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Scope.AppID.String(), Kinds: e.cfg.Content, Resolver: e.catalog.Resolver(), Gate: e.gate,
-		Entities: e.entities, Channels: e.channels, Hub: e.hub, Logger: e.log, Now: deps.Clock, Visibility: e.catalog, Reading: e.reading, Activity: e.alog}
+		Entities: e.entities, Channels: e.channels, Hub: e.hub, Logger: e.log, Now: deps.Clock, Visibility: e.catalog, Reading: e.reading, Activity: e.alog,
+		Feedback: e.cfg.Interactions.Feedback}
 	o.Tenure, _ = deps.Billing.(access.TenureReader)
 	if e.media != nil {
 		o.Media = e.media.versions

@@ -3506,6 +3506,7 @@
       "behavior": "A signed-out subject idle past anonymous_retention loses its reading state, history, recent searches and reaction links to the hourly expiry job; an active one and one linked to an account keep theirs, and reaction counts are unchanged",
       "status": "verified",
       "evidence": [
+        "The idle visitor's feedback answer and its free text expire with the rest; the answer is logged as its like with reason other and the text in no activity row.",
         "Real HTTP over real PostgreSQL and ClickHouse; the analytics job records activity from the log and the real contentkit_anonymous_expiry River job expires."
       ],
       "cases": [
@@ -3518,10 +3519,141 @@
       "behavior": "Without ClickHouse a signed-out visitor's hides, searches and reactions record its activity, so the expiry job still expires an idle one and keeps an active one, with reaction counts unchanged",
       "status": "verified",
       "evidence": [
+        "Without ClickHouse the idle visitor's feedback expires; a visitor whose only activity in 31 days is answering a prompt is kept, the answer recorded in anonymous_activity.",
         "Real HTTP over real PostgreSQL with no ClickHouse configured; the real contentkit_anonymous_expiry River job expires."
       ],
       "cases": [
         "TestAnalyticsAnonymousExpiryWithoutClickHouse/CK-J32-S17_without_clickhouse_idle_anonymous_visitors_expire"
+      ]
+    },
+    {
+      "id": "CK-J40-S01",
+      "journey": "CK-J40",
+      "behavior": "A feedback prompt follows only the reader's own current like, favorite or dislike, and offers only answers the item can name",
+      "status": "verified",
+      "cases": [
+        "TestReactionFeedback/CK-J40-S01_offered_only_after_the_readers_own_reaction"
+      ],
+      "evidence": [
+        "No prompt without the reaction, for a mismatched reaction, or for a signed-out browser that did not react; an unknown reaction or a signed-out request without ContentKit-Anonymous-Id is 400 and an unknown item 404. A like offers artwork, artist, story, series, tag and other with the item's tags, artist and series; a bare item offers artwork, story and other.",
+        "contentkit#300: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
+      "id": "CK-J40-S02",
+      "journey": "CK-J40",
+      "behavior": "One person is never asked twice about one item",
+      "status": "verified",
+      "cases": [
+        "TestReactionFeedback/CK-J40-S02_never_twice_for_one_item"
+      ],
+      "evidence": [
+        "After a like prompt, a later favorite and a repeated like on the same item, a day later, offer nothing; one row is stored.",
+        "contentkit#300: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
+      "id": "CK-J40-S03",
+      "journey": "CK-J40",
+      "behavior": "One prompt a day per person across likes and dislikes, each signed-out browser its own",
+      "status": "verified",
+      "cases": [
+        "TestReactionFeedback/CK-J40-S03_one_prompt_a_day_across_likes_and_dislikes"
+      ],
+      "evidence": [
+        "A dislike 23 hours after a like prompt is not asked about and is 25 hours after; two rows are stored. Two signed-out browsers sharing an address are each asked once.",
+        "contentkit#300: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
+      "id": "CK-J40-S04",
+      "journey": "CK-J40",
+      "behavior": "Like answers name their entity, replace earlier answers and suggest a follow-up",
+      "status": "verified",
+      "cases": [
+        "TestReactionFeedback/CK-J40-S04_like_answers_name_their_entity_and_follow_up"
+      ],
+      "evidence": [
+        "A tag answer needs one of the item's tags and leads to browsing it; artist and series answers name the only one and lead to following it; artwork and story name nothing; other keeps up to 280 characters of trimmed text and the first answer time; bad reasons, misplaced text, over-long text, a hide without a not_into answer and an answer without a prompt are refused.",
+        "contentkit#300: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
+      "id": "CK-J40-S05",
+      "journey": "CK-J40",
+      "behavior": "Dislike answers and their culprit tags",
+      "status": "verified",
+      "cases": [
+        "TestReactionFeedback/CK-J40-S05_dislike_answers_and_culprit_tags"
+      ],
+      "evidence": [
+        "Without culprits a dislike offers bad_art, bad_story, misleading and other, each stored. Culprits are the filters' tags in their order, at most three, all hideable, and not_into must name one; a tag the reader already dislikes is a culprit though no filter offers it, and is not hideable.",
+        "contentkit#300: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
+      "id": "CK-J40-S06",
+      "journey": "CK-J40",
+      "behavior": "Not into a hideable tag offers hiding it, never preselected, and taking it writes the account's content_filter_prefs",
+      "status": "verified",
+      "cases": [
+        "TestReactionFeedback/CK-J40-S06_not_into_offers_hiding_the_tag_in_account_filters"
+      ],
+      "evidence": [
+        "not_into furry records the suggestion undecided; taking it hides the tag in GET /v1/content-filters and stores entity:<id>=hide; an already disliked tag comes first; declining leaves the filters; a tag the reader already hides is not hideable and its take is refused.",
+        "contentkit#300: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
+      "id": "CK-J40-S07",
+      "journey": "CK-J40",
+      "behavior": "A signed-out browser's hide is recorded under its anonymous subject and stored by no account",
+      "status": "verified",
+      "cases": [
+        "TestReactionFeedback/CK-J40-S07_signed_out_hide_is_recorded_not_stored_for_an_account"
+      ],
+      "evidence": [
+        "Without ContentKit-Anonymous-Id 400, another browser 404; the browser's take and later free-text answer are stored under its anonymous subject, recorded as its activity in anonymous_activity, and no content_filter_prefs row is written.",
+        "contentkit#300: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
+      "id": "CK-J40-S08",
+      "journey": "CK-J40",
+      "behavior": "Signing in merges a browser's filter choices into the account: unset entities filled, a hide wins over a show",
+      "status": "verified",
+      "cases": [
+        "TestReactionFeedback/CK-J40-S08_signin_merges_browser_filters"
+      ],
+      "evidence": [
+        "A browser hide overrides the account's show and fills an unset entity; a browser show never overrides a hide; resets and entities no domain offers are ignored; a repeat changes nothing; another account's id is 403 and signed out 401.",
+        "contentkit#300: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
+      "id": "CK-J40-S09",
+      "journey": "CK-J40",
+      "behavior": "Account erasure deletes the account's feedback, free text included, and nobody else's",
+      "status": "verified",
+      "cases": [
+        "TestReactionFeedback/CK-J40-S09_erasure_deletes_answers_and_their_text"
+      ],
+      "evidence": [
+        "After AnonymizeAccount no row of the account or its text remains; other people's rows are untouched.",
+        "contentkit#300: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
+      "id": "CK-J40-S10",
+      "journey": "CK-J40",
+      "behavior": "Sampling follows each reaction's configured rate and never redraws for one person, item and reaction",
+      "status": "verified",
+      "cases": [
+        "TestReactionFeedbackSampling/CK-J40-S10_sampling_follows_the_rates_and_never_redraws"
+      ],
+      "evidence": [
+        "At like 1/2 and dislike 0, 60 signed-out browsers each reacting are asked between 12 and 48 times and never about the dislike; each passed-over browser reacting and asking three more times is never asked; rows match.",
+        "contentkit#300: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
       ]
     }
   ],
@@ -7414,35 +7546,6 @@
       "qualified_scope": "phase1 security-only; not full route functionality"
     },
     {
-      "id": "CK-API-152",
-      "method": "POST",
-      "path": "/v1/me/content-filters/initialize",
-      "selection": "partial-security-only; positive/full functionality deferred P1",
-      "status": "verified",
-      "cases": [
-        "TestHTTPAuthenticationMatrix/CK-API-152_POST_/v1/me/content-filters/initialize/malformed_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-152_POST_/v1/me/content-filters/initialize/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-152_POST_/v1/me/content-filters/initialize/expired_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-152_POST_/v1/me/content-filters/initialize/wrong_issuer",
-        "TestHTTPAuthenticationMatrix/CK-API-152_POST_/v1/me/content-filters/initialize/foreign_app_key",
-        "TestHTTPAuthenticationMatrix/CK-API-152_POST_/v1/me/content-filters/initialize/anonymous_protected_operation"
-      ],
-      "implemented_security_cases": [
-        "TestHTTPAuthenticationMatrix/CK-API-152_POST_/v1/me/content-filters/initialize/malformed_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-152_POST_/v1/me/content-filters/initialize/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-152_POST_/v1/me/content-filters/initialize/expired_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-152_POST_/v1/me/content-filters/initialize/wrong_issuer",
-        "TestHTTPAuthenticationMatrix/CK-API-152_POST_/v1/me/content-filters/initialize/foreign_app_key",
-        "TestHTTPAuthenticationMatrix/CK-API-152_POST_/v1/me/content-filters/initialize/anonymous_protected_operation"
-      ],
-      "remaining": "P1: positive/function-specific error and deeper target profiles, as declared in the approved inventory.",
-      "security_evidence": "credential gate and app-key boundary only; no route-specific functional or mutation no-effect approval; executed in integrated-f052-aggregate",
-      "evidence": [
-        "Selected phase1 credential failures, foreign app-key binding, declared staff permission gate when applicable, HEAD inheritance and no protected body disclosure. Positive functionality and deeper route-specific profiles remain P1."
-      ],
-      "qualified_scope": "phase1 security-only; not full route functionality"
-    },
-    {
       "id": "CK-API-153",
       "method": "GET",
       "path": "/v1/me/history",
@@ -8940,6 +9043,95 @@
       ],
       "evidence": [
         "Credential failures and the foreign app-key boundary over real HTTP; the named analytics scenario drives the route end to end over real PostgreSQL and ClickHouse."
+      ]
+    },
+    {
+      "id": "CK-API-220",
+      "method": "POST",
+      "path": "/v1/me/content-filters/merge",
+      "selection": "included-critical functionality and security",
+      "status": "verified",
+      "cases": [
+        "TestReactionFeedback/CK-J40-S08_signin_merges_browser_filters",
+        "TestHTTPAuthenticationMatrix/CK-API-220_POST_/v1/me/content-filters/merge/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-220_POST_/v1/me/content-filters/merge/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-220_POST_/v1/me/content-filters/merge/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-220_POST_/v1/me/content-filters/merge/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-220_POST_/v1/me/content-filters/merge/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-220_POST_/v1/me/content-filters/merge/anonymous_protected_operation"
+      ],
+      "implemented_security_cases": [
+        "TestHTTPAuthenticationMatrix/CK-API-220_POST_/v1/me/content-filters/merge/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-220_POST_/v1/me/content-filters/merge/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-220_POST_/v1/me/content-filters/merge/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-220_POST_/v1/me/content-filters/merge/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-220_POST_/v1/me/content-filters/merge/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-220_POST_/v1/me/content-filters/merge/anonymous_protected_operation"
+      ],
+      "security_evidence": "credential gate and app-key boundary only; functional behavior is the mapped scenario cases",
+      "evidence": [
+        "The account's filters take a browser's choices at sign-in, hides winning; another account's id is refused.",
+        "contentkit#300: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
+      "id": "CK-API-221",
+      "method": "POST",
+      "path": "/v1/contents/{id}/feedback",
+      "selection": "included-critical functionality and security",
+      "status": "verified",
+      "cases": [
+        "TestReactionFeedback/CK-J40-S01_offered_only_after_the_readers_own_reaction",
+        "TestReactionFeedback/CK-J40-S02_never_twice_for_one_item",
+        "TestReactionFeedback/CK-J40-S03_one_prompt_a_day_across_likes_and_dislikes",
+        "TestReactionFeedbackSampling/CK-J40-S10_sampling_follows_the_rates_and_never_redraws",
+        "TestHTTPAuthenticationMatrix/CK-API-221_POST_/v1/contents/{id}/feedback/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-221_POST_/v1/contents/{id}/feedback/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-221_POST_/v1/contents/{id}/feedback/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-221_POST_/v1/contents/{id}/feedback/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-221_POST_/v1/contents/{id}/feedback/foreign_app_key"
+      ],
+      "implemented_security_cases": [
+        "TestHTTPAuthenticationMatrix/CK-API-221_POST_/v1/contents/{id}/feedback/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-221_POST_/v1/contents/{id}/feedback/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-221_POST_/v1/contents/{id}/feedback/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-221_POST_/v1/contents/{id}/feedback/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-221_POST_/v1/contents/{id}/feedback/foreign_app_key"
+      ],
+      "security_evidence": "credential gate and app-key boundary only; functional behavior is the mapped scenario cases",
+      "evidence": [
+        "Prompts follow the reader's own reaction, sampled, about once a day and never twice for one item.",
+        "contentkit#300: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
+      "id": "CK-API-222",
+      "method": "PATCH",
+      "path": "/v1/contents/{id}/feedback",
+      "selection": "included-critical functionality and security",
+      "status": "verified",
+      "cases": [
+        "TestReactionFeedback/CK-J40-S04_like_answers_name_their_entity_and_follow_up",
+        "TestReactionFeedback/CK-J40-S05_dislike_answers_and_culprit_tags",
+        "TestReactionFeedback/CK-J40-S06_not_into_offers_hiding_the_tag_in_account_filters",
+        "TestReactionFeedback/CK-J40-S07_signed_out_hide_is_recorded_not_stored_for_an_account",
+        "TestHTTPAuthenticationMatrix/CK-API-222_PATCH_/v1/contents/{id}/feedback/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-222_PATCH_/v1/contents/{id}/feedback/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-222_PATCH_/v1/contents/{id}/feedback/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-222_PATCH_/v1/contents/{id}/feedback/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-222_PATCH_/v1/contents/{id}/feedback/foreign_app_key"
+      ],
+      "implemented_security_cases": [
+        "TestHTTPAuthenticationMatrix/CK-API-222_PATCH_/v1/contents/{id}/feedback/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-222_PATCH_/v1/contents/{id}/feedback/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-222_PATCH_/v1/contents/{id}/feedback/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-222_PATCH_/v1/contents/{id}/feedback/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-222_PATCH_/v1/contents/{id}/feedback/foreign_app_key"
+      ],
+      "security_evidence": "credential gate and app-key boundary only; functional behavior is the mapped scenario cases",
+      "evidence": [
+        "Answers, culprit tags and the hide decision are validated and stored; a taken hide writes the account's filters.",
+        "contentkit#300: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
       ]
     }
   ],
@@ -12160,6 +12352,92 @@
         "Remote client reads the same state as the engine.",
         "contentkit#287: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
       ]
+    },
+    {
+      "id": "go:Client.PostContentFeedback",
+      "name": "Client.PostContentFeedback",
+      "status": "verified",
+      "cases": [
+        "TestReactionFeedback/CK-J40-S01_offered_only_after_the_readers_own_reaction",
+        "TestReactionFeedback/CK-J40-S03_one_prompt_a_day_across_likes_and_dislikes"
+      ],
+      "evidence": [
+        "The Go client asks for prompts and reads null when none is offered.",
+        "contentkit#300: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
+      "id": "go:Client.PatchContentFeedback",
+      "name": "Client.PatchContentFeedback",
+      "status": "verified",
+      "cases": [
+        "TestReactionFeedback/CK-J40-S04_like_answers_name_their_entity_and_follow_up",
+        "TestReactionFeedback/CK-J40-S06_not_into_offers_hiding_the_tag_in_account_filters"
+      ],
+      "evidence": [
+        "The Go client answers prompts and decides hides.",
+        "contentkit#300: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
+      "id": "go:Client.PostMeContentFiltersMerge",
+      "name": "Client.PostMeContentFiltersMerge",
+      "status": "verified",
+      "cases": [
+        "TestReactionFeedback/CK-J40-S08_signin_merges_browser_filters"
+      ],
+      "evidence": [
+        "The Go client merges browser filter choices into the account.",
+        "contentkit#300: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
+      "id": "ts:FeedbackClient.ask",
+      "name": "FeedbackClient.ask",
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptPublicContracts/reaction_feedback"
+      ],
+      "evidence": [
+        "The built SDK asks after a like and gets null when asked again about the item.",
+        "contentkit#300: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
+      "id": "ts:FeedbackClient.answer",
+      "name": "FeedbackClient.answer",
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptPublicContracts/reaction_feedback"
+      ],
+      "evidence": [
+        "The built SDK answers a tag and, signed out, a not_into with hide that writes the browser's filter.",
+        "contentkit#300: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
+      "id": "ts:FeedbackClient.hide",
+      "name": "FeedbackClient.hide",
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptPublicContracts/reaction_feedback"
+      ],
+      "evidence": [
+        "The built SDK declines hiding a not_into tag, leaving the account's filters.",
+        "contentkit#300: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
+      "id": "ts:ReaderPreferencesClient.carryGuestFilters",
+      "name": "ReaderPreferencesClient.carryGuestFilters",
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptPublicContracts/reaction_feedback"
+      ],
+      "evidence": [
+        "Signing in carries the browser's hidden tag into the account's content filters.",
+        "contentkit#300: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
     }
   ],
   "retired_contracts": [
@@ -12348,6 +12626,17 @@
         "TestPreferenceSync/CK-J23-S09_a_preference_batch_racing_an_erasure_leaves_no_rows"
       ],
       "reason": "The preference sync is deleted, so no preference batch races an erasure."
+    },
+    {
+      "issue": "contentkit#300",
+      "reason": "Registration-only adoption of guest filters is replaced by POST /v1/me/content-filters/merge, run at every sign-in.",
+      "operations": [
+        {
+          "id": "CK-API-152",
+          "method": "POST",
+          "path": "/v1/me/content-filters/initialize"
+        }
+      ]
     }
   ]
 }

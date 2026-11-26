@@ -25,7 +25,9 @@ type ContentFiltersUpdate struct {
 	Filters []GuestFilterSetting `json:"filters,omitempty"`
 }
 
-type ContentFiltersInitialization struct {
+// ContentFiltersMerge carries a signed-out browser's choices into the
+// account_id's settings at sign-in.
+type ContentFiltersMerge struct {
 	AccountID string               `json:"account_id"`
 	Filters   []GuestFilterSetting `json:"filters"`
 }

@@ -8,15 +8,17 @@ export interface GuestReaderPreferences {
   language?: string;
   filters: ReaderFilters;
 }
-export interface PendingReaderPreferences extends GuestReaderPreferences {
+/** A registration's guest language, saved to the account once. */
+export interface PendingReaderPreferences {
   account: string;
+  language?: string;
   languageDone: boolean;
-  filtersDone: boolean;
   languageObserved?: boolean;
   initialLanguage?: string | null;
 }
 
-type Document = GuestReaderPreferences & { registrations: readonly PendingReaderPreferences[] };
+// carried is the filter list last merged into an account, so each set goes once.
+type Document = GuestReaderPreferences & { registrations: readonly PendingReaderPreferences[]; carried?: string };
 const EMPTY: Document = Object.freeze({ filters: Object.freeze([]), registrations: Object.freeze([]) });
 
 function language(value: unknown): string | undefined {
@@ -86,20 +88,19 @@ function decode(raw: string | null, legacy = false): Document {
           continue;
         registrations.push({
           account: entry.account,
-          ...choices(entry),
+          language: language(entry.language),
           languageDone: entry.languageDone === true,
-          filtersDone: entry.filtersDone === true,
           languageObserved: entry.languageObserved === true,
           initialLanguage: entry.initialLanguage === null ? null : language(entry.initialLanguage),
         });
       }
-    return { ...choices(value), registrations };
+    return { ...choices(value), registrations, carried: typeof value.carried === "string" ? value.carried : undefined };
   } catch {
     return EMPTY;
   }
 }
 
-/** Anonymous choices and registration retries, isolated to one catalog URL.
+/** Anonymous choices, registration retries and the filters carried into an account, isolated to one catalog URL.
  * v1 is read once when v2 is absent, and never modified, so old tabs cannot
  * clobber a new shared choice and a rollback still has the original data. */
 export class BrowserReaderPreferences {
@@ -142,6 +143,17 @@ export class BrowserReaderPreferences {
     validate?.(next);
     this.save(next);
   }
+  /** The signed-out filter choices not yet carried into an account. */
+  uncarried(): ReaderFilters | undefined {
+    this.sync();
+    const filters = this.value.filters;
+    return filters.length && JSON.stringify(filters) !== this.value.carried ? filters : undefined;
+  }
+  /** Notes filters as merged into an account; they stay this browser's signed-out choices. */
+  carried(filters: ReaderFilters): void {
+    this.sync();
+    this.save({ ...this.value, carried: JSON.stringify(filters) });
+  }
   pending(account: string): PendingReaderPreferences | undefined {
     this.sync();
     return this.value.registrations.find((r) => r.account === account);
@@ -149,27 +161,16 @@ export class BrowserReaderPreferences {
   register(account: string): void {
     this.sync();
     if (!account || account.length > 128) throw new Error("contentkit: registration account is required");
-    if (this.pending(account) || (!this.value.language && !this.value.filters.length)) return;
+    if (this.pending(account) || !this.value.language) return;
     if (this.value.registrations.length >= 20) throw new Error("contentkit: too many pending preference registrations");
     this.save({
       ...this.value,
-      registrations: [
-        ...this.value.registrations,
-        {
-          account,
-          language: this.value.language,
-          filters: this.value.filters,
-          languageDone: !this.value.language,
-          filtersDone: !this.value.filters.length,
-        },
-      ],
+      registrations: [...this.value.registrations, { account, language: this.value.language, languageDone: false }],
     });
   }
-  complete(account: string, step: "language" | "filters"): void {
+  complete(account: string): void {
     this.sync();
-    const registrations = this.value.registrations
-      .map((r) => (r.account === account ? { ...r, [step === "language" ? "languageDone" : "filtersDone"]: true } : r))
-      .filter((r) => !r.languageDone || !r.filtersDone);
+    const registrations = this.value.registrations.map((r) => (r.account === account ? { ...r, languageDone: true } : r)).filter((r) => !r.languageDone);
     this.save({ ...this.value, registrations });
   }
   observeLanguage(account: string, initialLanguage: string | null): void {
@@ -218,12 +219,14 @@ export class BrowserReaderPreferences {
       language: next.language,
       filters: next.filters,
       registrations: next.registrations,
+      carried: next.carried,
     });
     if (encoded === this.encoded) return;
     this.encoded = encoded;
     this.value = Object.freeze({
       ...freezeChoices(next),
-      registrations: Object.freeze(next.registrations.map((r) => Object.freeze({ ...r, ...freezeChoices(r) }))),
+      registrations: Object.freeze(next.registrations.map((r) => Object.freeze({ ...r }))),
+      carried: next.carried,
     });
     const publicValue = { language: this.value.language, filters: this.value.filters };
     if (JSON.stringify(publicValue) !== JSON.stringify(this.publicValue)) this.publicValue = Object.freeze(publicValue);

@@ -507,7 +507,7 @@ export interface ContentFilters {
   filters: ContentFilterState[];
 }
 
-export interface ContentFiltersInitialization {
+export interface ContentFiltersMerge {
   account_id: string;
   filters: GuestFilterSetting[];
 }
@@ -975,6 +975,42 @@ export interface FeedItem {
   content_kind: string;
   content_id: string;
   content_version_id?: string;
+}
+
+export interface FeedbackAnswer {
+  reason: "artist" | "artwork" | "bad_art" | "bad_story" | "misleading" | "not_into" | "other" | "series" | "story" | "tag";
+  entity_id: string | null;
+  text: string | null;
+  answered_at: string;
+}
+
+export interface FeedbackEntity {
+  id: string;
+  kind: string;
+  slug: string;
+  name: string;
+  path?: string;
+  hideable: boolean;
+}
+
+export interface FeedbackFollowUp {
+  action: "browse" | "follow";
+  entity: FeedbackEntity;
+}
+
+export interface FeedbackInput {
+  reason?: "artist" | "artwork" | "bad_art" | "bad_story" | "misleading" | "not_into" | "other" | "series" | "story" | "tag";
+  entity_id?: string;
+  text?: string;
+  hide?: boolean;
+}
+
+export interface FeedbackOffer {
+  prompt: ReactionFeedback | null;
+}
+
+export interface FeedbackRequest {
+  reaction: "dislike" | "favorite" | "like";
 }
 
 export interface FileDownload {
@@ -1680,6 +1716,21 @@ export interface ReactionCounts {
   likes?: number;
   dislikes?: number;
   mine: number;
+}
+
+export interface ReactionFeedback {
+  content_id: string;
+  reaction: "dislike" | "favorite" | "like";
+  polarity: "dislike" | "like";
+  reasons: ("artist" | "artwork" | "bad_art" | "bad_story" | "misleading" | "not_into" | "other" | "series" | "story" | "tag")[];
+  tags: FeedbackEntity[];
+  artists: FeedbackEntity[];
+  series: FeedbackEntity[];
+  hide: FeedbackEntity | null;
+  hide_taken: boolean | null;
+  offered_at: string;
+  answer: FeedbackAnswer | null;
+  follow_up: FeedbackFollowUp | null;
 }
 
 export interface ReactionRecord {

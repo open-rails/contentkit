@@ -129,7 +129,6 @@ CK-API-148	GET	/v1/recommendations	user		included-critical functionality and sec
 CK-API-149	GET	/v1/release-dates	public		included-critical functionality and security
 CK-API-150	GET	/v1/content-filters	public		partial-security-only; positive/full functionality deferred P1
 CK-API-151	PATCH	/v1/me/content-filters	user		partial-security-only; positive/full functionality deferred P1
-CK-API-152	POST	/v1/me/content-filters/initialize	user		partial-security-only; positive/full functionality deferred P1
 CK-API-153	GET	/v1/me/history	user		partial-security-only; positive/full functionality deferred P1
 CK-API-154	DELETE	/v1/me/history	user		partial-security-only; positive/full functionality deferred P1
 CK-API-157	GET	/v1/me/favorites	user		partial-security-only; positive/full functionality deferred P1
@@ -181,3 +180,6 @@ CK-API-203	POST	/v1/me/anonymous-link	user		included-critical functionality and 
 CK-API-204	PUT	/v1/contents/{id}/hidden	public		included-critical functionality and security
 CK-API-205	DELETE	/v1/contents/{id}/hidden	public		included-critical functionality and security
 CK-API-206	GET	/v1/me/continue	public		included-critical functionality and security
+CK-API-220	POST	/v1/me/content-filters/merge	user		included-critical functionality and security
+CK-API-221	POST	/v1/contents/{id}/feedback	public		included-critical functionality and security
+CK-API-222	PATCH	/v1/contents/{id}/feedback	public		included-critical functionality and security

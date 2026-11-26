@@ -754,6 +754,30 @@ Free-text submission, automatic grouping and classifier dependencies are
 removed. The database stores only choice polls; questions have no kind column
 or answer table.
 
+## Feedback after reactions
+
+`Config.Interactions.Feedback` asks readers why they liked, favorited or disliked content. Only the content kinds in `kinds` ask, each naming the entity kinds its answers pick from:
+
+```yaml
+interactions:
+  feedback:
+    kinds:
+      gallery: {tags: [tag], artists: [artist], series: [series, character]}
+    favorite: 0.5   # share of each reaction asked about; these are the defaults
+    like: 0.2
+    dislike: 0.3
+    per_day: 1      # prompts per person in 24 hours
+```
+
+After a reaction the client calls `POST /contents/{id}/feedback` with the reaction (`like`, `favorite` or `dislike`). It answers a prompt, recorded as offered, only when the reader holds that reaction now, the reaction is sampled (the same draw every time for one person, item and reaction), the reader has had fewer than `per_day` prompts in 24 hours and has never been asked about the item. `PATCH /contents/{id}/feedback` stores the answer:
+
+- like or favorite: `artwork`, `artist`, `story`, `series`, `tag` (naming one of the item's tags) or `other`; the answer's `follow_up` is following the artist or series, or browsing the tag.
+- dislike: `bad_art`, `bad_story`, `not_into` (naming one of up to three culprit tags: those the domain's content filters offer, or that the reader already dislikes), `misleading` (cover, title or tags) or `other`.
+- `other` takes up to 280 characters of text.
+- `not_into` a tag the filters can hide (`hideable`) suggests hiding it; `hide: true` writes the account's `content_filter_prefs`, and a signed-out browser keeps the choice itself.
+
+A signed-out browser is the person by its anonymous id (`ContentKit-Anonymous-Id`); its prompts and answers count as its activity. `content_reaction_feedback` keeps one row per person and item: the reaction, the answer, the tag suggested for hiding and whether it was taken. Account erasure deletes the account's rows, and anonymous expiry an idle browser's. An answer is logged as its reaction with the reason; the text never leaves PostgreSQL and ContentKit does not analyze it. An optional AI layer can read it through a port.
+
 ## Account lifecycle and interaction erasure
 
 Applications consume AuthKit's retained lifecycle events. On `user.deleted`,
@@ -918,9 +942,10 @@ that fits the reader (`display_language` first, then position).
   `PATCH /me/content-filters` atomically merges submitted shared entity choices,
   preserving omitted values. One entity choice
   applies across the configured `content_filters.applies_to` content kinds.
-  `POST /me/content-filters/initialize` adopts a new account's guest choices
-  only when no saved settings exist; its `account_id` must match the signed-in
-  account. Trigger initialization on registration, never ordinary sign-in.
+  `POST /me/content-filters/merge` carries a browser's guest choices into the
+  signed-in account at each sign-in: a choice fills an entity the account has
+  not set, and a hide wins over the account's show. Its `account_id` must match
+  the signed-in account; the SDK sends each set of guest choices once.
   Guest browsers persist choices locally and send
   `ContentKit-Reader-Preferences: {"filters":[{"entity_id":"configured-entity-id","visible":false}]}`.
   The header is ignored for authenticated accounts, grants no access, and

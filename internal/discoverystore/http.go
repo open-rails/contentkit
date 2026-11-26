@@ -191,10 +191,18 @@ var routes = []httpapi.Route[handler]{
 		Doc:   "Atomically changes only submitted shared entity choices. Omitted choices remain unchanged. Each choice sets visible or default:true.",
 		Query: []httpapi.Param{httpapi.Text("language", "the language of labels and group names")}, Request: discovery.ContentFiltersUpdate{},
 		Responses: []httpapi.Reply{httpapi.OK(discovery.ContentFilters{})}}, Serve: httpapi.H(handler.setContentFilters)},
-	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/me/content-filters/initialize", Resource: "discovery", Auth: httpapi.User,
-		Doc:   "Initializes the account_id's content filter settings from its guest choices only if no settings exist; account_id must match the authenticated account and retries preserve all saved settings.",
-		Query: []httpapi.Param{httpapi.Text("language", "the language of labels and group names")}, Request: discovery.ContentFiltersInitialization{},
-		Responses: []httpapi.Reply{httpapi.OK(discovery.ContentFilters{})}, Errors: []string{httpapi.CodeForbidden}}, Serve: httpapi.H(handler.initializeContentFilters)},
+	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/me/content-filters/merge", Resource: "discovery", Auth: httpapi.User,
+		Doc:   "Carries a signed-out browser's content filter choices into account_id's settings at sign-in: a choice fills an entity the account has not set, and a hide wins over the account's show. account_id must be the authenticated account; resets and entities no domain offers are ignored.",
+		Query: []httpapi.Param{httpapi.Text("language", "the language of labels and group names")}, Request: discovery.ContentFiltersMerge{},
+		Responses: []httpapi.Reply{httpapi.OK(discovery.ContentFilters{})}, Errors: []string{httpapi.CodeForbidden}}, Serve: httpapi.H(handler.mergeContentFilters)},
+	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/contents/{id}/feedback", Resource: "discovery", Auth: httpapi.Public,
+		Doc:   "Offers a feedback prompt after the reader's own like, favorite or dislike of the content: a share of each reaction is asked about, one person is offered about one prompt a day and never two for one item. The prompt is recorded as offered; prompt is null when there is none.",
+		Query: []httpapi.Param{httpapi.Text("version", "the version the reaction is on"), httpapi.Text("language", "the language of entity names")}, Request: discovery.FeedbackRequest{},
+		Responses: []httpapi.Reply{httpapi.OK(discovery.FeedbackOffer{})}, Errors: []string{httpapi.CodeNotFound}}, Serve: httpapi.H(handler.offerFeedback)},
+	{Spec: httpapi.Spec{Method: httpapi.PATCH, Path: "/contents/{id}/feedback", Resource: "discovery", Auth: httpapi.Public,
+		Doc:   "Answers the reader's feedback prompt on the content, or takes or declines its hide suggestion. A taken suggestion hides the tag in an account's content filters; a signed-out browser keeps the choice itself. not_found when no prompt was offered.",
+		Query: []httpapi.Param{httpapi.Text("language", "the language of entity names")}, Request: discovery.FeedbackInput{},
+		Responses: []httpapi.Reply{httpapi.OK(discovery.ReactionFeedback{})}, Errors: []string{httpapi.CodeForbidden, httpapi.CodeNotFound}}, Serve: httpapi.H(handler.answerFeedback)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/me/history", Resource: "discovery", Auth: httpapi.User,
 		Doc: "The contents the reader engaged with, most recent first, with their progress.",
 		Query: params([]httpapi.Param{httpapi.Text("kind", "only this content kind"), httpapi.Text("status", "seen, in_progress or completed; any by default"), httpapi.Bool("summary", "selection-wide filtered and locked counts on the first page"),
@@ -418,17 +426,38 @@ func (h handler) setContentFilters(w http.ResponseWriter, r *http.Request) {
 	h.contentFilters(w, r)
 }
 
-func (h handler) initializeContentFilters(w http.ResponseWriter, r *http.Request) {
-	var u discovery.ContentFiltersInitialization
+func (h handler) mergeContentFilters(w http.ResponseWriter, r *http.Request) {
+	var u discovery.ContentFiltersMerge
 	if err := decode(r, &u); err != nil {
 		h.fail(w, r, err)
 		return
 	}
-	if err := h.s.InitializeContentFilters(r.Context(), gate.Actor(r.Context()), u); err != nil {
+	if err := h.s.MergeContentFilters(r.Context(), gate.Actor(r.Context()), u); err != nil {
 		h.fail(w, r, err)
 		return
 	}
 	h.contentFilters(w, r)
+}
+
+func (h handler) offerFeedback(w http.ResponseWriter, r *http.Request) {
+	var in discovery.FeedbackRequest
+	if err := decode(r, &in); err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	q := r.URL.Query()
+	out, err := h.s.OfferFeedback(r.Context(), gate.Actor(r.Context()), r.Header.Get(subject.Header), r.PathValue("id"), q.Get("version"), q.Get("language"), in)
+	h.reply(w, r, out, err)
+}
+
+func (h handler) answerFeedback(w http.ResponseWriter, r *http.Request) {
+	var in discovery.FeedbackInput
+	if err := decode(r, &in); err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	out, err := h.s.AnswerFeedback(r, gate.Actor(r.Context()), r.PathValue("id"), r.URL.Query().Get("language"), in)
+	h.reply(w, r, out, err)
 }
 
 func (h handler) history(w http.ResponseWriter, r *http.Request) {

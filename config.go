@@ -24,6 +24,7 @@ import (
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/content"
+	"github.com/open-rails/contentkit/discovery"
 	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
@@ -112,6 +113,9 @@ type InteractionsConfig struct {
 	// repeatedly (default 30s).
 	ModeratorTimeout  time.Duration `yaml:"moderator_timeout" json:"moderator_timeout"`
 	ModeratorCooldown time.Duration `yaml:"moderator_cooldown" json:"moderator_cooldown"`
+	// Feedback is when readers are asked why they liked, favorited or
+	// disliked content; a kind it does not name is never asked about.
+	Feedback discovery.FeedbackConfig `yaml:"feedback" json:"feedback"`
 }
 
 // LimitsConfig is content.Limits as data: nil rates take the defaults.
