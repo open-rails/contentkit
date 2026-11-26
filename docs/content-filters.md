@@ -152,12 +152,14 @@ Guests keep shared choices in app-scoped localStorage and send a bounded
 header. It grants no access and cannot select a domain. Signed-in requests use
 the account's database settings instead, ignoring the guest header.
 
-After confirmed registration, `POST /v1/me/content-filters/initialize` adopts
-valid guest choices only when the authenticated account has no saved preference
-row. `account_id` must match the authenticated account; retries cannot overwrite
-saved choices. Initialization validates against all the app's domains and
-ignores stale, internal or never-toggleable entities. Ordinary login never
-imports guest preferences. Language remains a separate account preference.
+At sign-in, `POST /v1/me/content-filters/merge` carries the browser's guest
+choices into the account: a choice fills an entity the account has not set, and
+a hide wins over the account's show. `account_id` must match the authenticated
+account. The merge validates against all the app's domains and ignores resets
+and stale, internal or never-toggleable entities, so a repeat changes nothing.
+The SDK sends each set of guest choices once and keeps them as the browser's
+signed-out choices. Language remains a separate account preference, inherited
+only at registration.
 
 ## Existing preferences and cutover
 

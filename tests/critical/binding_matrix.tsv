@@ -263,3 +263,10 @@ ts:ChannelsClient.uploadImage	ts	TS channel media method	ChannelsClient.uploadIm
 ts:resolveInlineImageReferences	ts	TS inline media helper	resolveInlineImageReferences	sdk/ui/src/client/inline-images.ts	included-critical edition259 contract
 go:Engine.AccountErasure	go	Go Engine member	Engine.AccountErasure	account_lifecycle.go	included-critical
 go:Client.GetAccountErasure	go	Go generated Client route	Client.GetAccountErasure	client_gen.go	included-critical
+go:Client.PostContentFeedback	go	Go generated Client route	Client.PostContentFeedback	client_gen.go	included-critical
+go:Client.PatchContentFeedback	go	Go generated Client route	Client.PatchContentFeedback	client_gen.go	included-critical
+go:Client.PostMeContentFiltersMerge	go	Go generated Client route	Client.PostMeContentFiltersMerge	client_gen.go	included-critical
+ts:FeedbackClient.ask	ts	TS class member	FeedbackClient.ask	sdk/ui/src/client/feedback.ts	included-critical
+ts:FeedbackClient.answer	ts	TS class member	FeedbackClient.answer	sdk/ui/src/client/feedback.ts	included-critical
+ts:FeedbackClient.hide	ts	TS class member	FeedbackClient.hide	sdk/ui/src/client/feedback.ts	included-critical
+ts:ReaderPreferencesClient.carryGuestFilters	ts	TS class member	ReaderPreferencesClient.carryGuestFilters	sdk/ui/src/client/reader-preferences.ts	included-critical

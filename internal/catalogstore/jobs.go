@@ -474,6 +474,12 @@ func (s *Store) eraseInteractions(ctx context.Context, tx pgx.Tx, kinds, ids, vi
  AND content_id = ANY($2)`, s.tenant, comments); err != nil {
 		return err
 	}
+	if vids == nil {
+		// Feedback is about a whole item.
+		if _, err := tx.Exec(ctx, `DELETE FROM `+s.t.feedback+` WHERE app_id = $1::text::uuid AND content_id IN (SELECT i::uuid FROM unnest($2::text[]) i)`, s.tenant, ids); err != nil {
+			return err
+		}
+	}
 	_, err := tx.Exec(ctx, `DELETE FROM `+s.t.accessHistory+` WHERE tenant_id = $1 AND `+history, historyArgs...)
 	return err
 }

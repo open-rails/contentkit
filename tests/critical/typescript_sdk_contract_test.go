@@ -81,6 +81,19 @@ func TestTypeScriptPublicContracts(t *testing.T) {
 		})
 	})
 
+	t.Run("reaction_feedback", func(t *testing.T) {
+		w := feedbackWorld(t)
+		a := w.apps[0]
+		f := newFeedbackFixture(t, w, a)
+		liked, furryItem, goreItem := f.item("TypeScript liked", f.plain, f.alice), f.item("TypeScript furry", f.furry), f.item("TypeScript gore", f.gore)
+		_, readerToken := w.person(t, 0)
+		signer, signerToken := w.person(t, 0)
+		runTypeScriptContract(t, "reaction_feedback", map[string]any{"base": a.server.URL + "/content", "reader": readerToken, "signer": signerToken, "signerID": signer.ID,
+			"liked": liked.ID, "furryItem": furryItem.ID, "goreItem": goreItem.ID, "plain": string(f.plain.ID), "furry": string(f.furry.ID), "gore": string(f.gore.ID)}, []string{
+			"FeedbackClient.ask", "FeedbackClient.answer", "FeedbackClient.hide", "ReaderPreferencesClient.carryGuestFilters",
+		})
+	})
+
 	t.Run("discovery_entities", func(t *testing.T) {
 		w := newWorld(t, func(c *ck.Config) {
 			c.Content.EntityKinds["tag"] = kinds.EntityKind{Route: "tags", MembershipScopes: []kinds.MembershipScope{kinds.ContentScope}}

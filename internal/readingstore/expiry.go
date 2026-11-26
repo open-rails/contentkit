@@ -35,7 +35,7 @@ ON CONFLICT (app_id, subject) DO UPDATE SET last_active_at = GREATEST(a.last_act
 }
 
 // Touch records a write of a signed-out subject's own rows (a search, a
-// reaction, a hide) as activity now, by the engine's clock, so expiry holds
+// reaction, a hide, a feedback answer) as activity now, by the engine's clock, so expiry holds
 // without the log. A row touched within the hour is left alone. Accounts are
 // ignored.
 func (s *Store) Touch(ctx context.Context, db execer, who uuid.UUID) error {
@@ -62,8 +62,9 @@ func (s *Store) ExpireIdle(ctx context.Context, cutoff time.Time) (int, error) {
 }
 
 // expireBatch deletes the personal rows of up to expireBatch signed-out
-// subjects idle since before cutoff: reading state, history and recent
-// searches; their reactions stay, unlinked from them. A subject linked to an
+// subjects idle since before cutoff: reading state, history, recent searches
+// and feedback answers, free text included; their reactions stay, unlinked
+// from them. A subject linked to an
 // account is never expired.
 func (s *Store) expireBatch(ctx context.Context, cutoff time.Time) (int, error) {
 	var n int
@@ -91,6 +92,7 @@ func (s *Store) expireBatch(ctx context.Context, cutoff time.Time) (int, error) 
 			{`DELETE FROM ` + s.t.history + ` WHERE app_id = $1 AND subject = ANY($2)`, []any{s.app, subjects}},
 			{`DELETE FROM ` + s.t.searches + ` WHERE tenant_id = $1 AND subject = ANY($2)`, []any{s.tenant, texts}},
 			{`UPDATE ` + s.t.reactions + ` SET anonymous_subject = NULL WHERE tenant_id = $1 AND anonymous_subject = ANY($2)`, []any{s.tenant, subjects}},
+			{`DELETE FROM ` + s.t.feedback + ` WHERE app_id = $1 AND anonymous_actor_id = ANY($2)`, []any{s.app, subjects}},
 		} {
 			if _, err := tx.Exec(ctx, q.sql, q.args...); err != nil {
 				return fmt.Errorf("readingstore: expire anonymous: %w", err)

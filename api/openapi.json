@@ -11981,12 +11981,12 @@
         ]
       }
     },
-    "/v1/me/content-filters/initialize": {
+    "/v1/me/content-filters/merge": {
       "post": {
         "tags": [
           "discovery"
         ],
-        "summary": "Initializes the account_id's content filter settings from its guest choices only if no settings exist; account_id must match the authenticated account and retries preserve all saved settings.",
+        "summary": "Carries a signed-out browser's content filter choices into account_id's settings at sign-in: a choice fills an entity the account has not set, and a hide wins over the account's show. account_id must be the authenticated account; resets and entities no domain offers are ignored.",
         "parameters": [
           {
             "name": "language",
@@ -12002,7 +12002,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ContentFiltersInitialization"
+                "$ref": "#/components/schemas/ContentFiltersMerge"
               }
             }
           }
@@ -12031,6 +12031,147 @@
         "x-contentkit-auth": "user",
         "x-contentkit-errors": [
           "forbidden"
+        ],
+        "x-contentkit-error-sets": [
+          "module:discovery",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/contents/{id}/feedback": {
+      "post": {
+        "tags": [
+          "discovery"
+        ],
+        "summary": "Offers a feedback prompt after the reader's own like, favorite or dislike of the content: a share of each reaction is asked about, one person is offered about one prompt a day and never two for one item. The prompt is recorded as offered; prompt is null when there is none.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "description": "the version the reaction is on",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "language",
+            "in": "query",
+            "description": "the language of entity names",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FeedbackRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeedbackOffer"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "discovery",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:discovery",
+          "auth",
+          "request"
+        ]
+      },
+      "patch": {
+        "tags": [
+          "discovery"
+        ],
+        "summary": "Answers the reader's feedback prompt on the content, or takes or declines its hide suggestion. A taken suggestion hides the tag in an account's content filters; a signed-out browser keeps the choice itself. not_found when no prompt was offered.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "language",
+            "in": "query",
+            "description": "the language of entity names",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FeedbackInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReactionFeedback"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "discovery",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [
+          "forbidden",
+          "not_found"
         ],
         "x-contentkit-error-sets": [
           "module:discovery",
@@ -14619,7 +14760,7 @@
           "filters"
         ]
       },
-      "ContentFiltersInitialization": {
+      "ContentFiltersMerge": {
         "type": "object",
         "properties": {
           "account_id": {
@@ -16191,6 +16332,165 @@
           "content_kind",
           "content_id"
         ]
+      },
+      "FeedbackAnswer": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "string",
+            "enum": [
+              "artist",
+              "artwork",
+              "bad_art",
+              "bad_story",
+              "misleading",
+              "not_into",
+              "other",
+              "series",
+              "story",
+              "tag"
+            ]
+          },
+          "entity_id": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "text": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "answered_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "reason",
+          "entity_id",
+          "text",
+          "answered_at"
+        ]
+      },
+      "FeedbackEntity": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "hideable": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "slug",
+          "name",
+          "hideable"
+        ]
+      },
+      "FeedbackFollowUp": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "browse",
+              "follow"
+            ]
+          },
+          "entity": {
+            "$ref": "#/components/schemas/FeedbackEntity"
+          }
+        },
+        "required": [
+          "action",
+          "entity"
+        ]
+      },
+      "FeedbackInput": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "string",
+            "enum": [
+              "artist",
+              "artwork",
+              "bad_art",
+              "bad_story",
+              "misleading",
+              "not_into",
+              "other",
+              "series",
+              "story",
+              "tag"
+            ]
+          },
+          "entity_id": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "hide": {
+            "type": "boolean"
+          }
+        }
+      },
+      "FeedbackOffer": {
+        "type": "object",
+        "properties": {
+          "prompt": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ReactionFeedback"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "prompt"
+        ]
+      },
+      "FeedbackRequest": {
+        "type": "object",
+        "properties": {
+          "reaction": {
+            "type": "string",
+            "enum": [
+              "dislike",
+              "favorite",
+              "like"
+            ]
+          }
+        }
       },
       "FileDownload": {
         "type": "object",
@@ -18549,6 +18849,123 @@
         },
         "required": [
           "mine"
+        ]
+      },
+      "ReactionFeedback": {
+        "type": "object",
+        "properties": {
+          "content_id": {
+            "type": "string"
+          },
+          "reaction": {
+            "type": "string",
+            "enum": [
+              "dislike",
+              "favorite",
+              "like"
+            ]
+          },
+          "polarity": {
+            "type": "string",
+            "enum": [
+              "dislike",
+              "like"
+            ]
+          },
+          "reasons": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "artist",
+                "artwork",
+                "bad_art",
+                "bad_story",
+                "misleading",
+                "not_into",
+                "other",
+                "series",
+                "story",
+                "tag"
+              ]
+            }
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FeedbackEntity"
+            }
+          },
+          "artists": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FeedbackEntity"
+            }
+          },
+          "series": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FeedbackEntity"
+            }
+          },
+          "hide": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/FeedbackEntity"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hide_taken": {
+            "oneOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "offered_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "answer": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/FeedbackAnswer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "follow_up": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/FeedbackFollowUp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "content_id",
+          "reaction",
+          "polarity",
+          "reasons",
+          "tags",
+          "artists",
+          "series",
+          "hide",
+          "hide_taken",
+          "offered_at",
+          "answer",
+          "follow_up"
         ]
       },
       "ReactionRecord": {

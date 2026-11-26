@@ -63,6 +63,7 @@ export {
 } from "./comments.js";
 export { useContentConfig, type UseContentConfig } from "./config.js";
 export { useFavorite, useReaction, type UseFavorite, type UseReaction } from "./engagement.js";
+export { useReactionFeedback, type UseReactionFeedback } from "./reaction-feedback.js";
 export { usePoll, usePollEditor, usePolls, withVote, type PollFilter, type PollImages, type UsePoll, type UsePollEditor } from "./polls.js";
 export { useContent, useManagedContents, type ManageFilter, type UseContent } from "./contents.js";
 export { useActive, useMyStats, type UseStats } from "./stats.js";

@@ -205,7 +205,9 @@ VALUES ($1,$2,false) ON CONFLICT (tenant_id,actor_id) DO NOTHING`, rt.tenant, ac
 		s := rt.store
 		favorites := `UPDATE ` + s.t.favorites + ` SET user_id=NULL,anonymous_actor_id=$3 WHERE app_id=$1::uuid AND user_id=$2::uuid`
 		if !isUUID(actorID) {
-			favorites = "" // only a UUID account holds favorites
+			favorites = "" // only a UUID account holds favorites and feedback
+		} else if _, err := tx.Exec(ctx, `DELETE FROM `+pgx.Identifier{rt.schema, "content_reaction_feedback"}.Sanitize()+` WHERE app_id=$1::uuid AND user_id=$2::uuid`, rt.tenant, actorID); err != nil {
+			return err // feedback, free text included, is deleted rather than kept anonymously
 		}
 		for _, q := range []string{
 			`UPDATE ` + s.t.reactions + ` SET user_id=NULL,ip=NULL,anonymous_actor_id=$3 WHERE tenant_id=$1 AND user_id=$2`,

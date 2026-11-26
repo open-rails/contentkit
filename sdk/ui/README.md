@@ -614,6 +614,18 @@ option; polls do not display a separate sign-in button:
 <Poll language={lang} variant="embedded" footer={<a href="/polls">Poll history</a>} />
 ```
 
+### Feedback after reactions
+
+`ReactionFeedbackPrompt` asks why after a like, favorite or dislike made through the client (`ReactionButtons`, `FavoriteButton`): "What did you like?" (the artwork, the artist's style, the story, the series or characters, a tag, something else) or "What didn't you like?" (bad art, bad story, "Not into ‹tag›" for up to three likely culprit tags, misleading, something else). The server decides whether to ask: a share of each reaction (`Config.Interactions.Feedback`), about one prompt a day per person, never twice for one item. "Not into ‹tag›" on a tag the filters can hide offers "Hide galleries tagged ‹tag›?", never preselected; signed in it writes the account's content filters, signed out the browser's, which carry over at sign-in. Override the copy through the `feedback.*` messages.
+
+```tsx
+<ReactionButtons item={{ type: "contents", id }} />
+<FavoriteButton item={{ type: "contents", id }} />
+<ReactionFeedbackPrompt item={{ id }} filtersHref="/settings/filters" reportHref={`/report/${id}`} onFollow={(e) => follow(e.id)} />
+```
+
+To render your own, `useReactionFeedback(item)` gives the prompt and `answer`, `hide` and `dismiss`; underneath, `client.feedback.ask`, `answer` and `hide` are the calls.
+
 ## Entities
 
 Tags, artists, series, characters and rails: the kinds the site's
@@ -1148,16 +1160,15 @@ null from `load` when no language is saved. A localized URL does not change a
 stored preference: only an explicit language selection does. The language
 callback still belongs to the host's router.
 
-On a confirmed **new registration**, call
-`contentkit.preferences.inheritAfterRegistration(userId)`. Never call it for an
-ordinary sign-in. The captured guest choices are retried once that account's
-authenticated transport is ready; failed transfers remain pending in localStorage.
-Existing account filter records are preserved. A confirmed new registration
-inherits the guest language over its initial default; retries preserve a later
-language choice. Ordinary sign-ins never import guest preferences.
-`useReaderPreferences()` exposes the preferred language, pending/error state and
-a retry action. ReaderSettings shows an incomplete transfer and lets the reader
-retry it. Guest preferences are retained separately after registration and logout.
+Every sign-in carries the browser's guest filter choices into the account once
+(`preferences.carryGuestFilters()`, run by `configure`): the server fills what
+the account has not set, and a hide wins. The browser keeps them as its
+signed-out choices. On a confirmed **new registration**, call
+`contentkit.preferences.inheritAfterRegistration(userId)` to save the guest
+language over the account's initial default; retries preserve a later language
+choice and failed transfers remain pending in localStorage. Never call it for an
+ordinary sign-in. `useReaderPreferences()` exposes the preferred language,
+pending/error state and a retry action, which also retries a failed carry-over.
 
 ### Reading activity
 

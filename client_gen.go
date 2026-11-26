@@ -3423,13 +3423,13 @@ func (c *Client) PatchMeContentFilters(ctx context.Context, body discovery.Conte
 	return out, err
 }
 
-// PostMeContentFiltersInitializeQuery is the query of PostMeContentFiltersInitialize.
-type PostMeContentFiltersInitializeQuery struct {
+// PostMeContentFiltersMergeQuery is the query of PostMeContentFiltersMerge.
+type PostMeContentFiltersMergeQuery struct {
 	// the language of labels and group names
 	Language string
 }
 
-func (q PostMeContentFiltersInitializeQuery) values() url.Values {
+func (q PostMeContentFiltersMergeQuery) values() url.Values {
 	v := url.Values{}
 	if q.Language != "" {
 		v.Set("language", q.Language)
@@ -3437,10 +3437,57 @@ func (q PostMeContentFiltersInitializeQuery) values() url.Values {
 	return v
 }
 
-// PostMeContentFiltersInitialize is POST /v1/me/content-filters/initialize (user). Initializes the account_id's content filter settings from its guest choices only if no settings exist; account_id must match the authenticated account and retries preserve all saved settings.
-func (c *Client) PostMeContentFiltersInitialize(ctx context.Context, body discovery.ContentFiltersInitialization, q PostMeContentFiltersInitializeQuery) (discovery.ContentFilters, error) {
+// PostMeContentFiltersMerge is POST /v1/me/content-filters/merge (user). Carries a signed-out browser's content filter choices into account_id's settings at sign-in: a choice fills an entity the account has not set, and a hide wins over the account's show. account_id must be the authenticated account; resets and entities no domain offers are ignored.
+func (c *Client) PostMeContentFiltersMerge(ctx context.Context, body discovery.ContentFiltersMerge, q PostMeContentFiltersMergeQuery) (discovery.ContentFilters, error) {
 	var out discovery.ContentFilters
-	err := c.call(ctx, http.MethodPost, "/v1/me/content-filters/initialize", q.values(), body, &out)
+	err := c.call(ctx, http.MethodPost, "/v1/me/content-filters/merge", q.values(), body, &out)
+	return out, err
+}
+
+// PostContentFeedbackQuery is the query of PostContentFeedback.
+type PostContentFeedbackQuery struct {
+	// the version the reaction is on
+	Version string
+	// the language of entity names
+	Language string
+}
+
+func (q PostContentFeedbackQuery) values() url.Values {
+	v := url.Values{}
+	if q.Version != "" {
+		v.Set("version", q.Version)
+	}
+	if q.Language != "" {
+		v.Set("language", q.Language)
+	}
+	return v
+}
+
+// PostContentFeedback is POST /v1/contents/{id}/feedback (public). Offers a feedback prompt after the reader's own like, favorite or dislike of the content: a share of each reaction is asked about, one person is offered about one prompt a day and never two for one item. The prompt is recorded as offered; prompt is null when there is none.
+func (c *Client) PostContentFeedback(ctx context.Context, id string, body discovery.FeedbackRequest, q PostContentFeedbackQuery) (discovery.FeedbackOffer, error) {
+	var out discovery.FeedbackOffer
+	err := c.call(ctx, http.MethodPost, expand("/v1/contents/{id}/feedback", "{id}", url.PathEscape(id)), q.values(), body, &out)
+	return out, err
+}
+
+// PatchContentFeedbackQuery is the query of PatchContentFeedback.
+type PatchContentFeedbackQuery struct {
+	// the language of entity names
+	Language string
+}
+
+func (q PatchContentFeedbackQuery) values() url.Values {
+	v := url.Values{}
+	if q.Language != "" {
+		v.Set("language", q.Language)
+	}
+	return v
+}
+
+// PatchContentFeedback is PATCH /v1/contents/{id}/feedback (public). Answers the reader's feedback prompt on the content, or takes or declines its hide suggestion. A taken suggestion hides the tag in an account's content filters; a signed-out browser keeps the choice itself. not_found when no prompt was offered.
+func (c *Client) PatchContentFeedback(ctx context.Context, id string, body discovery.FeedbackInput, q PatchContentFeedbackQuery) (discovery.ReactionFeedback, error) {
+	var out discovery.ReactionFeedback
+	err := c.call(ctx, http.MethodPatch, expand("/v1/contents/{id}/feedback", "{id}", url.PathEscape(id)), q.values(), body, &out)
 	return out, err
 }
 
