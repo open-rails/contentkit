@@ -13,10 +13,10 @@ import (
 
 // SyncFences makes each target version's gateway fence follow the catalog:
 // a version deleted itself or with its content serves nothing until restored.
-// Each content's rows stay share-locked through the storage calls, so a
-// deletion, restore or erasure claim commits before or after a sync, never
-// during one. Catalog writes sync after they commit; the publication job the
-// same write scheduled syncs again, so a crash cannot leave the fence stale.
+// It reads the catalog, then writes the bucket with no transaction open (a
+// manifest write records itself under the catalog's row locks). A catalog
+// write racing a sync wakes the publication job again, whose next run syncs
+// the newer state; an erased item stays erased.
 func (s *Service) SyncFences(ctx context.Context, targets []versions.Target) error {
 	if s.reg == nil || s.m.Jobs == nil {
 		return nil
@@ -33,17 +33,15 @@ func (s *Service) SyncFences(ctx context.Context, targets []versions.Target) err
 	}
 	var failures error
 	for _, content := range slices.Sorted(maps.Keys(byContent)) {
-		failures = errors.Join(failures, pgx.BeginFunc(ctx, s.o.Pool, func(tx pgx.Tx) error {
-			return s.syncFencesTx(ctx, tx, content, byContent[content])
-		}))
+		failures = errors.Join(failures, s.syncFences(ctx, content, byContent[content]))
 	}
 	return failures
 }
 
-func (s *Service) syncFencesTx(ctx context.Context, tx pgx.Tx, content string, vers []string) error {
+func (s *Service) syncFences(ctx context.Context, content string, vers []string) error {
 	var kind string
 	var deleted bool
-	err := tx.QueryRow(ctx, `SELECT kind,state='deleted' FROM `+s.t.items+` WHERE tenant_id=$1 AND id=$2 FOR SHARE`,
+	err := s.o.Pool.QueryRow(ctx, `SELECT kind,state='deleted' FROM `+s.t.items+` WHERE tenant_id=$1 AND id=$2`,
 		s.o.Tenant, content).Scan(&kind, &deleted)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil // purged: erasure fenced its versions for good
@@ -53,8 +51,8 @@ func (s *Service) syncFencesTx(ctx context.Context, tx pgx.Tx, content string, v
 	if k, err := s.reg.Kind(kind); err != nil || !k.Versions {
 		return nil
 	}
-	rows, err := tx.Query(ctx, `SELECT id,state='deleted' FROM `+s.t.versions+`
- WHERE tenant_id=$1 AND content_id=$2 AND ($3::text[] IS NULL OR id=ANY($3)) ORDER BY id FOR SHARE`, s.o.Tenant, content, vers)
+	rows, err := s.o.Pool.Query(ctx, `SELECT id,state='deleted' FROM `+s.t.versions+`
+ WHERE tenant_id=$1 AND content_id=$2 AND ($3::text[] IS NULL OR id=ANY($3)) ORDER BY id`, s.o.Tenant, content, vers)
 	if err != nil {
 		return err
 	}
@@ -74,7 +72,7 @@ func (s *Service) syncFencesTx(ctx context.Context, tx pgx.Tx, content string, v
 			if err != nil {
 				return err
 			}
-			return s.m.Jobs.FenceDeleted(gctx, ref, deleted || v.Deleted)
+			return s.m.Jobs.SetDeleted(gctx, ref, deleted || v.Deleted)
 		})
 	}
 	return g.Wait()

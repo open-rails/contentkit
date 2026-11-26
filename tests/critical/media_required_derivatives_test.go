@@ -15,9 +15,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/catalog"
-	"github.com/open-rails/contentkit/internal/media/worker"
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/media/worker"
 )
 
 // The same actual derivative worker handles PNG and MP4. A held S3 output
@@ -46,21 +46,18 @@ func TestRequiredMixedDerivativesBeforeRelease(t *testing.T) {
 	must(t, err)
 	_, err = admin.PostContentPublish(t.Context(), item.ID, catalog.PublishInput{})
 	must(t, err)
-	accepted := currentPublicationJob(t, m.app, ref.Version)
 	t.Cleanup(func() {
 		if !t.Failed() {
 			return
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
-		var requests, jobs string
-		err := m.pool.QueryRow(ctx, `SELECT coalesce(jsonb_agg(jsonb_build_object('id',id,'state',state,'current',current,'scheduled_at',scheduled_at,'waiting',plan->'waiting','error',error)),'[]')::text FROM `+pgx.Identifier{m.schema, "content_publication_requests"}.Sanitize()+` WHERE tenant_id=$1 AND version_id=$2`, m.app.cfg.Scope.AppID.String(), ref.Version).Scan(&requests)
-		t.Logf("release requests=%s err=%v clock=%s", requests, err, m.clock.now())
-		err = m.pool.QueryRow(ctx, `SELECT coalesce(jsonb_agg(jsonb_build_object('state',state,'args',args,'errors',errors,'scheduled_at',scheduled_at)),'[]')::text FROM `+pgx.Identifier{m.schema + "_river", "river_job"}.Sanitize()+` WHERE kind='contentkit_publication'`).Scan(&jobs)
+		var jobs string
+		err := m.pool.QueryRow(ctx, `SELECT coalesce(jsonb_agg(jsonb_build_object('state',state,'args',args,'errors',errors,'scheduled_at',scheduled_at)),'[]')::text FROM `+pgx.Identifier{m.schema + "_river", "river_job"}.Sanitize()+` WHERE kind='contentkit_publication'`).Scan(&jobs)
 		t.Logf("release jobs=%s err=%v", jobs, err)
 	})
 	hold := m.wire.pause(t, func(r *http.Request) bool {
-		return r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/internal/") && strings.HasPrefix(r.Header.Get("Content-Type"), "video/mp4")
+		return r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/internal/") && strings.HasPrefix(r.Header.Get("Content-Type"), "video/mp4") && !strings.HasSuffix(r.URL.Path, digestBytes(video))
 	})
 	config := m.config
 	config.VideoCodecs = []media.Codec{media.CodecH264}
@@ -103,16 +100,12 @@ func TestRequiredMixedDerivativesBeforeRelease(t *testing.T) {
 	_, err = m.app.client("").GetVersion(t.Context(), ref.Version, ck.GetVersionQuery{})
 	requireError(t, err, 404, "not_found")
 	var active bool
-	must(t, m.pool.QueryRow(t.Context(), `SELECT release_id IS NOT NULL FROM `+pgx.Identifier{m.schema, "content_versions"}.Sanitize()+` WHERE tenant_id=$1 AND id=$2`, m.app.cfg.Scope.AppID.String(), ref.Version).Scan(&active))
+	must(t, m.pool.QueryRow(t.Context(), `SELECT released FROM `+pgx.Identifier{m.schema, "content_versions"}.Sanitize()+` WHERE tenant_id=$1 AND id=$2`, m.app.cfg.Scope.AppID.String(), ref.Version).Scan(&active))
 	if active {
 		t.Fatal("partial derivatives activated a release")
 	}
 	hold.unblock()
 	awaitMediaReady(t, admin, ref)
-	readyRequest := currentPublicationJob(t, m.app, ref.Version)
-	if !readyRequest.Due.Equal(accepted.Due) {
-		t.Fatalf("processing completion moved accepted publication date: before=%s after=%s host_clock=%s", accepted.Due, readyRequest.Due, m.clock.now())
-	}
 	awaitEditionPublication(t, m.app, admin, item.ID, ref.Version)
 	visible, err := m.app.client("").GetVersion(t.Context(), ref.Version, ck.GetVersionQuery{})
 	must(t, err)
@@ -124,9 +117,10 @@ func TestRequiredMixedDerivativesBeforeRelease(t *testing.T) {
 	if derivatives == 0 {
 		t.Fatal("no unified derivative work was performed")
 	}
-	// Replacing one input retains the old release until that output finishes.
+	// Replacing one input retains the old release until that output finishes
+	// (a released output's replacement is written where it is served).
 	hold = m.wire.pause(t, func(r *http.Request) bool {
-		return r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/internal/") && strings.HasPrefix(r.Header.Get("Content-Type"), "image/webp")
+		return r.Method == http.MethodPut && strings.HasPrefix(r.Header.Get("Content-Type"), "image/webp")
 	})
 	before, err := m.app.client("").GetMediaVersion(t.Context(), ref.Kind, ref.ID, ref.Version, ck.GetMediaVersionQuery{})
 	must(t, err)

@@ -31,6 +31,7 @@ import (
 
 	contentkit "github.com/open-rails/contentkit"
 	ckopenrails "github.com/open-rails/contentkit/adapters/openrails"
+	ckmedia "github.com/open-rails/contentkit/media"
 	mediaS3 "github.com/open-rails/contentkit/media/s3"
 )
 
@@ -373,6 +374,11 @@ func secureEndpoint(raw string) error {
 // Reconcile repairs the engine's derived catalog state (Engine.Reconcile).
 func (s *Server) Reconcile(ctx context.Context) (contentkit.Reconciled, error) {
 	return s.engine.Reconcile(ctx)
+}
+
+// RegenerateMedia queues the media worker over r's items (Engine.RegenerateMedia).
+func (s *Server) RegenerateMedia(ctx context.Context, r ckmedia.Regeneration) (int, error) {
+	return s.engine.RegenerateMedia(ctx, r)
 }
 
 // Handler is the public surface: ContentKit's routes and /livez, /readyz,

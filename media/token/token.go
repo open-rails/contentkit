@@ -3,10 +3,13 @@
 //
 //	{kid}.{exp}.base64url(HMAC-SHA256(secret, "{scope}|{exp}"))
 //
-// An item token's scope is an item's, "{ns}/{kind}/{id}" or a version's
-// "{ns}/{kind}/{id}/{version}": every file in the item's private/ or none. A
-// private-file token covers one immutable key, never its siblings.
-// Tokens are bearer tokens, revoked only by expiry.
+// An item token's scope is the item's bucket and folder without its trailing
+// slash, "{bucket}/{kind}/{id}" (or "{bucket}/_accounts/{kind}/{id}"): every
+// file in the item's private/ or none. The bucket is the tenancy boundary, so
+// a token never opens another app's item of the same id, even through a
+// gateway holding one key for many apps. There are no per-file tokens.
+// Tokens are bearer tokens, revoked only by expiry (and by the item's
+// deletion fence).
 package token
 
 import (
@@ -130,21 +133,17 @@ func (r Ring) Sign(scope string, exp time.Time) string {
 	return r.current.ID + "." + e + "." + mac(r.current.Secret, scope, e)
 }
 
-// PrivateFileScope covers one private object key, including tenant, app, kind,
-// item and version. Its domain separator keeps it distinct from download and
-// whole-item scopes.
-func PrivateFileScope(key string) string { return "private-file|" + key }
+// ItemScope is the scope of an item token for the item folder prefix in bucket.
+func ItemScope(bucket, prefix string) string { return bucket + "/" + strings.TrimSuffix(prefix, "/") }
 
-// VerifyPrivate checks an exact-file or whole-item token for a private key.
-func (r Ring) VerifyPrivate(tok, key string, now time.Time) error {
+// VerifyPrivate checks an item token for a private key in bucket: the token
+// of the item whose private/ holds key.
+func (r Ring) VerifyPrivate(tok, bucket, key string, now time.Time) error {
 	k, area, ok := keyFolder(key)
-	if !ok || area != layout.AreaPrivate {
+	if !ok || area != layout.AreaPrivate || bucket == "" {
 		return ErrInvalid
 	}
-	if err := r.VerifyScope(tok, PrivateFileScope(key), now); !errors.Is(err, ErrInvalid) {
-		return err
-	}
-	return r.VerifyScope(tok, strings.TrimSuffix(k.Folder(), "/"), now)
+	return r.VerifyScope(tok, ItemScope(bucket, k.Folder()), now)
 }
 
 // VerifyScope checks tok for exactly scope at now.

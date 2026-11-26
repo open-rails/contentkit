@@ -16,6 +16,28 @@ const (
 	CodecAV1 Codec = "av1"
 )
 
+// DynamicRange is a video's: SDR, or HDR with the PQ (HDR10) or HLG
+// transfer. AV1 renditions keep an HDR source's range; its H.264
+// renditions, sprite and frames are tone-mapped to BT.709 SDR.
+type DynamicRange string
+
+const (
+	RangeSDR DynamicRange = ""
+	RangePQ  DynamicRange = "pq"  // SMPTE ST 2084
+	RangeHLG DynamicRange = "hlg" // ARIB STD-B67
+)
+
+// HLS is the range as an HLS VIDEO-RANGE value.
+func (r DynamicRange) HLS() string {
+	switch r {
+	case RangePQ:
+		return "PQ"
+	case RangeHLG:
+		return "HLG"
+	}
+	return "SDR"
+}
+
 // DefaultVideoLimits are an upload's VideoLimits where it sets none: 4 h at
 // up to 60 fps, frames up to DCI 8K (8192×4320; the ladder scales larger
 // sources down to 4K), and the work of a 4 h 4K60 default ladder (2160,

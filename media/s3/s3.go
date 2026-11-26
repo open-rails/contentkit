@@ -152,16 +152,21 @@ func (s *Store) Capabilities(ctx context.Context) (media.Capabilities, error) {
 
 // Check reports whether the bucket answers, probing the capabilities while
 // they are unknown. New never dials, so hosts start without the bucket and
-// run Check as their S3 dependency probe.
+// run Check as their S3 dependency probe. Once they are known it reads one
+// fixed object, written on the first Check that finds none: a HEAD proves
+// reachability and the keys without a listing, which on a heavily sharded
+// bucket index reads every shard.
 func (s *Store) Check(ctx context.Context) error {
 	if s.caps.Load() == nil {
 		_, err := s.Capabilities(ctx)
 		return err
 	}
-	for _, err := range s.List(ctx, s.probe+"_health/") {
-		return err
+	key := s.probe + "_health"
+	_, err := s.Head(ctx, key)
+	if errors.Is(err, mediastore.ErrNotFound) {
+		_, err = s.Put(ctx, key, strings.NewReader(""), 0, media.PutOptions{})
 	}
-	return nil
+	return err
 }
 
 func (s *Store) Put(ctx context.Context, key string, body io.Reader, size int64, o media.PutOptions) (media.Object, error) {
@@ -212,8 +217,10 @@ func (s *Store) Head(ctx context.Context, key string) (media.Object, error) {
 		Metadata: out.Metadata}, nil
 }
 
+// Delete sends one attempt: an unanswered DELETE retried by the SDK could
+// still run after the retry answered, past GC's settle period.
 func (s *Store) Delete(ctx context.Context, key string) error {
-	_, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: &s.bucket, Key: &key})
+	_, err := s.client.DeleteObject(ctx, &s3.DeleteObjectInput{Bucket: &s.bucket, Key: &key}, func(so *s3.Options) { so.Retryer = aws.NopRetryer{} })
 	return mapErr("delete", key, err)
 }
 
@@ -229,6 +236,26 @@ func (s *Store) List(ctx context.Context, prefix string) iter.Seq2[media.Object,
 			for _, o := range page.Contents {
 				if !yield(media.Object{Key: aws.ToString(o.Key), Size: aws.ToInt64(o.Size), ETag: aws.ToString(o.ETag),
 					LastModified: aws.ToTime(o.LastModified)}, nil) {
+					return
+				}
+			}
+		}
+	}
+}
+
+// Folders lists the "folders" directly under prefix: each common prefix
+// ending in "/", in key order.
+func (s *Store) Folders(ctx context.Context, prefix string) iter.Seq2[string, error] {
+	return func(yield func(string, error) bool) {
+		p := s3.NewListObjectsV2Paginator(s.client, &s3.ListObjectsV2Input{Bucket: &s.bucket, Prefix: &prefix, Delimiter: aws.String("/")})
+		for p.HasMorePages() {
+			page, err := p.NextPage(ctx)
+			if err != nil {
+				yield("", mapErr("list folders", prefix, err))
+				return
+			}
+			for _, cp := range page.CommonPrefixes {
+				if !yield(aws.ToString(cp.Prefix), nil) {
 					return
 				}
 			}
@@ -446,21 +473,30 @@ func (s *Store) AbortMultipart(ctx context.Context, key, uploadID string) error 
 // infer ownership or change keys; the tag enables expiry without bucket scans.
 func temporaryTagging(key string) *string {
 	parsed, ok := layout.Parse(key)
-	if !ok || parsed.Area != layout.AreaTemp && parsed.Area != layout.AreaTmp {
+	if !ok || parsed.Area != layout.AreaTmp {
 		return nil
 	}
 	return aws.String("contentkit-temp=true")
 }
 
-// Configure enables versioning, retains permanent noncurrent versions for
-// restoreDays, and expires temporary objects and incomplete uploads after seven
-// days. Temporary noncurrent versions have a one-day retention after replacement
-// or expiry. Other applications' lifecycle rules are preserved.
-func (s *Store) Configure(ctx context.Context, restoreDays int32) error {
-	if _, err := s.client.PutBucketVersioning(ctx, &s3.PutBucketVersioningInput{Bucket: &s.bucket,
-		VersioningConfiguration: &types.VersioningConfiguration{Status: types.BucketVersioningStatusEnabled}}); err != nil {
-		return fmt.Errorf("s3: enable versioning: %w", err)
+// Bucket is the bucket's name.
+func (s *Store) Bucket() string { return s.bucket }
+
+// Versioning reports the bucket's versioning status: "" when it was never
+// enabled.
+func (s *Store) Versioning(ctx context.Context) (string, error) {
+	out, err := s.client.GetBucketVersioning(ctx, &s3.GetBucketVersioningInput{Bucket: &s.bucket})
+	if err != nil {
+		return "", mapErr("get versioning", "", err)
 	}
+	return string(out.Status), nil
+}
+
+// Configure sets ContentKit's lifecycle rules: tagged temporary objects and
+// video work expire after seven days, incomplete multipart uploads are
+// aborted after seven. It never enables versioning: the media bucket must
+// never have it. Other applications' rules are preserved.
+func (s *Store) Configure(ctx context.Context) error {
 	current, err := s.client.GetBucketLifecycleConfiguration(ctx, &s3.GetBucketLifecycleConfigurationInput{Bucket: &s.bucket})
 	if err != nil {
 		var apiErr smithy.APIError
@@ -482,7 +518,6 @@ func (s *Store) Configure(ctx context.Context, restoreDays int32) error {
 		ID:                             aws.String("contentkit-media"),
 		Status:                         types.ExpirationStatusEnabled,
 		Filter:                         &types.LifecycleRuleFilter{Prefix: aws.String("")},
-		NoncurrentVersionExpiration:    &types.NoncurrentVersionExpiration{NoncurrentDays: aws.Int32(restoreDays)},
 		AbortIncompleteMultipartUpload: &types.AbortIncompleteMultipartUpload{DaysAfterInitiation: aws.Int32(7)},
 	}, {
 		ID:         aws.String("contentkit-video-work"),
@@ -491,9 +526,8 @@ func (s *Store) Configure(ctx context.Context, restoreDays int32) error {
 		Expiration: &types.LifecycleExpiration{Days: aws.Int32(7)},
 	}, {
 		ID: aws.String("contentkit-temp"), Status: types.ExpirationStatusEnabled,
-		Filter:                      &types.LifecycleRuleFilter{Tag: &types.Tag{Key: aws.String("contentkit-temp"), Value: aws.String("true")}},
-		Expiration:                  &types.LifecycleExpiration{Days: aws.Int32(7)},
-		NoncurrentVersionExpiration: &types.NoncurrentVersionExpiration{NoncurrentDays: aws.Int32(1)},
+		Filter:     &types.LifecycleRuleFilter{Tag: &types.Tag{Key: aws.String("contentkit-temp"), Value: aws.String("true")}},
+		Expiration: &types.LifecycleExpiration{Days: aws.Int32(7)},
 	}}...)
 	_, err = s.client.PutBucketLifecycleConfiguration(ctx, &s3.PutBucketLifecycleConfigurationInput{Bucket: &s.bucket,
 		LifecycleConfiguration: &types.BucketLifecycleConfiguration{Rules: rules}})

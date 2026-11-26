@@ -34,7 +34,8 @@ type HandlerOptions struct {
 	// Limit is the per-viewer rate limit (default 2/s, burst 120, per
 	// process; set Limit.Redis to share it across replicas): every read,
 	// playlist and download counts.
-	// Viewers are keyed by Actor.ID, anonymous ones by their address.
+	// Viewers are keyed by Actor.ID, anonymous ones by their address; the
+	// engine's in-process client is not limited.
 	Limit RateLimit
 	// Events selects the retained processing log for this physical item.
 	Events func(contentref.ContentRef) (eventlog.Reader, error)
@@ -99,9 +100,10 @@ func (h readHandler) read(w http.ResponseWriter, req *http.Request) {
 	h.log.Debug("media read", "path", req.URL.Path, "duration", time.Since(start))
 }
 
-// presets lists the preset rules: the same for every viewer, so cacheable.
+// presets lists the preset rules with their default images: the same for
+// every viewer, so cacheable.
 func (h readHandler) presets(w http.ResponseWriter, req *http.Request) {
-	writeJSON(w, http.StatusOK, h.r.reg.PresetRules())
+	writeJSON(w, http.StatusOK, h.r.reg.PresetRulesWithDefaults(req.Context()))
 }
 
 func (h readHandler) playlist(w http.ResponseWriter, req *http.Request) {
@@ -188,8 +190,6 @@ func fail(w http.ResponseWriter, req *http.Request, log *slog.Logger, err error)
 		status, code, msg = http.StatusBadRequest, "invalid_request", "invalid request"
 	case errors.Is(err, media.ErrUnavailable):
 		status, code, msg = http.StatusServiceUnavailable, "unavailable", "media storage is unavailable"
-	case errors.Is(err, ErrPublicationLayoutRequired):
-		status, code, msg = http.StatusServiceUnavailable, media.CodeUpgrade, "media publication is being restored"
 	case errors.Is(err, ErrEditorReadUnsupported):
 		status, code, msg = http.StatusServiceUnavailable, "unavailable", "editor media delivery is unavailable"
 	default:
@@ -211,6 +211,10 @@ func limited(o HandlerOptions, log *slog.Logger) func(http.Handler) http.Handler
 func limit(lim *ratelimit.Limiter, next http.Handler, log *slog.Logger) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		actor := gate.Actor(req.Context())
+		if gate.IsHost(actor) {
+			next.ServeHTTP(w, req) // the engine's own client is no viewer
+			return
+		}
 		if ok, wait := lim.Allow(req.Context(), viewerKey(actor)); !ok {
 			log.Warn("media read rate limited", "viewer", actor.ID, "anonymous", actor.Anonymous, "path", req.URL.Path)
 			w.Header().Set("Retry-After", strconv.Itoa(max(1, int(math.Ceil(wait.Seconds())))))

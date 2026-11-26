@@ -160,7 +160,7 @@ function Workbench({ client, basePath, navigation, sections: wanted, contentKind
           ) : section === "polls" ? (
             <PollManager {...shared} {...polls} languages={model.kinds.languages} basePath={`${base}/polls`} navigation={nav} />
           ) : (
-            <StatsDashboard {...shared} kinds={kinds.map((value) => ({ value, label: labelOf(labels, value) }))} />
+            <StatsDashboard {...shared} />
           )}
         </div>
         </NestedPageHeadings>

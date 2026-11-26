@@ -5,6 +5,7 @@ package contentkit
 // restrictions and token claims stay on the server.
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"time"
@@ -21,14 +22,12 @@ type ContentModel struct {
 	Tiers       []string                    `json:"tiers"`
 	Kinds       map[string]kinds.Kind       `json:"kinds"`
 	EntityKinds map[string]kinds.EntityKind `json:"entity_kinds"`
-	// Signals: the site records signals and exposures now. Without, clients
-	// send none and read the model again later: a configured signal plane
-	// that is down comes back (history, similar and recommendations answer
-	// unavailable meanwhile), one never configured answers not_configured.
+	// Signals: the site logs activity (it has a signal plane). Without,
+	// clients send none: POST /v1/activity answers not_configured.
 	Signals bool `json:"signals"`
-	// Avatars is people's avatar preset (Stable): an avatar's URLs are its
-	// names at {base}/v1/{namespace}/{kind}/{user id}/public/, and its
-	// uploads target {kind, user id}. Absent: people have none.
+	// Avatars is people's avatar preset with its default image; uploads
+	// target {kind, user id}. Absent: people have none. Another person's
+	// avatar is listed beside what they wrote.
 	Avatars *media.PresetRule `json:"avatars,omitempty"`
 }
 
@@ -59,12 +58,12 @@ func publicModel(c kinds.Config, signals bool, avatars *media.PresetRule) Conten
 
 type kindsServer struct {
 	content kinds.Config
-	avatars *media.PresetRule
+	avatars func(context.Context) *media.PresetRule
 	signals func() bool
 }
 
 // kindsHandler serves the content model and the current domain’s configured buckets.
-func kindsHandler(guard httpapi.Guard, c kinds.Config, signals func() bool, avatars *media.PresetRule) http.Handler {
+func kindsHandler(guard httpapi.Guard, c kinds.Config, signals func() bool, avatars func(context.Context) *media.PresetRule) http.Handler {
 	srv := &kindsServer{content: c, signals: signals, avatars: avatars}
 	mux := http.NewServeMux()
 	httpapi.Mount(mux, guard, srv, kindsRoutes)
@@ -75,30 +74,12 @@ func init() { httpapi.Register(httpapi.Kinds, kindsRoutes) }
 
 var kindsRoutes = []httpapi.Route[*kindsServer]{
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/kinds", Resource: "kinds", Auth: httpapi.Open,
-		Doc:       "The site's content model: languages, tiers, content kinds, entity kinds, whether signals are recorded now and people's avatar preset.",
+		Doc:       "The site's content model: languages, tiers, content kinds, entity kinds, whether activity is logged and people's avatar preset.",
 		Responses: []httpapi.Reply{httpapi.OK(ContentModel{})}, Cache: httpapi.Cache{MaxAge: time.Minute}}, Serve: httpapi.H((*kindsServer).handle)},
 }
 
 func (s *kindsServer) handle(w http.ResponseWriter, r *http.Request) {
-	model := publicModel(s.content, s.signals(), s.avatars)
-	domain, _ := s.content.DomainFor(r.Host)
-	for name, kind := range model.Kinds {
-		buckets := make([]kinds.PopularityBucket, 0, len(kind.Popularity))
-		for _, bucket := range kind.Popularity {
-			scopes := make([]kinds.PopularityScope, 0, len(bucket.Scopes))
-			for _, scope := range bucket.ActivityScopes() {
-				if scope.Domain == "" || scope.Domain == domain.Name {
-					scopes = append(scopes, scope)
-				}
-			}
-			if len(scopes) > 0 {
-				bucket.Scopes = scopes
-				buckets = append(buckets, bucket)
-			}
-		}
-		kind.Popularity = buckets
-		model.Kinds[name] = kind
-	}
+	model := publicModel(s.content, s.signals(), s.avatars(r.Context()))
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(model)
 }

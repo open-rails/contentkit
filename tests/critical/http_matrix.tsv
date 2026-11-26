@@ -120,8 +120,6 @@ CK-API-136	PUT	/v1/contents/{id}/versions/{version}/reader	editor	root:content:w
 CK-API-138	GET	/v1/contents/{id}/versions/{version}/download	public		included-critical functionality and security
 CK-API-139	GET	/v1/contents/{id}/versions/{version}/archive	public		included-critical functionality and security
 CK-API-140	GET	/v1/me/library	user		included-critical functionality and security
-CK-API-141	POST	/v1/engagement	public		partial-security-only; positive/full functionality deferred P1
-CK-API-142	POST	/v1/activity-contexts	public		partial-security-only; positive/full functionality deferred P1
 CK-API-143	GET	/v1/releases	public		included-critical functionality and security
 CK-API-144	GET	/v1/content-cards	public		included-critical functionality and security
 CK-API-145	GET	/v1/search	public		included-critical functionality and security
@@ -131,17 +129,14 @@ CK-API-148	GET	/v1/recommendations	user		included-critical functionality and sec
 CK-API-149	GET	/v1/release-dates	public		included-critical functionality and security
 CK-API-150	GET	/v1/content-filters	public		partial-security-only; positive/full functionality deferred P1
 CK-API-151	PATCH	/v1/me/content-filters	user		partial-security-only; positive/full functionality deferred P1
-CK-API-152	POST	/v1/me/content-filters/initialize	user		partial-security-only; positive/full functionality deferred P1
 CK-API-153	GET	/v1/me/history	user		partial-security-only; positive/full functionality deferred P1
 CK-API-154	DELETE	/v1/me/history	user		partial-security-only; positive/full functionality deferred P1
-CK-API-155	POST	/v1/signals	public		partial-security-only; positive/full functionality deferred P1
-CK-API-156	POST	/v1/exposures	public		partial-security-only; positive/full functionality deferred P1
 CK-API-157	GET	/v1/me/favorites	user		partial-security-only; positive/full functionality deferred P1
 CK-API-159	GET	/v1/me/searches	public		partial-security-only; positive/full functionality deferred P1
 CK-API-160	DELETE	/v1/me/searches	public		partial-security-only; positive/full functionality deferred P1
 CK-API-161	GET	/v1/sitemap/contents	open		included-critical functionality and security
 CK-API-162	GET	/v1/sitemap/entities	open		included-critical functionality and security
-CK-API-163	GET	/v1/stats/activity	staff	root:content:view-restricted	partial-security-only; positive/full functionality deferred P1
+CK-API-163	GET	/v1/stats/active	staff	root:content:view-restricted	partial-security-only; positive/full functionality deferred P1
 CK-API-164	GET	/v1/me/stats	user		partial-security-only; positive/full functionality deferred P1
 CK-API-165	GET	/v1/manage/search-suggestions	editor	root:content:write	included-critical functionality and security
 CK-API-166	POST	/v1/import	staff	root:import:write	partial-security-reply-counts-import-recounts-and-merged-entity-aliases; other functionality deferred P1
@@ -180,3 +175,11 @@ CK-API-198	GET	/v1/moderation/location-rules/history	staff	root:locations:write	
 CK-API-199	GET	/v1/moderation/location-rules/{id}/history	staff	root:locations:write	included-critical functionality and security
 CK-API-200	GET	/v1/moderation/location-rules/check	staff	root:locations:write	included-critical functionality and security
 CK-API-201	GET	/v1/accounts/{id}/erasure	staff	root:accounts:lifecycle	included-critical functionality and security
+CK-API-202	POST	/v1/activity	public		included-critical functionality and security
+CK-API-203	POST	/v1/me/anonymous-link	user		included-critical functionality and security
+CK-API-204	PUT	/v1/contents/{id}/hidden	public		included-critical functionality and security
+CK-API-205	DELETE	/v1/contents/{id}/hidden	public		included-critical functionality and security
+CK-API-206	GET	/v1/me/continue	public		included-critical functionality and security
+CK-API-220	POST	/v1/me/content-filters/merge	user		included-critical functionality and security
+CK-API-221	POST	/v1/contents/{id}/feedback	public		included-critical functionality and security
+CK-API-222	PATCH	/v1/contents/{id}/feedback	public		included-critical functionality and security

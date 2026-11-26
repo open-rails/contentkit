@@ -391,18 +391,18 @@ func (s *Store) readCreators(ctx context.Context, ids []string) (map[string][]ca
 
 // readVersions reads every version of the items with its text and segments,
 // or with a non-empty vid only those with that ID or version code.
-// reader receives each version's active publication snapshot of segments,
-// independent of the author's pending chapter markers; it never leaves the
-// store directly.
+// reader receives each released version's released chapters, independent
+// of the author's pending chapter markers; it never leaves the store
+// directly. Their page spans are the reader plan's.
 func (s *Store) readVersions(ctx context.Context, ids []string, vid string, reader map[string][]catalog.Segment) (map[string]*catalog.Version, error) {
 	q := `SELECT id, code, position, languages, traits, label, state, publish_at, published_at, access, attributes,
  pages, duration_ms, width, height, has_audio, ordinal, coalesce(cover->>'image', ''),coalesce(original_title,''),coalesce(original_language,''),
- (SELECT jsonb_build_object('id',r.id,'state',CASE WHEN r.state='retiring' THEN 'running'
-          WHEN r.state='completed' AND coalesce((r.result->>'waiting')::boolean,false) THEN 'waiting' ELSE r.state END,
-          'scheduled_at',r.scheduled_at,'completed_at',r.completed_at,'error',r.error)
-  FROM ` + s.qs + `.content_publication_requests r WHERE r.tenant_id=v.tenant_id AND r.version_id=v.id AND r.current),
- (SELECT r.result#>'{pages,segments}' FROM ` + s.qs + `.content_publication_requests r
-  WHERE r.tenant_id=v.tenant_id AND r.id=v.release_id AND r.version_id=v.id AND r.state IN ('retiring','completed'))
+ CASE WHEN v.released THEN jsonb_build_object('id','','state','completed','scheduled_at',coalesce(v.published_at,v.updated_at),'completed_at',v.published_at)
+      WHEN v.state='published' THEN jsonb_build_object('id','','state','pending','scheduled_at',
+        greatest(coalesce(v.publish_at,v.updated_at),coalesce((SELECT c.publish_at FROM ` + s.t.items + ` c WHERE c.tenant_id=v.tenant_id AND c.id=v.content_id),v.updated_at))) END,
+ (SELECT jsonb_agg(jsonb_build_object('id',g.id,'position',g.position,'title',g.title,'start',coalesce(g.start_index,0),'end',coalesce(g.end_index,0),
+   'release_at',g.release_at,'released_at',g.released_at) ORDER BY g.position)
+  FROM ` + s.t.segments + ` g WHERE g.tenant_id=v.tenant_id AND g.version_id=v.id AND g.released_at IS NOT NULL AND v.released)
  FROM ` + s.t.versions + ` v WHERE tenant_id = $1 AND content_id = ANY($2)`
 	args := []any{s.tenant, ids}
 	if vid != "" {

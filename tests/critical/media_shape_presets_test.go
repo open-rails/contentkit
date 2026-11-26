@@ -20,9 +20,9 @@ import (
 	"github.com/riverqueue/river/rivertype"
 
 	ck "github.com/open-rails/contentkit"
-	"github.com/open-rails/contentkit/internal/media/worker"
 	"github.com/open-rails/contentkit/internal/media/workqueue"
 	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/media/worker"
 )
 
 var (
@@ -37,7 +37,7 @@ var (
 func TestImageShapePresets(t *testing.T) {
 	t.Run("CK-J09-S31_registry_validates_shapes_and_unmeasured_uploads_use_the_preset_image", func(t *testing.T) {
 		kind := func(p media.Private) media.Config {
-			return media.Config{Namespace: "shapes", Kinds: []media.Kind{{Name: "gallery",
+			return media.Config{Scope: newMediaScope(), Kinds: []media.Kind{{Name: "gallery",
 				Uploads: []media.Upload{{Path: "pages/{name}", Types: []string{"image/png"}, MaxBytes: 1 << 20}},
 				Private: []media.Private{p}}}}
 		}
@@ -65,7 +65,7 @@ func TestImageShapePresets(t *testing.T) {
 			"other format":      kind(reader(media.Shape{NoWiderThan: media.Ratio("1:2"), Image: source})),
 			"other animation":   kind(reader(media.Shape{NoWiderThan: media.Ratio("1:2"), Image: still})),
 			"invalid image":     kind(reader(media.Shape{NoWiderThan: media.Ratio("1:2"), Image: media.Image{Width: -1}})),
-			"no image producer": kind(media.Private{Name: "pages", Zip: "reader/", To: "pages.zip", Shapes: readerShapes}),
+			"no image producer": kind(media.Private{Name: "pages", From: "pages/{name}", To: "pages/{name}.vtt", Subtitles: &media.Subtitles{}, Shapes: readerShapes}),
 		}
 		for name, config := range invalid {
 			if _, err := mediastore.NewRegistry(config, mediastore.Hooks{}); err == nil {
@@ -80,7 +80,7 @@ func TestImageShapePresets(t *testing.T) {
 		})
 		// The registry as `contentkit media-config` prints it and
 		// cmd/media-worker loads it from MEDIA_KINDS_FILE.
-		printed, err := json.MarshalIndent(m.config.Kinds, "", "  ")
+		printed, err := m.app.cfg.MediaRegistry()
 		must(t, err)
 		var compact bytes.Buffer
 		must(t, json.Compact(&compact, printed))
@@ -97,7 +97,7 @@ func TestImageShapePresets(t *testing.T) {
 			t.Fatalf("registry JSON changed the shapes: %+v", gallery.Private[0].Shapes)
 		}
 		config := m.config
-		config.Kinds = registry
+		config.Kinds = parsed
 		w, err := worker.New(t.Context(), config)
 		must(t, err)
 		run, cancel := context.WithCancel(context.Background())
@@ -168,9 +168,7 @@ func TestImageShapePresets(t *testing.T) {
 		must(t, err)
 		item, err := registry.Item(logical)
 		must(t, err)
-		journal, err := mediastore.NewPGJournal(m.pool, m.schema, nil)
-		must(t, err)
-		manifests, err := mediastore.NewManifests(m.storage.store, registry, mediastore.ManifestOptions{Locker: mediastore.PGLocker(m.pool), Journal: journal})
+		manifests, err := mediastore.NewManifests(m.storage.store, registry, mediastore.ManifestOptions{})
 		must(t, err)
 		manifest, _, err := manifests.Get(t.Context(), logical)
 		must(t, err)

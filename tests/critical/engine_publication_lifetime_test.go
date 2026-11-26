@@ -51,12 +51,11 @@ func TestEnginePublicationLifetime(t *testing.T) {
 	if err := a.engine.Ready(t.Context()); err == nil {
 		t.Fatal("closed engine still reports ready")
 	}
-	// Replaying this completed exact request probes the queue after Close.
-	// If the old engine still fetched jobs, its idempotent replay would finish.
-	request := currentPublicationJob(t, a, item.Versions[0].ID)
+	// Replaying this version's release probes the queue after Close. If the
+	// old engine still fetched jobs, its idempotent replay would finish.
 	queue, err := river.NewClient(riverpgxv5.New(w.pool), &river.Config{Schema: w.schema + "_river"})
 	must(t, err)
-	job, err := queue.Insert(t.Context(), request, &river.InsertOpts{Queue: versionstore.QueueFor(publicationTenant(a))})
+	job, err := queue.Insert(t.Context(), releaseArgs{Content: item.ID, Version: item.Versions[0].ID}, &river.InsertOpts{Queue: versionstore.QueueFor(publicationTenant(a))})
 	must(t, err)
 	deadline := time.NewTimer(500 * time.Millisecond)
 	defer deadline.Stop()

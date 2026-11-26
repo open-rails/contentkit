@@ -318,7 +318,6 @@ export class MediaClient {
     const emit = this.http.captureChanges();
     const file = await this.untilReady(ref, path, o, (r, f) => {
       if (!f.pending?.length && !f.staged && (f.size ?? 0) > 0) return f;
-      if (r.full) throw new ContentKitError("too_large", `${path} waits: the item is full; remove uploads to process more`, { status: 413 });
     });
     emit({ type: "media.processed", ref: itemRef(ref), file });
     return file;

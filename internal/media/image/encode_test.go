@@ -17,6 +17,7 @@ import (
 	mediastore "github.com/open-rails/contentkit/internal/mediastore"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/avatar"
+	"github.com/open-rails/contentkit/media/layout"
 )
 
 func TestMain(m *testing.M) {
@@ -196,7 +197,7 @@ func TestShrinkOnLoad(t *testing.T) {
 
 // A path the kind no longer declares is refused as such, not as too large.
 func TestUndeclaredUploadPath(t *testing.T) {
-	reg, err := mediastore.NewRegistry(media.Config{Namespace: "t", Kinds: []media.Kind{{Name: "gallery",
+	reg, err := mediastore.NewRegistry(media.Config{Scope: layout.Scope{TenantID: "0190a000-0000-7000-8000-000000000001", AppID: "0190a000-0000-7000-8000-000000000002"}, Kinds: []media.Kind{{Name: "gallery",
 		Uploads: []media.Upload{{Path: "pages/{name}", Types: []string{"image/png"}, MaxBytes: 1 << 20}}}}}, mediastore.Hooks{})
 	if err != nil {
 		t.Fatal(err)

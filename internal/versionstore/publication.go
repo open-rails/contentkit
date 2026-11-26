@@ -8,8 +8,8 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	mediastore "github.com/open-rails/contentkit/internal/mediastore"
+	"github.com/open-rails/contentkit/internal/pglock"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/layout"
 	versions "github.com/open-rails/contentkit/media/versions"
@@ -163,16 +163,16 @@ func tracksOf(k *mediastore.RegisteredKind, m *mediastore.Manifest) ([]track, er
 
 // lockSource serializes a version's publication with source edits and imports.
 func (s *Service) lockSource(ctx context.Context, v versions.Target) (func(), error) {
-	return LockSource(ctx, s.o.Pool, s.o.Tenant, v.Version)
+	return LockSource(ctx, s.o.Locks, s.o.Tenant, v.Version)
 }
 
 // LockSource serializes source selection with catalog segment writes. Acquire
 // it before a SQL transaction/row lock; manifest commits may notify the catalog.
-func LockSource(ctx context.Context, pool *pgxpool.Pool, tenant, version string) (func(), error) {
+func LockSource(ctx context.Context, locks *pglock.Locks, tenant, version string) (func(), error) {
 	if tenant == "" || version == "" {
 		return nil, ErrInvalid
 	}
-	return LockSources(ctx, pool, tenant, []string{version})
+	return LockSources(ctx, locks, tenant, []string{version})
 }
 
 // sameBlob reports two allocations of the same bytes.

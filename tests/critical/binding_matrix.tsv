@@ -213,6 +213,7 @@ ts:publicURL	ts	TS exported function	publicURL	sdk/ui/src/client/public.ts	inclu
 ts:publicRenditions	ts	TS exported function	publicRenditions	sdk/ui/src/client/public.ts	included-critical public-value vector
 ts:isPending	ts	TS exported function	isPending	sdk/ui/src/client/versions.ts	included-critical public-value vector
 ts:acceptsFile	ts	TS exported function	acceptsFile	sdk/ui/src/client/media/rules.ts	included-critical public-value vector
+ts:otherLevels	ts	TS exported function	otherLevels	sdk/ui/src/client/playback.ts	included-critical public-value vector
 go:Client.WatchMedia	go	Go Client streaming method	Client.WatchMedia	client_media_progress.go	included-critical media247 streaming/UI acceptance
 go:Engine.AccountMediaEvents	go	Go Engine retained account log	Engine.AccountMediaEvents	account_media.go	included-critical media247 streaming/UI acceptance
 ts:MediaApi.watch	ts	TS client streaming method	MediaApi.watch	sdk/ui/src/client/media/api.ts	included-critical media247 streaming/UI acceptance
@@ -263,3 +264,10 @@ ts:ChannelsClient.uploadImage	ts	TS channel media method	ChannelsClient.uploadIm
 ts:resolveInlineImageReferences	ts	TS inline media helper	resolveInlineImageReferences	sdk/ui/src/client/inline-images.ts	included-critical edition259 contract
 go:Engine.AccountErasure	go	Go Engine member	Engine.AccountErasure	account_lifecycle.go	included-critical
 go:Client.GetAccountErasure	go	Go generated Client route	Client.GetAccountErasure	client_gen.go	included-critical
+go:Client.PostContentFeedback	go	Go generated Client route	Client.PostContentFeedback	client_gen.go	included-critical
+go:Client.PatchContentFeedback	go	Go generated Client route	Client.PatchContentFeedback	client_gen.go	included-critical
+go:Client.PostMeContentFiltersMerge	go	Go generated Client route	Client.PostMeContentFiltersMerge	client_gen.go	included-critical
+ts:FeedbackClient.ask	ts	TS class member	FeedbackClient.ask	sdk/ui/src/client/feedback.ts	included-critical
+ts:FeedbackClient.answer	ts	TS class member	FeedbackClient.answer	sdk/ui/src/client/feedback.ts	included-critical
+ts:FeedbackClient.hide	ts	TS class member	FeedbackClient.hide	sdk/ui/src/client/feedback.ts	included-critical
+ts:ReaderPreferencesClient.carryGuestFilters	ts	TS class member	ReaderPreferencesClient.carryGuestFilters	sdk/ui/src/client/reader-preferences.ts	included-critical

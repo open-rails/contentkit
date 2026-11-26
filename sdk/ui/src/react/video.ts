@@ -3,7 +3,7 @@ import type { ContentKitClient } from "../client/client.js";
 import { ContentKitError, toContentKitError } from "../client/errors.js";
 import type { Edit, FileInfo, Op, ReadResult, RefBody } from "../client/generated/wire.js";
 import { samePath, type Progress } from "../client/media/client.js";
-import { classifyHlsError, hlsConfig, type PlaybackError } from "../client/playback.js";
+import { classifyHlsError, hlsConfig, isHdrLevel, type PlaybackError } from "../client/playback.js";
 import { spriteCueAt, type SpriteCue } from "../client/player.js";
 import { useContentKitClient } from "./context.js";
 import { hlsLoading } from "./gallery.js";
@@ -150,9 +150,12 @@ export function useVideoFrame(o: VideoFrameOptions): UseVideoFrame {
         const hls = new Hls({ ...hlsConfig, ...hlsLoading(() => media.hls), autoStartLoad: false, capLevelToPlayerSize: false, maxBufferLength: 4 });
         destroy = () => hls.destroy();
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
-          const sides = hls.levels.map((l) => Math.min(l.width || l.height, l.height || l.width));
-          const under = sides.filter((side) => side <= FRAME_RUNG);
-          hls.currentLevel = sides.indexOf(under.length ? Math.max(...under) : Math.min(...sides));
+          // An HDR video's SDR renditions show the frame a poster grabs, and copy to a canvas as they look.
+          const sdr = hls.levels.some((l) => !isHdrLevel(l));
+          const sides = hls.levels.map((l) => (sdr && isHdrLevel(l) ? NaN : Math.min(l.width || l.height, l.height || l.width)));
+          const ok = sides.filter((side) => !Number.isNaN(side));
+          const under = ok.filter((side) => side <= FRAME_RUNG);
+          hls.currentLevel = sides.indexOf(under.length ? Math.max(...under) : Math.min(...ok));
           hls.startLoad(want.current ?? 0);
         });
         hls.on(Hls.Events.ERROR, (_, d) => {

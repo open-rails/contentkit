@@ -21,7 +21,6 @@ import (
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
-	"github.com/open-rails/contentkit/internal/media/workqueue"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/token"
 	"github.com/open-rails/contentkit/media/versions"
@@ -34,8 +33,8 @@ func TestOriginalZIPCannotBypassChapterRelease(t *testing.T) {
 		kind := &c.Media.Kinds[0]
 		kind.Uploads = append(kind.Uploads, media.Upload{Path: "import/{name}", Types: []string{"application/zip"}, MaxBytes: 1 << 20},
 			media.Upload{Path: "archive", Types: []string{"application/zip"}, MaxBytes: 1 << 20})
-		kind.Publish = &media.Publish{Pages: "pages/{name}", Renditions: []string{"reader"}, Import: "import/{name}", Download: "released-archive"}
-		kind.Private = append(kind.Private, media.Private{Name: "archive-pages", From: "pages/{name}", To: "download-pages/{name}{ext}", Image: &media.Image{Format: media.ImageFormatSource}}, media.Private{Name: "released-archive", To: "released.zip", Zip: "download-pages/", HostOnly: true})
+		kind.Publish = &media.Publish{Pages: "pages/{name}", Renditions: []string{"reader"}, Import: "import/{name}"}
+		kind.Private = append(kind.Private, media.Private{Name: "archive-pages", From: "pages/{name}", To: "download-pages/{name}{ext}", Image: &media.Image{Format: media.ImageFormatSource}})
 	})
 	admin := a.engine.Client()
 	ref := galleryRef(t, admin, "Original archive includes a future chapter")
@@ -128,11 +127,7 @@ func TestOriginalZIPCannotBypassChapterRelease(t *testing.T) {
 	must(t, err)
 	registry, err := mediastore.NewRegistry(model, service.Hooks())
 	must(t, err)
-	queue, err := workqueue.New(w.pool, registry, a.cfg.Media.WorkerSchema)
-	must(t, err)
-	journal, err := mediastore.NewPGJournal(w.pool, w.schema, queue)
-	must(t, err)
-	jobs, err := mediastore.NewJobs(mediastore.JobsConfig{Store: storage.store, Registry: registry, Locker: mediastore.PGLocker(w.pool), Journal: journal})
+	jobs, err := mediastore.NewJobs(mediastore.JobsConfig{Manifests: mustManifests(t, storage.store, registry), Processes: mustQueue(t, w.pool, registry, a.cfg.Media.WorkerSchema)})
 	must(t, err)
 	ring, err := token.NewRing(storage.key, nil)
 	must(t, err)
@@ -140,7 +135,9 @@ func TestOriginalZIPCannotBypassChapterRelease(t *testing.T) {
 	must(t, err)
 	delivery, err := mediastore.NewReader(mediastore.ReaderOptions{Manifests: jobs.Manifests(), Delivery: media.Delivery{Mode: media.DeliverURL, Keys: deliveryKeys(t, storage.key)}})
 	must(t, err)
-	must(t, service.Bind(versionstore.Media{Manifests: jobs.Manifests(), Uploads: uploads, Jobs: jobs, Reader: delivery}))
+	cache, err := mediastore.NewPGCache(w.pool, w.schema, registry, mediastore.CacheOptions{})
+	must(t, err)
+	must(t, service.Bind(versionstore.Media{Manifests: jobs.Manifests(), Cache: cache, Uploads: uploads, Jobs: jobs, Reader: delivery}))
 	raw, err := service.Download(t.Context(), access.Actor{Anonymous: true, IP: "127.0.0.1"}, versions.Target{Content: ref.ID, Version: ref.Version})
 	if !errors.Is(err, versionstore.ErrNoDownload) || raw != nil {
 		t.Fatalf("raw original ZIP bypassed future chapter release: granted=%t error=%v", raw != nil, err)

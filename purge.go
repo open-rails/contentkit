@@ -6,24 +6,40 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 
 	"github.com/open-rails/contentkit/contentref"
-	"github.com/open-rails/contentkit/signal"
+	"github.com/open-rails/contentkit/internal/hub"
 )
 
-// forgetPurgedTx records required signal erasure with the catalog mutation.
-// The ordinary content purge sweep drains these records after deleting content.
+// forgottenContent names purged content: a whole work (VersionID empty) or
+// one version of it.
+type forgottenContent struct{ Kind, ContentID, VersionID string }
+
+// forgetPurgedTx removes purged works from everyone's reading state and
+// records the activity log's erasure with the catalog mutation. The ordinary
+// content purge sweep drains those records after deleting content.
 func (e *Engine) forgetPurgedTx(ctx context.Context, tx pgx.Tx, refs []contentref.ContentRef) error {
-	if !e.purgeSignalsConfigured() || len(refs) == 0 {
+	if len(refs) == 0 {
 		return nil
 	}
-	contents := make([]signal.ForgottenContent, 0, len(refs))
+	contents := make([]forgottenContent, 0, len(refs))
+	var works []uuid.UUID
 	for _, ref := range refs {
 		if ref.TenantID != e.cfg.Scope.AppID.String() {
 			return errors.New("contentkit: purge cleanup crossed catalog scope")
 		}
-		contents = append(contents, signal.ForgottenContent{Kind: ref.ContentKind, ContentID: ref.ContentID, VersionID: ref.Version()})
+		contents = append(contents, forgottenContent{Kind: ref.ContentKind, ContentID: ref.ContentID, VersionID: ref.Version()})
+		if id, err := uuid.Parse(ref.ContentID); err == nil && ref.Version() == "" {
+			works = append(works, id)
+		}
+	}
+	if err := e.reading.ForgetContentsTx(ctx, tx, works); err != nil {
+		return err
+	}
+	if !e.purgeSignalsConfigured() {
+		return nil
 	}
 	return e.insertForgottenTx(ctx, tx, contents)
 }
@@ -37,7 +53,7 @@ func (e *Engine) purgeSignalsConfigured() bool {
 	return strings.TrimSpace(e.cfg.ClickHouse.Database) != "" || strings.TrimSpace(e.cfg.ClickHouse.Addr) != ""
 }
 
-func (e *Engine) insertForgottenTx(ctx context.Context, tx pgx.Tx, contents []signal.ForgottenContent) error {
+func (e *Engine) insertForgottenTx(ctx context.Context, tx pgx.Tx, contents []forgottenContent) error {
 	if len(contents) == 0 {
 		return nil
 	}
@@ -76,8 +92,8 @@ func (e *Engine) purgeSignals(ctx context.Context) error {
 			if err != nil {
 				return err
 			}
-			refs, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (signal.ForgottenContent, error) {
-				var ref signal.ForgottenContent
+			refs, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (forgottenContent, error) {
+				var ref forgottenContent
 				err := row.Scan(&ref.Kind, &ref.ContentID, &ref.VersionID)
 				return ref, err
 			})
@@ -85,7 +101,19 @@ func (e *Engine) purgeSignals(ctx context.Context) error {
 				return err
 			}
 			count = len(refs)
-			if err := e.hub.ForgetContents(ctx, refs); err != nil {
+			store := e.hub.Signals()
+			if store == nil {
+				return hub.ErrSignalPlaneDown
+			}
+			// The activity log and its rollups are per work: a purged version
+			// leaves its work's rows.
+			var works []uuid.UUID
+			for _, ref := range refs {
+				if id, err := uuid.Parse(ref.ContentID); err == nil && ref.VersionID == "" {
+					works = append(works, id)
+				}
+			}
+			if err := store.ForgetContents(ctx, e.cfg.Scope.AppID.String(), works); err != nil {
 				return err
 			}
 			kinds, contents, versions := make([]string, count), make([]string, count), make([]string, count)

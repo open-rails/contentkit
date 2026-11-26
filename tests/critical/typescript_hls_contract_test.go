@@ -28,12 +28,11 @@ func TestTypeScriptVideoContracts(t *testing.T) {
 		_, err = f.app.engine.Client().PatchContentVersion(t.Context(), f.Ref.ID, f.Ref.Version, catalog.VersionInput{Access: &access.Rule{Level: access.TierLevel, Tiers: []string{"gold"}}})
 		must(t, err)
 		// Policy acceptance leaves the prior public release usable until the
-		// durable worker copies, activates and retires its private replacement.
+		// release job moves the files into private/ and records the new access.
 		waitForChapterPublication(t, func() bool {
 			var completed bool
-			must(t, f.world.pool.QueryRow(t.Context(), `SELECT v.released_access->>'level'='tier' AND r.state='completed'
- FROM `+f.world.schema+`.content_versions v JOIN `+f.world.schema+`.content_publication_requests r
- ON r.tenant_id=v.tenant_id AND r.id=v.release_id WHERE v.tenant_id=$1 AND v.id=$2`,
+			must(t, f.world.pool.QueryRow(t.Context(), `SELECT coalesce(v.released_access->>'level'='tier',false)
+ FROM `+f.world.schema+`.content_versions v WHERE v.tenant_id=$1 AND v.id=$2`,
 				f.app.cfg.Scope.AppID.String(), f.Ref.Version).Scan(&completed))
 			return completed
 		})

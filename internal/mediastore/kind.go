@@ -15,11 +15,10 @@ import (
 )
 
 // RegisteredKind is a Kind NewRegistry validated and placed in its
-// namespace and scope.
+// namespace.
 type RegisteredKind struct {
 	media.Kind
-	ns       string
-	scope    layout.Scope
+	ns       string    // its refs' TenantID: the app's partition, or the tenant's for Account
 	patterns []pattern // parallel to Uploads
 }
 
@@ -84,8 +83,8 @@ func (k *RegisteredKind) validatePublish() error {
 		}
 	}
 	if p.Download != "" {
-		if z := k.private(p.Download); z == nil || z.Zip == "" || !z.HostOnly {
-			return fmt.Errorf("Download %q is no HostOnly Zip preset", p.Download)
+		if z := k.private(p.Download); z == nil || z.Image == nil || z.Image.Format != media.ImageFormatSource || !z.HostOnly || z.From != p.Pages {
+			return fmt.Errorf("Download %q is no HostOnly source-format Image preset from Pages", p.Download)
 		}
 	}
 	return nil
@@ -214,95 +213,13 @@ func (k *RegisteredKind) PublicNames(p *media.Public, path string) []string {
 	return out
 }
 
-// Publication returns the latest generation still owned by the source: a
-// reservation (cleanup must protect it while PUTs run), else the current
-// generation.
-func (k *RegisteredKind) Publication(f media.File, p *media.Public) (media.Publication, bool) {
-	pub, ok := f.Publication(p.Name)
-	return pub, ok && k.owned(f, p, pub)
-}
-
-// Current returns the ready generation still owned by the source: what
-// readers are shown.
-func (k *RegisteredKind) Current(f media.File, p *media.Public) (media.Publication, bool) {
-	pub, ok := f.Current(p.Name)
-	return pub, ok && k.owned(f, p, pub)
-}
-
-func (k *RegisteredKind) owned(f media.File, p *media.Public, pub media.Publication) bool {
-	return !f.Unattached && f.Fail() == nil && pub.Source == f.Key() &&
-		slices.Equal(pub.Names, k.PublicNames(p, f.Path))
-}
-
-// PublicKept protects every owned generation: the current files, legacy
-// ones included, and an active reservation, plus a Stable preset's logical
-// names while one is current. Any other generation's name is permanently
-// retired; no later worker may reuse it.
-func (k *RegisteredKind) PublicKept(m *Manifest) []string {
-	if k.Versions {
-		var out []string
-		for _, blob := range m.Blobs() {
-			if area, name, ok := layout.SplitBlobRef(blob); ok && area == layout.AreaPublic {
-				out = append(out, name)
-			}
-		}
-		return out
-	}
-	var out []string
-	for _, f := range m.Files {
-		if !f.IsUpload() || f.Unattached {
-			continue
-		}
-		for _, p := range k.PublicFor(f.Path) {
-			for _, pub := range f.Public {
-				if pub.Preset == p.Name && k.owned(f, p, pub) {
-					out = append(out, pub.NamesOnDisk()...)
-					if p.Stable && pub.Ready() && pub.Generation != "" {
-						out = append(out, pub.Names...)
-					}
-				}
-			}
-		}
-	}
-	return out
-}
-
-// Mirror copies a Stable preset's current file to its logical name.
-type Mirror struct {
-	From string `json:"from"`
-	To   string `json:"to"`
-}
-
-// mirrors are the copies an edit from cur to next makes: each Stable
-// preset's current generation that next newly makes current, to its logical
-// names. Cleanup (PublicKept) removes them once none is current.
-func (k *RegisteredKind) mirrors(item Item, cur, next *Manifest) []Mirror {
-	if k.Versions {
+// PublicOutputs are the current outputs of public preset p from upload f:
+// its widths in order. A failed or unattached upload shows none.
+func (k *RegisteredKind) PublicOutputs(m *Manifest, f media.File, p *media.Public) []media.File {
+	if f.Unattached || f.Fail() != nil || f.Gone {
 		return nil
 	}
-	var out []Mirror
-	for _, f := range next.Files {
-		if !f.IsUpload() {
-			continue
-		}
-		for _, p := range k.PublicFor(f.Path) {
-			pub, ok := k.Current(f, p)
-			if !p.Stable || !ok || pub.Generation == "" {
-				continue
-			}
-			if was, ok := cur.Get(f.Path); ok {
-				if prev, ok := k.Current(was, p); ok && prev.Generation == pub.Generation {
-					continue
-				}
-			}
-			for i, name := range pub.NamesOnDisk() {
-				from, _ := item.Public(name)
-				to, _ := item.Public(pub.Names[i])
-				out = append(out, Mirror{From: from, To: to})
-			}
-		}
-	}
-	return out
+	return m.Outputs(f.Path, p.Name)
 }
 
 // UploadRules are the kind's upload paths with the rules a client checks.
@@ -345,8 +262,8 @@ func (k *RegisteredKind) EditBounds(path string) media.Image {
 }
 
 func (k *RegisteredKind) validate() error {
-	if !layout.ValidSegment(k.Name) || strings.HasPrefix(k.Name, "_") {
-		return errors.New("invalid name")
+	if !layout.ValidKind(k.Name) {
+		return errors.New("invalid or reserved name")
 	}
 	if len(k.Uploads) == 0 {
 		return errors.New("no uploads")
@@ -411,23 +328,48 @@ func (k *RegisteredKind) validate() error {
 func (k *RegisteredKind) validateDownload() error {
 	if d := k.Download; d != "" {
 		p := k.private(d)
-		if i := k.uploadIndex(d); p == nil && (i < 0 || strings.Contains(d, nameVar)) ||
-			p != nil && p.MP4 == nil && (p.Zip == "" || k.Publish == nil || k.Publish.Download != d) {
-			return fmt.Errorf("download %q is no literal upload, MP4 preset or Publish's Zip", d)
+		pages := k.Publish != nil && d == k.Publish.Pages
+		if i := k.uploadIndex(d); p != nil || !pages && (i < 0 || strings.Contains(d, nameVar)) {
+			return fmt.Errorf("download %q is no literal upload or Publish's Pages", d)
 		}
 	}
 	return nil
 }
 
-// Area is the area of an upload's allocation (preset "") or of a derived
-// file's: a version's originals/ or internal/; else private/, but internal/
-// for a HostOnly preset's, which no item token opens.
+// ReaderOutput reports a derived file readers may get as a file: of a
+// page, only the kind's reader renditions (Publish.Renditions); never a
+// HostOnly preset's or the download rendition's (Publish.Download).
+func (k *RegisteredKind) ReaderOutput(m *Manifest, f media.File) bool {
+	if f.IsUpload() || k.downloadOnly(f.Preset) {
+		return false
+	}
+	src, ok := m.Get(f.From)
+	if !ok || k.Publish == nil || !k.IsPageUpload(src) {
+		return true
+	}
+	return slices.Contains(k.Publish.Renditions, f.Preset)
+}
+
+// downloadOnly reports a preset readers never get as a file: a HostOnly
+// one, or the reader kind's download rendition (Publish.Download), which
+// only the ZIP carries.
+func (k *RegisteredKind) downloadOnly(preset string) bool {
+	if p := k.private(preset); p != nil && p.HostOnly {
+		return true
+	}
+	return preset != "" && k.Publish != nil && k.Publish.Download == preset
+}
+
+// Area is where an upload (preset "") or a derived file is first written:
+// a public preset's in public/; a version's in internal/, until its release
+// moves it; another kind's in private/, but internal/ for a HostOnly
+// preset's, which no item token opens.
 func (k *RegisteredKind) Area(preset string) string {
-	if k.Versions {
-		if preset == "" {
-			return layout.AreaOriginals
-		}
-		return layout.AreaInternal
+	switch {
+	case k.public(preset) != nil:
+		return layout.AreaPublic
+	case k.Versions:
+		return layout.AreaInternal // released by moving it (Release)
 	}
 	if p := k.private(preset); p != nil && p.HostOnly {
 		return layout.AreaInternal
@@ -461,7 +403,7 @@ func (k *RegisteredKind) validatePrivate(p media.Private, names map[string]bool)
 	}
 	names[p.Name] = true
 	producers := 0
-	for _, set := range []bool{p.Image != nil, p.HLS != nil, p.MP4 != nil, p.Zip != "", p.Subtitles != nil} {
+	for _, set := range []bool{p.Image != nil, p.HLS != nil, p.Subtitles != nil} {
 		if set {
 			producers++
 		}
@@ -469,11 +411,7 @@ func (k *RegisteredKind) validatePrivate(p media.Private, names map[string]bool)
 	if producers != 1 {
 		return errors.New("needs exactly one producer")
 	}
-	if p.Zip != "" {
-		if p.From != "" || !validDir(p.Zip) {
-			return errors.New("a Zip takes no From and a directory prefix")
-		}
-	} else if k.uploadIndex(p.From) < 0 {
+	if k.uploadIndex(p.From) < 0 {
 		return fmt.Errorf("From %q is no upload path", p.From)
 	}
 	dir := p.HLS != nil
@@ -504,8 +442,8 @@ func (k *RegisteredKind) validatePrivate(p media.Private, names map[string]bool)
 	if len(p.Shapes) > 0 && p.Image == nil {
 		return errors.New("Shapes need an Image producer")
 	}
-	if p.HostOnly && (p.HLS != nil || p.Subtitles != nil) {
-		return errors.New("HostOnly is for Image, MP4 and Zip presets: an HLS ladder or caption track left out of playlists plays nowhere")
+	if p.HostOnly && p.Image == nil {
+		return errors.New("HostOnly is for Image presets: an HLS ladder or caption track left out of playlists plays nowhere")
 	}
 	switch {
 	case p.Image != nil:
@@ -515,11 +453,6 @@ func (k *RegisteredKind) validatePrivate(p media.Private, names map[string]bool)
 		return validateShapes(*p.Image, p.Shapes)
 	case p.HLS != nil:
 		return validateHLS(p.HLS)
-	case p.MP4 != nil:
-		if p.MP4.Rung < 2 || p.MP4.Rung > 4320 || p.MP4.Rung%2 != 0 {
-			return fmt.Errorf("invalid MP4 rung %d", p.MP4.Rung)
-		}
-
 	}
 	return nil
 }
@@ -544,9 +477,6 @@ func (k *RegisteredKind) validatePublic(p *media.Public, names map[string]bool) 
 		slices.Contains(vars, "w") != (len(p.Widths) > 0) ||
 		!layout.ValidSegment(fill(p.To, map[string]string{"name": "n", "w": "1"})) {
 		return fmt.Errorf("invalid To %q ([A-Za-z0-9._-] with {w} exactly when Widths are set)", p.To)
-	}
-	if p.Stable && slices.Contains(vars, "name") {
-		return errors.New("Stable needs one image per item: no {name} in To")
 	}
 	if p.Default != "" && k.Defaults != nil {
 		if _, err := fs.Stat(k.Defaults, p.Default); err != nil {
@@ -640,7 +570,7 @@ const (
 )
 
 const (
-	trackEntryBytes = 640 + 24 + 74 // fresh allocation UUIDs in both Blob and Track.Index
+	trackEntryBytes = 640 + 24 + 74 + 30 // fresh allocation UUIDs in both Blob and Track.Index; an HDR rendition's range and long-form codecs
 )
 
 const (
@@ -648,20 +578,22 @@ const (
 )
 
 const (
-	measuredBytes = 48 // an upload's w and h, or dur, once measured
+	measuredBytes = 64 // an upload's w and h, or dur, and a video's range, once measured
 )
 
 const (
 	failureEntryBytes = 768 // a Failure: its key, a message of maxFailureBytes, code and details
 )
 
-// Unwritten estimates the JSON m gains as the worker processes it. Per
-// upload it is the larger of a failure record and what success writes: an
-// entry for every output its presets have yet to write (an HLS ladder's
-// tracks one by one: a rendition per rung and codec, the sprite, and as many
-// audio and subtitle tracks as a source may carry), its measured fields,
-// and a staged upload's or frame's blob.
-// Then the zips and the public presets' pending names.
+// Unwritten estimates the JSON m gains as the worker processes it and its
+// files move. Per upload it is the larger of a failure record and what
+// success writes: an entry for every output its presets have yet to write
+// (an HLS ladder's tracks one by one: a rendition per rung and codec, the
+// sprite, and as many audio and subtitle tracks as a source may carry), its
+// measured fields, and a staged upload's or frame's blob. Then the zips and
+// the public presets' pending names. Every derived object, written or to
+// come, may leave a retired entry and its stamp (a release's move, a
+// regeneration), as does every retired entry its stamp.
 // Commits bound the manifest with it; an item whose outputs still overrun
 // it is marked Full by the worker.
 func (k *RegisteredKind) Unwritten(m *Manifest) int64 {
@@ -672,8 +604,29 @@ func (k *RegisteredKind) Unwritten(m *Manifest) int64 {
 		}
 	}
 	var n int64
+	for _, r := range m.Retired {
+		if r.Deleting == nil {
+			n += int64(stampBytes)
+		}
+	}
 	for _, f := range m.Files {
-		if !f.IsUpload() || f.Gone || f.Fail() != nil {
+		if f.Gone {
+			continue
+		}
+		moved := int64(retiredBytes + jsonLen(f.Path))
+		if !f.IsUpload() && f.Blob != "" {
+			n += moved
+		}
+		if f.Editor != nil {
+			n += moved
+		}
+		if f.Master != nil && !f.Master.IsOriginal() {
+			n += moved
+		}
+		if f.Track != nil && f.Track.Index != "" {
+			n += moved
+		}
+		if !f.IsUpload() || f.Fail() != nil {
 			continue
 		}
 		var out int64
@@ -681,7 +634,7 @@ func (k *RegisteredKind) Unwritten(m *Manifest) int64 {
 			out += blobFieldsBytes
 		}
 		if isImageType(f.Type) && f.Editor == nil {
-			out += 256 // an owned editor image and its source/spec fingerprint
+			out += 256 + int64(retiredBytes) // an owned editor image and its source/spec fingerprint
 		}
 		from := jsonLen(f.Path)
 		public := k.PublicFor(f.Path)
@@ -689,13 +642,10 @@ func (k *RegisteredKind) Unwritten(m *Manifest) int64 {
 			if f.Unattached {
 				continue
 			}
-			if _, ok := k.Publication(f, p); !ok {
-				// Source, fingerprint and UUID; one logical name and measured
-				// dimension pair per rendition. Replacement does not accumulate
-				// old generations in the root.
-				out += 256 + int64(len(p.Name))
+			if len(m.Outputs(f.Path, p.Name)) == 0 {
+				// One output entry per width: its name, hash and dimensions.
 				for _, name := range k.PublicNames(p, f.Path) {
-					out += int64(jsonLen(name) + 64)
+					out += int64(2*jsonLen(name) + outputEntryBytes + retiredBytes)
 				}
 			}
 		}
@@ -710,7 +660,7 @@ func (k *RegisteredKind) Unwritten(m *Manifest) int64 {
 				size += maxNameBytes + 16
 			}
 			if left := entries - written[[2]string{f.Path, p.Name}]; left > 0 {
-				out += left * (size + int64(jsonLen(k.OutputPath(p, f.Path))+from+len(p.Name)))
+				out += left * (size + retiredBytes + int64(2*jsonLen(k.OutputPath(p, f.Path))+from+len(p.Name)))
 			}
 		}
 		if out > 0 || len(f.Pending) > 0 { // work is left: it may measure the upload, or fail
@@ -729,45 +679,5 @@ func (k *RegisteredKind) Unwritten(m *Manifest) int64 {
 			}
 		}
 	}
-	for i := range k.Private {
-		if z := &k.Private[i]; z.Zip != "" && written[[2]string{z.Zip, z.Name}] == 0 {
-			n += outputEntryBytes + maxNameBytes + 16 + int64(jsonLen(z.To)+jsonLen(z.Zip)+len(z.Name))
-		}
-	}
 	return n
-}
-
-// DownloadFile is the file k.Download serves in m: its literal upload, or
-// its MP4 preset's output of the attached source. A Zip's is its own route's.
-func (k *RegisteredKind) DownloadFile(m *Manifest) (media.File, media.DownloadState) {
-	from, p := k.Download, k.private(k.Download)
-	if p != nil {
-		if p.MP4 == nil {
-			return media.File{}, media.DownloadNone
-		}
-		from = p.From
-	}
-	g := k.uploadIndex(from)
-	for _, f := range m.Files {
-		if i, _, _, _, ok := k.upload(f.Path); !f.IsUpload() || f.Unattached || !ok || i != g || g < 0 {
-			continue
-		}
-		switch {
-		case f.Fail() != nil, f.Gone:
-			return f, media.DownloadNone
-		case f.Blob == "":
-			return f, media.DownloadPending
-		case p == nil:
-			return f, media.DownloadReady
-		case slices.Contains(f.Pending, p.Name):
-			return f, media.DownloadPending
-		}
-		for _, o := range m.Outputs(f.Path, p.Name) {
-			if o.Blob != "" && !o.Gone {
-				return o, media.DownloadReady
-			}
-		}
-		return f, media.DownloadNone
-	}
-	return media.File{}, media.DownloadNone
 }

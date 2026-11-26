@@ -22,6 +22,12 @@ import (
 
 type panicLockContext struct{ context.Context }
 
+// lockProcess is one process's pool and the locks it takes on direct sessions.
+type lockProcess struct {
+	*pgxpool.Pool
+	locks *pglock.Locks
+}
+
 func (panicLockContext) Deadline() (time.Time, bool) { panic("test: waiter context panicked") }
 
 func TestAdvisoryLockSession(t *testing.T) {
@@ -31,7 +37,7 @@ func TestAdvisoryLockSession(t *testing.T) {
 	}
 	// Each pool stands in for one process; its application name tells its
 	// connections apart in pg_stat_activity.
-	process := func(t *testing.T) (*pgxpool.Pool, string) {
+	process := func(t *testing.T) (lockProcess, string) {
 		cfg, err := pgxpool.ParseConfig(dsn)
 		if err != nil {
 			t.Fatal(err)
@@ -43,14 +49,14 @@ func TestAdvisoryLockSession(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Cleanup(pool.Close)
-		return pool, name
+		return lockProcess{pool, pglock.New(cfg)}, name
 	}
 	prefix := "contentkit:test:" + uuid.NewString() + ":"
 
 	// Sixteen workers each take an outer key and nest three keys of their own
 	// while holding it, like a source lock over manifest locks. held, when
 	// set, runs once every worker holds all four keys; each then releases.
-	nest := func(t *testing.T, pool *pgxpool.Pool, outer func(w int) string, held func()) (overlap int32) {
+	nest := func(t *testing.T, pool lockProcess, outer func(w int) string, held func()) (overlap int32) {
 		ctx := t.Context()
 		var inside sync.Map
 		var overlaps atomic.Int32
@@ -67,7 +73,7 @@ func TestAdvisoryLockSession(t *testing.T) {
 					}
 				}()
 				key := outer(w)
-				unlock, _, err := pglock.Acquire(ctx, pool, key, true)
+				unlock, _, err := pool.locks.Acquire(ctx, key, true)
 				if err != nil {
 					errs <- err
 					holding.Done()
@@ -79,7 +85,7 @@ func TestAdvisoryLockSession(t *testing.T) {
 				}
 				defer inside.Delete(key)
 				for i := range 3 {
-					inner, _, err := pglock.Acquire(ctx, pool, fmt.Sprintf("%sinner:%d:%d", prefix, w, i), true)
+					inner, _, err := pool.locks.Acquire(ctx, fmt.Sprintf("%sinner:%d:%d", prefix, w, i), true)
 					if err != nil {
 						errs <- err
 						holding.Done()
@@ -122,12 +128,12 @@ func TestAdvisoryLockSession(t *testing.T) {
 		observer, _ := process(t)
 		var held, locks int32
 		nest(t, pool, func(w int) string { return fmt.Sprintf("%souter:%d", prefix, w) }, func() {
-			held, locks = sessions(t, observer, name)
+			held, locks = sessions(t, observer.Pool, name)
 		})
 		if held != 1 || locks != 64 {
 			t.Fatalf("64 held locks were on %d sessions (%d locks seen), want all on the one shared session", held, locks)
 		}
-		if _, left := sessions(t, observer, name); left != 0 {
+		if _, left := sessions(t, observer.Pool, name); left != 0 {
 			t.Fatalf("%d advisory locks left held after every release", left)
 		}
 	})
@@ -138,7 +144,7 @@ func TestAdvisoryLockSession(t *testing.T) {
 		if overlap := nest(t, pool, func(int) string { return prefix + "outer" }, nil); overlap != 0 {
 			t.Fatalf("%d workers held the outer key at once", overlap)
 		}
-		if _, left := sessions(t, observer, name); left != 0 {
+		if _, left := sessions(t, observer.Pool, name); left != 0 {
 			t.Fatalf("%d advisory locks left held after every release", left)
 		}
 	})
@@ -153,7 +159,7 @@ func TestAdvisoryLockSession(t *testing.T) {
 			}
 			return pid
 		}
-		release, _, err := pglock.Acquire(ctx, pool, prefix+"lost", true)
+		release, _, err := pool.locks.Acquire(ctx, prefix+"lost", true)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -161,13 +167,13 @@ func TestAdvisoryLockSession(t *testing.T) {
 		if _, err := observer.Exec(ctx, "SELECT pg_terminate_backend($1)", lost); err != nil {
 			t.Fatal(err)
 		}
-		next, ok, err := pglock.Acquire(ctx, pool, prefix+"next", false)
+		next, ok, err := pool.locks.Acquire(ctx, prefix+"next", false)
 		if err == nil && ok {
 			next()
 		}
 		// The first query on the terminated session fails; the one after
 		// reconnects.
-		next, ok, err = pglock.Acquire(ctx, pool, prefix+"next", false)
+		next, ok, err = pool.locks.Acquire(ctx, prefix+"next", false)
 		if err != nil || !ok {
 			t.Fatalf("no lock after the session was lost: ok=%v err=%v", ok, err)
 		}
@@ -182,29 +188,29 @@ func TestAdvisoryLockSession(t *testing.T) {
 		ctx := t.Context()
 		a, _ := process(t)
 		b, _ := process(t)
-		held, _, err := pglock.Acquire(ctx, a, prefix+"held", true)
+		held, _, err := a.locks.Acquire(ctx, prefix+"held", true)
 		if err != nil {
 			t.Fatal(err)
 		}
-		other, _, err := pglock.Acquire(ctx, b, prefix+"other", true)
+		other, _, err := b.locks.Acquire(ctx, prefix+"other", true)
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, ok, err := pglock.Acquire(ctx, b, prefix+"held", false); err != nil || ok {
+		if _, ok, err := b.locks.Acquire(ctx, prefix+"held", false); err != nil || ok {
 			t.Fatalf("another process took a held key: ok=%v err=%v", ok, err)
 		}
 		// A waiter in a that gives up must not end a's other locks.
 		waitCtx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
 		defer cancel()
-		if _, _, err := pglock.Acquire(waitCtx, a, prefix+"other", true); err == nil {
+		if _, _, err := a.locks.Acquire(waitCtx, prefix+"other", true); err == nil {
 			t.Fatal("waiter acquired a key held by another process")
 		}
-		if _, ok, err := pglock.Acquire(ctx, b, prefix+"held", false); err != nil || ok {
+		if _, ok, err := b.locks.Acquire(ctx, prefix+"held", false); err != nil || ok {
 			t.Fatalf("a cancelled waiter released its process's other lock: ok=%v err=%v", ok, err)
 		}
 		acquired := make(chan error, 1)
 		go func() {
-			release, _, err := pglock.Acquire(ctx, b, prefix+"held", true)
+			release, _, err := b.locks.Acquire(ctx, prefix+"held", true)
 			if err == nil {
 				release()
 			}
@@ -225,17 +231,17 @@ func TestAdvisoryLockSession(t *testing.T) {
 		ctx := t.Context()
 		a, name := process(t)
 		b, _ := process(t)
-		first, _, err := pglock.Acquire(ctx, a, prefix+"budget-first", true)
+		first, _, err := a.locks.Acquire(ctx, prefix+"budget-first", true)
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer first()
-		second, _, err := pglock.Acquire(ctx, a, prefix+"budget-second", true)
+		second, _, err := a.locks.Acquire(ctx, prefix+"budget-second", true)
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer second()
-		blocker, _, err := pglock.Acquire(ctx, b, prefix+"budget-blocker", true)
+		blocker, _, err := b.locks.Acquire(ctx, prefix+"budget-blocker", true)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -244,14 +250,14 @@ func TestAdvisoryLockSession(t *testing.T) {
 		waitCtx, cancel := context.WithTimeout(ctx, 19*time.Second)
 		defer cancel()
 		started := time.Now()
-		_, ok, err := pglock.Acquire(waitCtx, a, prefix+"budget-blocker", true)
+		_, ok, err := a.locks.Acquire(waitCtx, prefix+"budget-blocker", true)
 		if ok || err == nil || !errors.Is(err, context.DeadlineExceeded) || !errors.Is(err, pglock.ErrContended) {
 			t.Errorf("wait timeout did not return retryable contention: ok=%v err=%v", ok, err)
 		}
 		if elapsed := time.Since(started); elapsed > 17*time.Second || waitCtx.Err() != nil {
 			t.Errorf("acquisition used the caller's long deadline: elapsed=%s caller=%v", elapsed, waitCtx.Err())
 		}
-		if held, locks := sessions(t, b, name); held != 1 || locks != 2 {
+		if held, locks := sessions(t, b.Pool, name); held != 1 || locks != 2 {
 			t.Errorf("wait timeout disturbed shared session: sessions=%d locks=%d", held, locks)
 		}
 		var waiters int
@@ -262,7 +268,7 @@ func TestAdvisoryLockSession(t *testing.T) {
 			t.Errorf("timed-out dedicated waiter still owns %d queued locks", waiters)
 		}
 		for _, key := range []string{"budget-first", "budget-second"} {
-			if release, ok, err := pglock.Acquire(ctx, b, prefix+key, false); err != nil || ok {
+			if release, ok, err := b.locks.Acquire(ctx, prefix+key, false); err != nil || ok {
 				if ok {
 					release()
 				}
@@ -282,12 +288,10 @@ func TestAdvisoryLockSession(t *testing.T) {
 		cfg, err := pgxpool.ParseConfig(dsn)
 		must(t, err)
 		cfg.ConnConfig.User, cfg.ConnConfig.Password = role, "critical-lock-only"
-		pool, err := pgxpool.NewWithConfig(ctx, cfg)
-		must(t, err)
-		t.Cleanup(pool.Close)
+		locks := pglock.New(cfg)
 		assertRefused := func(key string) {
 			t.Helper()
-			release, ok, err := pglock.Acquire(ctx, pool, key, true)
+			release, ok, err := locks.Acquire(ctx, key, true)
 			if release != nil {
 				defer release()
 			}
@@ -304,7 +308,7 @@ func TestAdvisoryLockSession(t *testing.T) {
 		must(t, occupied.Close(ctx))
 		// The shared session now consumes the slot. Re-entering its held key
 		// must use a dedicated waiter, whose connection is refused as well.
-		held, ok, err := pglock.Acquire(ctx, pool, prefix+"refused-waiter", true)
+		held, ok, err := locks.Acquire(ctx, prefix+"refused-waiter", true)
 		must(t, err)
 		if !ok {
 			t.Fatal("initial lock was not acquired")
@@ -332,7 +336,7 @@ func TestAdvisoryLockSession(t *testing.T) {
 		})
 		tenant := uuid.NewString()
 		key := "contentkit:media:contentkit:versions:" + tenant + ":"
-		blocker, _, err := pglock.Acquire(ctx, b, key+"b", true)
+		blocker, _, err := b.locks.Acquire(ctx, key+"b", true)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -343,9 +347,9 @@ func TestAdvisoryLockSession(t *testing.T) {
 					t.Error("second acquisition did not panic")
 				}
 			}()
-			_, _ = versionstore.LockSources(panicLockContext{ctx}, a, tenant, []string{"b", "a"})
+			_, _ = versionstore.LockSources(panicLockContext{ctx}, a.locks, tenant, []string{"b", "a"})
 		}()
-		release, ok, err := pglock.Acquire(ctx, b, key+"a", false)
+		release, ok, err := b.locks.Acquire(ctx, key+"a", false)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -365,10 +369,7 @@ func TestAdvisoryLockConnectErrors(t *testing.T) {
 			cfg, err := pgxpool.ParseConfig("postgres://critical@127.0.0.1:1/critical?sslmode=disable")
 			must(t, err)
 			cfg.ConnConfig.DialFunc = func(context.Context, string, string) (net.Conn, error) { return nil, cause }
-			pool, err := pgxpool.NewWithConfig(t.Context(), cfg)
-			must(t, err)
-			defer pool.Close()
-			release, ok, err := pglock.Acquire(t.Context(), pool, uuid.NewString(), true)
+			release, ok, err := pglock.New(cfg).Acquire(t.Context(), uuid.NewString(), true)
 			if release != nil {
 				defer release()
 			}

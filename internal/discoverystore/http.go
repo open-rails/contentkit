@@ -8,16 +8,17 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/open-rails/authkit/auth"
 	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/contenturl"
 	discovery "github.com/open-rails/contentkit/discovery"
 	entitlement "github.com/open-rails/contentkit/internal/entitlement"
 	"github.com/open-rails/contentkit/internal/gate"
 	"github.com/open-rails/contentkit/internal/httpapi"
 	"github.com/open-rails/contentkit/internal/hub"
 	"github.com/open-rails/contentkit/internal/search"
+	"github.com/open-rails/contentkit/internal/subject"
 )
 
 // Handler serves the discovery routes: lists, search, typeahead, similar and
@@ -76,7 +77,7 @@ var (
 		httpapi.Repeated("attribute", "name:value of one of the kind's filterable attributes; repeat for more"),
 		httpapi.Text("released_on", "published on this day (YYYY-MM-DD) or month (YYYY-MM)"),
 		httpapi.Text("tz", "the IANA time zone of released_on and release dates; UTC by default"),
-		httpapi.Text("view_status", "the signed-in reader's unseen, in_progress or completed contents"),
+		httpapi.Text("view_status", "the reader's unseen (new to them: never opened or hidden), in_progress or completed contents; a signed-out reader's by its anonymous id"),
 	}
 )
 
@@ -93,13 +94,12 @@ var (
 )
 
 var (
-	sortParam = httpapi.Text("sort", "newest, oldest, title, popular[:bucket], top_rated, most_favorited, position or random; the kind's default, else newest")
+	sortParam = httpapi.Text("sort", "newest, oldest, title, popular (needs kind; pages by cursor), top_rated, most_favorited, position or random; the kind's default, else newest")
 )
 
 var (
 	activityParams = []httpapi.Param{
-		httpapi.Text("activity_from", "inclusive UTC date; requires activity_until, kind and sort=popular; reads prepared daily activity only"),
-		httpapi.Text("activity_until", "exclusive UTC date; requires activity_from, kind and sort=popular"),
+		httpapi.Text("window", "the popular sort's window of activity days: week (the default), 30d, 90d, year, all, month:YYYY-MM, year:YYYY or YYYY-MM-DD..YYYY-MM-DD (last day included)"),
 	}
 )
 
@@ -133,12 +133,18 @@ var routes = []httpapi.Route[handler]{
 		Doc:       "Content covered by the reader's purchased content or version entitlements, within the current domain's hard visibility boundary.",
 		Query:     []httpapi.Param{httpapi.Text("language", "title language"), httpapi.Text("cursor", "previous next_cursor"), httpapi.Int("limit", "page size: 20 by default, at most 100")},
 		Responses: []httpapi.Reply{httpapi.OK(discovery.LibraryPage{})}}, Serve: httpapi.H(handler.library)},
-	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/engagement", Resource: "discovery", Auth: httpapi.Public,
-		Doc:     "Records bounded, idempotent measured engagement snapshots: loaded visible page coverage, focused active time or actually played timeline ranges. No opening, preload or page-turn counters. Each segment reuses its original subject-bound access receipt and revision; positive short partials can accumulate across visits.",
-		Request: discovery.EngagementBatch{}, Responses: []httpapi.Reply{httpapi.NoContent}, Errors: append([]string{httpapi.CodeNotFound}, signals...)}, Serve: httpapi.H(handler.engagement)},
-	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/activity-contexts", Resource: "discovery", Auth: httpapi.Public,
-		Doc:     "Captures signed, immutable event-time access and eligible audience context before displaying or consuming content. Batches up to 100 targets; clients reuse each receipt for all revisions of one view.",
-		Request: discovery.ActivityContextsInput{}, Responses: []httpapi.Reply{httpapi.OK(discovery.ActivityContexts{})}, Errors: signals}, Serve: httpapi.H(handler.activityContexts)},
+	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/activity", Resource: "discovery", Auth: httpapi.Public,
+		Doc:     "Logs the reader's opens and reading progress: an open names the list it came from; progress is the active time since the last report and the furthest and current page or second. A signed-out reader sends its anonymous id in ContentKit-Anonymous-Id, and every request may send ContentKit-UTC-Offset. Unknown content is skipped.",
+		Request: discovery.Activity{}, Responses: []httpapi.Reply{httpapi.NoContent}, Errors: signals}, Serve: httpapi.H(handler.activity)},
+	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/me/anonymous-link", Resource: "discovery", Auth: httpapi.User,
+		Doc:     "Sent once at sign-in: the browser's anonymous id is now this account, so its reading state, history, reactions and recent searches fold into the account's.",
+		Request: discovery.AnonymousLink{}, Responses: []httpapi.Reply{httpapi.NoContent}}, Serve: httpapi.H(handler.link)},
+	{Spec: httpapi.Spec{Method: httpapi.PUT, Path: "/contents/{id}/hidden", Resource: "discovery", Auth: httpapi.Public,
+		Doc:       "Hides a content item from every list the reader is served (\"not interested\"), at once; a signed-out reader hides by its anonymous id.",
+		Responses: []httpapi.Reply{httpapi.NoContent}, Errors: []string{httpapi.CodeNotFound}}, Serve: httpapi.H(handler.hide)},
+	{Spec: httpapi.Spec{Method: httpapi.DELETE, Path: "/contents/{id}/hidden", Resource: "discovery", Auth: httpapi.Public,
+		Doc:       "Shows a hidden content item again: the undo of hiding it.",
+		Responses: []httpapi.Reply{httpapi.NoContent}, Errors: []string{httpapi.CodeNotFound}}, Serve: httpapi.H(handler.unhide)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/releases", Resource: "discovery", Auth: httpapi.Public,
 		Doc:       "Every visible release in a calendar-day window ending on end_date (today by default), grouped newest first, with complete card metadata and empty days. Each day also counts unique contents omitted solely by optional reader entity filters and overlapping per-entity counts, including zero counts for current hidden public toggles. Hard domain, publication, language and access policies remain enforced at the current time; omitted content metadata and covers are not returned. No item limit or pagination; future and deleted releases stay excluded.",
 		Query:     params(dailyFilterParams(), readerParams, []httpapi.Param{cardEntities, httpapi.Int("days", "calendar days including end_date: 10 by default, from 1 through 31"), httpapi.Text("end_date", "inclusive YYYY-MM-DD in time_zone; today by default; future dates are rejected"), httpapi.Text("time_zone", "IANA zone for calendar-day boundaries; UTC by default")}),
@@ -152,10 +158,10 @@ var routes = []httpapi.Route[handler]{
 		Query: params(filterParams, readerParams, []httpapi.Param{sortParam, cardEntities, httpapi.Bool("summary", "selection-wide total, filtered and locked counts on the first page or every numbered page")}, activityParams, pageParams, []httpapi.Param{numberedPage}), Responses: []httpapi.Reply{httpapi.OK(discovery.ContentPage{})},
 		Errors: signals}, Serve: httpapi.H(handler.list)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/search", Resource: "discovery", Auth: httpapi.Public,
-		Doc: "Keyword search over contents, grouped per content item, personalized for a signed-in reader unless sorted otherwise.",
+		Doc: "Keyword search over contents, grouped per content item, personalized for a reader with reading state unless sorted otherwise. A first page's request_id names the search in the activity log.",
 		Query: params([]httpapi.Param{httpapi.Text("q", "the query")}, filterParams, readerParams,
 			[]httpapi.Param{httpapi.Text("sort", "relevance (the default) or a list sort of every match"), cardEntities, httpapi.Bool("summary", "selection-wide total, filtered and locked counts on the first page or every numbered page"),
-				httpapi.Bool("personalize", "false ranks a signed-in reader's results as anyone's"), sessionParam}, pageParams, []httpapi.Param{numberedPage}),
+				httpapi.Bool("personalize", "false ranks the reader's results as anyone's")}, activityParams, pageParams, []httpapi.Param{numberedPage}),
 		Responses: []httpapi.Reply{httpapi.OK(discovery.SearchPage{})}, Errors: signals}, Serve: httpapi.H(handler.search)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/typeahead", Resource: "discovery", Auth: httpapi.Public,
 		Doc: "Completes literal own title and entity-name/alias substrings while the reader types (name prefixes only under three characters), with prefixes first and common fillers ignored; excludes contextual keywords and typos.",
@@ -184,27 +190,32 @@ var routes = []httpapi.Route[handler]{
 		Doc:   "Atomically changes only submitted shared entity choices. Omitted choices remain unchanged. Each choice sets visible or default:true.",
 		Query: []httpapi.Param{httpapi.Text("language", "the language of labels and group names")}, Request: discovery.ContentFiltersUpdate{},
 		Responses: []httpapi.Reply{httpapi.OK(discovery.ContentFilters{})}}, Serve: httpapi.H(handler.setContentFilters)},
-	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/me/content-filters/initialize", Resource: "discovery", Auth: httpapi.User,
-		Doc:   "Initializes the account_id's content filter settings from its guest choices only if no settings exist; account_id must match the authenticated account and retries preserve all saved settings.",
-		Query: []httpapi.Param{httpapi.Text("language", "the language of labels and group names")}, Request: discovery.ContentFiltersInitialization{},
-		Responses: []httpapi.Reply{httpapi.OK(discovery.ContentFilters{})}, Errors: []string{httpapi.CodeForbidden}}, Serve: httpapi.H(handler.initializeContentFilters)},
+	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/me/content-filters/merge", Resource: "discovery", Auth: httpapi.User,
+		Doc:   "Carries a signed-out browser's content filter choices into account_id's settings at sign-in: a choice fills an entity the account has not set, and a hide wins over the account's show. account_id must be the authenticated account; resets and entities no domain offers are ignored.",
+		Query: []httpapi.Param{httpapi.Text("language", "the language of labels and group names")}, Request: discovery.ContentFiltersMerge{},
+		Responses: []httpapi.Reply{httpapi.OK(discovery.ContentFilters{})}, Errors: []string{httpapi.CodeForbidden}}, Serve: httpapi.H(handler.mergeContentFilters)},
+	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/contents/{id}/feedback", Resource: "discovery", Auth: httpapi.Public,
+		Doc:   "Offers a feedback prompt after the reader's own like, favorite or dislike of the content: a share of each reaction is asked about, one person is offered about one prompt a day and never two for one item. The prompt is recorded as offered; prompt is null when there is none.",
+		Query: []httpapi.Param{httpapi.Text("version", "the version the reaction is on"), httpapi.Text("language", "the language of entity names")}, Request: discovery.FeedbackRequest{},
+		Responses: []httpapi.Reply{httpapi.OK(discovery.FeedbackOffer{})}, Errors: []string{httpapi.CodeNotFound}}, Serve: httpapi.H(handler.offerFeedback)},
+	{Spec: httpapi.Spec{Method: httpapi.PATCH, Path: "/contents/{id}/feedback", Resource: "discovery", Auth: httpapi.Public,
+		Doc:   "Answers the reader's feedback prompt on the content, or takes or declines its hide suggestion. A taken suggestion hides the tag in an account's content filters; a signed-out browser keeps the choice itself. not_found when no prompt was offered.",
+		Query: []httpapi.Param{httpapi.Text("language", "the language of entity names")}, Request: discovery.FeedbackInput{},
+		Responses: []httpapi.Reply{httpapi.OK(discovery.ReactionFeedback{})}, Errors: []string{httpapi.CodeForbidden, httpapi.CodeNotFound}}, Serve: httpapi.H(handler.answerFeedback)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/me/history", Resource: "discovery", Auth: httpapi.User,
 		Doc: "The contents the reader engaged with, most recent first, with their progress.",
 		Query: params([]httpapi.Param{httpapi.Text("kind", "only this content kind"), httpapi.Text("status", "seen, in_progress or completed; any by default"), httpapi.Bool("summary", "selection-wide filtered and locked counts on the first page"),
 			cardEntities}, readerParams, []httpapi.Param{httpapi.Text("cursor", "the previous page's next_cursor"), httpapi.Int("limit", "page size: 24 by default, at most 100")}),
-		Responses: []httpapi.Reply{httpapi.OK(discovery.ContentPage{})}, Errors: signals}, Serve: httpapi.H(handler.history)},
+		Responses: []httpapi.Reply{httpapi.OK(discovery.ContentPage{})}}, Serve: httpapi.H(handler.history)},
+	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/me/continue", Resource: "discovery", Auth: httpapi.Public,
+		Doc: "Continue reading and watching: the reader's contents started but not finished, most recent first, each card with its position; bounced, finished, hidden and disliked ones are left out. A signed-out reader's come from its anonymous id. Filters and access apply.",
+		Query: params([]httpapi.Param{httpapi.Text("kind", "only this content kind"), cardEntities}, readerParams,
+			[]httpapi.Param{httpapi.Text("cursor", "the previous page's next_cursor"), httpapi.Int("limit", "page size: 24 by default, at most 100")}),
+		Responses: []httpapi.Reply{httpapi.OK(discovery.ContentPage{})}}, Serve: httpapi.H(handler.continueReading)},
 	{Spec: httpapi.Spec{Method: httpapi.DELETE, Path: "/me/history", Resource: "discovery", Auth: httpapi.User,
-		Doc:       "Erases the reader's history: of one content item, one kind or everything.",
+		Doc:       "Erases the reader's history: of one content item, one kind or everything. Hidden contents stay hidden.",
 		Query:     []httpapi.Param{httpapi.Text("kind", "only this content kind"), httpapi.Text("content_id", "only this content item")},
 		Responses: []httpapi.Reply{httpapi.NoContent}, Errors: append([]string{httpapi.CodeNotFound}, signals...)}, Serve: httpapi.H(handler.forget)},
-	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/signals", Resource: "discovery", Auth: httpapi.Public,
-		Doc:     "Records explicit clicks of the signed-in reader or, signed out, the stable browser identity; actual reading and playback use POST /engagement.",
-		Request: discovery.Signals{}, Responses: []httpapi.Reply{httpapi.NoContent}, Errors: append([]string{httpapi.CodeNotFound}, signals...)},
-		Serve: httpapi.H(handler.signals)},
-	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/exposures", Resource: "discovery", Auth: httpapi.Public,
-		Doc:     "Records result lists a client served, rendered or showed, for click attribution.",
-		Request: discovery.Exposures{}, Responses: []httpapi.Reply{httpapi.NoContent}, Errors: append([]string{httpapi.CodeNotFound}, signals...)},
-		Serve: httpapi.H(handler.exposures)},
 }
 
 func list(v string) []string {
@@ -241,10 +252,16 @@ func optionalFlag(r *http.Request, name string) (bool, error) {
 	return v, nil
 }
 
+// siteLanguage is the request's Accept-Language among the configured ones:
+// the popular sort's site without an explicit language.
+func (h handler) siteLanguage(r *http.Request) string {
+	return contenturl.AcceptLanguage(h.s.o.Kinds.Languages, r.Header.Get("Accept-Language"))
+}
+
 func readerOf(r *http.Request) discovery.Reader {
 	q := r.URL.Query()
 	return discovery.Reader{Actor: gate.Actor(r.Context()), Host: r.Host, Language: q.Get("language"), DisplayLanguage: q.Get("display_language"),
-		Mode: access.Mode(q.Get("mode"))}
+		Mode: access.Mode(q.Get("mode")), AnonymousID: r.Header.Get(subject.Header)}
 }
 
 func filterOf(r *http.Request) Filter {
@@ -297,15 +314,8 @@ func (h handler) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query()
-	for _, name := range []string{"activity_from", "activity_until"} {
-		if len(q[name]) > 1 || len(q[name]) == 1 && q.Get(name) == "" {
-			h.fail(w, r, fmt.Errorf("%w: %s must occur once with a UTC date", ErrInvalid, name))
-			return
-		}
-	}
 	page, err := h.s.List(r.Context(), ListOptions{Reader: readerOf(r), Filter: filterOf(r), Sort: q.Get("sort"), CardEntities: list(q.Get("card_entities")),
-		ActivityFrom: q.Get("activity_from"), ActivityUntil: q.Get("activity_until"),
-		Cursor: q.Get("cursor"), Page: pageNumber, Limit: limit, Summary: summary})
+		Window: q.Get("window"), SiteLanguage: h.siteLanguage(r), Cursor: q.Get("cursor"), Page: pageNumber, Limit: limit, Summary: summary})
 	h.reply(w, r, page, err)
 }
 
@@ -327,7 +337,7 @@ func (h handler) search(w http.ResponseWriter, r *http.Request) {
 	}
 	q := r.URL.Query()
 	o := SearchOptions{Reader: readerOf(r), Filter: filterOf(r), Query: q.Get("q"), Sort: q.Get("sort"), CardEntities: list(q.Get("card_entities")),
-		Cursor: q.Get("cursor"), Page: pageNumber, Limit: limit, Summary: summary}
+		Window: q.Get("window"), SiteLanguage: h.siteLanguage(r), Cursor: q.Get("cursor"), Page: pageNumber, Limit: limit, Summary: summary}
 	if v := q.Get("personalize"); v != "" {
 		p, err := strconv.ParseBool(v)
 		if err != nil {
@@ -338,7 +348,7 @@ func (h handler) search(w http.ResponseWriter, r *http.Request) {
 	}
 	page, err := h.s.Search(r.Context(), o)
 	if err == nil {
-		h.recordSearch(r, o, page)
+		h.recordSearch(r, o, &page)
 	}
 	h.reply(w, r, page, err)
 }
@@ -414,17 +424,38 @@ func (h handler) setContentFilters(w http.ResponseWriter, r *http.Request) {
 	h.contentFilters(w, r)
 }
 
-func (h handler) initializeContentFilters(w http.ResponseWriter, r *http.Request) {
-	var u discovery.ContentFiltersInitialization
+func (h handler) mergeContentFilters(w http.ResponseWriter, r *http.Request) {
+	var u discovery.ContentFiltersMerge
 	if err := decode(r, &u); err != nil {
 		h.fail(w, r, err)
 		return
 	}
-	if err := h.s.InitializeContentFilters(r.Context(), gate.Actor(r.Context()), u); err != nil {
+	if err := h.s.MergeContentFilters(r.Context(), gate.Actor(r.Context()), u); err != nil {
 		h.fail(w, r, err)
 		return
 	}
 	h.contentFilters(w, r)
+}
+
+func (h handler) offerFeedback(w http.ResponseWriter, r *http.Request) {
+	var in discovery.FeedbackRequest
+	if err := decode(r, &in); err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	q := r.URL.Query()
+	out, err := h.s.OfferFeedback(r.Context(), gate.Actor(r.Context()), r.Header.Get(subject.Header), r.PathValue("id"), q.Get("version"), q.Get("language"), in)
+	h.reply(w, r, out, err)
+}
+
+func (h handler) answerFeedback(w http.ResponseWriter, r *http.Request) {
+	var in discovery.FeedbackInput
+	if err := decode(r, &in); err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	out, err := h.s.AnswerFeedback(r, gate.Actor(r.Context()), r.PathValue("id"), r.URL.Query().Get("language"), in)
+	h.reply(w, r, out, err)
 }
 
 func (h handler) history(w http.ResponseWriter, r *http.Request) {
@@ -444,46 +475,47 @@ func (h handler) history(w http.ResponseWriter, r *http.Request) {
 	h.reply(w, r, page, err)
 }
 
+func (h handler) continueReading(w http.ResponseWriter, r *http.Request) {
+	limit, err := intParam(r, "limit")
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	q := r.URL.Query()
+	page, err := h.s.Continue(r.Context(), discovery.ContinueOptions{Reader: readerOf(r), Kind: q.Get("kind"), CardEntities: list(q.Get("card_entities")),
+		Cursor: q.Get("cursor"), Limit: limit})
+	h.reply(w, r, page, err)
+}
+
 func (h handler) forget(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	h.done(w, r, h.s.ForgetHistory(r.Context(), gate.Actor(r.Context()), q.Get("kind"), q.Get("content_id")))
 }
 
-func (h handler) signals(w http.ResponseWriter, r *http.Request) {
-	var in discovery.Signals
+func (h handler) activity(w http.ResponseWriter, r *http.Request) {
+	var in discovery.Activity
 	if err := decode(r, &in); err != nil {
 		h.fail(w, r, err)
 		return
 	}
-	h.done(w, r, h.s.RecordSignals(r.Context(), gate.Actor(r.Context()), in))
+	h.done(w, r, h.s.RecordActivity(r, gate.Actor(r.Context()), in))
 }
 
-func (h handler) engagement(w http.ResponseWriter, r *http.Request) {
-	var in discovery.EngagementBatch
+func (h handler) link(w http.ResponseWriter, r *http.Request) {
+	var in discovery.AnonymousLink
 	if err := decode(r, &in); err != nil {
 		h.fail(w, r, err)
 		return
 	}
-	h.done(w, r, h.s.RecordEngagement(r.Context(), gate.Actor(r.Context()), in))
+	h.done(w, r, h.s.LinkAnonymous(r.Context(), gate.Actor(r.Context()), in))
 }
 
-func (h handler) activityContexts(w http.ResponseWriter, r *http.Request) {
-	var in discovery.ActivityContextsInput
-	if err := decode(r, &in); err != nil {
-		h.fail(w, r, err)
-		return
-	}
-	out, err := h.s.ActivityContexts(r.Context(), gate.Actor(r.Context()), in)
-	h.reply(w, r, out, err)
+func (h handler) hide(w http.ResponseWriter, r *http.Request) {
+	h.done(w, r, h.s.SetHidden(r, gate.Actor(r.Context()), r.PathValue("id"), true))
 }
 
-func (h handler) exposures(w http.ResponseWriter, r *http.Request) {
-	var in discovery.Exposures
-	if err := decode(r, &in); err != nil {
-		h.fail(w, r, err)
-		return
-	}
-	h.done(w, r, h.s.RecordExposures(r.Context(), gate.Actor(r.Context()), in))
+func (h handler) unhide(w http.ResponseWriter, r *http.Request) {
+	h.done(w, r, h.s.SetHidden(r, gate.Actor(r.Context()), r.PathValue("id"), false))
 }
 
 const maxBody = 1 << 20
@@ -549,16 +581,5 @@ func (h handler) fail(w http.ResponseWriter, r *http.Request, err error) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(c.Status)
 	body := map[string]any{"error": msg, "code": code}
-	var rangeError *popularityRangeError
-	if errors.As(err, &rangeError) {
-		details := map[string]string{}
-		if rangeError.From != nil {
-			details["available_from"] = rangeError.From.UTC().Format(time.DateOnly)
-		}
-		if rangeError.Until != nil {
-			details["available_until"] = rangeError.Until.UTC().Format(time.DateOnly)
-		}
-		body["details"] = details
-	}
 	_ = json.NewEncoder(w).Encode(body)
 }

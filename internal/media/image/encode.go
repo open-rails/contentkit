@@ -614,3 +614,23 @@ func orUnbounded(n int) int {
 	}
 	return n
 }
+
+// Lossless re-encodes an 8-bit image as lossless WebP without its metadata:
+// the form a hook's changed master is stored in.
+func Lossless(src []byte) ([]byte, error) {
+	if err := start(); err != nil {
+		return nil, err
+	}
+	img, err := vips.NewImageFromBuffer(src)
+	if err != nil {
+		return nil, permanentError{err}
+	}
+	defer img.Close()
+	p := vips.NewWebpExportParams()
+	p.Lossless, p.StripMetadata = true, true
+	out, _, err := img.ExportWebp(p)
+	if err != nil {
+		return nil, permanentError{err}
+	}
+	return out, nil
+}

@@ -1,0 +1,598 @@
+// Package worker is the media worker: the one process that places uploads
+// and runs every producer, from the host's worker River schema
+// (Config.Schema) in its database: staged uploads hashed and placed at their
+// blobs, the kinds' master recipes (media.Kind.Master, with the host's
+// Config.Hooks), images, public presets and editor views (libvips), and HLS,
+// subtitles and frames (ffmpeg). The host presigns, commits and reads.
+//
+// Main is the whole command: the stock image (cmd/media-worker) is Main()
+// with no hooks, and a host with master hooks builds its own binary from
+// Main(hook, ...). New and Run run the worker in a process of the host's own.
+package worker
+
+import (
+	"cmp"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"sync"
+	"time"
+
+	mediastore "github.com/open-rails/contentkit/internal/mediastore"
+	versionstore "github.com/open-rails/contentkit/internal/versionstore"
+
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/open-rails/helpers/deps"
+	riverhelpers "github.com/open-rails/helpers/river"
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/riverdriver/riverpgxv5"
+	"github.com/riverqueue/river/rivertype"
+
+	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/media/image"
+	"github.com/open-rails/contentkit/internal/media/master"
+	"github.com/open-rails/contentkit/internal/media/video"
+	"github.com/open-rails/contentkit/internal/media/workqueue"
+	"github.com/open-rails/contentkit/internal/pglock"
+	"github.com/open-rails/contentkit/media"
+)
+
+// Config configures the worker.
+type Config struct {
+	Pool *pgxpool.Pool // the host database: Schema, manifest locks, progress
+	// Session is a direct configuration of Pool's database for its session
+	// locks and River's LISTEN when Pool is a transaction pooler; nil dials
+	// with Pool's.
+	Session *pgxpool.Config
+	// Schema is the host's worker River schema (contentkit's
+	// Config.Media.WorkerSchema); required, and never shared with another
+	// host.
+	Schema string
+	// ContentSchema is the host's ContentKit schema, holding the media item
+	// cache and event log; the host migrates it.
+	ContentSchema string
+	// AccountSchema and AccountWorkerSchema are the shared tenant avatar state
+	// and queue from contentkit.Config.AccountMedia. Empty retains legacy mode.
+	AccountSchema, AccountWorkerSchema string
+	Store                              media.Store
+	// Kinds is the host's media registry: contentkit.Config.MediaKinds, or
+	// the JSON Config.MediaRegistry writes (media.ParseConfig).
+	Kinds media.Config
+	// Hooks are the master hooks the kinds' recipes name (media.Kind.Master),
+	// each under its Name. New refuses a recipe naming one missing or at
+	// another version, and two hooks of one name.
+	Hooks []media.MasterHook
+	// HostSchema is the host's River schema ("" is the connection's search
+	// path): the releases and garbage collection a manifest write wakes run
+	// there.
+	HostSchema string
+
+	TempDir string // scratch for video sources and outputs; default os.TempDir()
+	Threads int    // ffmpeg threads; default GOMAXPROCS
+	// Preset, TopPreset, VideoEncoder and VideoCodecs are the video
+	// encoder's: x264 presets up to 1080 and above it, auto, cpu or nvenc,
+	// and the ladder's codecs, preferred first.
+	Preset, TopPreset, VideoEncoder string
+	VideoCodecs                     []media.Codec
+	// IngestWorkers and DerivativeWorkers bound concurrent item jobs (defaults
+	// 2 and 1). A derivative job handles both images and video for its item.
+	IngestWorkers     int
+	DerivativeWorkers int
+	// ImageSources bounds sources decoded at once within one derivative job.
+	ImageSources int
+	// PageGroup is how many rendered images are recorded and reported per
+	// manifest edit (default 1, each on its own).
+	PageGroup int
+	// MaxPixels, MaxFrames and MaxAnimationSeconds bound decoded images
+	// (the image processor's defaults when zero).
+	MaxPixels           int
+	MaxFrames           int
+	MaxAnimationSeconds float64
+	// JobTimeout bounds one ingest or derivative attempt (default 1 h).
+	JobTimeout time.Duration
+	// VideoSlice is how long a derivative attempt keeps encoding its own
+	// video's chunks before yielding to the other queued jobs; 0 (the
+	// default) yields after every chunk. A slice ends early when its video
+	// becomes playable or a job of higher priority waits. At most half of
+	// JobTimeout, so the last chunk a slice starts still has the other half.
+	VideoSlice time.Duration
+	// ShutdownGrace is how long running jobs get to finish on shutdown
+	// before they are cancelled and retried elsewhere; default 30 s.
+	ShutdownGrace time.Duration
+	Logger        *slog.Logger
+	// RiverHooks are added to the worker's River client (observability).
+	RiverHooks []rivertype.Hook
+	// Metrics, when set, takes the worker's metrics: work attempts, encode
+	// passes and, while this worker leads its Schema, the queue backlog.
+	Metrics prometheus.Registerer
+
+	reg     *mediastore.Registry
+	metrics *metrics
+	locks   *pglock.Locks
+}
+
+func (c *Config) defaults() error {
+	if c.Pool == nil || c.Store == nil {
+		return errors.New("media/worker: Config needs a Pool and a Store")
+	}
+	if c.locks == nil {
+		c.locks = pglock.New(cmp.Or(c.Session, c.Pool.Config()))
+	}
+	reg, err := mediastore.NewRegistry(c.Kinds, mediastore.Hooks{})
+	if err != nil {
+		return fmt.Errorf("media/worker: Kinds: %w", err)
+	}
+	if len(reg.Kinds()) == 0 {
+		return errors.New("media/worker: Config.Kinds declares no kind")
+	}
+	c.reg = reg
+	if err := workqueue.ValidSchema(c.Schema); err != nil {
+		return err
+	}
+	if c.ContentSchema == "" {
+		return errors.New("media/worker: Config.ContentSchema is required")
+	}
+	if c.DerivativeWorkers <= 0 {
+		c.DerivativeWorkers = 1
+	}
+	if c.IngestWorkers <= 0 {
+		c.IngestWorkers = 2
+	}
+	if c.JobTimeout <= 0 {
+		c.JobTimeout = time.Hour
+	}
+	c.VideoSlice = min(c.VideoSlice, c.JobTimeout/2)
+	if c.ShutdownGrace <= 0 {
+		c.ShutdownGrace = 30 * time.Second
+	}
+	if c.Logger == nil {
+		c.Logger = slog.Default()
+	}
+	return nil
+}
+
+// Worker is a configured worker; Run drains jobs until shutdown.
+type Worker struct {
+	c          Config
+	account    *Worker
+	client     *river.Client[pgx.Tx]
+	stopSlices func()
+}
+
+// New builds the River client with the image and video workers. It needs no
+// DDL rights: the host's contentkit.MigratePostgres migrates Schema, so the
+// worker can run as the host's unprivileged app role. Missing tables, a
+// recipe naming a hook Hooks lacks or has at another version, and two hooks
+// of one name are refused here, before any job runs.
+func New(ctx context.Context, c Config) (*Worker, error) {
+	if err := c.defaults(); err != nil {
+		return nil, err
+	}
+	masterHooks := make(map[string]media.MasterHook, len(c.Hooks))
+	for _, h := range c.Hooks {
+		name := h.Name()
+		switch _, dup := masterHooks[name]; {
+		case name == "":
+			return nil, errors.New("media/worker: a master hook has no name")
+		case dup:
+			return nil, fmt.Errorf("media/worker: two master hooks are named %q", name)
+		}
+		masterHooks[name] = h
+	}
+	if err := master.Check(c.reg, masterHooks); err != nil {
+		return nil, err
+	}
+	if c.Metrics != nil && c.metrics == nil {
+		m, err := newMetrics(c.Metrics)
+		if err != nil {
+			return nil, err
+		}
+		c.metrics = m
+	}
+	for _, table := range []string{"encode_run", "encode_chunk"} {
+		var exists bool
+		name := pgx.Identifier{c.Schema, table}.Sanitize()
+		if err := c.Pool.QueryRow(ctx, "SELECT to_regclass($1) IS NOT NULL", name).Scan(&exists); err != nil {
+			return nil, fmt.Errorf("media/worker: check %s.%s: %w", c.Schema, table, err)
+		}
+		if !exists {
+			return nil, fmt.Errorf("media/worker: missing %s.%s; the host must run contentkit.MigratePostgres",
+				c.Schema, table)
+		}
+	}
+	for _, object := range []string{"content_media_items", "eventlog_pending", "content_event_ids"} {
+		name := pgx.Identifier{c.ContentSchema, object}.Sanitize()
+		var exists bool
+		if err := c.Pool.QueryRow(ctx, "SELECT to_regclass($1) IS NOT NULL", name).Scan(&exists); err != nil {
+			return nil, fmt.Errorf("media/worker: check completion storage: %w", err)
+		}
+		if !exists {
+			return nil, fmt.Errorf("media/worker: missing %s; the host must apply ContentKit migrations", name)
+		}
+	}
+	if err := video.SweepTemp(c.TempDir); err != nil {
+		return nil, fmt.Errorf("media/worker: sweep scratch: %w", err)
+	}
+	queue, err := workqueue.NewWithAccounts(c.Pool, c.reg, c.Schema, c.AccountWorkerSchema)
+	if err != nil {
+		return nil, err
+	}
+	wake := func(ctx context.Context, tx pgx.Tx, ref contentref.ContentRef) error { return nil }
+	paths := versionstore.ChapterPathHooks(c.Pool, c.ContentSchema, c.reg, wake)
+	c.reg, err = mediastore.NewRegistry(c.Kinds, mediastore.Hooks{CanUpload: preparationUploads{},
+		ValidatePathsChanged: paths.ValidatePathsChanged, PathsChanged: paths.PathsChanged})
+	if err != nil {
+		return nil, err
+	}
+	cache, err := c.cache(nil)
+	if err != nil {
+		return nil, err
+	}
+	manifests, err := mediastore.NewManifests(c.Store, c.reg, mediastore.ManifestOptions{Written: cache.Record})
+	if err != nil {
+		return nil, err
+	}
+	uploads, err := mediastore.NewUploads(mediastore.UploadOptions{Store: c.Store, Manifests: manifests})
+	if err != nil {
+		return nil, err
+	}
+	prepare := versionstore.PrepareDerivatives(c.Pool, c.locks, c.ContentSchema, manifests, uploads)
+	var observeEncode func(video.EncodeObservation)
+	if c.metrics != nil {
+		observeEncode = c.metrics.observeEncode
+	}
+	enc, err := video.New(ctx, video.Config{Manifests: manifests, Queue: queue, TempDir: c.TempDir,
+		Threads: c.Threads, Preset: c.Preset, TopPreset: c.TopPreset, Encoder: c.VideoEncoder, Codecs: c.VideoCodecs, Logger: c.Logger,
+		ObserveEncode: observeEncode})
+	if err != nil {
+		return nil, err
+	}
+	hooks := append(c.RiverHooks[:len(c.RiverHooks):len(c.RiverHooks)], &completionHook{manifests: manifests})
+	var middleware []rivertype.Middleware
+	if c.metrics != nil {
+		middleware = []rivertype.Middleware{c.metrics}
+		if leader := c.metrics.queue.watch(c.Pool, c.Schema); leader != nil {
+			hooks = append(hooks, leader)
+		}
+	}
+	masters, err := master.New(master.Config{Manifests: manifests, Hooks: masterHooks, TempDir: c.TempDir, WebP: image.Lossless})
+	if err != nil {
+		return nil, err
+	}
+	images, err := image.New(image.Config{Store: c.Store, Manifests: manifests, Workers: c.ImageSources, MaxPixels: c.MaxPixels, MaxFrames: c.MaxFrames, MaxAnimationSeconds: c.MaxAnimationSeconds, GroupSize: c.PageGroup})
+	if err != nil {
+		return nil, err
+	}
+	stopping := make(chan struct{})
+	processing := riverhelpers.NewContribution("contentkit-media-processing", func(_ context.Context, cfg *river.Config) error {
+		for _, q := range []string{workqueue.IngestQueue, workqueue.DerivativeQueue} {
+			if _, exists := cfg.Queues[q]; exists {
+				return fmt.Errorf("media/worker: queue %q already registered", q)
+			}
+		}
+		cfg.Queues[workqueue.IngestQueue] = river.QueueConfig{MaxWorkers: c.IngestWorkers}
+		cfg.Queues[workqueue.DerivativeQueue] = river.QueueConfig{MaxWorkers: c.DerivativeWorkers}
+		if err := river.AddWorkerSafely(cfg.Workers, &ingestWorker{c: c, manifests: manifests, queue: queue}); err != nil {
+			return err
+		}
+		return river.AddWorkerSafely(cfg.Workers, &derivativeWorker{c: c, masters: masters, images: images, manifests: manifests, prepare: prepare, video: video.WorkerConfig{Encoder: enc, Pool: c.Pool, Locks: c.locks, Schema: c.Schema, Slice: c.VideoSlice, Stopping: stopping, Logger: c.Logger}})
+	}, nil, nil)
+	client, err := riverhelpers.NewWithSession(ctx, c.Pool, c.Session, &river.Config{Schema: c.Schema, ReindexerSchedule: river.NeverSchedule(),
+		JobTimeout: time.Hour, RescueStuckJobsAfter: 2 * time.Hour,
+		Logger: c.Logger, Hooks: hooks, Middleware: middleware}, processing)
+	if err != nil {
+		return nil, err
+	}
+	out := &Worker{c: c, client: client, stopSlices: sync.OnceFunc(func() { close(stopping) })}
+	if c.AccountSchema != "" {
+		child := c
+		child.ContentSchema = c.AccountSchema
+		child.Schema = c.AccountWorkerSchema
+		child.AccountSchema = ""
+		child.AccountWorkerSchema = ""
+		out.account, err = New(ctx, child)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+// cache is the item cache every manifest write lands in, which wakes
+// releases and garbage collection on the host's River schema; with queue,
+// processing too (a rebuild). Processing jobs enqueue their own follow-ups.
+func (c Config) cache(queue mediastore.ProcessQueue) (*mediastore.PGCache, error) {
+	host, err := river.NewClient(riverpgxv5.New(c.Pool), &river.Config{Schema: c.HostSchema})
+	if err != nil {
+		return nil, err
+	}
+	recorded, err := versionstore.Recorded(c.Pool, c.locks, c.HostSchema, c.ContentSchema, c.reg)
+	if err != nil {
+		return nil, err
+	}
+	o := mediastore.CacheOptions{Lock: recorded.Lock, Recorded: recorded.Recorded, Processes: queue, GC: mediastore.RiverGC{Client: host}}
+	cache, err := mediastore.NewPGCache(c.Pool, c.ContentSchema, c.reg, o)
+	if err != nil {
+		return nil, err
+	}
+	if c.AccountSchema == "" {
+		return cache, nil
+	}
+	if c.AccountWorkerSchema == "" {
+		return nil, errors.New("media/worker: account storage requires its queue")
+	}
+	scope := c.reg.Scope()
+	account, err := mediastore.NewPGCache(c.Pool, c.AccountSchema, c.reg, o)
+	if err != nil {
+		return nil, err
+	}
+	scope.AppID = ""
+	return mediastore.RouteCache(cache, account, scope.Partition())
+}
+
+// Rebuild refills the item cache from the bucket's manifests: after the
+// database was restored from a backup, or dropped and migrated again. Each
+// item recorded wakes its processing, release and collection. It returns
+// the items recorded.
+func Rebuild(ctx context.Context, c Config) (int, error) {
+	if err := c.defaults(); err != nil {
+		return 0, err
+	}
+	queue, err := workqueue.NewWithAccounts(c.Pool, c.reg, c.Schema, c.AccountWorkerSchema)
+	if err != nil {
+		return 0, err
+	}
+	cache, err := c.cache(queue)
+	if err != nil {
+		return 0, err
+	}
+	manifests, err := mediastore.NewManifests(c.Store, c.reg, mediastore.ManifestOptions{Written: cache.Record})
+	if err != nil {
+		return 0, err
+	}
+	jobs, err := mediastore.NewJobs(mediastore.JobsConfig{Manifests: manifests, Processes: queue, Logger: c.Logger})
+	if err != nil {
+		return 0, err
+	}
+	var kinds []string
+	for _, k := range c.reg.Kinds() {
+		kinds = append(kinds, k.Name)
+	}
+	return jobs.Rebuild(ctx, cache, kinds...)
+}
+
+// checkTimeout bounds one readiness check, so a bucket that accepts
+// connections and never answers cannot wedge Run.
+const checkTimeout = 10 * time.Second
+
+// Run waits for the bucket (every job needs it; waiting burns no job
+// attempts), then works jobs until ctx is done. Running jobs get ShutdownGrace before
+// cancellation. A non-nil error may leave jobs unwinding: the caller must not
+// close their database pool until the worker's River client has stopped.
+func (w *Worker) Run(ctx context.Context) error {
+	if w.account != nil {
+		run, cancel := context.WithCancel(ctx)
+		defer cancel()
+		out := make(chan error, 2)
+		own := *w
+		own.account = nil
+		go func() { out <- own.Run(run) }()
+		go func() { out <- w.account.Run(run) }()
+		first := <-out
+		cancel()
+		return errors.Join(first, <-out)
+	}
+
+	for attempt := 0; ; attempt++ {
+		checkCtx, cancel := context.WithTimeout(ctx, checkTimeout)
+		err := w.c.Store.Check(checkCtx)
+		cancel()
+		if err == nil {
+			break
+		}
+		wait := deps.Backoff(attempt, 500*time.Millisecond, 30*time.Second)
+		w.c.Logger.Warn("media-worker: waiting for the bucket", "attempt", attempt+1, "retry_in", wait.Round(time.Millisecond), "error", err.Error())
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-time.After(wait):
+		}
+	}
+	// River ends on its context's cancellation only: a context that ends by
+	// deadline makes its notifier retry without backoff. Pass ctx's end on
+	// as a cancellation.
+	runCtx, cancelRun := context.WithCancel(context.WithoutCancel(ctx))
+	defer cancelRun()
+	stopRun := context.AfterFunc(ctx, cancelRun)
+	defer stopRun()
+	if err := w.client.Start(runCtx); err != nil {
+		return err
+	}
+	w.c.Logger.Info("media-worker: started", "schema", w.c.Schema, "derivative_workers", w.c.DerivativeWorkers, "ingest_workers", w.c.IngestWorkers, "video_slice", w.c.VideoSlice)
+	<-ctx.Done()
+	w.stopSlices()
+	return stopJobs(w.client, w.c.ShutdownGrace, 30*time.Second)
+}
+
+// stopJobs allows a short graceful drain, then interrupts work and waits for
+// River to acknowledge it. Its error must retain the unfinished-work signal.
+func stopJobs(client *river.Client[pgx.Tx], grace, hardLimit time.Duration) error {
+	soft, cancel := context.WithTimeout(context.Background(), grace)
+	defer cancel()
+	if err := client.Stop(soft); err == nil {
+		return nil
+	}
+	hard, cancelHard := context.WithTimeout(context.Background(), hardLimit)
+	defer cancelHard()
+	if err := client.StopAndCancel(hard); err != nil {
+		return fmt.Errorf("media-worker: shutdown incomplete: %w", err)
+	}
+	return nil
+}
+
+type ingestWorker struct {
+	river.WorkerDefaults[workqueue.IngestArgs]
+	c         Config
+	manifests *mediastore.Manifests
+	queue     *workqueue.Queue
+}
+
+func (w *ingestWorker) Timeout(*river.Job[workqueue.IngestArgs]) time.Duration {
+	return w.c.JobTimeout
+}
+
+// Work places an item's staged uploads, after any equal job it follows, then
+// enqueues its processing.
+func (w *ingestWorker) Work(ctx context.Context, job *river.Job[workqueue.IngestArgs]) (err error) {
+	fail := func(ctx context.Context, cause error) error {
+		if err := full(ctx, w.manifests, job.Args.Ref, w.manifests.FailIngest(ctx, job.Args.Ref, cause)); err != nil {
+			return err
+		}
+		return w.queue.Enqueue(ctx, mediastore.ProcessJob{Ref: job.Args.Ref, Preset: job.Args.Preset})
+	}
+	defer func() { err = w.c.finishAttempt(ctx, job.JobRow, err, fail) }()
+	if err := w.c.restoreRescuedAttempt(ctx, job.JobRow); err != nil {
+		return err
+	}
+	if err := w.c.checkAttemptBudget(ctx, job.JobRow, fail); err != nil {
+		return err
+	}
+	a := job.Args
+	item, err := w.c.reg.Item(a.Ref)
+	if err != nil {
+		return river.JobCancel(err)
+	}
+	if err := mediastore.WaitFor(ctx, river.ClientFromContext[pgx.Tx](ctx), a.After); err != nil {
+		return err
+	}
+	// A previous attempt's write may have landed without its record.
+	if err := w.manifests.Sync(ctx, a.Ref); err != nil {
+		return err
+	}
+	if _, err := w.manifests.Place(ctx, a.Ref); err != nil {
+		return full(ctx, w.manifests, a.Ref, err)
+	}
+	if err := w.manifests.IngestArchives(ctx, a.Ref, w.c.TempDir); err != nil {
+		return full(ctx, w.manifests, a.Ref, err)
+	}
+	if !a.Force && a.Preset == "" {
+		m, _, err := w.manifests.Get(ctx, a.Ref)
+		if err != nil {
+			return err
+		}
+		if !item.Kind().NeedsProcessing(m) {
+			return nil // Placed audio needs no image/video job; staged images still do.
+		}
+	}
+	return w.queue.Enqueue(ctx, mediastore.ProcessJob{Ref: a.Ref, Preset: a.Preset, Force: a.Force})
+}
+
+type derivativeWorker struct {
+	river.WorkerDefaults[workqueue.DerivativeArgs]
+	c         Config
+	masters   *master.Runner
+	images    *image.Processor
+	manifests *mediastore.Manifests
+	video     video.WorkerConfig
+	prepare   func(context.Context, contentref.ContentRef) error
+}
+
+func (w *derivativeWorker) Timeout(*river.Job[workqueue.DerivativeArgs]) time.Duration {
+	return w.c.JobTimeout
+}
+
+// Work generates image outputs and advances video outputs through their existing
+// resumable chunks. Both formats share this one durable item obligation.
+func (w *derivativeWorker) Work(ctx context.Context, job *river.Job[workqueue.DerivativeArgs]) (err error) {
+	fail := func(ctx context.Context, cause error) error {
+		pending := mediastore.ProcessJob{Ref: job.Args.Ref, Preset: job.Args.Preset, Editor: job.Args.Editor}
+		return full(ctx, w.manifests, job.Args.Ref, errors.Join(
+			w.masters.FailPending(ctx, job.Args.Ref, cause),
+			w.images.FailPending(ctx, pending, cause),
+			w.video.Encoder.FailPending(ctx, pending, cause),
+		))
+	}
+	defer func() { err = w.c.finishAttempt(ctx, job.JobRow, err, fail) }()
+	if err := w.c.restoreRescuedAttempt(ctx, job.JobRow); err != nil {
+		return err
+	}
+	if err := w.c.checkAttemptBudget(ctx, job.JobRow, fail); err != nil {
+		return err
+	}
+	a := job.Args
+	// A rescued attempt (process death) keeps its number but leaves an error.
+	pj := mediastore.ProcessJob{Ref: a.Ref, Preset: a.Preset, Force: a.Force, Editor: a.Editor, Retry: len(job.Errors) > 0}
+	if _, err := w.c.reg.Item(pj.Ref); err != nil {
+		return river.JobCancel(err)
+	}
+	if err := mediastore.WaitFor(ctx, river.ClientFromContext[pgx.Tx](ctx), job.Args.After); err != nil {
+		return err
+	}
+	// A previous attempt's write may have landed without its record.
+	if err := w.manifests.Sync(ctx, a.Ref); err != nil {
+		return err
+	}
+	// Masters first: renditions derive from them. A failing hook keeps its
+	// upload's previous master; the rest proceeds and the job retries it.
+	var masterErr error
+	if !a.Editor {
+		masterErr = w.masters.Process(ctx, a.Ref)
+		if err := w.prepare(ctx, a.Ref); err != nil {
+			return errors.Join(err, masterErr)
+		}
+	}
+	var checkpoint struct {
+		ImagesForced bool `json:"contentkit_images_forced"`
+	}
+	if err := json.Unmarshal(job.Metadata, &checkpoint); err != nil {
+		return err
+	}
+	pj.Force = a.Force && !checkpoint.ImagesForced
+	if err := full(ctx, w.manifests, pj.Ref, w.images.Process(ctx, pj)); err != nil {
+		return errors.Join(err, masterErr)
+	}
+	if pj.Force {
+		if _, err := w.c.Pool.Exec(ctx, `UPDATE `+pgx.Identifier{w.c.Schema, "river_job"}.Sanitize()+` SET metadata=jsonb_set(metadata,'{contentkit_images_forced}','true') WHERE id=$1`, job.ID); err != nil {
+			return err
+		}
+	}
+	if a.Editor {
+		return nil
+	}
+	// Image analysis may have established page selection or changed the cover
+	// source. Prepare those inputs, then finish their image outputs in this job.
+	if err := w.prepare(ctx, a.Ref); err != nil {
+		return err
+	}
+	pj.Force = false
+	if err := full(ctx, w.manifests, pj.Ref, w.images.Process(ctx, pj)); err != nil {
+		return errors.Join(err, masterErr)
+	}
+	if err := full(ctx, w.manifests, pj.Ref, w.video.Run(ctx, job)); err != nil {
+		return errors.Join(err, masterErr)
+	}
+	return masterErr
+}
+
+// full marks the item Full when a record of its outputs did not fit
+// (ErrManifestTooLarge) and ends the job: a retry would redo the work only
+// to be refused again.
+func full(ctx context.Context, ms *mediastore.Manifests, ref contentref.ContentRef, err error) error {
+	if !errors.Is(err, mediastore.ErrManifestTooLarge) {
+		return err
+	}
+	return river.JobCancel(errors.Join(err, ms.FailIngest(ctx, ref, err)))
+}
+
+// preparationUploads authorizes only internal same-version cover preparation;
+// this worker exposes no HTTP upload interface.
+type preparationUploads struct{}
+
+func (preparationUploads) CanUpload(_ context.Context, a access.Actor, _ media.UploadTarget) (media.UploadGrant, error) {
+	return media.UploadGrant{Allowed: a.ID == "contentkit" && a.Kind == "contentkit:system" && !a.Anonymous, Exempt: true}, nil
+}

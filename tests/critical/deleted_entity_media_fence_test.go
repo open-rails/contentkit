@@ -78,8 +78,7 @@ func TestDeletedEntityMediaFence(t *testing.T) {
 	must(t, a.engine.StartJobs(jobs))
 	admin := a.engine.Client()
 
-	root := layout.Scope{TenantID: a.cfg.Scope.TenantID.String(), AppID: a.cfg.Scope.AppID.String()}.Root()
-	folder := func(kind, id string) string { return root + kind + "/" + id + "/" }
+	folder := layout.Prefix
 	// served lists an item's public/ and private/ keys, without its fence.
 	served := func(t *testing.T, kind, id string) []string {
 		t.Helper()
@@ -328,13 +327,11 @@ func TestDeletedEntityMediaFence(t *testing.T) {
 		must(t, err)
 		registry, err := mediastore.NewRegistry(config, mediastore.Hooks{})
 		must(t, err)
-		journal, err := mediastore.NewPGJournal(w.pool, w.schema, nil)
-		must(t, err)
-		storage, err := mediastore.NewJobs(mediastore.JobsConfig{Store: m.store, Registry: registry, Locker: mediastore.PGLocker(w.pool), Journal: journal})
+		storage, err := mediastore.NewJobs(mediastore.JobsConfig{Manifests: mustManifests(t, m.store, registry)})
 		must(t, err)
 		ref, err := registry.Ref("channel", channel.ID)
 		must(t, err)
-		must(t, storage.FenceDeleted(t.Context(), ref, false))
+		must(t, storage.SetDeleted(t.Context(), ref, false))
 		expectFence(t, "channel", channel.ID, layout.FenceErased)
 		expect(t, http.StatusNotFound, channelPictures...)
 	})

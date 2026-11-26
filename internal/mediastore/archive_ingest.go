@@ -7,7 +7,6 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -18,7 +17,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/open-rails/contentkit/contentref"
@@ -46,11 +44,6 @@ func (m *Manifests) IngestArchives(ctx context.Context, ref contentref.ContentRe
 	if err != nil {
 		return err
 	}
-	unlock, err := PGLocker(m.journal.pool).Lock(ctx, "contentkit:media:archive:"+ref.String())
-	if err != nil {
-		return err
-	}
-	defer unlock()
 	current, _, err := m.Get(ctx, ref)
 	if errors.Is(err, ErrNotFound) {
 		return nil
@@ -127,9 +120,6 @@ func (m *Manifests) ingestArchive(ctx context.Context, item Item, source media.F
 		return uploadErr(media.CodeConflict, "archive lacks a verified upload admission; recommit the ZIP through the upload API")
 	}
 	admission := *source.Admission
-	if admission.Enforce && (admission.Owner == "" || !admission.Accounting) {
-		return uploadErr(media.CodeForbidden, "archive quota owner is missing; recommit the ZIP")
-	}
 	k := item.Kind()
 	destination := k.ArchiveDestination(source.Path)
 	target := k.uploadIndex(destination)
@@ -261,79 +251,30 @@ func (m *Manifests) ingestArchive(ctx context.Context, item Item, source media.F
 		}
 		page.retainedPath, page.retainedBlob = file.Path, file.Blob
 	}
-	var newBytes int64
 	newPages := 0
 	for _, page := range pages {
 		if page.retainedPath == "" {
-			newBytes += max(page.size, uploadFloor)
 			newPages++
 		}
 	}
 	if current.uploads()+newPages > media.MaxUploads {
 		return tooManyFiles(media.MaxUploads, "archive exceeds item upload limit")
 	}
-
-	fingerprintInput, _ := json.Marshal(struct {
-		Source, Path, Target string
-		Admission            media.SourceAdmission
-	}{source.Blob, source.Path, destination, admission})
-	operation := uuidv7.Name(item.at(), uuid.NameSpaceOID, "contentkit:archive-ingest:v1:"+item.Ref().String()+":"+string(fingerprintInput))
-	// Reserve the validated expanded bytes before any page PUT. The accepted
-	// source policy is replayed without invoking a host callback in the worker.
-	reservationKey := item.TempPrefix() + "archive-quota-" + operation.String()
-	quotaLedger := *m.journal.forTenant(item.Ref().TenantID).limiter
-	quotaLedger.limits.Quota = func(context.Context, string, string) (int64, error) { return admission.Quota, nil }
-	if admission.Enforce && newBytes > 0 {
-		if err := quotaLedger.Reserve(ctx, Reservation{Tenant: item.Ref().TenantID, Owner: admission.Owner, Uploader: "contentkit:archive-ingest", Key: reservationKey, Size: newBytes}); err != nil {
-			return err
-		}
-		defer func() {
-			clean, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
-			defer cancel()
-			_ = quotaLedger.Settle(clean, Settlement{Tenant: item.Ref().TenantID, Owner: admission.Owner, Keys: []string{reservationKey}})
-		}()
-	}
-	written := []string{}
-	defer func() {
-		if len(written) > 0 {
-			clean, cancel := context.WithTimeout(context.WithoutCancel(ctx), time.Minute)
-			defer cancel()
-			cleanupErr := m.DropUnreferenced(clean, item.Ref(), Unreferenced{Blobs: written})
-			if resultErr == nil {
-				resultErr = cleanupErr
-			}
-		}
-	}()
+	operation := uuidv7.Name(item.at(), uuid.NameSpaceOID, "contentkit:archive-ingest:v2:"+item.Ref().String()+":"+source.Blob+":"+source.Path+":"+admission.Generation)
 	for batchStart := 0; batchStart < len(pages); batchStart += archiveCommitBatch {
 		batchEnd := min(batchStart+archiveCommitBatch, len(pages))
-		batchKey := "batch:" + strconv.Itoa(batchStart)
-		batchInput := append(slices.Clone(fingerprintInput), []byte(batchKey)...)
-		mutation := &manifestMutation{commit: manifestCommit{ID: uuidv7.Child(operation, batchKey), Ref: item.Ref(), Folder: item.Prefix(), Actor: "contentkit:archive-ingest", Fingerprint: sha256.Sum256(batchInput)}, quota: admission.Quota}
-		if _, replayed, err := m.replayCommit(ctx, item, mutation.commit); err != nil {
-			return err
-		} else if replayed {
-			if err := CompleteProcessing(ctx, m, item.Ref(), nil); err != nil {
-				return err
-			}
-			continue
-		}
-		// Each batch owns its fresh allocations before PUT; its exact mutation
-		// adopts them together. Failed/unused objects belong to content purge.
+		// Pages are written under their hash before the manifest names them;
+		// a page a crash leaves unnamed is an orphan the next GC removes.
 		for i := batchStart; i < batchEnd; i++ {
 			if pages[i].retainedPath != "" {
 				continue
 			}
-			blob, err := m.NewBlobs(ctx, item.Ref(), k.Area(""), [][]byte{pages[i].sum})
-			if err != nil {
-				return err
-			}
-			pages[i].blob = blob[0]
-			written = append(written, blob[0])
+			pages[i].blob = layout.BlobRef(k.Area(""), pages[i].sum)
 			if err := m.putArchivePage(ctx, item, pages[i], tempDir); err != nil {
 				return err
 			}
 		}
-		_, err = m.editOperation(ctx, item.Ref(), true, bound{project: k.Unwritten}, mutation, func(cur *Manifest) error {
+		_, err = m.EditWith(ctx, item.Ref(), EditOptions{Existing: true, Op: uuidv7.Child(operation, strconv.Itoa(batchStart)).String(), Reserve: k.Unwritten}, func(cur *Manifest) error {
 			i := cur.Find(source.Path)
 			if i < 0 || cur.Files[i].Source() != source.Source() {
 				return errArchiveChanged
@@ -341,15 +282,7 @@ func (m *Manifests) ingestArchive(ctx context.Context, item Item, source media.F
 			if cur.Files[i].Admission == nil || *cur.Files[i].Admission != admission {
 				return errArchiveChanged
 			}
-			keys := make([]string, len(written))
-			for i, b := range written {
-				keys[i], _ = item.Blob(b)
-			}
-			if err := m.checkAllocationsIn(ctx, item, keys, cur.Incarnation); err != nil {
-				return err
-			}
 			archiveUnattached := cur.Files[i].Unattached
-			before := cur.uploadBytes()
 			objects := map[string]media.Object{}
 			for _, page := range pages[batchStart:batchEnd] {
 				if page.retainedPath != "" {
@@ -358,17 +291,9 @@ func (m *Manifests) ingestArchive(ctx context.Context, item Item, source media.F
 					}
 					continue
 				}
-				physical, _ := item.Blob(page.blob)
-				obj, err := m.store.Head(ctx, physical)
-				if err != nil {
-					return err
-				}
-				if obj.Size != page.size {
-					return uploadErr(media.CodeConflict, "prepared archive page changed")
-				}
-				objects[page.blob] = obj
+				objects[page.blob] = media.Object{Size: page.size, ContentType: page.typ}
 			}
-			runner := &opRun{k: k, m: cur, ref: item.Ref(), objects: objects, trusted: true, exempt: !admission.Enforce}
+			runner := &opRun{k: k, m: cur, ref: item.Ref(), objects: objects, trusted: true}
 			taken := map[string]bool{}
 			existing := map[int]media.File{}
 			for _, file := range cur.Files {
@@ -456,21 +381,9 @@ func (m *Manifests) ingestArchive(ctx context.Context, item Item, source media.F
 			if cur.uploads() > media.MaxUploads {
 				return tooManyFiles(media.MaxUploads, "archive exceeds item upload limit")
 			}
-			chargedOwner := admission.Owner
-			if !admission.Accounting {
-				chargedOwner = ""
-			}
-			var reservationKeys []string
-			if batchEnd == len(pages) {
-				reservationKeys = []string{reservationKey}
-			}
-			mutation.effects.Settlement = Settlement{Tenant: item.Ref().TenantID, Owner: chargedOwner, Keys: reservationKeys, Delta: cur.uploadBytes() - before, Enforce: admission.Enforce}
 			return nil
 		})
 		if err != nil {
-			return err
-		}
-		if err := CompleteProcessing(ctx, m, item.Ref(), nil); err != nil {
 			return err
 		}
 	}
@@ -526,7 +439,7 @@ func readArchiveEntry(ctx context.Context, entry *zip.File, sink io.Writer, limi
 }
 
 // putArchivePage extracts one validated page from the ZIP on disk again and
-// writes it to its allocation: scratch holds at most one page beside the ZIP.
+// writes it under its hash: scratch holds at most one page beside the ZIP.
 func (m *Manifests) putArchivePage(ctx context.Context, item Item, page archivePageSource, tempDir string) error {
 	spool, err := os.CreateTemp(tempDir, "contentkit-archive-page-*")
 	if err != nil {
@@ -548,7 +461,8 @@ func (m *Manifests) putArchivePage(ctx context.Context, item Item, page archiveP
 	if err != nil {
 		return err
 	}
-	_, err = m.store.Put(ctx, physical, spool, page.size, media.PutOptions{ContentType: page.typ, ChecksumSHA256: page.sum, IfNoneMatch: "*"})
+	// Identical bytes under the same name: a repeated PUT is harmless.
+	_, err = m.store.Put(ctx, physical, spool, page.size, media.PutOptions{ContentType: page.typ, ChecksumSHA256: page.sum})
 	return err
 }
 

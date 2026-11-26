@@ -39,6 +39,7 @@ jobs:
       GOMAXPROCS: '2'
       DEBIAN_FRONTEND: noninteractive
       CONTENTKIT_CRITICAL_PG: postgres://contentkit:contentkit@postgres:5432/critical?sslmode=disable
+      CONTENTKIT_CRITICAL_PGBOUNCER: postgres://contentkit:contentkit@127.0.0.1:6440/critical?sslmode=disable
       CONTENTKIT_CRITICAL_S3_ENDPOINT: http://localhost:9000
       CONTENTKIT_CRITICAL_S3_USER: contentkit
       CONTENTKIT_CRITICAL_S3_PASSWORD: contentkit-secret
@@ -55,7 +56,19 @@ jobs:
     # FFmpeg 7.1 with SVT-AV1 and the dav1d HEIF plugin, as the worker image ships.
     - uses: ./.github/actions/native-setup
       with:
-        packages: libvips-dev libheif-plugin-dav1d ffmpeg python3 openssl docker-cli
+        packages: libvips-dev libheif-plugin-dav1d ffmpeg python3 openssl docker-cli pgbouncer
+    - name: Start PgBouncer in transaction mode
+      run: |
+        # 6440: the Debian package may have started its own instance on 6432.
+        mkdir -p /tmp/pgbouncer && chmod 777 /tmp/pgbouncer
+        install -m 644 .github/pgbouncer/pgbouncer.ini .github/pgbouncer/userlist.txt /tmp/pgbouncer/
+        pgbouncer -d -u nobody /tmp/pgbouncer/pgbouncer.ini
+        for i in $(seq 1 30); do
+          if (exec 3<>/dev/tcp/127.0.0.1/6440) 2>/dev/null; then exit 0; fi
+          sleep 1
+        done
+        cat /tmp/pgbouncer/pgbouncer.log
+        exit 1
     - name: Issue the signal store's test TLS certificate
       run: |
         dir="$RUNNER_TEMP/clickhouse-tls"
@@ -104,20 +117,16 @@ jobs:
       run: |
         pnpm install --frozen-lockfile --ignore-scripts
         pnpm contract:check
-        pnpm typecheck && pnpm lint && pnpm test:read-refresh && pnpm build
+        pnpm typecheck && pnpm lint && pnpm test:read-refresh && pnpm test:activity && pnpm build
         pnpm pack --pack-destination "$RUNNER_TEMP"
         python3 ../../.github/scripts/check-npm-package.py "$RUNNER_TEMP/openrails-contentkit-ui-0.0.0.tgz" 0.0.0
-        # These four are independent (three configs write to three different
-        # outDirs, the Playwright install touches neither) -- were running
-        # one after another for no reason.
+        # These three are independent (two configs write to two different
+        # outDirs, the Playwright install touches neither).
         declare -A browser_pids
         mkdir -p "$RUNNER_TEMP/browser-build-logs"
         ( pnpm exec vite build --config ../../tests/critical/browser/vite.config.mjs ) \
           > "$RUNNER_TEMP/browser-build-logs/vite.log" 2>&1 &
         browser_pids[vite]=$!
-        ( RAYON_NUM_THREADS=1 pnpm exec vite build --config ../../tests/critical/browser/search-attribution.config.mjs ) \
-          > "$RUNNER_TEMP/browser-build-logs/search-attribution.log" 2>&1 &
-        browser_pids[search-attribution]=$!
         ( RAYON_NUM_THREADS=1 pnpm exec vite build --config ../../tests/critical/browser/media-sse-upload.config.mjs ) \
           > "$RUNNER_TEMP/browser-build-logs/media-sse-upload.log" 2>&1 &
         browser_pids[media-sse-upload]=$!
@@ -138,6 +147,8 @@ jobs:
         [[ $status -eq 0 ]] || exit 1
     - name: Build and vet public modules and native commands
       run: bash .github/scripts/build-and-vet.sh
+    - name: Video command lines and HDR filter graphs against FFmpeg
+      run: go test -count=1 -p 1 ./internal/media/video
     - name: Run every reviewed critical contract with race detection
       env:
         CRITICAL_SUITE: ${{ inputs.suite }}

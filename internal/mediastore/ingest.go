@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
@@ -14,13 +13,13 @@ import (
 
 // StageCopies copies each request's From to a fresh staged upload of ref's
 // item, so no byte passes through this process; a commit's puts adopt them
-// as they do presigned uploads, and the sweep takes what none adopts.
+// as they do presigned uploads; tmp/ expires what none adopts.
 func (u *Uploads) StageCopies(ctx context.Context, actor access.Actor, ref contentref.ContentRef, reqs []media.CopyRequest) ([]media.StagedCopy, error) {
 	item, err := u.item(ref)
 	if err != nil {
 		return nil, err
 	}
-	if err := RequireConditionalPut(ctx, u.o.Store); err != nil {
+	if err := RequireWritable(ctx, u.o.Store); err != nil {
 		return nil, err
 	}
 	out := make([]media.StagedCopy, 0, len(reqs))
@@ -49,17 +48,16 @@ func (u *Uploads) StageCopies(ctx context.Context, actor access.Actor, ref conte
 	return out, nil
 }
 
-// copySource refuses a source inside ContentKit's namespaces: an item's
-// upload copies with OpCopy.
+// copySource refuses a source in ContentKit's media layout: an item's upload
+// copies with OpCopy.
 func (u *Uploads) copySource(from string) error {
-	if key, ok := layout.Parse(from); ok && (!key.Scope.IsZero() || slices.Contains(u.reg.Namespaces(), key.Namespace)) {
-		return uploadErr(media.CodeInvalid, "copy source %q is in a ContentKit namespace: use OpCopy", from)
+	if _, ok := layout.Parse(from); ok {
+		return uploadErr(media.CodeInvalid, "copy source %q is a ContentKit media key: use OpCopy", from)
 	}
 	return nil
 }
 
-// stageCopy copies r.From to a fresh staged upload at path (Upload g),
-// reserved for grant's owner; a failed copy is dropped at once.
+// stageCopy copies r.From to a fresh staged upload at path (Upload g).
 func (u *Uploads) stageCopy(ctx context.Context, actor access.Actor, item Item, path string, g int, grant media.UploadGrant, r media.CopyRequest) (media.StagedCopy, error) {
 	src, err := u.o.Store.Head(ctx, r.From)
 	if errors.Is(err, ErrNotFound) {
@@ -75,24 +73,9 @@ func (u *Uploads) stageCopy(ctx context.Context, actor access.Actor, item Item, 
 	}
 	blob := NewStaged()
 	key, _ := item.Staged(blob)
-	tenant := item.Ref().TenantID
-	limited := u.o.Limiter != nil && !grant.Exempt
-	if limited {
-		if err := u.o.Limiter.Reserve(ctx, Reservation{Tenant: tenant, Uploader: uploaderID(actor), Owner: grant.Owner, Key: key, Size: src.Size}); err != nil {
-			return media.StagedCopy{}, err
-		}
+	obj, err := u.o.Store.Copy(ctx, r.From, key, media.CopyOptions{IfMatch: src.ETag, ContentType: r.Type})
+	if err != nil {
+		return media.StagedCopy{}, fmt.Errorf("media: copy %s: %w", r.From, err)
 	}
-	if err = u.o.Manifests.allocate(ctx, item, []string{key}); err == nil {
-		var obj media.Object
-		if obj, err = u.o.Store.Copy(ctx, r.From, key, media.CopyOptions{IfMatch: src.ETag, ContentType: r.Type}); err == nil {
-			return media.StagedCopy{Path: path, Blob: blob, Size: obj.Size}, nil
-		}
-		// Only an unadopted copy goes; a failed drop leaves it to the sweep.
-		_ = u.o.Manifests.DropUnreferenced(context.WithoutCancel(ctx), item.Ref(), Unreferenced{Staged: []string{blob}})
-		err = fmt.Errorf("media: copy %s: %w", r.From, err)
-	}
-	if limited {
-		_ = u.o.Limiter.Settle(context.WithoutCancel(ctx), Settlement{Tenant: tenant, Keys: []string{key}})
-	}
-	return media.StagedCopy{}, err
+	return media.StagedCopy{Path: path, Blob: blob, Size: obj.Size}, nil
 }

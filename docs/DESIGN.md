@@ -34,6 +34,7 @@ reference against the tenant of the call. Nothing is defaulted.
 - Postgres, host schema: `content_search_documents`, `content_search_dirty`,
   `content_search_entity_dirty`, `content_search_invalid`,
   `content_search_backfill` (keyword profile). Interaction tables (`content_posts`, `content_comments`, ...) arrive with C2.
-- ClickHouse, dedicated database: `signals` (canonical, versioned), the
-  measured engagement tables, `exposures`, `erasures`. See
-  [signal-plane.md](signal-plane.md).
+- ClickHouse, dedicated database: `activity`, `content_daily`,
+  `audience_daily`, `erasures`; PostgreSQL holds `reading_state`,
+  `reading_history`, `anonymous_links` and `outcome_values`. See
+  [analytics.md](analytics.md).

@@ -306,7 +306,7 @@ func (h *harness) object(w http.ResponseWriter, r *http.Request) {
 	}
 	var key string
 	if q.Has("public") {
-		key, err = it.Public(q.Get("public"))
+		key, err = h.fileKey(r.Context(), it, q.Get("public"))
 	} else {
 		key, err = h.fileKey(r.Context(), it, q.Get("path"))
 	}

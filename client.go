@@ -33,9 +33,9 @@ type Client struct {
 }
 
 // Client is the engine's in-process client, acting as the host itself:
-// holding the Engine is the authority, so it sends no credential and holds
-// every staff permission. Routes for a signed-in person (tier user) refuse
-// it.
+// holding the Engine is the authority, so it sends no credential, holds
+// every staff permission and is held to no per-viewer read or interaction
+// limit. Routes for a signed-in person (tier user) refuse it.
 func (e *Engine) Client() *Client {
 	if e.erasureRecovery {
 		return &Client{hc: &http.Client{Transport: erasureRecoveryTransport{}}, base: inprocessBase}

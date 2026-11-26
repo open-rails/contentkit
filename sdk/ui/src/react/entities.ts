@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ContentKitClient } from "../client/client.js";
+import type { PopularWindow } from "../client/discovery.js";
 import type { ContentKitError } from "../client/errors.js";
 import type {
   ContentMemberships,
@@ -51,8 +52,10 @@ export interface EntityFilter {
   language?: string;
   /** Count contents of this kind only. */
   contentKind?: string;
-  /** Default "name". */
+  /** Default "popular" for one kind (the server's), else "name". */
   sort?: EntitySort;
+  /** The popular sort's window; the week by default. */
+  window?: PopularWindow;
   /** Default 50, at most 200. */
   pageSize?: number;
   /** Management: a canonical name, alias or slug containing this. */
@@ -78,8 +81,8 @@ export function useEntitiesPage(f: EntityFilter, page: number, o: { client?: Con
   const language = f.language ?? provided;
   const size = f.pageSize ?? 50;
   const n = Math.max(1, Math.floor(page));
-  const r = useResource<EntityPage>(store, keyOf("entities", scope, "page", f.kind, f.parent, f.scope, f.slug, f.letter, language, f.contentKind, f.sort, size, n), { type: "entities" }, (signal) =>
-    client.entities.list({ kind: f.kind, parent: f.parent, scope: f.scope, slug: f.slug, letter: f.letter, language, content_kind: f.contentKind, sort: f.sort, page: n, limit: size }, signal),
+  const r = useResource<EntityPage>(store, keyOf("entities", scope, "page", f.kind, f.parent, f.scope, f.slug, f.letter, language, f.contentKind, f.sort, f.window, size, n), { type: "entities" }, (signal) =>
+    client.entities.list({ kind: f.kind, parent: f.parent, scope: f.scope, slug: f.slug, letter: f.letter, language, content_kind: f.contentKind, sort: f.sort, window: f.window, page: n, limit: size }, signal),
   );
   return { items: r.data?.entities ?? NO_ENTITIES, total: r.data?.total, loading: r.loading || !r.loaded, error: r.error, reload: r.reload };
 }
@@ -91,10 +94,10 @@ export function useEntities(f: EntityFilter = {}, o: { client?: ContentKitClient
   const size = f.pageSize ?? 50;
   return useList(
     store,
-    keyOf("entities", scope, o.management, f.kind, f.parent, f.scope, f.slug, f.letter, language, f.contentKind, f.sort, size, f.query, f.deleted),
+    keyOf("entities", scope, o.management, f.kind, f.parent, f.scope, f.slug, f.letter, language, f.contentKind, f.sort, f.window, size, f.query, f.deleted),
     { type: "entities" },
     async (cursor, signal) => {
-      const query = { kind: f.kind, parent: f.parent, scope: f.scope, slug: f.slug, letter: f.letter, language, content_kind: f.contentKind, sort: f.sort, cursor: cursor as string | undefined, limit: size };
+      const query = { kind: f.kind, parent: f.parent, scope: f.scope, slug: f.slug, letter: f.letter, language, content_kind: f.contentKind, sort: f.sort, window: f.window, cursor: cursor as string | undefined, limit: size };
       const page = await (o.management
         ? client.entities.manage({ ...query, q: f.query?.trim() || undefined, state: f.deleted ? "deleted" : undefined }, signal)
         : client.entities.list(query, signal));

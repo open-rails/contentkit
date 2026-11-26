@@ -4,8 +4,6 @@ import (
 	"context"
 	"slices"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/resolve"
 	media "github.com/open-rails/contentkit/media"
@@ -34,16 +32,12 @@ type Hooks struct {
 	// Resolver authorizes media reads. Declared public presets do not depend
 	// on publication visibility.
 	Resolver resolve.Resolver
-	// ReaderManifest supplies the catalog's completed reader snapshot. It is a
-	// metadata projection only: the gateway still authorizes one item's folder.
-	// Editor and inspection reads use the current authoring manifest instead.
-	ReaderManifest func(ctx context.Context, ref contentref.ContentRef, actor access.Actor) (*Manifest, error)
-	// ValidatePathsChanged validates virtual-name mutations before the manifest
-	// write while its lock is held. It must perform reads only.
+	// ValidatePathsChanged validates virtual-name mutations in every attempt
+	// of the commit that makes them. It must perform reads only.
 	ValidatePathsChanged func(ctx context.Context, ref contentref.ContentRef, renames map[string]string, removed []string) error
-	// PathsChanged applies accepted virtual-name changes in the journal's
-	// settlement transaction. Failure retries the same recorded mapping.
-	PathsChanged func(ctx context.Context, tx pgx.Tx, ref contentref.ContentRef, renames map[string]string, removed []string) error
+	// PathsChanged applies accepted virtual-name changes after the commit's
+	// write landed. It is idempotent: a retried commit calls it again.
+	PathsChanged func(ctx context.Context, ref contentref.ContentRef, renames map[string]string, removed []string) error
 	// CanUpload says who may write which upload path.
 	CanUpload media.UploadAuthorizer
 	// ItemCommitted reports an item a commit changed, before its processing

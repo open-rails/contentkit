@@ -1,12 +1,15 @@
 # Media jobs
 
-ContentKit uses two media processing job types and one publication job:
+ContentKit uses two media processing job types, one release job and one garbage-collection job:
 
 | Operation | River kind | Queue |
 |---|---|---|
 | Validate/unpack/attach uploads | `contentkit_media_ingest` | `media_ingest` |
 | Generate required image/video outputs | `contentkit_media_derivatives` | `media_derivatives` |
-| Deliver and activate a complete edition | `contentkit_publication` | `contentkit_publication_<catalog hash>` |
+| Move a version's released files into served areas | `contentkit_publication` | `contentkit_publication_<catalog hash>` |
+| Delete an item's retired files | `contentkit_media_gc` | `contentkit_media_gc` |
+
+The release and GC jobs are one per item: each is woken by the item's manifest writes (through the `content_media_items` cache) and snoozed until the item next needs it.
 
 A version can contain images and video. Its derivative job uses the configured
 image presets and video codecs/renditions, including soundtracks. Original audio
@@ -15,6 +18,10 @@ separate River job types. Completed work survives retries; source/incarnation
 checks prevent stale work from replacing newer uploads. A force request is
 consumed once. Ingest and derivative concurrency are configured independently.
 
+## Masters first
+
+A derivative attempt first makes the masters its kind's recipe (`media.Kind.Master`) has yet to make, with the worker's hooks, then derives from them. An image's renditions, and a video's HLS renditions, seek sprite and grabbed frames (whose own renditions follow), record the master's hash, so a new master re-derives each of them; a frame waits for its video's master. A worker refuses to start while a recipe names a hook it lacks or at another version: the stock image registers none, and a host with hooks runs its own binary over `media/worker.Main` ([Masters](../HOST_INTEGRATION.md#masters-mediakindmaster)). A failing hook leaves the upload's previous master and everything derived from it in place while the job retries. A master or rendition past 1 GiB is streamed from its file in 64 MiB parts, each checked by its SHA-256 (S3 refuses a single PUT past 5 GiB).
+
 ## Processing and publication are separate
 
 Ingest validates the archive before attaching its files. The derivative attempt
@@ -22,10 +29,11 @@ prepares page order and automatic cover inputs, then produces missing required
 outputs. Drafts receive the same preparation without becoming published.
 Generated edition outputs remain in `internal/`.
 
-Publish records intent for now or a future date. The existing release request
-waits until every required output is complete, copies the selected output set
-into `public/` or `private/`, verifies it, then activates the reader snapshot.
-An existing completed release remains readable while a replacement processes.
+Publish records intent for now or a future date. The release job moves each
+due chapter's ready pages, and once anything is released the version's other
+ready outputs, into `private/` (`public/` when free), writes the manifest naming
+them, and retires the `internal/` copies. What an earlier release served of a
+page stays served while its replacement processes.
 A video becoming partially playable does not complete publication. An upload a
 kind marks `Required` counts as a required output: without it the release
 waits, and an existing release that lacks it is withdrawn rather than kept.
@@ -34,35 +42,38 @@ was required.
 
 There is no standalone playable flag, daily playable scan, version preparation
 worker, body-image-copy worker or version-fork operation. New versions have their
-own text and media. The media gateway retains its simple rule: files actually in
-`public/` are public; `private/` requires the appropriate authorization token.
+own text and media. The media gateway's rule is the area: `public/` is public,
+`private/` requires the item's token, `internal/` is never served.
 
 ## Progress and retries
 
-Processors update canonical manifests/checkpoints and append retained processing
-facts. Admin JSON, Go and SSE observers can show partial progress without exposing
-partially complete releases. Normal processing completion wakes an accepted release
-request directly; no readiness relay or additional preparation job is necessary.
+Processors update manifests/checkpoints; the cache appends retained processing
+facts when an item's status changes. Admin JSON, Go and SSE observers can show
+partial progress without exposing unreleased files. Every manifest write wakes
+the version's release; no readiness relay or additional preparation job is necessary.
 
 Rendered images are recorded and reported one at a time. `PageGroup` (stock
 workers: `MEDIA_WORKER_PAGE_GROUP`) above 1 records up to that many in one
 manifest edit, or those finished within 5 s of the group's first, which bulk
-imports use to cut manifest edits. An attempt after one that failed, timed out
+imports use to cut manifest edits. Bulk imports should set 50–100: every edit rewrites the whole manifest, and edits of one manifest queue behind each other within a process. An attempt after one that failed, timed out
 or died records one at a time again, so a page that kills the worker cannot keep
 the rest of its group unrecorded.
 
 A failed ingest or derivative attempt retries through that same durable job.
 Video attempts checkpoint bounded work so successful chunks/renditions are not
-encoded again. After five failed attempts, the shared worker records remaining
-image, video, subtitle, and frame work as failed before cancelling the job.
+encoded again. A chunk's renditions wait in the item's `tmp/` until their rung
+is recorded or the run is superseded, and are then deleted; the bucket's
+lifecycle expires what a killed run leaves. After five failed attempts, the
+shared worker records remaining image, video, subtitle, and frame work as failed
+before cancelling the job.
 Completed outputs and checkpoints survive. Regeneration clears these failures,
 including frames that failed before producing their first blob. Shutdowns,
 checkpoint yields, and bounded storage-outage snoozes retain their existing
 retry behavior. Jobs cancelled by an older worker are not scanned automatically;
 regenerate affected items to retry their remaining outputs. Storage mutation and
 source identity rules remain authoritative.
-Content/media retention deletion belongs to the existing content-purge sweep;
-there is no separate media reaper or bucket-discovery scanner.
+GC deletes only files an item's manifest retired, once due; there is no
+bucket-wide scanner. Each run lists the item's folder and retires objects no manifest names once they are a day old; one that finds younger ones runs again when they are. Due entries are stamped deleting in batches of conditional writes, and a run deletes only what it stamped, during the first half of the 15-minute settle period, while the stamp keeps the hash from being referenced again; after it, a HEAD decides whether the entry is dropped or stamped again. A manifest is at most 16 MiB; GC's stamps may pass that by 512 KiB. A commit is refused (`too_large`) when the item, processed and released, would not fit: each derived file is budgeted a retired entry for its move.
 
 A video attempt encodes one chunk, assembling the rung that chunk completes,
 then yields its job behind the other queued videos. Every queued video so
@@ -83,15 +94,7 @@ Jobs write scratch files under `TempDir` (stock workers: `MEDIA_WORKER_TMP`, def
 
 ## Adoption
 
-Use matching host libraries, media-worker images and KEDA triggers. Configure
+Use matching host libraries, media-worker images (or a host's own worker binary, built from the same release) and KEDA triggers. Configure
 `IngestWorkers`, `DerivativeWorkers` and `JobTimeout`; stock workers use
-`MEDIA_WORKER_INGEST_CONCURRENCY` and `MEDIA_WORKER_CONCURRENCY`.
-
-Before the hard cut, finish accepted old image/video/preparation/copy work using
-the previous implementation, then stop old producers and workers before migration.
-Preserve existing job history, original files and published migration bytes.
-No compatibility handler or new obsolete-job repair guard is introduced.
-
-Qualify actual PostgreSQL/S3/FFmpeg behavior: mixed media, complete-output release,
-last-good reader snapshots, interruption/retry, force consumption, stale sources,
-codec outputs, per-version access, progress observation and retained deletion.
+`MEDIA_WORKER_INGEST_CONCURRENCY` and `MEDIA_WORKER_CONCURRENCY`. Moving a
+bucket of the earlier model is in [migration](migration.md#media-model).

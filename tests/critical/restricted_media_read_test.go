@@ -30,9 +30,9 @@ func TestRestrictedMediaReadIsNotEditAuthority(t *testing.T) {
 		kind := c.Content.Kinds["gallery"]
 		kind.Download = &kinds.Download{Off: true}
 		c.Content.Kinds["gallery"] = kind
-		c.Media.Kinds[0].Publish = &media.Publish{Pages: "pages/{name}", Renditions: []string{"reader"}, Playback: "audio/{name}", Download: "archive"}
+		c.Media.Kinds[0].Publish = &media.Publish{Pages: "pages/{name}", Renditions: []string{"reader"}, Playback: "audio/{name}"}
 		c.Media.Kinds[0].Uploads = append(c.Media.Kinds[0].Uploads, media.Upload{Path: "audio/{name}", Types: []string{"audio/wav"}, MaxBytes: 1 << 20})
-		c.Media.Kinds[0].Private = append(c.Media.Kinds[0].Private, media.Private{Name: "download-pages", From: "pages/{name}", To: "download-pages/{name}{ext}", Image: &media.Image{Format: media.ImageFormatSource}}, media.Private{Name: "archive", To: "pages.zip", Zip: "download-pages/", HostOnly: true})
+		c.Media.Kinds[0].Private = append(c.Media.Kinds[0].Private, media.Private{Name: "download-pages", From: "pages/{name}", To: "download-pages/{name}{ext}", Image: &media.Image{Format: media.ImageFormatSource}})
 		c.Media.Kinds[0].Private = append(c.Media.Kinds[0].Private, media.Private{Name: "internal", From: "pages/{name}", To: "internal/{name}.webp", Image: media.Fit(96), HostOnly: true})
 		c.Media.Delivery.Mode = string(media.DeliverCookie)
 		c.Media.Delivery.CookieDomain = "critical.invalid"
@@ -72,14 +72,8 @@ func TestRestrictedMediaReadIsNotEditAuthority(t *testing.T) {
 	if len(ordinary.Files) != 0 {
 		t.Fatal("ordinary media read bypassed completed publication")
 	}
-	// Superseded requests are deleted, so compare request identities and
-	// deadlines rather than a count a new request plus a delete keeps flat.
-	publicationRequests := func() string {
-		t.Helper()
-		var requests string
-		must(t, w.pool.QueryRow(t.Context(), `SELECT coalesce(string_agg(id::text||'@'||scheduled_at::text,',' ORDER BY id),'') FROM `+w.schema+`.content_publication_requests WHERE tenant_id=$1 AND version_id=$2`, a.cfg.Scope.AppID.String(), ref.Version).Scan(&requests))
-		return requests
-	}
+	// Compare the version's release jobs: an inspection wakes nothing.
+	publicationRequests := func() string { return publicationJobs(t, a, ref.Version) }
 	before := publicationRequests()
 	read, err := reader.GetMediaVersion(t.Context(), ref.Kind, ref.ID, ref.Version, ck.GetMediaVersionQuery{Editor: true})
 	must(t, err)
@@ -121,7 +115,7 @@ func TestRestrictedMediaReadIsNotEditAuthority(t *testing.T) {
 	}
 	ring, err := mediatoken.NewRing(storage.key, nil)
 	must(t, err)
-	response, err := http.Get(storage.gateway.URL + "/v1/" + key + "?t=" + ring.Sign(folder, time.Now().Add(time.Minute)))
+	response, err := http.Get(storage.gateway.URL + "/v1/" + key + "?t=" + ring.Sign(mediatoken.ItemScope(storage.bucket, folder), time.Now().Add(time.Minute)))
 	must(t, err)
 	response.Body.Close()
 	if response.StatusCode != 404 {

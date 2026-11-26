@@ -233,38 +233,24 @@ declared as shared infrastructure, not make Doujins conceptually own Hentai0
 accounts. Any app endpoint receiving the operation validates the same tenant
 account before forwarding.
 
-One bucket can hold all of a tenant's resources with derived paths. A future
-hosted deployment can also place multiple tenants in a bucket. A path prefix
-does not enforce isolation; signed capabilities, authenticated reads and
-gateway checks must validate the tenant/app resource context.
-
-Logical target layout:
+Each app has its own bucket, and the bucket is the tenancy boundary: no key
+names a tenant or an app. A hosted deployment gives each tenant app its own
+bucket and S3 credentials, never prefixes of a shared one. Item tokens are
+bound to the bucket, so one gateway key serving many apps cannot open one
+app's item with another's token.
 
 ```text
-tenant/{tenantID}/account/user/{accountID}/{manifest|private|public|temp}/...
-tenant/{tenantID}/app/{appID}/{kind}/{contentID}/{versionID}/{area}/...
+{kind}/{itemID}/{manifest.json|internal|private|public|tmp}/...          an app's bucket
+_accounts/user/{accountID}/{manifest.json|internal|private|public|tmp}/... the avatar primary's bucket
 ```
 
-`versionID` is present for versioned content; the avatar's manifest owns its
-generations without pretending an account is an app catalog item. The
-`private`, `public`, `download` and `temp` access classes keep their existing
-meaning. A profile/avatar ID can repeat in another tenant safely. Two apps can
-have the same content ID safely. Public avatars remain intentionally public;
-editor views and originals keep their existing access controls.
-
-The logical target is not a request to rename live objects immediately.
-Current storage uses `accounts/user/...`, `doujins/...` and `hentai0/...`;
-`media/layout.Parse` accepts both shapes. A scoped-only gateway serves only
-scoped objects.
-
-Consolidating buckets is independent of renaming keys. First copy and verify
-the existing keys into the shared bucket, switch explicit mappings, and keep
-the source buckets. Counts alone are insufficient: verify object size and
-content checksum plus representative manifests, private reads and public
-renditions. Do not remove originals as part of this task. A later key migration
-uses an explicit plan and read compatibility, with a single canonical write
-location and resumable verification. Do not dual-write independent avatar
-manifests.
+A versioned kind's item is its version. Tenant and app IDs remain in database
+partitions, refs and authorization. A profile/avatar ID can repeat in another
+tenant safely; two apps can hold the same item ID safely. Public avatars remain
+intentionally public; editor views and originals keep their existing access
+controls. ContentKit reads no earlier layout: hosts importing from buckets
+written under one read those keys themselves. Do not dual-write independent
+avatar manifests.
 
 ## Statistics and lifecycle
 
@@ -393,8 +379,8 @@ events cannot recreate shared records. Entitlement keys use the app ID.
 
 ### D. Storage layout
 
-Catalog media uses tenant/app-derived roots; account media uses the tenant's
-account root. Databases are recreated. Schema changes use forward migrations;
+Each app's media is in its own bucket, at `{kind}/{id}/`; account media is
+`_accounts/` in the avatar primary's bucket. Databases are recreated. Schema changes use forward migrations;
 there are no catalog adoption or layout conversion paths.
 
 Gate: manifest references, authenticated/private/public and default-media

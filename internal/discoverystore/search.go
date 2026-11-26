@@ -17,8 +17,8 @@ import (
 	entitlement "github.com/open-rails/contentkit/internal/entitlement"
 	entitystore "github.com/open-rails/contentkit/internal/entitystore"
 	"github.com/open-rails/contentkit/internal/hub"
+	"github.com/open-rails/contentkit/internal/rankings"
 	"github.com/open-rails/contentkit/internal/search"
-	"github.com/open-rails/contentkit/signal"
 )
 
 // SearchOptions select one page of keyword search.
@@ -27,9 +27,11 @@ type SearchOptions struct {
 	Filter
 	Query string
 	// Sort is relevance (the default) or a list sort of the best matches.
-	Sort         string
-	CardEntities []string
-	Cursor       string
+	Sort string
+	// Window and SiteLanguage are the popular sort's, as ListOptions'.
+	Window, SiteLanguage string
+	CardEntities         []string
+	Cursor               string
 	// Page numbers pages from 1 instead of Cursor.
 	Page int
 	// Limit defaults to 24 and is capped at 100.
@@ -108,24 +110,24 @@ func (s *Service) Search(ctx context.Context, o SearchOptions) (result discovery
 	}
 	base := hub.SearchOptions{Language: q.display, LanguageMode: s.languageMode(), ContentKinds: s.searchKinds(o.Kind), Eligibility: s.eligibility(q)}
 	if o.Sort != "" && o.Sort != discovery.SortRelevance {
-		var srt order
-		var snapshot *discovery.PopularitySnapshot
-		if id, popular := popularSort(o.Sort); popular {
-			srt, snapshot, err = s.popularOrder(ctx, o.Kind, id, o.Reader, o.Sort)
-		} else {
-			srt, err = s.parseSort(ctx, o.Sort, o.Filter)
-		}
-
-		if err != nil {
-			return empty, err
-		}
-		summaryOrder = srt
 		match, err := s.o.Hub.KeywordMatch(ctx, text, base)
 		if err != nil {
 			return empty, err
 		}
 		q.and("(f.content_id,f.version_id) IN ("+match.SQL+")", match.Args)
-		picks, next, err := s.page(ctx, q, srt, o.Cursor, limit, offset)
+		var picks []pick
+		var next string
+		var snapshot *discovery.PopularitySnapshot
+		if o.Sort == discovery.SortPopular {
+			// A keyword match is a selection: order it by the ranking.
+			picks, next, snapshot, err = s.popular(ctx, q, popularQuery{reader: o.Reader, kind: o.Kind, window: o.Window, siteLanguage: o.SiteLanguage,
+				cursor: o.Cursor, limit: limit, offset: offset, niche: len(o.Filter.Entities) > 0, selective: true})
+			if err == nil {
+				summaryOrder, err = s.parseSort(ctx, discovery.SortNewest, Filter{})
+			}
+		} else if summaryOrder, err = s.parseSort(ctx, o.Sort, o.Filter); err == nil {
+			picks, next, err = s.page(ctx, q, summaryOrder, o.Cursor, limit, offset)
+		}
 		if err != nil {
 			return empty, err
 		}
@@ -143,14 +145,13 @@ func (s *Service) Search(ctx context.Context, o SearchOptions) (result discovery
 	}
 	base.Limit, base.Offset = limit, offset
 	opts := hub.HubSearchOptions{SearchOptions: base}
-	if a := o.Actor; a.Member() && !o.Unpersonalized {
-		opts.Personalize = &hub.Personalization{Subject: signal.Subject{UserID: a.AccountID()}, DemoteSeen: true,
+	if who, known := s.reader(o.Reader); known && !o.Unpersonalized {
+		opts.Personalize = &hub.Personalization{DemoteSeen: true,
+			States: func(ctx context.Context, refs []contentref.ContentRef) (map[contentref.ContentKey]hub.ViewState, error) {
+				return s.viewStates(ctx, who, refs)
+			},
 			Popularity: func(ctx context.Context, kind string, ids []string) (map[string]float64, error) {
-				key, ok := s.rankingFor(ctx, o.Reader, kind, "")
-				if !ok {
-					return nil, nil
-				}
-				return s.rankedScores(ctx, key, ids)
+				return s.popularScores(ctx, o.Reader, kind, rankings.DefaultWindow, ids)
 			}}
 	}
 	res, err := s.o.Hub.Search(ctx, text, opts)

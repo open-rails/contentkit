@@ -167,7 +167,7 @@ func (f *faults) storageParent(path string) string {
 		return ""
 	}
 	parsed, ok := layout.Parse(key)
-	if !ok || parsed.Scope != mediaScope || parsed.Version != "" {
+	if !ok || parsed.Account {
 		return ""
 	}
 	return f.h.items.versionOwner(parsed.Kind, parsed.ID)
@@ -183,7 +183,7 @@ func contains(s []string, v string) bool {
 }
 
 // gatewayProxy is the media origin: media-gateway behind the fault rules.
-// The browser's Host passes through (the gateway serves the namespaces by it).
+// The browser's Host passes through (the gateway routes it to its bucket).
 func (f *faults) gatewayProxy(gateway *url.URL) http.Handler {
 	proxy := &httputil.ReverseProxy{
 		Rewrite: func(pr *httputil.ProxyRequest) {
@@ -240,11 +240,7 @@ func (f *faults) expire(r *http.Request) *http.Request {
 		return r
 	}
 	q := r.URL.Query()
-	scope := strings.TrimSuffix(parsed.Folder(), "/")
-	if f.h.ring.VerifyScope(q.Get("t"), token.PrivateFileScope(key), time.Now()) == nil {
-		scope = token.PrivateFileScope(key)
-	}
-	q.Set("t", f.h.ring.Sign(scope, time.Now().Add(-time.Hour)))
+	q.Set("t", f.h.ring.Sign(token.ItemScope(f.h.bucket, parsed.Folder()), time.Now().Add(-time.Hour)))
 	r.URL.RawQuery = q.Encode()
 	return r
 }

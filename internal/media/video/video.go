@@ -131,23 +131,15 @@ var errStale = errors.New("media/video: upload changed during processing")
 // replaced: what was made for it is deleted at once.
 var errGone = fmt.Errorf("%w: removed", errStale)
 
-// full reports an item marked Full: nothing more is produced for it until a
-// commit shrinks it.
-func (e *Encoder) full(ctx context.Context, item mediastore.Item) bool {
-	m, _, err := e.ms.Get(ctx, item.Ref())
-	return err == nil && m.Full
-}
-
-// settle records a permanent error as upload f's failure, marks the item
-// Full when its outputs do not fit, and drops errStale (the next job redoes
-// the work).
+// settle records a permanent error, or outputs that do not fit, as upload
+// f's failure, and drops errStale (the next job redoes the work).
 func (e *Encoder) settle(ctx context.Context, item mediastore.Item, f media.File, err error) error {
 	var perm *PermanentError
 	switch {
 	case errors.Is(err, errStale):
 		return nil
 	case errors.Is(err, mediastore.ErrManifestTooLarge):
-		return errors.Join(err, e.ms.SetFull(ctx, item.Ref(), err))
+		return e.fail(ctx, item, f.Path, f.Blob, err)
 	case errors.As(err, &perm):
 		return e.fail(ctx, item, f.Path, f.Blob, perm.Err)
 	case err != nil:

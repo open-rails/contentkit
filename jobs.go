@@ -7,7 +7,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/open-rails/contentkit/internal/analytics"
 	mediastore "github.com/open-rails/contentkit/internal/mediastore"
+	"github.com/open-rails/contentkit/internal/outcomevalue"
+	"github.com/open-rails/contentkit/internal/readingstore"
+	signalstore "github.com/open-rails/contentkit/internal/signalstore"
 
 	"github.com/jackc/pgx/v5"
 	riverhelpers "github.com/open-rails/helpers/river"
@@ -15,6 +19,7 @@ import (
 	"github.com/riverqueue/river/rivertype"
 
 	"github.com/open-rails/contentkit/internal/jobhook"
+	"github.com/open-rails/contentkit/internal/rankings"
 	"github.com/open-rails/contentkit/internal/worker"
 	"github.com/open-rails/contentkit/media"
 )
@@ -40,11 +45,11 @@ func (j *jobs) bound() *river.Client[pgx.Tx] {
 
 // The engine's schedules; each periodic run is unique per its period.
 const (
-	searchSyncEvery     = 5 * time.Minute // backstop: writes queue their own sync (syncDocuments)
-	preferenceSyncEvery = 5 * time.Minute
-	resyncEvery         = 24 * time.Hour
-	searchPruneEvery    = time.Hour
-	popularRefreshEvery = 5 * time.Minute
+	searchSyncEvery  = 5 * time.Minute // backstop: writes queue their own sync (syncDocuments)
+	searchPruneEvery = time.Hour
+	// anonymousExpiryEvery runs the expiry often enough that its bounded
+	// runs keep up with a day's new visitors.
+	anonymousExpiryEvery = time.Hour
 )
 
 // contribution is the engine's River composition: its own workers, queues and
@@ -64,12 +69,20 @@ func (j *jobs) contribution() riverhelpers.Contribution {
 		} else if !ok {
 			cfg.Queues[queueContentKit] = river.QueueConfig{MaxWorkers: workers}
 		}
+		if e.media != nil {
+			if _, ok := cfg.Queues[mediastore.GCQueueName]; !ok {
+				cfg.Queues[mediastore.GCQueueName] = river.QueueConfig{MaxWorkers: 2}
+			}
+			if err := river.AddWorkerSafely(cfg.Workers, &mediastore.GCWorker{Jobs: e.media.jobs}); err != nil {
+				return err
+			}
+		}
 		for _, add := range []func() error{
 			func() error { return river.AddWorkerSafely(cfg.Workers, &searchSyncWorker{e: e}) },
-			func() error { return river.AddWorkerSafely(cfg.Workers, &preferenceSyncWorker{e: e}) },
+			func() error { return river.AddWorkerSafely(cfg.Workers, &analyticsWorker{e: e}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &searchPruneWorker{e: e}) },
-			func() error { return river.AddWorkerSafely(cfg.Workers, &popularRefreshWorker{e: e}) },
-			func() error { return river.AddWorkerSafely(cfg.Workers, &entityPopularRefreshWorker{e: e}) },
+			func() error { return river.AddWorkerSafely(cfg.Workers, &anonymousExpiryWorker{e: e}) },
+			func() error { return river.AddWorkerSafely(cfg.Workers, &rankingsWorker{e: e}) },
 		} {
 			if err := add(); err != nil {
 				return err
@@ -84,18 +97,13 @@ func (j *jobs) contribution() riverhelpers.Contribution {
 		}
 		periodic("contentkit_search_sync", searchSyncEvery, searchSyncArgs{})
 		periodic("contentkit_search_prune", searchPruneEvery, searchPruneArgs{})
-		cfg.PeriodicJobs = append(cfg.PeriodicJobs, riverhelpers.NewPeriodicJob(cfg, time.Hour,
-			func() (river.JobArgs, *river.InsertOpts) {
-				return entityPopularRefreshArgs{}, &river.InsertOpts{Queue: queueContentKit, MaxAttempts: 3, UniqueOpts: mediastore.PendingOnce}
-			}, &river.PeriodicJobOpts{ID: "contentkit_entity_popular_refresh", RunOnStart: true}))
-		if e.hub.SignalsConfigured() { // their runs skip while it is down
-			periodic("contentkit_preference_sync", preferenceSyncEvery, preferenceSyncArgs{})
-			periodic("contentkit_preference_resync", resyncEvery, preferenceSyncArgs{Resync: true})
-			// A refresh can outlast its period; it never runs twice at once.
-			cfg.PeriodicJobs = append(cfg.PeriodicJobs, riverhelpers.NewPeriodicJob(cfg, popularRefreshEvery,
+		periodic("contentkit_anonymous_expiry", anonymousExpiryEvery, anonymousExpiryArgs{})
+		if e.hub.SignalsConfigured() {
+			// One run at a time; a run can outlast its period.
+			cfg.PeriodicJobs = append(cfg.PeriodicJobs, riverhelpers.NewPeriodicJob(cfg, analytics.FoldEvery,
 				func() (river.JobArgs, *river.InsertOpts) {
-					return popularRefreshArgs{}, &river.InsertOpts{Queue: queueContentKit, MaxAttempts: 3, UniqueOpts: mediastore.PendingOnce}
-				}, &river.PeriodicJobOpts{ID: "contentkit_popular_refresh", RunOnStart: true}))
+					return analyticsArgs{}, &river.InsertOpts{Queue: queueContentKit, MaxAttempts: 3, UniqueOpts: mediastore.PendingOnce}
+				}, &river.PeriodicJobOpts{ID: "contentkit_analytics", RunOnStart: true}))
 		}
 		return nil
 	}, func(_ context.Context, b riverhelpers.Binding) error {
@@ -212,68 +220,84 @@ func (w *searchPruneWorker) Work(ctx context.Context, _ *river.Job[searchPruneAr
 	return err
 }
 
-type preferenceSyncArgs struct {
-	// Resync re-sends every exportable preference: the repair for sink loss.
-	Resync bool `json:"resync,omitempty"`
-}
+type anonymousExpiryArgs struct{}
 
-func (preferenceSyncArgs) Kind() string { return "contentkit_preference_sync" }
+func (anonymousExpiryArgs) Kind() string { return "contentkit_anonymous_expiry" }
 
-// preferenceSyncWorker sends reactions and favorites into the signal plane.
-type preferenceSyncWorker struct {
-	river.WorkerDefaults[preferenceSyncArgs]
+// anonymousExpiryWorker expires signed-out visitors idle longer than
+// Config.AnonymousRetention. PostgreSQL only: it runs without ClickHouse.
+type anonymousExpiryWorker struct {
+	river.WorkerDefaults[anonymousExpiryArgs]
 	e *Engine
 }
 
-func (w *preferenceSyncWorker) Work(ctx context.Context, job *river.Job[preferenceSyncArgs]) error {
-	h := w.e.hub
-	if !h.SignalPlane() {
-		return nil
-	}
-	if job.Args.Resync {
-		_, err := w.e.content.ResyncPreferences(ctx, h.SendPreferences)
-		return err
-	}
-	_, err := w.e.content.SyncPreferences(ctx, h.SendPreferences)
+func (w *anonymousExpiryWorker) Work(ctx context.Context, _ *river.Job[anonymousExpiryArgs]) error {
+	_, err := w.e.reading.ExpireIdle(ctx, w.e.now().Add(-w.e.cfg.AnonymousRetention))
 	return err
 }
 
-type popularRefreshArgs struct{}
+type analyticsArgs struct{}
 
-func (popularRefreshArgs) Kind() string { return "contentkit_popular_refresh" }
+func (analyticsArgs) Kind() string { return "contentkit_analytics" }
 
-// popularRefreshWorker prepares reusable daily participation and refreshes
-// host-declared popular rankings independently of public requests.
-type popularRefreshWorker struct {
-	river.WorkerDefaults[popularRefreshArgs]
+// analyticsWorker folds the activity log into reading state and history,
+// rebuilds the daily rollups and deletes erased rows (analytics.Job).
+type analyticsWorker struct {
+	river.WorkerDefaults[analyticsArgs]
 	e *Engine
 }
 
-// Each ranking is stored as it completes, so a run cut short resumes with
-// the rest on the next.
-func (w *popularRefreshWorker) Timeout(*river.Job[popularRefreshArgs]) time.Duration {
-	return time.Hour
+func (w *analyticsWorker) Timeout(*river.Job[analyticsArgs]) time.Duration { return 30 * time.Minute }
+
+func (w *analyticsWorker) Work(ctx context.Context, _ *river.Job[analyticsArgs]) error {
+	return w.e.analyticsJob().Run(ctx)
 }
 
-func (w *popularRefreshWorker) Work(ctx context.Context, _ *river.Job[popularRefreshArgs]) error {
-	return w.e.discover.RefreshPopularRankings(ctx)
+// analyticsJob is the engine's analytics job.
+func (e *Engine) analyticsJob() *analytics.Job {
+	return &analytics.Job{Tenant: e.cfg.Scope.AppID.String(), Signals: e.hub.Signals, Reading: e.reading, Thresholds: signalstore.DefaultThresholds,
+		Polarizing: e.discover.PolarizingTags,
+		Values: func(ctx context.Context) (outcomevalue.Table, error) {
+			return outcomevalue.Load(ctx, e.pool, e.schema, e.cfg.Scope.AppID.String())
+		},
+		Segment: func(kind string) string { return outcomevalue.SegmentOf(e.cfg.Content.Kinds[kind].Presentation) },
+		Surface: func(name string) readingstore.Surface {
+			return readingstore.SurfaceOf(name, func(kind string) bool { _, ok := e.cfg.Content.EntityKinds[kind]; return ok })
+		},
+		Rebuilt: e.rebuilt,
+		Now:     e.now, Log: e.log}
 }
 
-type entityPopularRefreshArgs struct{}
+// rebuilt precomputes the featured rankings after the analytics job rebuilt
+// day: a past day's rebuild is its last, so ranges through it close.
+func (e *Engine) rebuilt(ctx context.Context, day time.Time) error {
+	now := e.now().UTC()
+	r := rankings.Rebuild{Generation: now}
+	if today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC); day.Before(today) {
+		r.Final = day
+	}
+	return e.rankings.Precompute(ctx, r)
+}
 
-func (entityPopularRefreshArgs) Kind() string { return "contentkit_entity_popular_refresh" }
+// rankingsArgs precompute the featured rankings after a rebuild of
+// content_daily: the analytics job's hourly run enqueues it.
+type rankingsArgs struct {
+	Generation time.Time `json:"generation"`
+	// Final is the day whose last rebuild this followed; zero hourly.
+	Final time.Time `json:"final,omitzero"`
+}
 
-type entityPopularRefreshWorker struct {
-	river.WorkerDefaults[entityPopularRefreshArgs]
+func (rankingsArgs) Kind() string { return "contentkit_rankings" }
+
+type rankingsWorker struct {
+	river.WorkerDefaults[rankingsArgs]
 	e *Engine
 }
 
-func (w *entityPopularRefreshWorker) Timeout(*river.Job[entityPopularRefreshArgs]) time.Duration {
-	return time.Hour
-}
+func (w *rankingsWorker) Timeout(*river.Job[rankingsArgs]) time.Duration { return 30 * time.Minute }
 
-func (w *entityPopularRefreshWorker) Work(ctx context.Context, _ *river.Job[entityPopularRefreshArgs]) error {
-	return w.e.discover.RefreshEntityPopularRankings(ctx)
+func (w *rankingsWorker) Work(ctx context.Context, job *river.Job[rankingsArgs]) error {
+	return w.e.rankings.Precompute(ctx, rankings.Rebuild{Generation: job.Args.Generation, Final: job.Args.Final})
 }
 
 func init() {
@@ -293,7 +317,7 @@ func init() {
 		if e.started || e.closed || e.erasureRecovery {
 			return nil, errors.New("contentkit: the engine cannot start")
 		}
-		fleet, err := riverhelpers.New(ctx, e.pool, cfg, append([]riverhelpers.Contribution{e.jobs.contribution()}, extra...)...)
+		fleet, err := riverhelpers.NewWithSession(ctx, e.pool, e.session, cfg, append([]riverhelpers.Contribution{e.jobs.contribution()}, extra...)...)
 		if err != nil {
 			return nil, err
 		}

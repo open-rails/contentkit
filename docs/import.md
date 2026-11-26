@@ -30,12 +30,13 @@ ContentKit's tables. The body is an `importer.Batch`; its wire types are in
   `(source, kind, key)` with `found` (link, canonical path, locator),
   `not_found` (unknown or hidden) or `gone` (removed), following merges.
 - Raw opens and legacy aggregate counters are not importable. Preserve existing
-  bookmarks in `legacy_reading`: target a content item or version, identify one
-  user or anonymous key, and send the source's last-read time, progress and resume
-  selector. Version bookmarks also restore the work's history. These rows restore
-  navigation only; they never create measured readers, quality, completions or rank.
+  bookmarks in `legacy_reading`: target a content item or version, name the
+  account, and send the source's last-read time and progress (of
+  `progress_max`). They merge into the account's reading state by maximum and
+  latest; progress reaching `progress_max`, or `completed`, is a finished read.
+  They never count toward popularity.
 - A record is the whole truth: a content record's `access` and each version's `state` are required, and a record without them is refused (`invalid`), never defaulted, so a replay cannot drop a paywall. `comments` defaults to the kind's.
-- Imported content is trusted: not screened, approved. Its bodies are not trusted HTML: version bodies run through `Deps.BodySanitizer` (default: every tag stripped) and comment bodies through `Deps.TextProcessor`, as authored ones do. Reactions and favorites take fresh preference revisions; `preference_floor` first raises the sequence past a retained signal plane (also the restore step).
+- Imported content is trusted: not screened, approved. Its bodies are not trusted HTML: version bodies run through `Deps.BodySanitizer` (default: every tag stripped) and comment bodies through `Deps.TextProcessor`, as authored ones do. 
 - Account ids (`user_id`, `owner_user_id`, creators) are stored as an authenticated subject carries them: trimmed, a UUID in its canonical lowercase form. A favorite's `user_id` must be a UUID; another is `invalid`. An anonymous record's `ip` is stored as a live anonymous write keys it, so they dedupe: its IPv4 address (an IPv4-mapped one unmapped) or its IPv6 /64; one that is not an address is `invalid`.
 - Import authoring channels through `channels`, separately from descriptive `entities`. A channel's AuthKit group is always its own id: an import never names or moves it. After committing channel identity, ContentKit provisions the group synchronously, or verifies the live one; a provider failure is reported for that record. Retry the same external ID to finish without creating another channel or group.
 - Records naming an erased person (an interaction's author, a content creator, a channel owner) fail (`erased`).
@@ -49,7 +50,7 @@ ContentKit's tables. The body is an `importer.Batch`; its wire types are in
 ## Order and failures
 
 Sections are written in order: entities, channels, contents, memberships,
-aliases, comments, reactions, favorites, polls, votes, signals,
+aliases, comments, reactions, favorites, polls, votes, legacy reading,
 deletes; a
 record may name what an earlier section or call wrote. Each section runs in
 transactions of up to 1000 records. Comments, reactions, favorites and votes
@@ -61,7 +62,7 @@ that fails is alone, so the result lists only the records that failed
 Fix the cause and send them, or the whole batch, again. A batch holds at
 most 20,000 records.
 
-Signals are skipped without a signal plane; `skipped` counts them. Re-sent
+Re-sent
 records of merged entities are accepted without writing and counted in
 `merged`, not `skipped`. References resolve to the survivor; `ids` still
 reports only written records. Products and prices are managed through
@@ -152,8 +153,7 @@ Each edition's body resolves inline images only from that edition's uploads.
 | `favorites` | `FavoriteRecord` | `target` (content, version), `user_id`, `removed` |
 | `polls` | `PollRecord` | `external_id`, `kind`, `question`, `language`, `image`, `active`, `live_at`, `closes_at`, `deleted_at`, `options` |
 | `votes` | `VoteRecord` | `poll`, `option`, `user_id` / `ip` |
-| `signals` | `SignalRecord` | `target` (content, version), `user_id` / `anon_key`, `type` (click), `event_id`, `revision`, `occurred_at` |
-| `legacy_reading` | `LegacyReadingRecord` | `target` (content, version), `user_id` / `anon_key`, `first_read_at`, `last_read_at`, `progress`, `progress_max`, `completed`, `resume`, `revision`, `removed` |
+| `legacy_reading` | `LegacyReadingRecord` | `target` (content, version), `user_id`, `first_read_at`, `last_read_at`, `progress`, `progress_max`, `completed`, `removed` |
 | `deletes` | `DeleteRecord` | `entity` (content, version, group, comment, poll), `external_id` |
 
 Poll imports support `multiple_choice` only. Import options with the poll,
@@ -174,8 +174,7 @@ removing a host-side vote-count check alone does not change that route.
 
 To withdraw a named user's imported favorite, send its target and `user_id`
 with `removed: true`; to neutralize an imported reaction, send `value: 0`.
-Both keep a zero-valued preference row and take a new revision only on a value
-change. They use the existing immediate/deferred count recount paths.
+Both keep a zero-valued row. They use the existing immediate/deferred count recount paths.
 Hosts must clear only preferences they imported, using the named user, target
 and original `Batch.Source`. Favorite/reaction provenance has three states:
 `NULL` means unknown (written before provenance existed), an empty string is the
@@ -186,16 +185,7 @@ or a pre-provenance `NULL` row; a cleared row records that source. Native-marked
 and other-source rows stay protected. Non-clear imports update only rows already
 owned by their source. Hosts are responsible for selecting their own historical
 imports when clearing unknown rows; no timestamp or user-ID heuristic infers
-ownership. Migration 0067 leaves existing rows at default `NULL`, with no backfill;
-native writes record their marker going forward.
+ownership. Native writes record their marker.
 
-For legacy reading, send the same target and subject with `removed: true` and
-`last_read_at` set to the source removal time. A higher `revision` orders changes
-at the same time; a removal wins over progress at an identical time/revision.
-Older snapshots cannot restore a newer removal. A later timestamp/revision can
-intentionally restore progress. Legacy reading is already an import-only
-relation: removal hides only that relation's row (including the work-level copy
-of a version import). Reader state is recomputed on read from remaining legacy
-and native measured state; measured engagement, readership and completion
-statistics are untouched. ClickHouse migration 0002 adds the removal marker;
-PostgreSQL migration 0067 adds favorite/reaction source ownership.
+For legacy reading, send the same target and account with `removed: true` to
+clear that reading; a later record with progress restores it.

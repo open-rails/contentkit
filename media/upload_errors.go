@@ -38,10 +38,6 @@ const (
 )
 
 const (
-	CodeQuota = "quota_exceeded" // 413: owner quota
-)
-
-const (
 	CodeType = "type_not_allowed" // 415
 )
 
@@ -115,7 +111,6 @@ var codeStatus = map[string]int{
 	CodeNotUploaded:  http.StatusConflict,
 	CodeTooManyFiles: http.StatusConflict,
 	CodeTooLarge:     http.StatusRequestEntityTooLarge,
-	CodeQuota:        http.StatusRequestEntityTooLarge,
 	CodeType:         http.StatusUnsupportedMediaType,
 	CodeChecksum:     http.StatusUnprocessableEntity,
 	CodeRate:         http.StatusTooManyRequests,
@@ -167,7 +162,7 @@ type ImageError struct {
 func (e *ImageError) Error() string { return e.Message }
 
 // UploadError is a refused upload request. UploadLimiter implementations
-// refuse with CodeRate or CodeQuota.
+// refuse with CodeRate.
 type UploadError struct {
 	Code       string
 	Message    string

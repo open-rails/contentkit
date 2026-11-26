@@ -337,8 +337,7 @@
         "TestPublicationWithoutWorkers/CK-J05-S01_immediate_publication_is_visible",
         "TestDurableTextPublication",
         "TestMediaApplicationPublishesTextKinds",
-        "TestReleaseRequestsSurviveRestartAndSequentialDeadlines",
-        "TestWithdrawnEditionRepublishesAtOnce"
+        "TestReleaseRequestsSurviveRestartAndSequentialDeadlines"
       ],
       "contract_change": "ContentKit #250 replaces clock-only publication and parent/subset access; preserved scenario identifiers do not preserve obsolete behavior."
     },
@@ -392,11 +391,8 @@
         "TestHiddenChapterPublication/TestHiddenPageCopiesWaitForTheirChapter",
         "TestHiddenChapterPublication/TestBlankAndLastChapterStarts",
         "TestIndependentChaptersSkipUnreleasedMiddle",
-        "TestCompletedPublicationReader",
-        "TestInternalArea/CK-J05-S04_editors_read_internal_and_readers_cannot",
         "TestScheduledPolicyPublishesWithoutStorageAreaChange",
-        "TestReleaseDuringPageSelectionKeepsCopyPrivate",
-        "TestUnchangedReleaseLeavesNoRequestCopies"
+        "TestReleaseDuringPageSelectionKeepsCopyPrivate"
       ],
       "contract_change": "ContentKit #250 replaces clock-only publication and parent/subset access; preserved scenario identifiers do not preserve obsolete behavior."
     },
@@ -428,10 +424,7 @@
       ],
       "cases": [
         "TestPublicationRecorderAndParentBoundary/CK-J05-S06_concurrent_recorders_catch_up_each_fact_once",
-        "TestPublicationQueuesIsolateSharedCatalogApps",
-        "TestSupersededPublicCopyReturnsToPrivate",
-        "TestPublicationSchedulingLocksParentBeforeRequest",
-        "TestPublicationStorage"
+        "TestPublicationQueuesIsolateSharedCatalogApps"
       ],
       "contract_change": "ContentKit #250 replaces clock-only publication and parent/subset access; preserved scenario identifiers do not preserve obsolete behavior."
     },
@@ -663,8 +656,8 @@
       "behavior": "Pagination/similar/recommendations never reintroduce excluded content",
       "status": "verified",
       "evidence": [
-        "Cursor pagination has exact membership without duplication; real ClickHouse-backed similar and signed-in recommendations retain the same domain/publication/access exclusions and include positive controls.",
-        "Executed with the race detector in the completed 8d5ae7c6 aggregate; the strict runner requires these exact cases on every qualification."
+        "Cursor pagination has exact membership without duplication; similar (shared tags and artist in Postgres) and signed-in recommendations retain the same domain/publication/access exclusions and include positive controls.",
+        "contentkit#300: similar is tag and artist overlap; the excluded fixtures share the anchor's tag, so only the reader's policy keeps them out."
       ],
       "cases": [
         "TestDiscoveryVisibility/CK-J07-S08_pagination_similar_and_recommendations_keep_exclusions"
@@ -692,18 +685,6 @@
       ],
       "cases": [
         "TestDiscoveryVisibility/CK-J07-S10_search_naming_a_hidden_entity_shows_its_contents"
-      ]
-    },
-    {
-      "id": "CK-J07-S11",
-      "journey": "CK-J07",
-      "behavior": "Popular rankings read access history only for contents read in their window",
-      "status": "verified",
-      "evidence": [
-        "A catalog with more than 100,000 unread access-history intervals still builds the requested popular ranking in the refresh job instead of failing on the history bound, and the list returns none of the unread contents."
-      ],
-      "cases": [
-        "TestDiscoveryVisibility/CK-J07-S11_popular_list_reads_history_of_read_contents_only"
       ]
     },
     {
@@ -743,72 +724,16 @@
       ]
     },
     {
-      "id": "CK-J07-S15",
+      "id": "CK-J07-S35",
       "journey": "CK-J07",
-      "behavior": "Popular lists follow the stored ranking of their kind, period and reader scope",
+      "behavior": "Watching a video's encoded rendition to its end records a completion even where the rendition outlasts the stored duration_ms; a watched range past that duration plus its two-second tolerance is refused with 400",
       "status": "verified",
       "evidence": [
-        "A configured bucket reads its stored order; an empty prepared ranking remains empty without unrelated standing scores."
+        "A player reports progress to the end of its rendition, past the probed duration within two seconds, and the job records a completed read; a report beyond that tolerance is refused."
       ],
       "cases": [
-        "TestDiscoveryVisibility/CK-J07-S15_popular_list_follows_the_stored_ranking"
-      ]
-    },
-    {
-      "id": "CK-J07-S16",
-      "journey": "CK-J07",
-      "behavior": "Public popularity reads only declared presets or prepared whole-day ranges",
-      "status": "verified",
-      "evidence": [
-        "Unknown bucket, kind and scope requests are refused without creating work.",
-        "Cold start prepares configured presets without public requests; metadata distinguishes pending from computed empty and reports actual covered dates across UTC rollover.",
-        "Arbitrary ranges read prepared scalars with catalog pagination and create no cache rows; dates before the first fully trusted UTC day or beyond prepared coverage are refused with structured bounds."
-      ],
-      "cases": [
-        "TestDiscoveryVisibility/CK-J07-S16_public_requests_cannot_create_popularity_work",
-        "TestPreparedPopularityBuckets"
-      ]
-    },
-    {
-      "id": "CK-J07-S17",
-      "journey": "CK-J07",
-      "behavior": "Daily popularity counts each qualified person once per work and available UTC day",
-      "status": "verified",
-      "evidence": [
-        "A 25,000-reader work and a ten-reader work share exactly 50,000 eligible readers; six available zero-reader days remain in the seven-day mean. Canonical receipt revisions, edition deduplication, public/tier daily unions, finalization, explicit rebuild, erasure and purge boundaries are covered with real ClickHouse.",
-        "Each day is swapped in whole: repeated refreshes, explicit rebuilds and an interrupted staged build leave exact plain sums without FINAL, and sixty one-part days of a 20,000-work scope rank under the read memory cap."
-      ],
-      "cases": [
-        "TestDailyPopularityCountsReadersExactly",
-        "TestDailyParticipationPreparation",
-        "TestDailyPopularityDaysAreWriteOnce"
-      ]
-    },
-    {
-      "id": "CK-J07-S18",
-      "journey": "CK-J07",
-      "behavior": "Canonical measured engagement is accepted despite derived summary failure; future interactions or explicit rebuild refresh summaries without automatic repair",
-      "status": "verified",
-      "evidence": [
-        "Actual ClickHouse INSERT constraints independently fail state, daily and canonical tables in disposable databases. Source receipts, revision deduplication, stale public state/activity reads, next-interaction convergence and explicit repair errors are asserted against real persisted data.",
-        "Signal schema recovery runs through the real engine callback with an unstarted River fleet: preference catch-up proves recovery occurred. Focused and full execution receipts remain separate qualification gates."
-      ],
-      "cases": [
-        "TestEngagementSummaryFailuresAreBestEffort",
-        "TestEngagementCanonicalFailuresRemainErrors",
-        "TestSignalRecoverySchedulesPreferences"
-      ]
-    },
-    {
-      "id": "CK-J07-S20",
-      "journey": "CK-J07",
-      "behavior": "The shipped popularity grid uses host choices and prepared whole-day ranges",
-      "status": "verified",
-      "evidence": [
-        "The real built shared UI selects two host-defined bucket IDs, renders their actual HTTP/PG ranking order, switches to a prepared-only ClickHouse date range, displays its inclusive last day, and receives the structured earliest-date refusal. No ranking cache is created by browser reads."
-      ],
-      "cases": [
-        "TestPreparedPopularityBrowser"
+        "TestVideoCompletion/CK-J07-S35_watching_the_rendition_to_its_end_records_a_completion",
+        "TestVideoCompletion/CK-J07-S35_a_range_past_the_duration_and_its_tolerance_is_refused"
       ]
     },
     {
@@ -866,32 +791,6 @@
       ]
     },
     {
-      "id": "CK-J07-S25",
-      "journey": "CK-J07",
-      "behavior": "Popular entity listings use hourly domain rankings of recent distinct account favourites, with decay, a one-hit guard and a support floor, then content count",
-      "status": "verified",
-      "evidence": [
-        "Account favourites count once per entity, collapse versions, decay with age, require support beyond one content and a score of 20, exclude categorical/internal/inactive entities and respect domain boundaries. The River build runs without signals and retains prior places on failure; unranked entities page by count and id. Kinds without popularity and listings of no kind are refused."
-      ],
-      "cases": [
-        "TestEntityPopularity"
-      ]
-    },
-    {
-      "id": "CK-J07-S19",
-      "journey": "CK-J07",
-      "behavior": "Observed search query and absolute result rank join to exact clicked visits across same-tab and native new-tab navigation",
-      "status": "verified",
-      "evidence": [
-        "Built shared SearchResults, SearchBox, ordinary ContentGrid and useReadingEngagement run in Chromium against real AuthKit/API/PostgreSQL/ClickHouse. Rendered and visible query/rank records join through exact click IDs to observed visits; opaque hrefs, direct returns, repeated tabs and snapshot retries preserve identity. A held real zero-result response produces no loading impression; only its successful settled empty list emits one rendered query observation, while a failed request emits none.",
-        "Real ClickHouse exports exclude origins with another subject, item or tenant, combine one visit across editions without receipt inflation, and retain historical analytics query text without age expiry. Recent-search clearing remains distinct from subject erasure. Execution receipts qualify the actual selected candidate separately."
-      ],
-      "cases": [
-        "TestBrowserSearchEngagementAttribution",
-        "TestSearchAttributionUsesExactOriginScope"
-      ]
-    },
-    {
       "id": "CK-J07-S26",
       "journey": "CK-J07",
       "behavior": "Admin-managed location rules restrict visitor reads and media by location and domain while administration remains available",
@@ -904,8 +803,7 @@
       "cases": [
         "TestAdminLocationRules",
         "TestAdminLocationRuleDefaultDomains",
-        "TestDiscoveryVisibility/location_rules_cover_all_visitor_read_paths",
-        "TestInternalArea/CK-J09-S01_real_image_upload_produces_a_readable_rendition/location_rule_denies_media_grant"
+        "TestDiscoveryVisibility/location_rules_cover_all_visitor_read_paths"
       ]
     },
     {
@@ -1096,10 +994,7 @@
         "Rendered pages are recorded in groups: forty pages take two manifest edits with progress per group; an unrenderable page fails alone; a page replaced mid-render keeps no stale output; cancellation records nothing and the next run converges; a group over the manifest bound keeps what fits and marks it full."
       ],
       "cases": [
-        "TestInternalArea/CK-J09-S01_real_image_upload_produces_a_readable_rendition",
         "TestShippedBrowserClient/CK-J09-S01",
-        "TestInternalArea/CK-J09-S01_versioned_derivatives_are_prepared_in_internal",
-        "TestInternalArea/CK-J09-S01_release_copies_internal_outputs_to_served_areas",
         "TestMediaPageGroups"
       ]
     },
@@ -1128,8 +1023,7 @@
       ],
       "cases": [
         "TestMediaAdmissionBoundaries/CK-J09-S03_two_apps_share_storage_without_sharing_upload_allocations",
-        "TestUploadAcceptanceAndRetry/CK-J09-S03_foreign_owner_and_version_cannot_adopt_staged_bytes",
-        "TestMediaFolderOwner"
+        "TestUploadAcceptanceAndRetry/CK-J09-S03_foreign_owner_and_version_cannot_adopt_staged_bytes"
       ]
     },
     {
@@ -1160,7 +1054,6 @@
         "Signed media child282aa358; combined race85.683s, restored browser positive19.270s and real migration9.836s. Final integrated run remains required."
       ],
       "cases": [
-        "TestMediaAdmissionBoundaries/CK-J09-S05_entity_owner_quota_is_atomic_and_removal_refunds_once",
         "TestUploadAcceptanceAndRetry/CK-J09-S05_file_count_rejection_is_atomic"
       ]
     },
@@ -1230,8 +1123,7 @@
       ],
       "cases": [
         "TestMediaAdmissionBoundaries/CK-J10-S04_expired_issuer_ticket_cannot_read_complete_abort_or_presign_parts",
-        "TestMultipartUpload/CK-J10-S04_foreign_actor_cannot_reuse_ticket",
-        "TestTemporaryPublicationStorage"
+        "TestMultipartUpload/CK-J10-S04_foreign_actor_cannot_reuse_ticket"
       ]
     },
     {
@@ -1343,13 +1235,7 @@
         "TestMediaFailureRecovery/CK-J11-S06/resource-failure-is-visible-and-regeneration-recovers",
         "TestMediaFailureRecovery/CK-J11-S06/staged-placement-failure-regenerates",
         "TestMediaFailureRecovery/CK-J11-S06/storage-refusal",
-        "TestMediaPreparedCommitRecovery/conflicting-put",
-        "TestMediaPreparedCommitRecovery/frozen-conflict",
-        "TestMediaPreparedCommitRecovery/matching-receipt",
-        "TestMediaPreparedCommitRecovery/equal-etag",
-        "TestMediaPreparedCommitRecovery/missing-existing",
         "TestMediaVideoFailureRecovery/video",
-        "TestMediaVideoFailureRecovery/mp4",
         "TestMediaVideoFailureRecovery/subtitle",
         "TestMediaVideoFailureRecovery/poster",
         "TestMediaVideoFailureRecovery/image-before-video",
@@ -1423,6 +1309,30 @@
       ]
     },
     {
+      "id": "CK-J11-S11",
+      "journey": "CK-J11",
+      "behavior": "An encoded and released video's folder holds none of its encode's chunk renditions",
+      "status": "verified",
+      "evidence": [
+        "A real clip encodes its two-rung ladder through the worker and releases; once every run completes, no chunk key the runs recorded and nothing under tmp/ remains in the item's folder."
+      ],
+      "cases": [
+        "TestMediaVideoScratch/CK-J11-S11_a_released_video_keeps_no_chunks"
+      ]
+    },
+    {
+      "id": "CK-J11-S12",
+      "journey": "CK-J11",
+      "behavior": "A worker killed mid-encode leaves only layout scratch in tmp/, tagged for the bucket's seven-day expiry",
+      "status": "verified",
+      "evidence": [
+        "A real worker process is SIGKILLed while its first rung's assembled rendition is held at the S3 wire; the folder holds chunk scratch under tmp/w-, every object parses in the layout, and every tmp/ object carries contentkit-temp=true."
+      ],
+      "cases": [
+        "TestMediaVideoScratch/CK-J11-S12_a_killed_encode_leaves_only_scratch_tagged_to_expire"
+      ]
+    },
+    {
       "id": "CK-J12-S01",
       "journey": "CK-J12",
       "behavior": "Real video produces playable configured AV1 and H264 renditions with its soundtrack",
@@ -1464,10 +1374,10 @@
     {
       "id": "CK-J12-S04",
       "journey": "CK-J12",
-      "behavior": "The stock worker binary publishes default renditions from the registry JSON without a database; hosts link no libvips",
+      "behavior": "The stock worker binary publishes app kinds' default renditions from the registry JSON without a database; hosts link no libvips",
       "status": "verified",
       "evidence": [
-        "The built cmd/media-worker publish-defaults renders ContentKit's avatar silhouette and a host default from MEDIA_DEFAULTS_DIR to create-only objects, prints MEDIA_GATEWAY_DEFAULTS naming exactly what it wrote, refuses a default no source holds, and writes nothing on repeat."
+        "The built cmd/media-worker publish-defaults renders ContentKit's avatar silhouette and a host default from MEDIA_DEFAULTS_DIR into each kind's _default item, prints the kinds it wrote, refuses a default no source holds, and writes nothing on repeat."
       ],
       "cases": [
         "TestWorkerPublishesDefaults"
@@ -1494,40 +1404,107 @@
     {
       "id": "CK-J12-S06",
       "journey": "CK-J12",
-      "behavior": "Frames count toward their upload's Max and are charged to the commit's quota owner at the still's size, refunded once on removal",
+      "behavior": "Frames count toward their upload's Max",
       "status": "verified",
       "evidence": [
         "With the shared usage ledger on, frame ops into a Max 1 stills upload refuse a second still in one commit and in a later one (409 too_many_files) while replacing the one still succeeds; a contributor's poster grabbed by the real worker moves its usage by exactly the still's size (at least 64 KiB), and removing it restores the usage. Added with the media work-bounds change; not yet run in an integrated execution, which full qualification requires."
       ],
       "cases": [
-        "TestMediaFramePosters/CK-J12-S06_frames_count_toward_max",
-        "TestMediaFramePosters/CK-J12-S06_a_frame_is_charged_its_still_and_refunded_once"
+        "TestMediaFramePosters/CK-J12-S06_frames_count_toward_max"
+      ]
+    },
+    {
+      "id": "CK-J12-S07",
+      "journey": "CK-J12",
+      "behavior": "A PQ (HDR10) upload keeps its range in 10-bit AV1 with its HDR10 metadata in the bitstream; its H.264 rendition, seek sprite and poster are tone-mapped BT.709 SDR; the master playlist labels the AV1 variant PQ with its long-form codecs and the H.264 one SDR",
+      "status": "verified",
+      "evidence": [
+        "A synthetic 10-bit HEVC PQ BT.2020 source with x265 mastering-display and MaxCLL SEI, made by ffmpeg in the test, is processed by the actual worker into AV1 and H.264. The delivered AV1 is probed as yuv420p10le smpte2084 bt2020 bt2020nc tv, and dav1d reads the mastering display and content light level from its OBUs alone (remuxed to a raw OBU stream). The H.264 is yuv420p BT.709; its first frame, the sprite and the grabbed poster keep the SDR picture's brightness and contrast, which PQ code values shown as BT.709 lose.",
+        "The editor master playlist labels every variant: AV1 PQ with CODECS av01.P.LLT.10.0.11x.09.16.09.0, H.264 SDR. Added with HDR video; it runs in CI's critical suite."
+      ],
+      "cases": [
+        "TestMediaHDRVideo/CK-J12-S07_a_PQ_upload_keeps_HDR10_in_AV1_and_plays_tone-mapped_SDR_elsewhere"
+      ]
+    },
+    {
+      "id": "CK-J12-S08",
+      "journey": "CK-J12",
+      "behavior": "An HLG upload keeps HLG in 10-bit AV1 without invented metadata; its H.264 rendition, sprite and poster are tone-mapped BT.709 SDR; the playlist labels the AV1 variant HLG",
+      "status": "verified",
+      "evidence": [
+        "A synthetic 10-bit HEVC HLG BT.2020 source is processed by the actual worker: the AV1 is yuv420p10le arib-std-b67 bt2020 with no mastering or light-level metadata, the H.264 is BT.709 SDR, and its frame, sprite and poster keep the SDR picture's brightness and contrast; the master says VIDEO-RANGE=HLG with CODECS ending .09.18.09.0 for AV1 and SDR for H.264."
+      ],
+      "cases": [
+        "TestMediaHDRVideo/CK-J12-S08_an_HLG_upload_keeps_HLG_in_AV1_and_plays_tone-mapped_SDR_elsewhere"
+      ]
+    },
+    {
+      "id": "CK-J12-S09",
+      "journey": "CK-J12",
+      "behavior": "An SDR upload is encoded exactly as before HDR support and every variant is labelled SDR",
+      "status": "verified",
+      "evidence": [
+        "An 8-bit H.264 source's AV1 and H.264 renditions keep its own tags in 8-bit 4:2:0, the AV1 carries no HDR metadata, its frame and poster match the picture, and the master labels both variants VIDEO-RANGE=SDR with the short AV1 codecs form (av01.P.LLT.08).",
+        "Byte identity: internal/media/video's TestSDRCommandLinesUnchanged pins an SDR source's encode, track, sprite, NVENC, frame and detail command lines to those of the release before; identical ffmpeg arguments over the same input with bitexact muxing produce the same bytes, and an SDR upload's fingerprint gains no HDR component, so nothing is re-encoded."
+      ],
+      "cases": [
+        "TestMediaHDRVideo/CK-J12-S09_an_SDR_upload_is_encoded_as_before_and_labelled_SDR"
+      ]
+    },
+    {
+      "id": "CK-J12-S10",
+      "journey": "CK-J12",
+      "behavior": "The shipped player plays an HDR ladder's PQ rungs only on an HDR screen whose decoder MediaCapabilities confirms; otherwise its SDR rungs; it never draws video through a canvas",
+      "status": "verified",
+      "evidence": [
+        "useHlsPlayer from the built package, in Chromium with real hls.js, plays CK-J12-S07's worker-encoded PQ clip three times: on headless Chromium's SDR screen it loads only the H.264 media playlist and its levels say SDR, without asking the decoder; with (dynamic-range: high) matching and decodingInfo confirming pq it loads only the AV1 playlist, its levels say PQ and the 10-bit video plays; with the decoder refusing pq it plays SDR. No canvas context is created in any.",
+        "The same runner passed locally in Google Chrome against a PQ ladder from the encoder's own pass (AV1 and H.264 renditions with a labelled master) before the scenario was added."
+      ],
+      "cases": [
+        "TestMediaHDRVideo/CK-J12-S10_the_shipped_player_plays_HDR_only_on_an_HDR_screen_whose_decoder_confirms_it"
+      ]
+    },
+    {
+      "id": "CK-J12-S11",
+      "journey": "CK-J12",
+      "behavior": "An account kind's defaults are account media: the avatar primary publishes them into the accounts area of its bucket and the tenant account cache, and a secondary site shows them for a person without an avatar at its own media host",
+      "status": "verified",
+      "evidence": [
+        "Two apps of one tenant, each with its own bucket: the built cmd/media-worker publish-defaults refuses the primary's account defaults without MEDIA_ACCOUNT_SCHEMA and writes nothing, then with it writes _accounts/user/_default/ into the primary's bucket only; the secondary's publication writes no account media, and a site declaring the account kind as its own media is refused.",
+        "The secondary's content model (GET /v1/kinds) carries the default avatar at its own media host, and a person without an avatar who comments there is listed with it; the secondary's gateway route (accounts naming the primary's bucket) serves each rendition as a WebP of its width.",
+        "The worker's rebuild records the account default again from the primary's bucket after its cache row is lost."
+      ],
+      "cases": [
+        "TestSecondaryDefaultAvatar/CK-J12-S11_account_defaults_need_the_account_cache",
+        "TestSecondaryDefaultAvatar/CK-J12-S11_only_the_primarys_bucket_holds_them",
+        "TestSecondaryDefaultAvatar/CK-J12-S11_a_secondary_shows_the_default_through_its_gateway",
+        "TestSecondaryDefaultAvatar/CK-J12-S11_rebuild_restores_them"
       ]
     },
     {
       "id": "CK-J13-S01",
       "journey": "CK-J13",
-      "behavior": "Private exact-file grant refuses a sibling file or another item",
+      "behavior": "An item token opens its own item's private files and no other item's",
       "status": "verified",
       "evidence": [
         "Existing exact-file capabilities open only their file, not a seeded sibling or another real item; each target has an independent positive control.",
         "Reviewed against current public behavior; exact cases passed in integrated/focused race receipts retained with this task. Full qualification still requires every selected contract and one integrated execution."
       ],
       "cases": [
-        "TestGatewayCapabilities/CK-J13-S01_exact_file_grant_does_not_open_sibling_or_another_item"
+        "TestGatewayCapabilities/CK-J13-S01_item_token_does_not_open_another_item"
       ]
     },
     {
       "id": "CK-J13-S02",
       "journey": "CK-J13",
-      "behavior": "Item token cannot authorize the download area",
+      "behavior": "An item token cannot open the item's internal (unreleased) area",
       "status": "verified",
       "evidence": [
         "An item capability opens ordinary private files but cannot open a seeded download object; the exact download capability is its positive control.",
         "Reviewed against current public behavior; exact cases passed in integrated/focused race receipts retained with this task. Full qualification still requires every selected contract and one integrated execution."
       ],
       "cases": [
-        "TestGatewayCapabilities/CK-J13-S02_item_token_cannot_open_download_area"
+        "TestGatewayCapabilities/CK-J13-S02_item_token_cannot_open_internal_area"
       ]
     },
     {
@@ -1550,14 +1527,14 @@
     {
       "id": "CK-J13-S04",
       "journey": "CK-J13",
-      "behavior": "Host/tenant/app mismatch and encoded traversal cannot fetch an object",
+      "behavior": "Host or bucket mismatch, unrouted account media and encoded traversal cannot fetch an object",
       "status": "verified",
       "evidence": [
-        "Existing objects under foreign host/tenant/app roots and encoded traversal forms404 despite valid-looking signatures; the real owning-root object remains available.",
+        "An unknown host, the same item's token for another bucket or without one, a key under a tenant/app prefix, account media on a host whose Route names no account bucket and encoded traversal forms 404 despite valid-looking signatures; the owning object remains available, account media is served once the Route names its bucket, and a host routed twice is refused.",
         "Reviewed against current public behavior; exact cases passed in integrated/focused race receipts retained with this task. Full qualification still requires every selected contract and one integrated execution."
       ],
       "cases": [
-        "TestGatewayCapabilities/CK-J13-S04_host_scope_and_encoded_traversal_refuse_existing_objects"
+        "TestGatewayCapabilities/CK-J13-S04_host_bucket_and_encoded_traversal_refuse_existing_objects"
       ]
     },
     {
@@ -1636,6 +1613,34 @@
         "TestRateLimiter/CK-J13-S09_limit_admits_burst_per_window_and_refusals_do_not_count",
         "TestRateLimiter/CK-J13-S09_every_window_must_admit",
         "TestRateLimiter/CK-J13-S09_member_limit_counts_distinct_items_from_their_first_opening"
+      ]
+    },
+    {
+      "id": "CK-J13-S10",
+      "journey": "CK-J13",
+      "behavior": "The bucket is the tenancy boundary: keys name no tenant or app, account media is under _accounts/, and no kind takes a reserved top-level name",
+      "status": "verified",
+      "evidence": [
+        "A scoped registry places an app item at {kind}/{id}/ in its app partition and an account item at _accounts/{kind}/{id}/ in the tenant partition; preset roots are \"\" and _accounts/. Keys under a tenant/app or tenant/account prefix, _probe/, _accounts/_accounts/ and work/ parse as nothing.",
+        "Registries refuse kinds named _accounts, _probe and work, and a zero or app-less scope. Engine scenarios (deleted media fence, imported avatar, account resilience, purge) list the real bucket at these keys."
+      ],
+      "cases": [
+        "TestBucketKeyLayout",
+        "TestBucketKeyLayout/CK-J13-S10_items_are_kind_and_id_in_the_app_bucket",
+        "TestBucketKeyLayout/CK-J13-S10_registries_refuse_reserved_kinds_and_a_missing_scope"
+      ]
+    },
+    {
+      "id": "CK-J13-S11",
+      "journey": "CK-J13",
+      "behavior": "A download outlives the host server's ReadTimeout and WriteTimeout: the archive route (ZIP, watermarked ZIP, a file's original or master) clears both deadlines once the request is read, so a slow reader gets every byte",
+      "status": "verified",
+      "cases": [
+        "TestDownloadOutlivesHostWriteTimeout/CK-J13-S11_a_slow_download_outlives_the_host_servers_WriteTimeout"
+      ],
+      "evidence": [
+        "The engine is mounted in an http.Server with a 2 s WriteTimeout and 4 KiB socket send buffers; a client with a 4 KiB receive buffer reads a released video's original download a KiB at a time over about 5 s and must receive it byte for byte. With only the read deadline cleared, the same server and client cut a 96 KiB body at 2.2 s (local net/http harness); clearing the write deadline completes it.",
+        "Reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
       ]
     },
     {
@@ -1924,14 +1929,13 @@
     {
       "id": "CK-J23-S07",
       "journey": "CK-J23",
-      "behavior": "Measured projection rebuilds remain fenced by account erasure",
+      "behavior": "Late activity of an erased subject is unreadable and the analytics job never folds it",
       "status": "verified",
       "evidence": [
-        "Repeated app erasure fences direct late measured ingestion; a nonempty ClickHouse projection rebuild retains only the live signal control."
+        "An erased account posts activity after its erasure: reads drop the row, the job leaves no reading state, and a live sibling is folded."
       ],
       "cases": [
-        "TestClickHouseErasureRetry/CK-J23-S07_late_signal_cannot_rebuild_erased_subject",
-        "TestClickHouseErasureRetry/CK-J23-S07_projection_rebuild_remains_erased"
+        "TestClickHouseErasureRetry/CK-J23-S07_late_activity_cannot_rebuild_an_erased_subject"
       ]
     },
     {
@@ -2307,7 +2311,7 @@
       "behavior": "Content purge durably retries ClickHouse erasure through the same sweep after outages and restart",
       "status": "verified",
       "evidence": [
-        "Reviewed real public HTTP/Go and persistent-store regression paths. Final exact combined candidate must execute these cases and pass; this mapping is not a deployment or aggregate qualification receipt."
+        "A purged content item keeps its durable ClickHouse cleanup through an outage; the sweep then deletes its activity rows and leaves another item's."
       ],
       "cases": [
         "TestContentPurgeRetriesSignalCleanup"
@@ -2364,6 +2368,18 @@
       "cases": [
         "TestDeletedMediaFence/CK-J08-S11_purge_erases_and_its_fence_outlives_restore",
         "TestDeletedContentPurgeOwnsMedia/CK-J08-S06_restore_and_durable_purge_claim_have_one_winner"
+      ]
+    },
+    {
+      "id": "CK-J08-S12",
+      "journey": "CK-J08",
+      "behavior": "Purging an encoded video erases its whole folder, scratch and keys outside the layout included, leaving only its tombstone and fence",
+      "status": "verified",
+      "evidence": [
+        "A real encoded clip with a planted scratch chunk and an unparseable chunk key is deleted and purged past retention; the purge completes and the folder holds only manifest.json and the erasure fence."
+      ],
+      "cases": [
+        "TestMediaVideoScratch/CK-J08-S12_erasing_an_encoded_video_empties_its_folder"
       ]
     },
     {
@@ -2685,6 +2701,19 @@
       ]
     },
     {
+      "id": "CK-J03-S74",
+      "journey": "CK-J03",
+      "behavior": "Engine.Client is held to no per-viewer media read or interaction limit; every credential, a staff key included, stays limited",
+      "status": "verified",
+      "evidence": [
+        "Over real PostgreSQL/MinIO the in-process host reads a published gallery past a burst of two and edits a person's comment past a two-per-hour comment limit; a staff application key with owner authority is refused 429 rate_limited on its third read and the person on its third comment. Not executed locally; CI's critical run is its first execution."
+      ],
+      "cases": [
+        "TestHostClientSkipsViewerLimits/CK-J03-S74_host_reads_past_the_media_read_limit",
+        "TestHostClientSkipsViewerLimits/CK-J03-S74_host_edits_past_the_comment_limit"
+      ]
+    },
+    {
       "id": "CK-J30-S01",
       "journey": "CK-J30",
       "behavior": "Only predefined-choice polls accept creation, import and votes; choices lock after voting while scope, closure, final-vote and erasure counts remain correct; a deleted poll keeps no votes",
@@ -2820,30 +2849,6 @@
       ]
     },
     {
-      "id": "CK-J09-S33",
-      "journey": "CK-J09",
-      "behavior": "A commit is authorized again under its item's lock: authority revoked while it waited writes nothing",
-      "status": "verified",
-      "evidence": [
-        "A commit through the real journal, S3 and PostgreSQL lock whose upload grant is revoked as it takes the item lock answers 403 forbidden and leaves the manifest as the previous, authorized commit wrote it. Added with the media work-bounds change; not yet run in an integrated execution, which full qualification requires."
-      ],
-      "cases": [
-        "TestCommitReauthorizesUnderLock"
-      ]
-    },
-    {
-      "id": "CK-J09-S34",
-      "journey": "CK-J09",
-      "behavior": "HostOnly outputs of every kind are prepared in internal/, which no item token opens",
-      "status": "verified",
-      "evidence": [
-        "The real worker renders a site kind's HostOnly image into internal/ and its served one into private/: an item token opens only the served one at the gateway, editors are signed both, and an ordinary read lists no HostOnly output. Added with the media work-bounds change; not yet run in an integrated execution, which full qualification requires."
-      ],
-      "cases": [
-        "TestHostOnlyOutputsStayInternal"
-      ]
-    },
-    {
       "id": "CK-J09-S35",
       "journey": "CK-J09",
       "behavior": "ZIP ingestion validates in one streaming pass and extracts pages per batch, so scratch holds the ZIP and one page",
@@ -2967,8 +2972,7 @@
       "behavior": "Signal reads serving a request carry a deadline and a memory ceiling",
       "status": "verified",
       "evidence": [
-        "A public similar read through the configured standalone issues its co-engagement query with max_memory_usage 1 GiB and a max_execution_time from its ten-second deadline, as ClickHouse's own query log records.",
-        "Fails on the base, whose query carries neither. Not yet an execution receipt; qualification runs the case."
+        "The staff active-days report, the one request that reads ClickHouse, carries max_execution_time and max_memory_usage in system.query_log."
       ],
       "cases": [
         "TestConfiguredStandaloneParity/CK-J01-S13_signal_reads_serving_a_request_carry_a_deadline_and_memory_ceiling"
@@ -3014,16 +3018,32 @@
       ]
     },
     {
-      "id": "CK-J01-S17",
+      "id": "CK-J01-S18",
       "journey": "CK-J01",
-      "behavior": "Favorites convert to uuid keys without blocking their writers, and toggle, card state, recount, preference sync and rankings read the converted rows",
+      "behavior": "Behind a transaction-mode PgBouncer with Deps.PostgresSession direct, the engine migrates, works its jobs and hears their notifications, its source locks exclude another process on a direct session, and nothing relies on a server-side prepared statement; a pooled Postgres with named statements is refused",
       "status": "verified",
       "cases": [
-        "TestFavoritesMigrateToBinaryKeys/CK-J01-S17_favorites_convert_to_binary_keys_and_stay_readable"
+        "TestTransactionPooler/CK-J01-S18_named_statements_break_behind_the_pooler_and_are_refused",
+        "TestTransactionPooler/CK-J01-S18_jobs_work_through_the_pooler_and_hear_their_notifications",
+        "TestTransactionPooler/CK-J01-S18_source_locks_hold_a_direct_session_and_exclude_another_process",
+        "TestTransactionPooler/CK-J01-S18_concurrent_writes_through_the_pooler_prepare_no_statement"
       ],
       "evidence": [
-        "The text-keyed table is rebuilt by the previous release's own migrations, filled with real rows and written between the conversion's steps (value change, anonymization, delete, insert); the converted table equals the old one row for row, with uuid keys, the five named indexes and no working tables. Toggle, card state, the reader's list, an import's recount, a preference resync into ClickHouse and an entity ranking refresh then read the converted rows.",
-        "contentkit#298: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+        "A real PgBouncer (transaction mode, max_prepared_statements=0) fronts the job's PostgreSQL. Two clients of a one-connection alias share its backend, so a second client's named statement fails 42P05 while cache_describe clients run there; New refuses a pooled Postgres in cache_statement mode. An engine on the pooler migrates through its session, a probe job behind a 30 s poll starts within 5 s of its insert, a segments write queues for a source lock another process holds on a backend named by the session, and 16 concurrent writes and the start-up jobs record no prepared-statement error.",
+        "contentkit#307: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
+      "id": "CK-J01-S19",
+      "journey": "CK-J01",
+      "behavior": "A schema an earlier migration history built (before 0.141.0's baselines, or by an edited migration) is rebuilt, never migrated forward: MigratePostgres and a SkipMigrations New refuse it, naming the schema and the rebuild, and the refusal is not ErrMigrationsRequired",
+      "status": "verified",
+      "cases": [
+        "TestEarlierMigrationHistoryRefused/CK-J01-S19_a_schema_an_earlier_history_built_is_refused_naming_the_rebuild"
+      ],
+      "evidence": [
+        "MigratePostgres builds a fresh catalog schema; its ledger's 0001 record then carries other content, as a pre-0.141 database's does. MigratePostgres and New with SkipMigrations both fail with the schema and 'rebuild it', and neither error is ErrMigrationsRequired.",
+        "Reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
       ]
     },
     {
@@ -3169,7 +3189,7 @@
         "TestPurgeLeavesNoAccountID/CK-J24-S08_purge_leaves_the_id_only_in_its_fence"
       ],
       "evidence": [
-        "An account that owned a channel, authored and was credited, commented, favorited, liked, uploaded quota-charged media and created and edited a location rule is purged; a sweep of every text, array, json and uuid column of the catalog schema finds its id only in content_erased_subjects and content_account_lifecycle.",
+        "An account that owned a channel, authored and was credited, commented, favorited, liked, uploaded media, restored a removed page and created and edited a location rule is purged; a sweep of every text, array, json and uuid column of the catalog schema, for the id and its base64 encodings, finds it only in content_erased_subjects and content_account_lifecycle.",
         "contentkit#287: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
       ]
     },
@@ -3202,6 +3222,32 @@
       ]
     },
     {
+      "id": "CK-J24-S11",
+      "journey": "CK-J24",
+      "behavior": "A real purge after the account restored a removed page leaves its id in no bucket object",
+      "status": "verified",
+      "cases": [
+        "TestPurgeLeavesNoAccountID/CK-J24-S11_purge_leaves_no_id_in_the_bucket"
+      ],
+      "evidence": [
+        "The account restores a duplicate page removed automatically (the manifest records the include override), then is purged; every object in the bucket, manifests gunzipped and the restored item's manifest among them, holds neither the id nor its base64 encodings.",
+        "contentkit#287: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
+      "id": "CK-J24-S12",
+      "journey": "CK-J24",
+      "behavior": "An upload authorized before its account's erasure and written after it stores the id nowhere",
+      "status": "verified",
+      "cases": [
+        "TestUploadRacingErasureStoresNoAccountID/CK-J24-S12_an_upload_racing_the_purge_stores_no_id"
+      ],
+      "evidence": [
+        "The account's commit passes its upload grant and is held at its manifest write while the account is anonymized; released, it lands (or is refused on a retry), and neither the catalog schema sweep nor the bucket sweep finds the id outside the fence and lifecycle rows.",
+        "contentkit#287: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
       "id": "CK-J23-S08",
       "journey": "CK-J23",
       "behavior": "An app whose signal plane was provisioned keeps erasure pending on an engine without ClickHouse",
@@ -3228,6 +3274,836 @@
       "evidence": [
         "A ::ffff:192.0.2.0/120 location rule is stored as 192.0.2.0/24 and hides its content from an IPv4 visitor inside it only; mapped IP bans store IPv4 networks; a mapped prefix shorter than /96 is refused 400.",
         "contentkit#287: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
+      "id": "CK-J09-S36",
+      "journey": "CK-J09",
+      "behavior": "Concurrent manifest writers converge through 412 and re-apply; a retried op writes once; a manifest never names absent bytes",
+      "status": "verified",
+      "evidence": [
+        "contentkit#297: real bucket (MinIO in CI), real PostgreSQL, engine and stock worker."
+      ],
+      "cases": [
+        "TestMediaManifestWriter/CK-J09-S36_concurrent_writers_converge_through_412_and_reapply"
+      ]
+    },
+    {
+      "id": "CK-J09-S37",
+      "journey": "CK-J09",
+      "behavior": "The store compares conditional PUT preconditions atomically with the write: of concurrent PUTs with one If-Match or If-None-Match, exactly one lands",
+      "status": "verified",
+      "evidence": [
+        "contentkit#297: real bucket (MinIO in CI), real PostgreSQL, engine and stock worker."
+      ],
+      "cases": [
+        "TestMediaManifestWriter/CK-J09-S37_store_honours_conditional_put_atomically"
+      ]
+    },
+    {
+      "id": "CK-J09-S38",
+      "journey": "CK-J09",
+      "behavior": "A bucket that ever had versioning refuses media writes",
+      "status": "verified",
+      "evidence": [
+        "contentkit#297: real bucket (MinIO in CI), real PostgreSQL, engine and stock worker."
+      ],
+      "cases": [
+        "TestMediaManifestWriter/CK-J09-S38_a_bucket_that_had_versioning_refuses_media_writes"
+      ]
+    },
+    {
+      "id": "CK-J09-S39",
+      "journey": "CK-J09",
+      "behavior": "Garbage collection deletes only retired, unreferenced files after their due time, fences re-reference while a delete settles, and removes old orphans",
+      "status": "verified",
+      "evidence": [
+        "contentkit#297: real bucket (MinIO in CI), real PostgreSQL, engine and stock worker."
+      ],
+      "cases": [
+        "TestMediaGarbageCollection/CK-J09-S39_gc_deletes_only_retired_unreferenced_files"
+      ]
+    },
+    {
+      "id": "CK-J09-S40",
+      "journey": "CK-J09",
+      "behavior": "An item token (cookie) reaches only its own item\u2019s private area",
+      "status": "verified",
+      "evidence": [
+        "contentkit#297: real bucket (MinIO in CI), real PostgreSQL, engine and stock worker."
+      ],
+      "cases": [
+        "TestMediaGatewayAreas/CK-J09-S40_a_cookie_reaches_only_its_items_private_area"
+      ]
+    },
+    {
+      "id": "CK-J09-S41",
+      "journey": "CK-J09",
+      "behavior": "Unreleased files (internal), staged uploads and the manifest are unreachable with or without a token",
+      "status": "verified",
+      "evidence": [
+        "contentkit#297: real bucket (MinIO in CI), real PostgreSQL, engine and stock worker."
+      ],
+      "cases": [
+        "TestMediaGatewayAreas/CK-J09-S41_unreleased_files_are_unreachable"
+      ]
+    },
+    {
+      "id": "CK-J09-S42",
+      "journey": "CK-J09",
+      "behavior": "A release moves files to a served area and leaves no internal copy once its leftovers are collected",
+      "status": "verified",
+      "evidence": [
+        "contentkit#297: real bucket (MinIO in CI), real PostgreSQL, engine and stock worker."
+      ],
+      "cases": [
+        "TestMediaReleaseByMove/CK-J09-S42_a_release_leaves_no_internal_copy"
+      ]
+    },
+    {
+      "id": "CK-J09-S43",
+      "journey": "CK-J09",
+      "behavior": "A crash at each release step (after the copies, after the manifest switch) recovers on the next run",
+      "status": "verified",
+      "evidence": [
+        "contentkit#297: real bucket (MinIO in CI), real PostgreSQL, engine and stock worker."
+      ],
+      "cases": [
+        "TestMediaReleaseByMove/CK-J09-S43_a_crash_at_each_release_step_recovers"
+      ]
+    },
+    {
+      "id": "CK-J09-S44",
+      "journey": "CK-J09",
+      "behavior": "Re-deriving unchanged outputs writes no object and no manifest revision",
+      "status": "verified",
+      "evidence": [
+        "contentkit#297: real bucket (MinIO in CI), real PostgreSQL, engine and stock worker."
+      ],
+      "cases": [
+        "TestMediaRederive/CK-J09-S44_a_rederive_writes_nothing"
+      ]
+    },
+    {
+      "id": "CK-J09-S45",
+      "journey": "CK-J09",
+      "behavior": "A version\u2019s ZIP is streamed from its masters (the originals under the identity recipe), byte-identical across requests, with Content-Length, ETag and ranges",
+      "status": "verified",
+      "evidence": [
+        "contentkit#297: real bucket (MinIO in CI), real PostgreSQL, engine and stock worker."
+      ],
+      "cases": [
+        "TestMediaZipDownload/CK-J09-S45_the_zip_is_byte_identical_across_requests"
+      ]
+    },
+    {
+      "id": "CK-J09-S46",
+      "journey": "CK-J09",
+      "behavior": "A database cache dropped and rebuilt from the bucket serves the same lists",
+      "status": "verified",
+      "evidence": [
+        "contentkit#297: real bucket (MinIO in CI), real PostgreSQL, engine and stock worker."
+      ],
+      "cases": [
+        "TestMediaCacheRebuild/CK-J09-S46_a_dropped_database_cache_rebuilt_from_the_bucket_serves_the_same_lists"
+      ]
+    },
+    {
+      "id": "CK-J09-S47",
+      "journey": "CK-J09",
+      "behavior": "Under the identity recipe each upload's master is its original's hash: the bucket holds no master object, a release never copies or moves an original, renditions record the original's hash as their input, and the ZIP serves the originals",
+      "status": "verified",
+      "evidence": [
+        "contentkit#304: real bucket (MinIO in CI), real PostgreSQL, engine and stock worker."
+      ],
+      "cases": [
+        "TestMediaMasters/CK-J09-S47_the_identity_recipe_stores_no_master_bytes"
+      ]
+    },
+    {
+      "id": "CK-J09-S48",
+      "journey": "CK-J09",
+      "behavior": "A changed rendition spec re-derives exactly the selected items' renditions (by id, then the kind): masters and other items stay unwritten, the replaced rendition is retired, and the release stays served",
+      "status": "verified",
+      "evidence": [
+        "contentkit#304: real bucket (MinIO in CI), real PostgreSQL, engine and stock worker."
+      ],
+      "cases": [
+        "TestMediaMasters/CK-J09-S48_a_changed_rendition_spec_regenerates_exactly_the_selected_items"
+      ]
+    },
+    {
+      "id": "CK-J09-S49",
+      "journey": "CK-J09",
+      "behavior": "A master recipe change makes each upload's master with the hook (a lossless WebP of its own, recording the hooks, versions, parameters and fingerprint), released to private/; renditions re-derive from it, downloads serve it, and a repeat regeneration writes nothing",
+      "status": "verified",
+      "evidence": [
+        "contentkit#304: real bucket (MinIO in CI), real PostgreSQL, engine and a worker built by media/worker.New with the hook in Config.Hooks."
+      ],
+      "cases": [
+        "TestMediaMasters/CK-J09-S49_a_recipe_change_rederives_masters_then_renditions"
+      ]
+    },
+    {
+      "id": "CK-J09-S50",
+      "journey": "CK-J09",
+      "behavior": "A failing master hook leaves the manifest, the bucket and the release unchanged while its job retries",
+      "status": "verified",
+      "evidence": [
+        "contentkit#304: real bucket (MinIO in CI), real PostgreSQL, engine and stock worker."
+      ],
+      "cases": [
+        "TestMediaMasters/CK-J09-S50_a_failed_hook_leaves_the_release_unchanged"
+      ]
+    },
+    {
+      "id": "CK-J09-S51",
+      "journey": "CK-J09",
+      "behavior": "A watermarked ZIP is marked and zipped anew for every download and never cached (private, no-store; CDN no-store; no length, ETag or ranges); an unwatermarked one is byte-stable with Content-Length and ETag",
+      "status": "verified",
+      "evidence": [
+        "contentkit#304: real bucket (MinIO in CI), real PostgreSQL, engine and stock worker."
+      ],
+      "cases": [
+        "TestMediaMasters/CK-J09-S51_a_watermarked_zip_is_never_cached_and_differs_per_download"
+      ]
+    },
+    {
+      "id": "CK-J09-S60",
+      "journey": "CK-J09",
+      "behavior": "Garbage collection never deletes a hash referenced again after its settle period, even when the run read the manifest before the re-reference",
+      "status": "verified",
+      "evidence": [
+        "fix/media-gc-safety: real bucket (MinIO in CI), real PostgreSQL; collector and lifecycle steps interleaved at exact bucket operations."
+      ],
+      "cases": [
+        "TestMediaGCSafety/CK-J09-S60_gc_never_deletes_a_hash_referenced_again_after_its_settle"
+      ]
+    },
+    {
+      "id": "CK-J09-S61",
+      "journey": "CK-J09",
+      "behavior": "Garbage collection sends each DELETE while the hash's fence holds, however slowly the bucket lists and answers, and drains a long retired list across runs",
+      "status": "verified",
+      "evidence": [
+        "fix/media-gc-safety: real bucket (MinIO in CI), real PostgreSQL; collector and lifecycle steps interleaved at exact bucket operations."
+      ],
+      "cases": [
+        "TestMediaGCSafety/CK-J09-S61_gc_sends_every_delete_while_its_fence_holds"
+      ]
+    },
+    {
+      "id": "CK-J09-S62",
+      "journey": "CK-J09",
+      "behavior": "An object no manifest names, written after the item's last write, is collected once it is a day old",
+      "status": "verified",
+      "evidence": [
+        "fix/media-gc-safety: real bucket (MinIO in CI), real PostgreSQL; collector and lifecycle steps interleaved at exact bucket operations."
+      ],
+      "cases": [
+        "TestMediaGCSafety/CK-J09-S62_an_object_left_after_the_items_last_write_is_collected"
+      ]
+    },
+    {
+      "id": "CK-J09-S63",
+      "journey": "CK-J09",
+      "behavior": "A deletion racing a restore leaves the gateway fence the manifest records: a deleted item is never served",
+      "status": "verified",
+      "evidence": [
+        "fix/media-gc-safety: real bucket (MinIO in CI), real PostgreSQL; collector and lifecycle steps interleaved at exact bucket operations."
+      ],
+      "cases": [
+        "TestMediaGCSafety/CK-J09-S63_a_deletion_racing_a_restore_leaves_the_fence_its_manifest_records"
+      ]
+    },
+    {
+      "id": "CK-J09-S64",
+      "journey": "CK-J09",
+      "behavior": "A restore racing an erasure never removes the erasure's permanent fence",
+      "status": "verified",
+      "evidence": [
+        "fix/media-gc-safety: real bucket (MinIO in CI), real PostgreSQL; collector and lifecycle steps interleaved at exact bucket operations."
+      ],
+      "cases": [
+        "TestMediaGCSafety/CK-J09-S64_a_restore_racing_an_erasure_keeps_its_permanent_fence"
+      ]
+    },
+    {
+      "id": "CK-J09-S65",
+      "journey": "CK-J09",
+      "behavior": "A page moved from private/ to public/ keeps its private copy readable for an hour; a page leaving public/ stops being served at once",
+      "status": "verified",
+      "evidence": [
+        "fix/media-gc-safety: real bucket (MinIO in CI), real PostgreSQL; collector and lifecycle steps interleaved at exact bucket operations."
+      ],
+      "cases": [
+        "TestLockedPreviewPages/CK-J09-S65_a_page_made_free_keeps_its_private_copy_readable_for_an_hour"
+      ]
+    },
+    {
+      "id": "CK-J09-S66",
+      "journey": "CK-J09",
+      "behavior": "Edits of one manifest within one process queue rather than conflict through refused conditional writes",
+      "status": "verified",
+      "evidence": [
+        "fix/media-gc-safety: real bucket (MinIO in CI), real PostgreSQL; collector and lifecycle steps interleaved at exact bucket operations."
+      ],
+      "cases": [
+        "TestMediaGCSafety/CK-J09-S66_edits_of_one_manifest_in_one_process_queue_instead_of_conflicting"
+      ]
+    },
+    {
+      "id": "CK-J09-S67",
+      "journey": "CK-J09",
+      "behavior": "Garbage collection drains the retired files of a manifest at its size limit",
+      "status": "verified",
+      "evidence": [
+        "fix/media-gc-safety: real bucket (MinIO in CI), real PostgreSQL; collector and lifecycle steps interleaved at exact bucket operations."
+      ],
+      "cases": [
+        "TestMediaGCSafety/CK-J09-S67_gc_drains_the_retired_files_of_a_manifest_at_its_size_limit"
+      ]
+    },
+    {
+      "id": "CK-J32-S01",
+      "journey": "CK-J32",
+      "behavior": "Opens, progress and searches land in the activity log stamped with subject, site, access, UTC offset and their list",
+      "status": "verified",
+      "evidence": [
+        "Real HTTP over real PostgreSQL and ClickHouse; the engine's batched writer and analytics job do the work."
+      ],
+      "cases": [
+        "TestAnalyticsReading/CK-J32-S01_intake_stamps_the_activity_log"
+      ]
+    },
+    {
+      "id": "CK-J32-S02",
+      "journey": "CK-J32",
+      "behavior": "Each process batches its rows into few async INSERTs and keeps them through a ClickHouse outage without duplicates",
+      "status": "verified",
+      "evidence": [
+        "Real HTTP over real PostgreSQL and ClickHouse; the engine's batched writer and analytics job do the work."
+      ],
+      "cases": [
+        "TestAnalyticsBatchedWrites/CK-J32-S02_writes_are_batched_and_survive_an_outage"
+      ]
+    },
+    {
+      "id": "CK-J32-S03",
+      "journey": "CK-J32",
+      "behavior": "The job classifies each person x gallery x day by fraction read and pace, and packs the day into reading_history with session starts and each gallery's first-open surface",
+      "status": "verified",
+      "evidence": [
+        "Real HTTP over real PostgreSQL and ClickHouse; the engine's batched writer and analytics job do the work."
+      ],
+      "cases": [
+        "TestAnalyticsReading/CK-J32-S03_the_job_classifies_each_day_by_fraction_read"
+      ]
+    },
+    {
+      "id": "CK-J32-S04",
+      "journey": "CK-J32",
+      "behavior": "reading_state merges by maximum and latest, and repeating the job changes nothing",
+      "status": "verified",
+      "evidence": [
+        "Real HTTP over real PostgreSQL and ClickHouse; the engine's batched writer and analytics job do the work."
+      ],
+      "cases": [
+        "TestAnalyticsReading/CK-J32-S04_reading_state_merges_by_maximum_and_latest"
+      ]
+    },
+    {
+      "id": "CK-J32-S05",
+      "journey": "CK-J32",
+      "behavior": "Signing in folds the anonymous id's reading, reactions and searches into the account; late anonymous rows count as the account's; a fresh anonymous id stays apart",
+      "status": "verified",
+      "evidence": [
+        "Real HTTP over real PostgreSQL and ClickHouse; the engine's batched writer and analytics job do the work."
+      ],
+      "cases": [
+        "TestAnalyticsSignInFold/CK-J32-S05_sign_in_folds_the_anonymous_history_into_the_account"
+      ]
+    },
+    {
+      "id": "CK-J32-S06",
+      "journey": "CK-J32",
+      "behavior": "Reactions and favorites are logged where they are written; a reaction alone makes no reading state",
+      "status": "verified",
+      "evidence": [
+        "Real HTTP over real PostgreSQL and ClickHouse; the engine's batched writer and analytics job do the work."
+      ],
+      "cases": [
+        "TestAnalyticsReactionsAndFavoritesAreLogged/CK-J32-S06_reactions_and_favorites_are_logged_where_written"
+      ]
+    },
+    {
+      "id": "CK-J32-S07",
+      "journey": "CK-J32",
+      "behavior": "Account erasure deletes reading state, history and links of the account and its folded anonymous ids, fences their rows and the daily delete removes them",
+      "status": "verified",
+      "evidence": [
+        "Real HTTP over real PostgreSQL and ClickHouse; the engine's batched writer and analytics job do the work."
+      ],
+      "cases": [
+        "TestAnalyticsErasure/CK-J32-S07_erasure_deletes_reading_and_fences_the_log"
+      ]
+    },
+    {
+      "id": "CK-J32-S08",
+      "journey": "CK-J32",
+      "behavior": "Hiding is immediate in every list, search and continue reading, per reader and signed out, and unhiding restores it",
+      "status": "verified",
+      "evidence": [
+        "Real HTTP over real PostgreSQL and ClickHouse; the engine's batched writer and analytics job do the work."
+      ],
+      "cases": [
+        "TestAnalyticsReading/CK-J32-S08_hide_is_immediate_everywhere_and_undoable"
+      ]
+    },
+    {
+      "id": "CK-J32-S09",
+      "journey": "CK-J32",
+      "behavior": "content_daily and audience_daily rebuild a whole tenant-day in one generation, hourly and after midnight, and the staff report reads them",
+      "status": "verified",
+      "evidence": [
+        "Real HTTP over real PostgreSQL and ClickHouse; the engine's batched writer and analytics job do the work."
+      ],
+      "cases": [
+        "TestAnalyticsDailyRollups/CK-J32-S09_daily_rollups_rebuild_a_whole_day_by_outcome_and_access"
+      ]
+    },
+    {
+      "id": "CK-J32-S10",
+      "journey": "CK-J32",
+      "behavior": "A polarizing gallery's audience is its readers with positive affinity for its tags and no not_into dislike",
+      "status": "verified",
+      "evidence": [
+        "Real HTTP over real PostgreSQL and ClickHouse; the engine's batched writer and analytics job do the work."
+      ],
+      "cases": [
+        "TestAnalyticsAudience/CK-J32-S10_a_polarizing_gallerys_audience_is_its_readers_with_affinity"
+      ]
+    },
+    {
+      "id": "CK-J32-S11",
+      "journey": "CK-J32",
+      "behavior": "Continue reading lists started, unfinished reads newest first with positions, without finished, bounced, hidden or disliked ones",
+      "status": "verified",
+      "evidence": [
+        "Real HTTP over real PostgreSQL and ClickHouse; the engine's batched writer and analytics job do the work."
+      ],
+      "cases": [
+        "TestAnalyticsReading/CK-J32-S11_continue_lists_started_unfinished_reads"
+      ]
+    },
+    {
+      "id": "CK-J32-S12",
+      "journey": "CK-J32",
+      "behavior": "Every card carries the reader's progress against its version's length in one batch per page",
+      "status": "verified",
+      "evidence": [
+        "Real HTTP over real PostgreSQL and ClickHouse; the engine's batched writer and analytics job do the work."
+      ],
+      "cases": [
+        "TestAnalyticsReading/CK-J32-S12_cards_carry_the_readers_progress"
+      ]
+    },
+    {
+      "id": "CK-J32-S13",
+      "journey": "CK-J32",
+      "behavior": "New to you leaves out what the reader opened or hid, signed in or by anonymous id",
+      "status": "verified",
+      "evidence": [
+        "Real HTTP over real PostgreSQL and ClickHouse; the engine's batched writer and analytics job do the work."
+      ],
+      "cases": [
+        "TestAnalyticsReading/CK-J32-S13_new_to_you_leaves_out_what_was_read_or_hidden"
+      ]
+    },
+    {
+      "id": "CK-J32-S14",
+      "journey": "CK-J32",
+      "behavior": "Legacy reading imports merge into reading state and an imported removal clears it",
+      "status": "verified",
+      "evidence": [
+        "Real HTTP over real PostgreSQL and ClickHouse; the engine's batched writer and analytics job do the work."
+      ],
+      "cases": [
+        "TestAnalyticsLegacyReadingImport/CK-J32-S14_legacy_reading_imports_into_reading_state",
+        "TestImportLegacyReadingRemoval"
+      ]
+    },
+    {
+      "id": "CK-J32-S15",
+      "journey": "CK-J32",
+      "behavior": "History and completed counts come from reading state; clearing history removes state, history and raw rows and keeps hidden galleries hidden",
+      "status": "verified",
+      "evidence": [
+        "Real HTTP over real PostgreSQL and ClickHouse; the engine's batched writer and analytics job do the work."
+      ],
+      "cases": [
+        "TestAnalyticsReading/CK-J32-S15_history_and_clearing_it"
+      ]
+    },
+    {
+      "id": "CK-J32-S16",
+      "journey": "CK-J32",
+      "behavior": "A signed-out subject idle past anonymous_retention loses its reading state, history, recent searches and reaction links to the hourly expiry job; an active one and one linked to an account keep theirs, and reaction counts are unchanged",
+      "status": "verified",
+      "evidence": [
+        "The idle visitor's feedback answer and its free text expire with the rest; the answer is logged as its like with reason other and the text in no activity row.",
+        "Real HTTP over real PostgreSQL and ClickHouse; the analytics job records activity from the log and the real contentkit_anonymous_expiry River job expires."
+      ],
+      "cases": [
+        "TestAnalyticsAnonymousExpiry/CK-J32-S16_idle_anonymous_visitors_expire"
+      ]
+    },
+    {
+      "id": "CK-J32-S17",
+      "journey": "CK-J32",
+      "behavior": "Without ClickHouse a signed-out visitor's hides, searches and reactions record its activity, so the expiry job still expires an idle one and keeps an active one, with reaction counts unchanged",
+      "status": "verified",
+      "evidence": [
+        "Without ClickHouse the idle visitor's feedback expires; a visitor whose only activity in 31 days is answering a prompt is kept, the answer recorded in anonymous_activity.",
+        "Real HTTP over real PostgreSQL with no ClickHouse configured; the real contentkit_anonymous_expiry River job expires."
+      ],
+      "cases": [
+        "TestAnalyticsAnonymousExpiryWithoutClickHouse/CK-J32-S17_without_clickhouse_idle_anonymous_visitors_expire"
+      ]
+    },
+    {
+      "id": "CK-J40-S01",
+      "journey": "CK-J40",
+      "behavior": "A feedback prompt follows only the reader's own current like, favorite or dislike, and offers only answers the item can name",
+      "status": "verified",
+      "cases": [
+        "TestReactionFeedback/CK-J40-S01_offered_only_after_the_readers_own_reaction"
+      ],
+      "evidence": [
+        "No prompt without the reaction, for a mismatched reaction, or for a signed-out browser that did not react; an unknown reaction or a signed-out request without ContentKit-Anonymous-Id is 400 and an unknown item 404. A like offers artwork, artist, story, series, tag and other with the item's tags, artist and series; a bare item offers artwork, story and other.",
+        "contentkit#300: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
+      "id": "CK-J40-S02",
+      "journey": "CK-J40",
+      "behavior": "One person is never asked twice about one item",
+      "status": "verified",
+      "cases": [
+        "TestReactionFeedback/CK-J40-S02_never_twice_for_one_item"
+      ],
+      "evidence": [
+        "After a like prompt, a later favorite and a repeated like on the same item, a day later, offer nothing; one row is stored.",
+        "contentkit#300: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
+      "id": "CK-J40-S03",
+      "journey": "CK-J40",
+      "behavior": "One prompt a day per person across likes and dislikes, each signed-out browser its own",
+      "status": "verified",
+      "cases": [
+        "TestReactionFeedback/CK-J40-S03_one_prompt_a_day_across_likes_and_dislikes"
+      ],
+      "evidence": [
+        "A dislike 23 hours after a like prompt is not asked about and is 25 hours after; two rows are stored. Two signed-out browsers sharing an address are each asked once.",
+        "contentkit#300: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
+      "id": "CK-J40-S04",
+      "journey": "CK-J40",
+      "behavior": "Like answers name their entity, replace earlier answers and suggest a follow-up",
+      "status": "verified",
+      "cases": [
+        "TestReactionFeedback/CK-J40-S04_like_answers_name_their_entity_and_follow_up"
+      ],
+      "evidence": [
+        "A tag answer needs one of the item's tags and leads to browsing it; artist and series answers name the only one and lead to following it; artwork and story name nothing; other keeps up to 280 characters of trimmed text and the first answer time; bad reasons, misplaced text, over-long text, a hide without a not_into answer and an answer without a prompt are refused.",
+        "contentkit#300: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
+      "id": "CK-J40-S05",
+      "journey": "CK-J40",
+      "behavior": "Dislike answers and their culprit tags",
+      "status": "verified",
+      "cases": [
+        "TestReactionFeedback/CK-J40-S05_dislike_answers_and_culprit_tags"
+      ],
+      "evidence": [
+        "Without culprits a dislike offers bad_art, bad_story, misleading and other, each stored. Culprits are the filters' tags in their order, at most three, all hideable, and not_into must name one; a tag the reader already dislikes is a culprit though no filter offers it, and is not hideable.",
+        "contentkit#300: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
+      "id": "CK-J40-S06",
+      "journey": "CK-J40",
+      "behavior": "Not into a hideable tag offers hiding it, never preselected, and taking it writes the account's content_filter_prefs",
+      "status": "verified",
+      "cases": [
+        "TestReactionFeedback/CK-J40-S06_not_into_offers_hiding_the_tag_in_account_filters"
+      ],
+      "evidence": [
+        "not_into furry records the suggestion undecided; taking it hides the tag in GET /v1/content-filters and stores entity:<id>=hide; an already disliked tag comes first; declining leaves the filters; a tag the reader already hides is not hideable and its take is refused.",
+        "contentkit#300: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
+      "id": "CK-J40-S07",
+      "journey": "CK-J40",
+      "behavior": "A signed-out browser's hide is recorded under its anonymous subject and stored by no account",
+      "status": "verified",
+      "cases": [
+        "TestReactionFeedback/CK-J40-S07_signed_out_hide_is_recorded_not_stored_for_an_account"
+      ],
+      "evidence": [
+        "Without ContentKit-Anonymous-Id 400, another browser 404; the browser's take and later free-text answer are stored under its anonymous subject, recorded as its activity in anonymous_activity, and no content_filter_prefs row is written.",
+        "contentkit#300: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
+      "id": "CK-J40-S08",
+      "journey": "CK-J40",
+      "behavior": "Signing in merges a browser's filter choices into the account: unset entities filled, a hide wins over a show",
+      "status": "verified",
+      "cases": [
+        "TestReactionFeedback/CK-J40-S08_signin_merges_browser_filters"
+      ],
+      "evidence": [
+        "A browser hide overrides the account's show and fills an unset entity; a browser show never overrides a hide; resets and entities no domain offers are ignored; a repeat changes nothing; another account's id is 403 and signed out 401.",
+        "contentkit#300: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
+      "id": "CK-J40-S09",
+      "journey": "CK-J40",
+      "behavior": "Account erasure deletes the account's feedback, free text included, and nobody else's",
+      "status": "verified",
+      "cases": [
+        "TestReactionFeedback/CK-J40-S09_erasure_deletes_answers_and_their_text"
+      ],
+      "evidence": [
+        "After AnonymizeAccount no row of the account or its text remains; other people's rows are untouched.",
+        "contentkit#300: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
+      "id": "CK-J40-S10",
+      "journey": "CK-J40",
+      "behavior": "Sampling follows each reaction's configured rate and never redraws for one person, item and reaction",
+      "status": "verified",
+      "cases": [
+        "TestReactionFeedbackSampling/CK-J40-S10_sampling_follows_the_rates_and_never_redraws"
+      ],
+      "evidence": [
+        "At like 1/2 and dislike 0, 60 signed-out browsers each reacting are asked between 12 and 48 times and never about the dislike; each passed-over browser reacting and asking three more times is never asked; rows match.",
+        "contentkit#300: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
+      "id": "CK-J09-S52",
+      "journey": "CK-J09",
+      "behavior": "A video hook's master (FFV1 in Matroska, its own object, released to private/) re-derives everything made from the video: every HLS rendition and the seek sprite record its hash, the grabbed poster is grabbed again from it and its thumbnail rendered again, readers stream the new renditions, and a repeat regeneration writes nothing",
+      "status": "verified",
+      "evidence": [
+        "contentkit#304: real bucket (MinIO in CI), real PostgreSQL, FFmpeg, engine and a worker built by media/worker.New with the hook."
+      ],
+      "cases": [
+        "TestMediaMasters/CK-J09-S52_a_video_master_rederives_its_renditions_sprite_frames_and_thumbnails"
+      ]
+    },
+    {
+      "id": "CK-J09-S53",
+      "journey": "CK-J09",
+      "behavior": "A host's own worker binary, media/worker.Main with its master hook, makes the recipe's masters; media/worker.New refuses a recipe's missing hook, another version and two hooks of one name, and the stock worker binary exits at start, taking no job, while a recipe names a hook it lacks",
+      "status": "verified",
+      "evidence": [
+        "contentkit#304: real bucket (MinIO in CI), real PostgreSQL, the stock and a host-built worker binary as processes."
+      ],
+      "cases": [
+        "TestMediaMasters/CK-J09-S53_a_hosts_worker_binary_registers_its_hooks_and_one_without_them_never_starts"
+      ]
+    },
+    {
+      "id": "CK-J09-S54",
+      "journey": "CK-J09",
+      "behavior": "A master (or video rendition) past the single-PUT limit is streamed from its file as a multipart upload, each part bound to its length and SHA-256, and stored byte for byte with its type; a file that fails part way is aborted, leaving no upload or object",
+      "status": "verified",
+      "evidence": [
+        "contentkit#304: real bucket (MinIO in CI) through the S3 store, with S3's smallest part size standing in for the production limit."
+      ],
+      "cases": [
+        "TestMediaMasters/CK-J09-S54_a_master_past_the_single_put_limit_goes_up_in_parts"
+      ]
+    },
+    {
+      "id": "CK-J07-S50",
+      "journey": "CK-J07",
+      "behavior": "Pages never query ClickHouse for featured windows; popular requests are validated",
+      "status": "verified",
+      "evidence": [
+        "With content_daily renamed away, the popular week and the default tag listing still answer from the cache (every article and tag, nothing read yet); unknown windows, malformed calendar windows and ranges, a page with a cursor, a missing kind and a window without sort=popular are refused.",
+        "contentkit#300: written against real PostgreSQL and ClickHouse with the engine's own precompute job; not executed locally, CI runs it."
+      ],
+      "cases": [
+        "TestPopularity/CK-J07-S50_pages_never_query_clickhouse_for_featured_windows"
+      ]
+    },
+    {
+      "id": "CK-J07-S51",
+      "journey": "CK-J07",
+      "behavior": "Galleries rank by quality-weighted person-days; a polarizing gallery scores about zero",
+      "status": "verified",
+      "evidence": [
+        "From real content_daily rows and outcome_values guesses, 40 good reads beat 5 complete ones and 3 good reads beat 60 split between favourites and \"not into\", which sum below zero and follow an unread article; the tag's own list ranks by its audience, where the split article leads.",
+        "contentkit#300: written against real PostgreSQL and ClickHouse with the engine's own precompute job; not executed locally, CI runs it."
+      ],
+      "cases": [
+        "TestPopularity/CK-J07-S51_quality_weighted_person_days_rank_galleries"
+      ]
+    },
+    {
+      "id": "CK-J07-S52",
+      "journey": "CK-J07",
+      "behavior": "Entities sum their galleries' popularity and show polarization",
+      "status": "verified",
+      "evidence": [
+        "The tag listing defaults to popular: a tag scores the exact sum of its articles, an unread tag follows the read ones and the negative tag comes last; the split tag's polarization is 2\u00b730/80 and a uniformly good tag's is 0.",
+        "contentkit#300: written against real PostgreSQL and ClickHouse with the engine's own precompute job; not executed locally, CI runs it."
+      ],
+      "cases": [
+        "TestPopularity/CK-J07-S52_entities_sum_their_galleries_and_show_polarization"
+      ]
+    },
+    {
+      "id": "CK-J07-S53",
+      "journey": "CK-J07",
+      "behavior": "Featured windows, closed calendar ranges and open reports rank their own days",
+      "status": "verified",
+      "evidence": [
+        "week, 30d and all order the same articles differently by when they were read; a past month is computed once and kept, ignoring rows added later; an open range is recomputed per request and reports its bounds.",
+        "contentkit#300: written against real PostgreSQL and ClickHouse with the engine's own precompute job; not executed locally, CI runs it."
+      ],
+      "cases": [
+        "TestPopularity/CK-J07-S53_windows_closed_ranges_and_reports"
+      ]
+    },
+    {
+      "id": "CK-J07-S54",
+      "journey": "CK-J07",
+      "behavior": "Each site (domain and language) ranks its own reads",
+      "status": "verified",
+      "evidence": [
+        "English, German (via Accept-Language) and a second domain rank the same two articles by the reads on that site only.",
+        "contentkit#300: written against real PostgreSQL and ClickHouse with the engine's own precompute job; not executed locally, CI runs it."
+      ],
+      "cases": [
+        "TestPopularity/CK-J07-S54_each_site_ranks_its_own_reads"
+      ]
+    },
+    {
+      "id": "CK-J07-S55",
+      "journey": "CK-J07",
+      "behavior": "Gated galleries scale to the people who could open them",
+      "status": "verified",
+      "evidence": [
+        "With 10 of 100 active people holding gold (audience_daily), a gold-only article read by 5 a day outranks a public one read by 10, using the access history's tier days.",
+        "contentkit#300: written against real PostgreSQL and ClickHouse with the engine's own precompute job; not executed locally, CI runs it."
+      ],
+      "cases": [
+        "TestPopularity/CK-J07-S55_gated_days_scale_to_the_people_who_could_open_them"
+      ]
+    },
+    {
+      "id": "CK-J07-S56",
+      "journey": "CK-J07",
+      "behavior": "Trending divides by the days a gallery was live",
+      "status": "verified",
+      "evidence": [
+        "In the week, 8 good reads of an article live for two days beat 10 over six; in 30d the order reverses.",
+        "contentkit#300: written against real PostgreSQL and ClickHouse with the engine's own precompute job; not executed locally, CI runs it."
+      ],
+      "cases": [
+        "TestPopularity/CK-J07-S56_trending_ranks_per_live_day"
+      ]
+    },
+    {
+      "id": "CK-J07-S57",
+      "journey": "CK-J07",
+      "behavior": "Popular listings drop only what the viewer's filters block",
+      "status": "verified",
+      "evidence": [
+        "A site's default-hidden tag removes its articles and itself from signed-out gallery and tag listings while unread articles stay; a signed-out browser choice and an account override show both again.",
+        "contentkit#300: written against real PostgreSQL and ClickHouse with the engine's own precompute job; not executed locally, CI runs it."
+      ],
+      "cases": [
+        "TestPopularity/CK-J07-S57_listings_drop_only_what_the_filters_block"
+      ]
+    },
+    {
+      "id": "CK-J07-S58",
+      "journey": "CK-J07",
+      "behavior": "Artists show their read-through rate from reading_state: readers who went on to read another of the artist's works within 30 days",
+      "status": "verified",
+      "evidence": [
+        "Of four readers of a work whose 30 days have passed, one read the artist's older work 20 days later and one the same day; one opened it only before and one 40 days after; a recent reader is not counted yet: the artist card shows 0.5 over 4 readers.",
+        "contentkit#300: written against real PostgreSQL and ClickHouse with the engine's own precompute job; not executed locally, CI runs it."
+      ],
+      "cases": [
+        "TestPopularity/CK-J07-S58_artists_show_their_read_through_rate"
+      ]
+    },
+    {
+      "id": "CK-J07-S59",
+      "journey": "CK-J07",
+      "behavior": "Similar weighs rare shared tags and the artist, under the viewer's filters",
+      "status": "verified",
+      "evidence": [
+        "The artist's other work comes first, then the one sharing a rare tag, then the common-tag ones; one hidden by the site's filters never appears.",
+        "contentkit#300: written against real PostgreSQL and ClickHouse with the engine's own precompute job; not executed locally, CI runs it."
+      ],
+      "cases": [
+        "TestPopularity/CK-J07-S59_similar_weighs_rare_tags_and_the_artist"
+      ]
+    },
+    {
+      "id": "CK-J07-S60",
+      "journey": "CK-J07",
+      "behavior": "A popular cursor keeps its ranking across a refresh",
+      "status": "verified",
+      "evidence": [
+        "After a precompute moves an unread article to the top, a cursor from before it pages the rest of the ranking it started, without duplicates or gaps, while a new first page shows the new order.",
+        "contentkit#300: written against real PostgreSQL and ClickHouse with the engine's own precompute job; not executed locally, CI runs it."
+      ],
+      "cases": [
+        "TestPopularity/CK-J07-S60_cursors_keep_their_ranking_across_a_refresh"
+      ]
+    },
+    {
+      "id": "CK-J07-S61",
+      "journey": "CK-J07",
+      "behavior": "Rankings are served stale while ClickHouse fails",
+      "status": "verified",
+      "evidence": [
+        "With content_daily unreachable the precompute fails and lists keep serving the last ranking, ready, then marked stale hours later; the next precompute after recovery succeeds.",
+        "contentkit#300: written against real PostgreSQL and ClickHouse with the engine's own precompute job; not executed locally, CI runs it."
+      ],
+      "cases": [
+        "TestPopularity/CK-J07-S61_rankings_are_served_stale_while_clickhouse_fails"
+      ]
+    },
+    {
+      "id": "CK-J07-S62",
+      "journey": "CK-J07",
+      "behavior": "A popular list \"new to you\" (view_status=unseen) leaves out what the reader opened or hid",
+      "status": "verified",
+      "evidence": [
+        "From the reader's reading_state, a bounced article and a hidden one drop out of the ranked list while an unopened one and an unread one stay, in ranking order.",
+        "contentkit#300: written against real PostgreSQL and ClickHouse with the engine's own precompute job; not executed locally, CI runs it."
+      ],
+      "cases": [
+        "TestPopularity/CK-J07-S62_new_to_you_leaves_out_what_the_reader_opened"
       ]
     }
   ],
@@ -3271,7 +4147,8 @@
       "bindings": 261,
       "change": "Moves channel moderation and personal-channel paths with their existing operation IDs; adds first-class channel CRUD, metadata, feed, repost and interaction contracts. Stable serialized billing/access identifiers remain unchanged.",
       "qualification": "Mappings are reviewed; no new integrated execution claim is made. The strict runner still requires every selected case to run and pass exactly once."
-    }
+    },
+    "analytics": "contentkit#300 replaces the signal plane with the activity log, reading state and daily rollups (CK-J32)."
   },
   "operation_contracts": [
     {
@@ -6856,60 +7733,6 @@
       ]
     },
     {
-      "id": "CK-API-141",
-      "method": "POST",
-      "path": "/v1/engagement",
-      "selection": "partial-security-only; positive/full functionality deferred P1",
-      "status": "verified",
-      "cases": [
-        "TestHTTPAuthenticationMatrix/CK-API-141_POST_/v1/engagement/malformed_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-141_POST_/v1/engagement/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-141_POST_/v1/engagement/expired_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-141_POST_/v1/engagement/wrong_issuer",
-        "TestHTTPAuthenticationMatrix/CK-API-141_POST_/v1/engagement/foreign_app_key"
-      ],
-      "implemented_security_cases": [
-        "TestHTTPAuthenticationMatrix/CK-API-141_POST_/v1/engagement/malformed_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-141_POST_/v1/engagement/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-141_POST_/v1/engagement/expired_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-141_POST_/v1/engagement/wrong_issuer",
-        "TestHTTPAuthenticationMatrix/CK-API-141_POST_/v1/engagement/foreign_app_key"
-      ],
-      "remaining": "P1: positive/function-specific error and deeper target profiles, as declared in the approved inventory.",
-      "security_evidence": "credential gate and app-key boundary only; no route-specific functional or mutation no-effect approval; executed in integrated-f052-aggregate",
-      "evidence": [
-        "Selected phase1 credential failures, foreign app-key binding, declared staff permission gate when applicable, HEAD inheritance and no protected body disclosure. Positive functionality and deeper route-specific profiles remain P1."
-      ],
-      "qualified_scope": "phase1 security-only; not full route functionality"
-    },
-    {
-      "id": "CK-API-142",
-      "method": "POST",
-      "path": "/v1/activity-contexts",
-      "selection": "partial-security-only; positive/full functionality deferred P1",
-      "status": "verified",
-      "cases": [
-        "TestHTTPAuthenticationMatrix/CK-API-142_POST_/v1/activity-contexts/malformed_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-142_POST_/v1/activity-contexts/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-142_POST_/v1/activity-contexts/expired_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-142_POST_/v1/activity-contexts/wrong_issuer",
-        "TestHTTPAuthenticationMatrix/CK-API-142_POST_/v1/activity-contexts/foreign_app_key"
-      ],
-      "implemented_security_cases": [
-        "TestHTTPAuthenticationMatrix/CK-API-142_POST_/v1/activity-contexts/malformed_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-142_POST_/v1/activity-contexts/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-142_POST_/v1/activity-contexts/expired_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-142_POST_/v1/activity-contexts/wrong_issuer",
-        "TestHTTPAuthenticationMatrix/CK-API-142_POST_/v1/activity-contexts/foreign_app_key"
-      ],
-      "remaining": "P1: positive/function-specific error and deeper target profiles, as declared in the approved inventory.",
-      "security_evidence": "credential gate and app-key boundary only; no route-specific functional or mutation no-effect approval; executed in integrated-f052-aggregate",
-      "evidence": [
-        "Selected phase1 credential failures, foreign app-key binding, declared staff permission gate when applicable, HEAD inheritance and no protected body disclosure. Positive functionality and deeper route-specific profiles remain P1."
-      ],
-      "qualified_scope": "phase1 security-only; not full route functionality"
-    },
-    {
       "id": "CK-API-143",
       "method": "GET",
       "path": "/v1/releases",
@@ -7173,35 +7996,6 @@
       "qualified_scope": "phase1 security-only; not full route functionality"
     },
     {
-      "id": "CK-API-152",
-      "method": "POST",
-      "path": "/v1/me/content-filters/initialize",
-      "selection": "partial-security-only; positive/full functionality deferred P1",
-      "status": "verified",
-      "cases": [
-        "TestHTTPAuthenticationMatrix/CK-API-152_POST_/v1/me/content-filters/initialize/malformed_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-152_POST_/v1/me/content-filters/initialize/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-152_POST_/v1/me/content-filters/initialize/expired_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-152_POST_/v1/me/content-filters/initialize/wrong_issuer",
-        "TestHTTPAuthenticationMatrix/CK-API-152_POST_/v1/me/content-filters/initialize/foreign_app_key",
-        "TestHTTPAuthenticationMatrix/CK-API-152_POST_/v1/me/content-filters/initialize/anonymous_protected_operation"
-      ],
-      "implemented_security_cases": [
-        "TestHTTPAuthenticationMatrix/CK-API-152_POST_/v1/me/content-filters/initialize/malformed_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-152_POST_/v1/me/content-filters/initialize/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-152_POST_/v1/me/content-filters/initialize/expired_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-152_POST_/v1/me/content-filters/initialize/wrong_issuer",
-        "TestHTTPAuthenticationMatrix/CK-API-152_POST_/v1/me/content-filters/initialize/foreign_app_key",
-        "TestHTTPAuthenticationMatrix/CK-API-152_POST_/v1/me/content-filters/initialize/anonymous_protected_operation"
-      ],
-      "remaining": "P1: positive/function-specific error and deeper target profiles, as declared in the approved inventory.",
-      "security_evidence": "credential gate and app-key boundary only; no route-specific functional or mutation no-effect approval; executed in integrated-f052-aggregate",
-      "evidence": [
-        "Selected phase1 credential failures, foreign app-key binding, declared staff permission gate when applicable, HEAD inheritance and no protected body disclosure. Positive functionality and deeper route-specific profiles remain P1."
-      ],
-      "qualified_scope": "phase1 security-only; not full route functionality"
-    },
-    {
       "id": "CK-API-153",
       "method": "GET",
       "path": "/v1/me/history",
@@ -7253,60 +8047,6 @@
         "TestHTTPAuthenticationMatrix/CK-API-154_DELETE_/v1/me/history/wrong_issuer",
         "TestHTTPAuthenticationMatrix/CK-API-154_DELETE_/v1/me/history/foreign_app_key",
         "TestHTTPAuthenticationMatrix/CK-API-154_DELETE_/v1/me/history/anonymous_protected_operation"
-      ],
-      "remaining": "P1: positive/function-specific error and deeper target profiles, as declared in the approved inventory.",
-      "security_evidence": "credential gate and app-key boundary only; no route-specific functional or mutation no-effect approval; executed in integrated-f052-aggregate",
-      "evidence": [
-        "Selected phase1 credential failures, foreign app-key binding, declared staff permission gate when applicable, HEAD inheritance and no protected body disclosure. Positive functionality and deeper route-specific profiles remain P1."
-      ],
-      "qualified_scope": "phase1 security-only; not full route functionality"
-    },
-    {
-      "id": "CK-API-155",
-      "method": "POST",
-      "path": "/v1/signals",
-      "selection": "partial-security-only; positive/full functionality deferred P1",
-      "status": "verified",
-      "cases": [
-        "TestHTTPAuthenticationMatrix/CK-API-155_POST_/v1/signals/malformed_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-155_POST_/v1/signals/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-155_POST_/v1/signals/expired_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-155_POST_/v1/signals/wrong_issuer",
-        "TestHTTPAuthenticationMatrix/CK-API-155_POST_/v1/signals/foreign_app_key"
-      ],
-      "implemented_security_cases": [
-        "TestHTTPAuthenticationMatrix/CK-API-155_POST_/v1/signals/malformed_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-155_POST_/v1/signals/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-155_POST_/v1/signals/expired_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-155_POST_/v1/signals/wrong_issuer",
-        "TestHTTPAuthenticationMatrix/CK-API-155_POST_/v1/signals/foreign_app_key"
-      ],
-      "remaining": "P1: positive/function-specific error and deeper target profiles, as declared in the approved inventory.",
-      "security_evidence": "credential gate and app-key boundary only; no route-specific functional or mutation no-effect approval; executed in integrated-f052-aggregate",
-      "evidence": [
-        "Selected phase1 credential failures, foreign app-key binding, declared staff permission gate when applicable, HEAD inheritance and no protected body disclosure. Positive functionality and deeper route-specific profiles remain P1."
-      ],
-      "qualified_scope": "phase1 security-only; not full route functionality"
-    },
-    {
-      "id": "CK-API-156",
-      "method": "POST",
-      "path": "/v1/exposures",
-      "selection": "partial-security-only; positive/full functionality deferred P1",
-      "status": "verified",
-      "cases": [
-        "TestHTTPAuthenticationMatrix/CK-API-156_POST_/v1/exposures/malformed_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-156_POST_/v1/exposures/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-156_POST_/v1/exposures/expired_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-156_POST_/v1/exposures/wrong_issuer",
-        "TestHTTPAuthenticationMatrix/CK-API-156_POST_/v1/exposures/foreign_app_key"
-      ],
-      "implemented_security_cases": [
-        "TestHTTPAuthenticationMatrix/CK-API-156_POST_/v1/exposures/malformed_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-156_POST_/v1/exposures/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-156_POST_/v1/exposures/expired_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-156_POST_/v1/exposures/wrong_issuer",
-        "TestHTTPAuthenticationMatrix/CK-API-156_POST_/v1/exposures/foreign_app_key"
       ],
       "remaining": "P1: positive/function-specific error and deeper target profiles, as declared in the approved inventory.",
       "security_evidence": "credential gate and app-key boundary only; no route-specific functional or mutation no-effect approval; executed in integrated-f052-aggregate",
@@ -7435,28 +8175,29 @@
     {
       "id": "CK-API-163",
       "method": "GET",
-      "path": "/v1/stats/activity",
-      "selection": "partial-security-only; positive/full functionality deferred P1",
+      "path": "/v1/stats/active",
+      "selection": "included-critical functionality and security",
       "status": "verified",
       "cases": [
-        "TestHTTPAuthenticationMatrix/CK-API-163_GET_/v1/stats/activity/malformed_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-163_GET_/v1/stats/activity/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-163_GET_/v1/stats/activity/expired_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-163_GET_/v1/stats/activity/wrong_issuer",
-        "TestHTTPAuthenticationMatrix/CK-API-163_GET_/v1/stats/activity/foreign_app_key",
-        "TestHTTPAuthenticationMatrix/CK-API-163_GET_/v1/stats/activity/anonymous_protected_operation",
-        "TestHTTPAuthenticationMatrix/CK-API-163_GET_/v1/stats/activity/inherited_HEAD_credential_gate",
-        "TestHTTPAuthenticationMatrix/CK-API-163_GET_/v1/stats/activity/member_without_named_permission"
+        "TestHTTPAuthenticationMatrix/CK-API-163_GET_/v1/stats/active/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-163_GET_/v1/stats/active/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-163_GET_/v1/stats/active/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-163_GET_/v1/stats/active/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-163_GET_/v1/stats/active/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-163_GET_/v1/stats/active/anonymous_protected_operation",
+        "TestHTTPAuthenticationMatrix/CK-API-163_GET_/v1/stats/active/inherited_HEAD_credential_gate",
+        "TestHTTPAuthenticationMatrix/CK-API-163_GET_/v1/stats/active/member_without_named_permission",
+        "TestAnalyticsDailyRollups/CK-J32-S09_daily_rollups_rebuild_a_whole_day_by_outcome_and_access"
       ],
       "implemented_security_cases": [
-        "TestHTTPAuthenticationMatrix/CK-API-163_GET_/v1/stats/activity/malformed_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-163_GET_/v1/stats/activity/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-163_GET_/v1/stats/activity/expired_credential",
-        "TestHTTPAuthenticationMatrix/CK-API-163_GET_/v1/stats/activity/wrong_issuer",
-        "TestHTTPAuthenticationMatrix/CK-API-163_GET_/v1/stats/activity/foreign_app_key",
-        "TestHTTPAuthenticationMatrix/CK-API-163_GET_/v1/stats/activity/anonymous_protected_operation",
-        "TestHTTPAuthenticationMatrix/CK-API-163_GET_/v1/stats/activity/inherited_HEAD_credential_gate",
-        "TestHTTPAuthenticationMatrix/CK-API-163_GET_/v1/stats/activity/member_without_named_permission"
+        "TestHTTPAuthenticationMatrix/CK-API-163_GET_/v1/stats/active/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-163_GET_/v1/stats/active/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-163_GET_/v1/stats/active/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-163_GET_/v1/stats/active/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-163_GET_/v1/stats/active/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-163_GET_/v1/stats/active/anonymous_protected_operation",
+        "TestHTTPAuthenticationMatrix/CK-API-163_GET_/v1/stats/active/inherited_HEAD_credential_gate",
+        "TestHTTPAuthenticationMatrix/CK-API-163_GET_/v1/stats/active/member_without_named_permission"
       ],
       "remaining": "P1: positive/function-specific error and deeper target profiles, as declared in the approved inventory.",
       "security_evidence": "credential gate and app-key boundary only; no route-specific functional or mutation no-effect approval; executed in integrated-f052-aggregate",
@@ -8413,8 +9154,7 @@
         "TestHTTPAuthenticationMatrix/CK-API-195_POST_/v1/moderation/location-rules/malformed_credential",
         "TestHTTPAuthenticationMatrix/CK-API-195_POST_/v1/moderation/location-rules/member_without_named_permission",
         "TestHTTPAuthenticationMatrix/CK-API-195_POST_/v1/moderation/location-rules/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-195_POST_/v1/moderation/location-rules/wrong_issuer",
-        "TestInternalArea/CK-J09-S01_real_image_upload_produces_a_readable_rendition/location_rule_denies_media_grant"
+        "TestHTTPAuthenticationMatrix/CK-API-195_POST_/v1/moderation/location-rules/wrong_issuer"
       ],
       "implemented_security_cases": [
         "TestHTTPAuthenticationMatrix/CK-API-195_POST_/v1/moderation/location-rules/malformed_credential",
@@ -8477,8 +9217,7 @@
         "TestHTTPAuthenticationMatrix/CK-API-197_DELETE_/v1/moderation/location-rules/{id}/malformed_credential",
         "TestHTTPAuthenticationMatrix/CK-API-197_DELETE_/v1/moderation/location-rules/{id}/member_without_named_permission",
         "TestHTTPAuthenticationMatrix/CK-API-197_DELETE_/v1/moderation/location-rules/{id}/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-197_DELETE_/v1/moderation/location-rules/{id}/wrong_issuer",
-        "TestInternalArea/CK-J09-S01_real_image_upload_produces_a_readable_rendition/location_rule_denies_media_grant"
+        "TestHTTPAuthenticationMatrix/CK-API-197_DELETE_/v1/moderation/location-rules/{id}/wrong_issuer"
       ],
       "implemented_security_cases": [
         "TestHTTPAuthenticationMatrix/CK-API-197_DELETE_/v1/moderation/location-rules/{id}/malformed_credential",
@@ -8625,6 +9364,224 @@
       "evidence": [
         "The host reads a purged account's state with its request and completion times; a member is refused.",
         "contentkit#287: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
+      "id": "CK-API-202",
+      "method": "POST",
+      "path": "/v1/activity",
+      "selection": "included-critical functionality and security",
+      "status": "verified",
+      "cases": [
+        "TestAnalyticsReading/CK-J32-S01_intake_stamps_the_activity_log",
+        "TestHTTPAuthenticationMatrix/CK-API-202_POST_/v1/activity/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-202_POST_/v1/activity/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-202_POST_/v1/activity/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-202_POST_/v1/activity/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-202_POST_/v1/activity/wrong_issuer"
+      ],
+      "implemented_security_cases": [
+        "TestHTTPAuthenticationMatrix/CK-API-202_POST_/v1/activity/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-202_POST_/v1/activity/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-202_POST_/v1/activity/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-202_POST_/v1/activity/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-202_POST_/v1/activity/foreign_app_key"
+      ],
+      "evidence": [
+        "Credential failures and the foreign app-key boundary over real HTTP; the named analytics scenario drives the route end to end over real PostgreSQL and ClickHouse."
+      ]
+    },
+    {
+      "id": "CK-API-203",
+      "method": "POST",
+      "path": "/v1/me/anonymous-link",
+      "selection": "included-critical functionality and security",
+      "status": "verified",
+      "cases": [
+        "TestAnalyticsSignInFold/CK-J32-S05_sign_in_folds_the_anonymous_history_into_the_account",
+        "TestHTTPAuthenticationMatrix/CK-API-203_POST_/v1/me/anonymous-link/anonymous_protected_operation",
+        "TestHTTPAuthenticationMatrix/CK-API-203_POST_/v1/me/anonymous-link/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-203_POST_/v1/me/anonymous-link/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-203_POST_/v1/me/anonymous-link/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-203_POST_/v1/me/anonymous-link/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-203_POST_/v1/me/anonymous-link/wrong_issuer"
+      ],
+      "implemented_security_cases": [
+        "TestHTTPAuthenticationMatrix/CK-API-203_POST_/v1/me/anonymous-link/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-203_POST_/v1/me/anonymous-link/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-203_POST_/v1/me/anonymous-link/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-203_POST_/v1/me/anonymous-link/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-203_POST_/v1/me/anonymous-link/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-203_POST_/v1/me/anonymous-link/anonymous_protected_operation"
+      ],
+      "evidence": [
+        "Credential failures and the foreign app-key boundary over real HTTP; the named analytics scenario drives the route end to end over real PostgreSQL and ClickHouse."
+      ]
+    },
+    {
+      "id": "CK-API-204",
+      "method": "PUT",
+      "path": "/v1/contents/{id}/hidden",
+      "selection": "included-critical functionality and security",
+      "status": "verified",
+      "cases": [
+        "TestAnalyticsReading/CK-J32-S08_hide_is_immediate_everywhere_and_undoable",
+        "TestHTTPAuthenticationMatrix/CK-API-204_PUT_/v1/contents/{id}/hidden/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-204_PUT_/v1/contents/{id}/hidden/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-204_PUT_/v1/contents/{id}/hidden/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-204_PUT_/v1/contents/{id}/hidden/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-204_PUT_/v1/contents/{id}/hidden/wrong_issuer"
+      ],
+      "implemented_security_cases": [
+        "TestHTTPAuthenticationMatrix/CK-API-204_PUT_/v1/contents/{id}/hidden/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-204_PUT_/v1/contents/{id}/hidden/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-204_PUT_/v1/contents/{id}/hidden/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-204_PUT_/v1/contents/{id}/hidden/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-204_PUT_/v1/contents/{id}/hidden/foreign_app_key"
+      ],
+      "evidence": [
+        "Credential failures and the foreign app-key boundary over real HTTP; the named analytics scenario drives the route end to end over real PostgreSQL and ClickHouse."
+      ]
+    },
+    {
+      "id": "CK-API-205",
+      "method": "DELETE",
+      "path": "/v1/contents/{id}/hidden",
+      "selection": "included-critical functionality and security",
+      "status": "verified",
+      "cases": [
+        "TestAnalyticsReading/CK-J32-S08_hide_is_immediate_everywhere_and_undoable",
+        "TestHTTPAuthenticationMatrix/CK-API-205_DELETE_/v1/contents/{id}/hidden/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-205_DELETE_/v1/contents/{id}/hidden/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-205_DELETE_/v1/contents/{id}/hidden/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-205_DELETE_/v1/contents/{id}/hidden/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-205_DELETE_/v1/contents/{id}/hidden/wrong_issuer"
+      ],
+      "implemented_security_cases": [
+        "TestHTTPAuthenticationMatrix/CK-API-205_DELETE_/v1/contents/{id}/hidden/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-205_DELETE_/v1/contents/{id}/hidden/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-205_DELETE_/v1/contents/{id}/hidden/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-205_DELETE_/v1/contents/{id}/hidden/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-205_DELETE_/v1/contents/{id}/hidden/foreign_app_key"
+      ],
+      "evidence": [
+        "Credential failures and the foreign app-key boundary over real HTTP; the named analytics scenario drives the route end to end over real PostgreSQL and ClickHouse."
+      ]
+    },
+    {
+      "id": "CK-API-206",
+      "method": "GET",
+      "path": "/v1/me/continue",
+      "selection": "included-critical functionality and security",
+      "status": "verified",
+      "cases": [
+        "TestAnalyticsReading/CK-J32-S11_continue_lists_started_unfinished_reads",
+        "TestHTTPAuthenticationMatrix/CK-API-206_GET_/v1/me/continue/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-206_GET_/v1/me/continue/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-206_GET_/v1/me/continue/inherited_HEAD_credential_gate",
+        "TestHTTPAuthenticationMatrix/CK-API-206_GET_/v1/me/continue/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-206_GET_/v1/me/continue/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-206_GET_/v1/me/continue/wrong_issuer"
+      ],
+      "implemented_security_cases": [
+        "TestHTTPAuthenticationMatrix/CK-API-206_GET_/v1/me/continue/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-206_GET_/v1/me/continue/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-206_GET_/v1/me/continue/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-206_GET_/v1/me/continue/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-206_GET_/v1/me/continue/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-206_GET_/v1/me/continue/inherited_HEAD_credential_gate"
+      ],
+      "evidence": [
+        "Credential failures and the foreign app-key boundary over real HTTP; the named analytics scenario drives the route end to end over real PostgreSQL and ClickHouse."
+      ]
+    },
+    {
+      "id": "CK-API-220",
+      "method": "POST",
+      "path": "/v1/me/content-filters/merge",
+      "selection": "included-critical functionality and security",
+      "status": "verified",
+      "cases": [
+        "TestReactionFeedback/CK-J40-S08_signin_merges_browser_filters",
+        "TestHTTPAuthenticationMatrix/CK-API-220_POST_/v1/me/content-filters/merge/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-220_POST_/v1/me/content-filters/merge/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-220_POST_/v1/me/content-filters/merge/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-220_POST_/v1/me/content-filters/merge/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-220_POST_/v1/me/content-filters/merge/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-220_POST_/v1/me/content-filters/merge/anonymous_protected_operation"
+      ],
+      "implemented_security_cases": [
+        "TestHTTPAuthenticationMatrix/CK-API-220_POST_/v1/me/content-filters/merge/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-220_POST_/v1/me/content-filters/merge/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-220_POST_/v1/me/content-filters/merge/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-220_POST_/v1/me/content-filters/merge/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-220_POST_/v1/me/content-filters/merge/foreign_app_key",
+        "TestHTTPAuthenticationMatrix/CK-API-220_POST_/v1/me/content-filters/merge/anonymous_protected_operation"
+      ],
+      "security_evidence": "credential gate and app-key boundary only; functional behavior is the mapped scenario cases",
+      "evidence": [
+        "The account's filters take a browser's choices at sign-in, hides winning; another account's id is refused.",
+        "contentkit#300: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
+      "id": "CK-API-221",
+      "method": "POST",
+      "path": "/v1/contents/{id}/feedback",
+      "selection": "included-critical functionality and security",
+      "status": "verified",
+      "cases": [
+        "TestReactionFeedback/CK-J40-S01_offered_only_after_the_readers_own_reaction",
+        "TestReactionFeedback/CK-J40-S02_never_twice_for_one_item",
+        "TestReactionFeedback/CK-J40-S03_one_prompt_a_day_across_likes_and_dislikes",
+        "TestReactionFeedbackSampling/CK-J40-S10_sampling_follows_the_rates_and_never_redraws",
+        "TestHTTPAuthenticationMatrix/CK-API-221_POST_/v1/contents/{id}/feedback/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-221_POST_/v1/contents/{id}/feedback/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-221_POST_/v1/contents/{id}/feedback/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-221_POST_/v1/contents/{id}/feedback/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-221_POST_/v1/contents/{id}/feedback/foreign_app_key"
+      ],
+      "implemented_security_cases": [
+        "TestHTTPAuthenticationMatrix/CK-API-221_POST_/v1/contents/{id}/feedback/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-221_POST_/v1/contents/{id}/feedback/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-221_POST_/v1/contents/{id}/feedback/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-221_POST_/v1/contents/{id}/feedback/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-221_POST_/v1/contents/{id}/feedback/foreign_app_key"
+      ],
+      "security_evidence": "credential gate and app-key boundary only; functional behavior is the mapped scenario cases",
+      "evidence": [
+        "Prompts follow the reader's own reaction, sampled, about once a day and never twice for one item.",
+        "contentkit#300: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
+      "id": "CK-API-222",
+      "method": "PATCH",
+      "path": "/v1/contents/{id}/feedback",
+      "selection": "included-critical functionality and security",
+      "status": "verified",
+      "cases": [
+        "TestReactionFeedback/CK-J40-S04_like_answers_name_their_entity_and_follow_up",
+        "TestReactionFeedback/CK-J40-S05_dislike_answers_and_culprit_tags",
+        "TestReactionFeedback/CK-J40-S06_not_into_offers_hiding_the_tag_in_account_filters",
+        "TestReactionFeedback/CK-J40-S07_signed_out_hide_is_recorded_not_stored_for_an_account",
+        "TestHTTPAuthenticationMatrix/CK-API-222_PATCH_/v1/contents/{id}/feedback/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-222_PATCH_/v1/contents/{id}/feedback/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-222_PATCH_/v1/contents/{id}/feedback/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-222_PATCH_/v1/contents/{id}/feedback/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-222_PATCH_/v1/contents/{id}/feedback/foreign_app_key"
+      ],
+      "implemented_security_cases": [
+        "TestHTTPAuthenticationMatrix/CK-API-222_PATCH_/v1/contents/{id}/feedback/malformed_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-222_PATCH_/v1/contents/{id}/feedback/revoked_session",
+        "TestHTTPAuthenticationMatrix/CK-API-222_PATCH_/v1/contents/{id}/feedback/expired_credential",
+        "TestHTTPAuthenticationMatrix/CK-API-222_PATCH_/v1/contents/{id}/feedback/wrong_issuer",
+        "TestHTTPAuthenticationMatrix/CK-API-222_PATCH_/v1/contents/{id}/feedback/foreign_app_key"
+      ],
+      "security_evidence": "credential gate and app-key boundary only; functional behavior is the mapped scenario cases",
+      "evidence": [
+        "Answers, culprit tags and the hide decision are validated and stored; a taken hide writes the account's filters.",
+        "contentkit#300: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
       ]
     }
   ],
@@ -9727,7 +10684,6 @@
       "name": "Config.MediaKinds",
       "status": "verified",
       "cases": [
-        "TestInternalArea/CK-J09-S01_real_image_upload_produces_a_readable_rendition",
         "TestConfiguredStandaloneParity/CK-J01-S06_configured_media_and_ClickHouse_work_through_standalone"
       ],
       "evidence": [
@@ -11211,6 +12167,17 @@
       ]
     },
     {
+      "id": "ts:otherLevels",
+      "name": "otherLevels",
+      "status": "verified",
+      "cases": [
+        "TestShippedTypeScriptValues/otherLevels"
+      ],
+      "evidence": [
+        "The shipped export chooses an HDR ladder's levels as the player does: SDR on an SDR screen without asking the decoder; on an HDR screen, HDR only for levels MediaCapabilities confirms (media-source, PQ or HLG transfer, rec2020), each asked; a ladder without SDR keeps its HDR; an SDR ladder keeps the first-listed codec set as before."
+      ]
+    },
+    {
       "id": "go:Client.WatchMedia",
       "name": "Client.WatchMedia",
       "status": "verified",
@@ -11846,6 +12813,92 @@
         "Remote client reads the same state as the engine.",
         "contentkit#287: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
       ]
+    },
+    {
+      "id": "go:Client.PostContentFeedback",
+      "name": "Client.PostContentFeedback",
+      "status": "verified",
+      "cases": [
+        "TestReactionFeedback/CK-J40-S01_offered_only_after_the_readers_own_reaction",
+        "TestReactionFeedback/CK-J40-S03_one_prompt_a_day_across_likes_and_dislikes"
+      ],
+      "evidence": [
+        "The Go client asks for prompts and reads null when none is offered.",
+        "contentkit#300: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
+      "id": "go:Client.PatchContentFeedback",
+      "name": "Client.PatchContentFeedback",
+      "status": "verified",
+      "cases": [
+        "TestReactionFeedback/CK-J40-S04_like_answers_name_their_entity_and_follow_up",
+        "TestReactionFeedback/CK-J40-S06_not_into_offers_hiding_the_tag_in_account_filters"
+      ],
+      "evidence": [
+        "The Go client answers prompts and decides hides.",
+        "contentkit#300: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
+      "id": "go:Client.PostMeContentFiltersMerge",
+      "name": "Client.PostMeContentFiltersMerge",
+      "status": "verified",
+      "cases": [
+        "TestReactionFeedback/CK-J40-S08_signin_merges_browser_filters"
+      ],
+      "evidence": [
+        "The Go client merges browser filter choices into the account.",
+        "contentkit#300: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
+      "id": "ts:FeedbackClient.ask",
+      "name": "FeedbackClient.ask",
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptPublicContracts/reaction_feedback"
+      ],
+      "evidence": [
+        "The built SDK asks after a like and gets null when asked again about the item.",
+        "contentkit#300: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
+      "id": "ts:FeedbackClient.answer",
+      "name": "FeedbackClient.answer",
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptPublicContracts/reaction_feedback"
+      ],
+      "evidence": [
+        "The built SDK answers a tag and, signed out, a not_into with hide that writes the browser's filter.",
+        "contentkit#300: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
+      "id": "ts:FeedbackClient.hide",
+      "name": "FeedbackClient.hide",
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptPublicContracts/reaction_feedback"
+      ],
+      "evidence": [
+        "The built SDK declines hiding a not_into tag, leaving the account's filters.",
+        "contentkit#300: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
+      "id": "ts:ReaderPreferencesClient.carryGuestFilters",
+      "name": "ReaderPreferencesClient.carryGuestFilters",
+      "status": "verified",
+      "cases": [
+        "TestTypeScriptPublicContracts/reaction_feedback"
+      ],
+      "evidence": [
+        "Signing in carries the browser's hidden tag into the account's content filters.",
+        "contentkit#300: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
     }
   ],
   "retired_contracts": [
@@ -11949,6 +13002,117 @@
       "issue": "contentkit#272",
       "case": "TestCommerceEntitlementBoundaries/CK-J06-S04_deleted_channel_retains_only_exact_edition_purchase",
       "reason": "Buyers no longer read deleted content; replaced by CK-J06-S04_deleted_channel_closes_exact_edition_purchase_but_keeps_it."
+    },
+    {
+      "issue": "contentkit#297",
+      "reason": "The media journal, manifest lock, allocations, quota ledger and per-file tokens were removed: commits re-authorize on every optimistic attempt, HostOnly outputs stay in internal/ (CK-J09-S41), and upload quotas are gone.",
+      "scenarios": [
+        {
+          "id": "CK-J09-S33",
+          "behavior": "A commit is authorized again under its item's lock: authority revoked while it waited writes nothing"
+        },
+        {
+          "id": "CK-J09-S34",
+          "behavior": "HostOnly outputs of every kind are prepared in internal/, which no item token opens"
+        }
+      ]
+    },
+    {
+      "issue": "contentkit#300",
+      "scenario": "CK-J07-S11",
+      "cases": [
+        "TestDiscoveryVisibility/CK-J07-S11_popular_list_reads_history_of_read_contents_only"
+      ],
+      "reason": "The popular refresh and its prepared daily popularity are gone; rankings are computed on demand from content_daily."
+    },
+    {
+      "issue": "contentkit#300",
+      "scenario": "CK-J07-S17",
+      "cases": [
+        "TestDailyPopularityCountsReadersExactly",
+        "TestDailyParticipationPreparation",
+        "TestDailyPopularityDaysAreWriteOnce"
+      ],
+      "reason": "popularity_daily is dropped; content_daily rebuilt whole per day replaces daily participation."
+    },
+    {
+      "issue": "contentkit#300",
+      "scenario": "CK-J07-S18",
+      "cases": [
+        "TestEngagementSummaryFailuresAreBestEffort",
+        "TestEngagementCanonicalFailuresRemainErrors",
+        "TestSignalRecoverySchedulesPreferences"
+      ],
+      "reason": "Measured engagement snapshots and the preference sync are gone; the browser reports open and progress and the server logs reactions."
+    },
+    {
+      "issue": "contentkit#300",
+      "scenario": "CK-J07-S20",
+      "cases": [
+        "TestPreparedPopularityBrowser"
+      ],
+      "reason": "The prepared popularity grid and its whole-day ranges are gone with popularity_daily."
+    },
+    {
+      "issue": "contentkit#300",
+      "scenario": "CK-J07-S19",
+      "cases": [
+        "TestBrowserSearchEngagementAttribution",
+        "TestSearchAttributionUsesExactOriginScope"
+      ],
+      "reason": "Exposures and click attribution are gone; a search logs its query, request_id and results, and an open names the request it came from (CK-J32-S01)."
+    },
+    {
+      "issue": "contentkit#300",
+      "scenario": "CK-J07-S34",
+      "cases": [
+        "TestPreferenceSync/CK-J07-S34_backlog_completes_across_deadline_limited_runs_without_resending",
+        "TestPreferenceSync/CK-J07-S34_a_run_with_nothing_new_sends_nothing",
+        "TestPreferenceSync/CK-J07-S34_a_change_is_sent_once_after_it_settles"
+      ],
+      "reason": "The preference sync is deleted: the server logs each reaction and favorite to the activity log as it writes it."
+    },
+    {
+      "issue": "contentkit#300",
+      "scenario": "CK-J01-S17",
+      "cases": [
+        "TestFavoritesMigrateToBinaryKeys/CK-J01-S17_favorites_convert_to_binary_keys_and_stay_readable"
+      ],
+      "reason": "Every database is rebuilt for #300, so no favorites table is converted in place, and 0081 drops the revision column the conversion test restores."
+    },
+    {
+      "issue": "contentkit#300",
+      "scenario": "CK-J23-S09",
+      "cases": [
+        "TestPreferenceSync/CK-J23-S09_a_preference_batch_racing_an_erasure_leaves_no_rows"
+      ],
+      "reason": "The preference sync is deleted, so no preference batch races an erasure."
+    },
+    {
+      "issue": "contentkit#300",
+      "reason": "Registration-only adoption of guest filters is replaced by POST /v1/me/content-filters/merge, run at every sign-in.",
+      "operations": [
+        {
+          "id": "CK-API-152",
+          "method": "POST",
+          "path": "/v1/me/content-filters/initialize"
+        }
+      ]
+    },
+    {
+      "issue": "contentkit#300",
+      "case": "TestDiscoveryVisibility/CK-J07-S15_popular_list_follows_the_stored_ranking",
+      "reason": "Stored rankings, prepared daily popularity and host-declared buckets are deleted: popularity is computed from content_daily and cached; replaced by TestPopularity (CK-J07-S50 to S61)."
+    },
+    {
+      "issue": "contentkit#300",
+      "case": "TestDiscoveryVisibility/CK-J07-S16_public_requests_cannot_create_popularity_work",
+      "reason": "Stored rankings, prepared daily popularity and host-declared buckets are deleted: popularity is computed from content_daily and cached; replaced by TestPopularity (CK-J07-S50 to S61)."
+    },
+    {
+      "issue": "contentkit#300",
+      "case": "TestEntityPopularity",
+      "reason": "Stored rankings, prepared daily popularity and host-declared buckets are deleted: popularity is computed from content_daily and cached; replaced by TestPopularity (CK-J07-S50 to S61)."
     }
   ]
 }

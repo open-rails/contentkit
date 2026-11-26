@@ -71,9 +71,9 @@ func TestPublicationRecorderAndParentBoundary(t *testing.T) {
 				t.Fatalf("unstarted recorder already caught up: %+v", event)
 			}
 		}
-		// Duplicate delivery of one accepted request races on the same durable
-		// lifecycle. No broad scan or startup timer is needed to recover it.
-		request := currentPublicationJob(t, a, item.Versions[0].ID)
+		// Duplicate deliveries of one version's release race on the same
+		// durable lifecycle. No broad scan or startup timer is needed.
+		request := releaseArgs{Content: item.ID, Version: item.Versions[0].ID}
 		wakeDuePublicationJobs(t, a)
 		ids := []int64{}
 		for range 4 {

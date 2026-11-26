@@ -45,7 +45,7 @@ check("transportFailure", () => {
   assert.equal(sdk.transportFailure(new DOMException("Canceled", "AbortError")), undefined);
 });
 check("readContentKitError", async () => {
-  const body = { code: "quota_exceeded", error: "Quota is full", retry_after: 7, details: { max_bytes: 12 }, blobs: ["b1"], ban: { scope: "owner:x", reason: "policy" }, action: "upload", reason: "release_window", available_at: "2030-01-01T00:00:00Z" };
+  const body = { code: "rate_limited", error: "Too many uploads", retry_after: 7, details: { max_bytes: 12 }, blobs: ["b1"], ban: { scope: "owner:x", reason: "policy" }, action: "upload", reason: "release_window", available_at: "2030-01-01T00:00:00Z" };
   const error = await sdk.readContentKitError(new Response(JSON.stringify(body), { status: 429, headers: { "Retry-After": "11" } }));
   assert.equal(error.code, body.code); assert.equal(error.message, body.error); assert.equal(error.status, 429); assert.equal(error.retryAfter, 7);
   assert.deepEqual(error.details, body.details); assert.deepEqual(error.blobs, body.blobs); assert.deepEqual(error.ban, body.ban);
@@ -71,15 +71,15 @@ check("ContentKitError.refusal", () => {
   assert.equal(new sdk.ContentKitError("internal_error", "Server", { status: 500 }).refusal, false);
 });
 check("ContentKitError.isLimit", () => {
-  for (const code of ["rate_limited", "quota_exceeded"]) assert.equal(new sdk.ContentKitError(code, "Limit").isLimit, true);
+  assert.equal(new sdk.ContentKitError("rate_limited", "Limit").isLimit, true);
   assert.equal(new sdk.ContentKitError("too_large", "One file").isLimit, false);
 });
 check("ContentKitError.isCeiling", () => {
   assert.equal(new sdk.ContentKitError("too_many_files", "Remove a file", { status: 409 }).isCeiling, true);
-  assert.equal(new sdk.ContentKitError("quota_exceeded", "Storage limit").isCeiling, false);
+  assert.equal(new sdk.ContentKitError("rate_limited", "Rate limit").isCeiling, false);
 });
 check("ContentKitError.blocksQueue", () => {
-  for (const code of ["quota_exceeded", "rate_limited", "unauthorized", "forbidden"]) assert.equal(new sdk.ContentKitError(code, "Stop").blocksQueue, true);
+  for (const code of ["rate_limited", "unauthorized", "forbidden"]) assert.equal(new sdk.ContentKitError(code, "Stop").blocksQueue, true);
   assert.equal(new sdk.ContentKitError("too_large", "Only this file").blocksQueue, false);
 });
 check("ContentKitError.transient", () => {
@@ -167,8 +167,7 @@ check("isProcessing", () => {
 check("processing", () => {
   assert.equal(sdk.processing({ state: "processing", files: [] }), true);
   assert.equal(sdk.processing({ state: "ready", files: [{ upload: true, staged: true }] }), true);
-  assert.equal(sdk.processing({ state: "processing", full: true, files: [] }), false);
-  assert.equal(sdk.processing({ status: { state: "full" }, files: [{ upload: true, staged: true }] }), false);
+  assert.equal(sdk.processing({ status: { state: "failed" }, files: [{ upload: true, staged: true }] }), false);
   assert.equal(sdk.processing(null), false);
 });
 check("statusKind", () => {
@@ -183,9 +182,9 @@ check("refreshable", () => {
   assert.equal(sdk.refreshable({ kind: "rate_limited", status: 429 }), false); assert.equal(sdk.refreshable({ kind: "network", status: 0 }), false);
 });
 check("publicURL", () => {
-  assert.equal(sdk.publicURL("https://media.invalid/", "app", "gallery", "parent", "cover.webp", "edition"), "https://media.invalid/v1/app/gallery/edition/public/cover.webp");
-  assert.equal(sdk.publicURL("https://media.invalid", "accounts", "avatar", "owner", "small.webp"), "https://media.invalid/v1/accounts/avatar/owner/public/small.webp");
-  assert.equal(sdk.publicURL("https://media.invalid", "ignored", "gallery", "parent", "cover.webp", "edition", "tenant/business/app/product/"), "https://media.invalid/v1/tenant/business/app/product/gallery/edition/public/cover.webp");
+  assert.equal(sdk.publicURL("https://media.invalid/", "gallery", "parent", "cover.webp", "edition"), "https://media.invalid/v1/gallery/edition/public/cover.webp");
+  assert.equal(sdk.publicURL("https://media.invalid", "gallery", "parent", "cover.webp"), "https://media.invalid/v1/gallery/parent/public/cover.webp");
+  assert.equal(sdk.publicURL("https://media.invalid", "user", "owner", "small.webp", undefined, "_accounts/"), "https://media.invalid/v1/_accounts/user/owner/public/small.webp");
 });
 check("publicRenditions", () => {
   const renditions = [{ url: "wide-original-name.webp", w: 800 }, { url: "small-original-name.webp", w: 200 }];
@@ -210,6 +209,41 @@ check("acceptsFile", () => {
   assert.equal(sdk.acceptsFile("video/*", { name: "poster.png", type: "image/png" }), false);
   assert.equal(sdk.acceptsFile(undefined, { name: "any.bin", type: "" }), true);
   assert.equal(sdk.acceptsFile(" , ", { name: "any.bin", type: "" }), true);
+});
+check("otherLevels", async () => {
+  // An HDR source's ladder as hls.js sorts it: AV1 PQ and H.264 SDR rungs.
+  const av1 = (h, r) => ({ codecSet: "av01,mp4a", videoCodec: "av01.0.08M.10.0.110.09.16.09.0", videoRange: r, width: h * 16 / 9, height: h, bitrate: h * 3000 });
+  const avc = (h) => ({ codecSet: "avc1,mp4a", videoCodec: "avc1.640028", videoRange: "SDR", width: h * 16 / 9, height: h, bitrate: h * 5000 });
+  const levels = [avc(480), av1(480, "PQ"), avc(1080), av1(1080, "PQ")];
+  const asked = [];
+  const env = (display, decodes) => ({
+    matchMedia: (query) => ({ matches: query === "(dynamic-range: high)" && display }),
+    navigator: { mediaCapabilities: { decodingInfo: async (c) => { asked.push(c); return { supported: decodes(c) }; } } },
+  });
+  const sdrOnly = [2, 0], hdrOnly = [3, 1];
+  // An SDR screen plays SDR without asking the decoder.
+  assert.deepEqual(await sdk.otherLevels(levels, 1, env(false, () => true)), hdrOnly);
+  assert.deepEqual(asked, []);
+  // An HDR screen plays HDR only when MediaCapabilities confirms PQ in BT.2020.
+  assert.deepEqual(await sdk.otherLevels(levels, 1, env(true, () => true)), sdrOnly);
+  assert.equal(asked.length, 2);
+  assert.deepEqual(asked.map((c) => [c.type, c.video.transferFunction, c.video.colorGamut, c.video.contentType]),
+    [["media-source", "pq", "rec2020", `video/mp4; codecs="${av1(480).videoCodec}"`], ["media-source", "pq", "rec2020", `video/mp4; codecs="${av1(480).videoCodec}"`]]);
+  assert.deepEqual(await sdk.otherLevels(levels, 1, env(true, () => false)), hdrOnly);
+  // A top rung the decoder refuses is dropped; HDR plays below it.
+  assert.deepEqual(await sdk.otherLevels(levels, 1, env(true, (c) => c.video.height < 1080)), [3, 2, 0]);
+  assert.deepEqual(await sdk.otherLevels(levels, 1, { matchMedia: () => ({ matches: true }) }), hdrOnly);
+  // HLG asks for its own transfer; a ladder with no SDR keeps its HDR.
+  asked.length = 0;
+  const hlg = [av1(480, "HLG"), av1(1080, "HLG")];
+  assert.deepEqual(await sdk.otherLevels([avc(480), ...hlg], 1, env(true, () => true)), [0]);
+  assert.deepEqual(asked.map((c) => c.video.transferFunction), ["hlg", "hlg"]);
+  assert.deepEqual(await sdk.otherLevels(hlg, 0, env(false, () => false)), []);
+  // An SDR ladder keeps the first-listed codec set, as before.
+  const sdr = [avc(480), { ...av1(480, "SDR"), videoCodec: "av01.0.08M.08" }, avc(1080), { ...av1(1080, "SDR"), videoCodec: "av01.0.08M.08" }];
+  assert.deepEqual(await sdk.otherLevels(sdr, 1, env(true, () => true)), [2, 0]);
+  assert.deepEqual(await sdk.otherLevels(sdr, -1, env(false, () => true)), [3, 1]);
+  assert.equal(sdk.hdrDisplay(env(true, () => true)), true); assert.equal(sdk.hdrDisplay({}), false);
 });
 
 const results = [];

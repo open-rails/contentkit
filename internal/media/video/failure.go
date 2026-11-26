@@ -18,9 +18,6 @@ func (e *Encoder) FailPending(ctx context.Context, job mediastore.ProcessJob, ca
 		return err
 	}
 	_, err = e.ms.EditExisting(ctx, job.Ref, func(m *mediastore.Manifest) error {
-		if m.Full {
-			return nil
-		}
 		for _, f := range m.Files {
 			if !f.IsUpload() || f.Gone || f.Fail() != nil {
 				continue
@@ -38,7 +35,7 @@ func (e *Encoder) FailPending(ctx context.Context, job mediastore.ProcessJob, ca
 				pending = pending || f.Blob == ""
 			} else if job.Preset == "" && f.Frame != nil {
 				v, ok := item.Kind().FramesVideo(m, f.Path)
-				pending = pending || ok && v.Blob != "" && (f.Blob == "" || f.Frame.Of != v.Blob)
+				pending = pending || ok && v.Blob != "" && (f.Blob == "" || !mediastore.FrameOf(f, v))
 			}
 			if pending {
 				m.SetFailed(f.Path, cause)

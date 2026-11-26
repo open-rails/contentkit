@@ -771,7 +771,7 @@ func (s *Store) PutVersions(ctx context.Context, actor access.Actor, in []catalo
 			chapterTargets = append(chapterTargets, versions.Target{Content: p.ContentID, Version: p.VersionID})
 		}
 	}
-	unlock, err := versionstore.LockSources(ctx, s.pool, s.tenant, segmentVersions)
+	unlock, err := versionstore.LockSources(ctx, s.locks, s.tenant, segmentVersions)
 	if err != nil {
 		return nil, err
 	}

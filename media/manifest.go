@@ -3,38 +3,27 @@ package media
 import (
 	"encoding/json"
 	"fmt"
-	"path"
-	"slices"
-	"strings"
 )
 
 // ManifestVersion is the manifest format.
-const ManifestVersion = 3
-
-// PublicationLayoutVersion marks explicit separation of retained sources,
-// prepared files and served files in a version-owned item.
-const PublicationLayoutVersion = 1
-
-// CommitReceipt proves which prepared attempt reached S3. Every writer keeps
-// the receipt until recovery has settled it; it is not an authorization token.
-type CommitReceipt struct {
-	Operation string `json:"operation"`
-	Attempt   string `json:"attempt"`
-}
+const ManifestVersion = 4
 
 // File is one file: an upload (no Preset) or a derived file.
 type File struct {
 	Path string  `json:"path"`           // app path: "originals/001.png", "low-res/001.webp"
-	Blob string  `json:"blob,omitempty"` // "sha256-{hex}-{uuid}" in private/; "" for a staged upload or a frame not grabbed yet
+	Blob string  `json:"blob,omitempty"` // "{area}/{sha256}"; "" for a staged upload or a frame not grabbed yet
 	Type string  `json:"type"`
 	Size int64   `json:"size,omitempty"`
 	W    int     `json:"w,omitempty"` // an upload's oriented size once measured; an output's size
 	H    int     `json:"h,omitempty"`
 	Dur  float64 `json:"dur,omitempty"`
+	// Range is a video upload's dynamic range once measured, and a video
+	// rendition's; empty is SDR.
+	Range DynamicRange `json:"range,omitempty"`
 
 	// Uploads:
-	Admission  *SourceAdmission `json:"admission,omitempty"`  // verified ZIP source quota policy, never client-supplied
-	Staged     string           `json:"staged,omitempty"`     // "u-{uuid}" in temp/ until the worker hashes and places it at Blob
+	Admission  *SourceAdmission `json:"admission,omitempty"`  // verified ZIP source destination, never client-supplied
+	Staged     string           `json:"staged,omitempty"`     // "u-{uuid}" in tmp/ until the worker hashes and places it at Blob
 	CreateID   string           `json:"create_id,omitempty"`  // create-only put receipt; retained through placement and processing
 	Edit       *Edit            `json:"edit,omitempty"`       // crop and rotate in source pixels
 	Frame      *Frame           `json:"frame,omitempty"`      // grabbed from a video (the frame op)
@@ -43,97 +32,29 @@ type File struct {
 	Gone       bool             `json:"gone,omitempty"`       // blob dropped (KeepOriginals false); the hash stays for provenance
 	Pending    []string         `json:"pending,omitempty"`    // presets still producing from this upload
 	Failed     *Failure         `json:"failed,omitempty"`     // this blob and edit cannot be processed
-	Public     []Publication    `json:"public,omitempty"`     // reserved or published public generations
 	Editor     *EditorImage     `json:"editor,omitempty"`     // selected immutable editor view, never listed to ordinary readers
+	Master     *Master          `json:"master,omitempty"`     // what renditions derive from and downloads serve; set once placed
 
-	// Derived files:
-	From     string `json:"from,omitempty"`     // the upload's path, or a zip's prefix
-	Preset   string `json:"preset,omitempty"`   // the Private preset
+	// Derived files (a private or public preset's output):
+	From     string `json:"from,omitempty"`     // the upload's path
+	Preset   string `json:"preset,omitempty"`   // the Private or Public preset
 	FP       string `json:"fp,omitempty"`       // Fingerprint of its inputs
+	Input    string `json:"input,omitempty"`    // the sha256 of the master it was derived from
 	Download string `json:"download,omitempty"` // the human download name
 	Track    *Track `json:"track,omitempty"`    // HLS
 }
 
-// EditorImage records the rendered view's allocation and source/spec fingerprint.
+// EditorImage records the rendered view's blob and source/spec fingerprint.
 type EditorImage struct {
 	Blob string `json:"blob"`
 	FP   string `json:"fp"`
 }
 
-// Publication owns one public preset's physical files. Reservation precedes
-// every PUT; State becomes ready only after all renditions have landed. Retired
-// generations are never reused, even when their source bytes are identical.
-// An upload holds at most one ready publication per preset, the current one,
-// and one reserved successor, which replaces it once ready: cleanup never
-// retires the current files while their successor is written.
-type Publication struct {
-	Preset string `json:"preset"`
-	Source string `json:"source"` // the upload's Key
-	FP     string `json:"fp"`
-	// Stable records whether this generation also owns its logical names.
-	// Nil marks historical manifests whose alias policy was not recorded.
-	Stable *bool `json:"stable,omitempty"`
-	// Generation suffixes every physical name; "" is a legacy publication,
-	// files a pre-v0.68 worker wrote at the logical names (always ready).
-	Generation string           `json:"generation"`
-	Blobs      []string         `json:"blobs,omitempty"` // version preset outputs prepared in internal/, aligned with Names
-	Names      []string         `json:"names"`           // logical preset names at this position
-	State      PublicationState `json:"state"`
-	Dims       []Dims           `json:"dims"`
-}
-
-// PublicationState has a fixed-width JSON representation: reserving and
-// publishing a replacement must not consume Full manifests' flag headroom.
-type PublicationState uint8
-
-const (
-	PublicationReserved PublicationState = iota
-	PublicationReady
-)
-
-func (p Publication) Ready() bool { return p.State == PublicationReady }
-
-// NamesOnDisk lists the immutable physical names reserved by the publication.
-func (p Publication) NamesOnDisk() []string {
-	if p.Generation == "" {
-		return slices.Clone(p.Names)
-	}
-	names := make([]string, len(p.Names))
-	for i, name := range p.Names {
-		ext := path.Ext(name)
-		names[i] = strings.TrimSuffix(name, ext) + "-" + p.Generation + ext
-	}
-	return names
-}
-
-// Publication returns the upload's latest generation of preset: its reserved
-// successor if any, else its current one.
-func (f File) Publication(preset string) (Publication, bool) {
-	if p, ok := f.publication(preset, PublicationReserved); ok {
-		return p, true
-	}
-	return f.Current(preset)
-}
-
-// Current returns the upload's ready generation of preset.
-func (f File) Current(preset string) (Publication, bool) {
-	return f.publication(preset, PublicationReady)
-}
-
-func (f File) publication(preset string, state PublicationState) (Publication, bool) {
-	for _, p := range f.Public {
-		if p.Preset == preset && p.State == state {
-			return p, true
-		}
-	}
-	return Publication{}, false
-}
-
 // Frame is an upload grabbed from a frame of its Upload.Frames video: the
-// one a player shows T seconds in; Auto lets the worker choose T. Of is the video blob it was
-// grabbed from: a new video grabs again. From names another item's video
-// instead (Kind always set): grabbed once, it is a still that video's
-// changes leave alone.
+// one a player shows T seconds in; Auto lets the worker choose T. Of is the
+// video's master blob it was grabbed from: a new video, or a new master of
+// it, grabs again. From names another item's video instead (Kind always
+// set): grabbed once, it is a still that video's changes leave alone.
 type Frame struct {
 	T    float64   `json:"t,omitempty"`
 	Auto bool      `json:"auto,omitempty"`
@@ -150,7 +71,7 @@ type Failure struct {
 }
 
 // Track is an HLS track file. It is small: the segment table or sprite grid
-// is its own private blob, Index (a TrackIndex), cached by hash.
+// is its own blob, Index (a TrackIndex), cached by hash.
 type Track struct {
 	Kind      string `json:"kind"`             // TrackVideo, TrackAudio, TrackSubs, TrackSprite
 	Codec     string `json:"codec,omitempty"`  // video: h264, av1
@@ -162,7 +83,7 @@ type Track struct {
 	Label     string `json:"label,omitempty"`
 	Default   bool   `json:"default,omitempty"`
 	Forced    bool   `json:"forced,omitempty"`
-	Index     string `json:"index,omitempty"` // "sha256-{hex}-{uuid}": the TrackIndex
+	Index     string `json:"index,omitempty"` // "{area}/{sha256}": the TrackIndex
 }
 
 const (

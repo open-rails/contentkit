@@ -1,9 +1,8 @@
-import type { Activity, MyStats } from "./generated/wire.js";
+import type { ActiveDays, MyStats } from "./generated/wire.js";
 import type { Http } from "./http.js";
 import { call } from "./route.js";
 
-export interface ActivityQuery {
-  kind: string;
+export interface ActiveQuery {
   /** The last days, today included: 10 by default, at most 90. */
   days?: number;
 }
@@ -12,9 +11,9 @@ export interface ActivityQuery {
 export class StatsClient {
   constructor(private readonly http: Http) {}
 
-  /** A kind's measured activity for every UTC day of the period, newest first: distinct people who read or played, by application-defined cohort, and focused active milliseconds. */
-  activity(q: ActivityQuery, signal?: AbortSignal): Promise<Activity> {
-    return call(this.http, "GET", "/stats/activity", { query: { kind: q.kind, days: q.days }, signal });
+  /** Distinct people active on the site for every UTC day of the period, newest first, by access. */
+  active(q: ActiveQuery = {}, signal?: AbortSignal): Promise<ActiveDays> {
+    return call(this.http, "GET", "/stats/active", { query: { days: q.days }, signal });
   }
   /** The signed-in reader's statistics: contents finished per kind, comments, reactions received and elapsed access per tier when billing supplies its history. */
   mine(signal?: AbortSignal): Promise<MyStats> {

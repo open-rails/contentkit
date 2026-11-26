@@ -101,44 +101,8 @@ func (s *Store) Viewer(ctx context.Context, o catalog.ViewerOptions) (*Viewer, e
 			return nil, err
 		}
 	}
-	allowed := map[string]bool{}
-	for _, p := range v.policies {
-		for id := range p.Toggles {
-			allowed[id] = true
-		}
-	}
-	values := map[string]string{}
-	if o.Actor.Member() {
-		var raw []byte
-		err := s.pool.QueryRow(ctx, `SELECT overrides FROM `+s.t.prefs+` WHERE tenant_id=$1 AND user_id=$2`, s.tenant, o.Actor.AccountID()).Scan(&raw)
-		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-			return nil, err
-		}
-		if len(raw) > 0 {
-			if err := json.Unmarshal(raw, &values); err != nil {
-				return nil, err
-			}
-		}
-	} else if o.Actor.Anonymous {
-		choices, err := readerprefs.Overrides(ctx, allowed)
-		if err != nil {
-			return nil, invalid("%s", err)
-		}
-		for key, value := range choices {
-			values[key] = value
-		}
-	}
-	v.hidden = map[string][]string{}
-	for kind, p := range v.policies {
-		for id, defaultVisible := range p.Toggles {
-			visible, overridden := readerprefs.Stored(values, id)
-			if !overridden {
-				visible = defaultVisible
-			}
-			if !visible && !slices.Contains(o.Requested, id) {
-				v.hidden[kind] = append(v.hidden[kind], id)
-			}
-		}
+	if v.hidden, err = s.hiddenFilters(ctx, o.Actor, v.policies, o.Requested); err != nil {
+		return nil, err
 	}
 	v.editorEntities = []string{}
 	if len(o.EditorEntities) > 0 && !v.staff {
@@ -152,6 +116,76 @@ func (s *Store) Viewer(ctx context.Context, o catalog.ViewerOptions) (*Viewer, e
 		slices.Sort(v.editorEntities)
 	}
 	return v, nil
+}
+
+// hiddenFilters are the optional entity filters a viewer hides, by content
+// kind: each toggle's default merged with the account's overrides, or a
+// signed-out visitor's browser choices. Requested entities are never hidden.
+func (s *Store) hiddenFilters(ctx context.Context, actor access.Actor, policies domainpolicy.Policies, requested []string) (map[string][]string, error) {
+	allowed := map[string]bool{}
+	for _, p := range policies {
+		for id := range p.Toggles {
+			allowed[id] = true
+		}
+	}
+	values := map[string]string{}
+	if actor.Member() {
+		var raw []byte
+		err := s.pool.QueryRow(ctx, `SELECT overrides FROM `+s.t.prefs+` WHERE tenant_id=$1 AND user_id=$2`, s.tenant, actor.AccountID()).Scan(&raw)
+		if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+			return nil, err
+		}
+		if len(raw) > 0 {
+			if err := json.Unmarshal(raw, &values); err != nil {
+				return nil, err
+			}
+		}
+	} else if actor.Anonymous {
+		choices, err := readerprefs.Overrides(ctx, allowed)
+		if err != nil {
+			return nil, invalid("%s", err)
+		}
+		for key, value := range choices {
+			values[key] = value
+		}
+	}
+	hidden := map[string][]string{}
+	for kind, p := range policies {
+		for id, defaultVisible := range p.Toggles {
+			visible, overridden := readerprefs.Stored(values, id)
+			if !overridden {
+				visible = defaultVisible
+			}
+			if !visible && !slices.Contains(requested, id) {
+				hidden[kind] = append(hidden[kind], id)
+			}
+		}
+	}
+	return hidden, nil
+}
+
+// HiddenEntities are the entities a request's content filters hide on its
+// host: what public entity listings leave out.
+func (s *Store) HiddenEntities(ctx context.Context, actor access.Actor, host string) ([]string, error) {
+	domain, _ := s.cfg.DomainFor(host)
+	policies, err := domainpolicy.Resolve(ctx, s.pool, s.t.entities, s.tenant, domain, s.cfg.ContentFilters.AppliesTo)
+	if err != nil {
+		return nil, err
+	}
+	hidden, err := s.hiddenFilters(ctx, actor, policies, nil)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, ids := range hidden {
+		for _, id := range ids {
+			if !slices.Contains(out, id) {
+				out = append(out, id)
+			}
+		}
+	}
+	slices.Sort(out)
+	return out, nil
 }
 
 // editable reports an owner entity the request already knows the viewer

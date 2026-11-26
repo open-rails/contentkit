@@ -7,7 +7,7 @@ import { JUMP_SEEK, PLAYER_VOLUME_KEY, playerKeyAction, writeVolume, type Player
 import { publicRenditions } from "../client/public.js";
 import { useMessages } from "../i18n/context.js";
 import { useHlsPlayer, type HlsPlayerOptions } from "../react/gallery.js";
-import type { ReadingEngagement } from "../react/use-engagement.js";
+import type { ReadingProgress } from "../react/use-reading.js";
 import { useActiveCues, useMediaState, useProgressReports, type PlaybackProgress } from "../react/player.js";
 import { ContentKitUiRoot } from "../scope.js";
 import { Captions, ControlButton, SeekBar, Spinner, clock } from "./player-controls.js";
@@ -23,8 +23,8 @@ export interface VideoMiniPlayerProps extends Omit<HlsPlayerOptions, "src" | "st
   onExpand: (state: { time: number; playing: boolean }) => void;
   onClose: (state: { time: number }) => void;
   onProgress?: (progress: PlaybackProgress) => void;
-  /** Continue actual visible playback measurements after the full player handoff. */
-  engagement?: Pick<ReadingEngagement, "video">;
+  /** Keep reporting real playback (useReadingProgress) after the full player handoff. */
+  reading?: Pick<ReadingProgress, "video">;
   /** Milliseconds. Default 10000. */
   progressInterval?: number;
   /** K, J, L and M page-wide (default), every shortcut while focus is in it, or none. */
@@ -48,7 +48,7 @@ export function VideoMiniPlayer({
   onExpand,
   onClose,
   onProgress,
-  engagement,
+  reading,
   progressInterval = 10_000,
   keyboard = "global",
   label,
@@ -82,11 +82,11 @@ export function VideoMiniPlayer({
     },
     [attach],
   );
-  const bindEngagement = engagement?.video;
+  const bindReading = reading?.video;
   useEffect(() => {
-    bindEngagement?.(started ? video : null);
-    return () => bindEngagement?.(null);
-  }, [bindEngagement, started, video]);
+    bindReading?.(started ? video : null);
+    return () => bindReading?.(null);
+  }, [bindReading, started, video]);
   const media = useMediaState(video);
   const cues = useActiveCues(video);
   useProgressReports(video, { enabled: started, source: started ? src : null, interval: progressInterval, onProgress });

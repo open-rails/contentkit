@@ -228,7 +228,7 @@ func (s *Service) ValidateChapterStartsTx(ctx context.Context, tx pgx.Tx, target
 	if err != nil {
 		return err
 	}
-	m, _, err := s.m.Manifests.GetTx(ctx, tx, ref)
+	m, _, err := s.m.Manifests.Get(ctx, ref)
 	if err != nil {
 		return err
 	}

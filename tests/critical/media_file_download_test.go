@@ -8,23 +8,25 @@ import (
 	"encoding/json"
 	"io"
 	"mime"
+	"net"
 	"net/http"
-	"net/url"
+	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	mediastore "github.com/open-rails/contentkit/internal/mediastore"
 
 	"github.com/google/uuid"
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
-	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/layout"
-	"github.com/open-rails/contentkit/media/token"
 	"github.com/open-rails/contentkit/media/versions"
 )
 
@@ -38,146 +40,96 @@ func (*transferDownloadPolicy) Mark(_ context.Context, _ access.Actor, _ version
 }
 
 func TestPublishedSingleFileDownload(t *testing.T) {
-	for _, profile := range []string{"internal-original", "host-only-mp4"} {
-		t.Run(profile, func(t *testing.T) {
-			f := newTinyHLSConfiguredFixture(t, false, func(c *ck.Config) {
-				for i := range c.Media.Kinds {
-					k := &c.Media.Kinds[i]
-					if k.Name != "clip" {
-						continue
-					}
-					if profile == "host-only-mp4" {
-						kind := c.Content.Kinds["clip"]
-						kind.Download = &kinds.Download{Serve: "export"}
-						c.Content.Kinds["clip"] = kind
-						k.Private = append(k.Private, media.Private{Name: "export", From: "source", To: "exports/{name}.mp4", HostOnly: true, MP4: media.Rung(144)}, media.Private{Name: "playback", From: "source", To: "playback/{name}.mp4", MP4: media.Rung(144)})
-					}
-				}
-			})
-			policy := &transferDownloadPolicy{}
-			a := f.app
-			a.server.Close()
-			must(t, a.engine.Close(t.Context()))
-			a.deps.Downloads = policy
-			var err error
-			a.engine, err = ck.New(t.Context(), a.cfg, a.deps)
-			must(t, err)
-			a.server = mountEngine(t, a.engine)
-			must(t, a.engine.StartJobs(t.Context()))
-			reader := a.client("")
-			var grant versions.FileDownload
-			waitForWithin(t, 45*time.Second, func() bool {
-				reply, err := reader.GetContentVersionDownload(t.Context(), f.Ref.ID, f.Ref.Version)
-				must(t, err)
-				if reply.Status == http.StatusAccepted {
-					return false
-				}
-				must(t, reply.Decode(&grant))
-				return grant.URL != ""
-			})
-			address := grant.URL
-			if !strings.HasPrefix(address, "archive?") {
-				t.Fatalf("internal download bypassed authorized host transfer: %s", address)
-			}
-			address = a.server.URL + "/content/v1/contents/" + f.Ref.ID + "/versions/" + f.Ref.Version + "/" + address
-			response, err := http.Get(address)
-			must(t, err)
-			body, err := io.ReadAll(response.Body)
-			response.Body.Close()
-			must(t, err)
-			if response.StatusCode != http.StatusOK {
-				t.Fatalf("download transfer HTTP%d: %s", response.StatusCode, body)
-			}
-			disposition, params, err := mime.ParseMediaType(response.Header.Get("Content-Disposition"))
-			must(t, err)
-			if response.StatusCode != 200 || response.Header.Get("Content-Type") != "application/octet-stream" || grant.Type != "video/mp4" || disposition != "attachment" || params["filename"] != grant.Name || int64(len(body)) != grant.Size || !bytes.Contains(body, []byte("ftyp")) {
-				t.Fatalf("configured download changed type/attachment/bytes: %d %v length%d grant%+v", response.StatusCode, response.Header, len(body), grant)
-			}
-			if profile != "host-only-mp4" && !bytes.Equal(body, f.Source) {
-				t.Fatal("original download changed uploaded bytes")
-			}
-			if response.Header.Get("Cache-Control") != "private, no-store" {
-				t.Fatal("internal authorized transfer was cacheable")
-			}
-			config, err := a.cfg.MediaKinds()
-			must(t, err)
-			reg, err := mediastore.NewRegistry(config, mediastore.Hooks{})
-			must(t, err)
-			ref, err := reg.VersionRef(f.Ref.Kind, f.Ref.ID, f.Ref.Version)
-			must(t, err)
-			item, err := reg.Item(ref)
-			must(t, err)
-			journal, err := mediastore.NewPGJournal(f.pool, f.schema, nil)
-			must(t, err)
-			manifests, err := mediastore.NewManifests(f.storage.store, reg, mediastore.ManifestOptions{Locker: mediastore.PGLocker(f.pool), Journal: journal})
-			must(t, err)
-			manifest, _, err := manifests.Get(t.Context(), ref)
-			must(t, err)
-			virtual := "source.mp4"
-			expected := layout.AreaOriginals
-			if profile == "host-only-mp4" {
-				virtual = "exports/source.mp4"
-				expected = layout.AreaInternal
-			}
-			file, found := manifest.Get(virtual)
-			if !found {
-				t.Fatalf("download source %s absent", virtual)
-			}
-			area, _, valid := layout.SplitBlobRef(file.Blob)
-			if !valid || area != expected {
-				t.Fatalf("internal download escaped to %q", file.Blob)
-			}
-			ring, err := token.NewRing(f.storage.key, nil)
-			must(t, err)
-			credential := ring.Sign(strings.TrimSuffix(item.Prefix(), "/"), time.Now().Add(time.Minute))
-			key, err := item.Blob(file.Blob)
-			must(t, err)
-			response, err = http.Get(f.storage.gateway.URL + layout.URLPrefix + key + "?t=" + credential)
-			must(t, err)
-			response.Body.Close()
-			if response.StatusCode != 404 {
-				t.Fatal("whole-item token opened internal original or HostOnly output")
-			}
-			read, err := reader.GetMediaVersion(t.Context(), f.Ref.Kind, f.Ref.ID, f.Ref.Version, ck.GetMediaVersionQuery{})
-			must(t, err)
-			for _, file := range read.Files {
-				if file.Path == virtual {
-					t.Fatal("ordinary reader lists internal download source")
-				}
-			}
-			changed, err := url.Parse(address)
-			must(t, err)
-			query := changed.Query()
-			query.Set("file", "false")
-			changed.RawQuery = query.Encode()
-			response, err = http.Get(changed.String())
-			must(t, err)
-			response.Body.Close()
-			if response.StatusCode != 404 {
-				t.Fatal("single-file ticket was reinterpreted as a ZIP grant")
-			}
-			policy.denied.Store(true)
-			_, err = reader.GetContentVersionDownload(t.Context(), f.Ref.ID, f.Ref.Version)
-			requireError(t, err, 403, "download_unavailable")
-			response, err = http.Get(address)
-			must(t, err)
-			response.Body.Close()
-			if response.StatusCode != 403 {
-				t.Fatal("issued transfer did not recheck the current host download policy")
-			}
-			policy.denied.Store(false)
-			_, err = a.engine.Client().PostContentUnpublish(t.Context(), f.Ref.ID)
-			must(t, err)
-			waitForWithin(t, 45*time.Second, func() bool {
-				response, err := http.Get(address)
-				if err != nil {
-					return false
-				}
-				response.Body.Close()
-				return response.StatusCode == 404 || response.StatusCode == 403
-			})
-		})
+	// A player's download streams its master, the original under the
+	// identity recipe, read in internal/ where it was placed: a release
+	// never copies or moves it. It is named {title}{ext}, has its length,
+	// ETag and ranges, and is never stored twice.
+	f := newTinyHLSConfiguredFixture(t, false, nil)
+	policy := &transferDownloadPolicy{}
+	a := f.app
+	a.server.Close()
+	must(t, a.engine.Close(t.Context()))
+	a.deps.Downloads = policy
+	var err error
+	a.engine, err = ck.New(t.Context(), a.cfg, a.deps)
+	must(t, err)
+	a.server = mountEngine(t, a.engine)
+	must(t, a.engine.StartJobs(t.Context()))
+	reader := a.client("")
+	var grant versions.FileDownload
+	waitForWithin(t, 45*time.Second, func() bool {
+		reply, err := reader.GetContentVersionDownload(t.Context(), f.Ref.ID, f.Ref.Version)
+		must(t, err)
+		if reply.Status == http.StatusAccepted {
+			return false
+		}
+		must(t, reply.Decode(&grant))
+		return grant.URL != ""
+	})
+	if !strings.HasPrefix(grant.URL, "archive?") || !strings.Contains(grant.URL, "file=true") || !strings.HasSuffix(grant.Name, ".mp4") || grant.Size != int64(len(f.Source)) {
+		t.Fatalf("an original download is a ticketed transfer named {title}{ext}: %+v", grant)
 	}
+	base := a.server.URL + "/content/v1/contents/" + f.Ref.ID + "/versions/" + f.Ref.Version + "/"
+	get := func(rangeHeader string) (*http.Response, []byte) {
+		t.Helper()
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, base+grant.URL, nil)
+		must(t, err)
+		if rangeHeader != "" {
+			req.Header.Set("Range", rangeHeader)
+		}
+		response, err := http.DefaultClient.Do(req)
+		must(t, err)
+		body, err := io.ReadAll(response.Body)
+		response.Body.Close()
+		must(t, err)
+		return response, body
+	}
+	response, body := get("")
+	disposition, params, err := mime.ParseMediaType(response.Header.Get("Content-Disposition"))
+	must(t, err)
+	if response.StatusCode != 200 || disposition != "attachment" || params["filename"] != grant.Name || !bytes.Equal(body, f.Source) ||
+		response.Header.Get("Content-Length") != strconv.Itoa(len(f.Source)) || response.Header.Get("ETag") == "" {
+		t.Fatalf("original download: HTTP%d %v length %d grant %+v", response.StatusCode, response.Header, len(body), grant)
+	}
+	partial, slice := get("bytes=10-99")
+	if partial.StatusCode != http.StatusPartialContent || !bytes.Equal(slice, f.Source[10:100]) {
+		t.Fatalf("original download range: HTTP%d with %d bytes", partial.StatusCode, len(slice))
+	}
+	config, err := a.cfg.MediaKinds()
+	must(t, err)
+	reg, err := mediastore.NewRegistry(config, mediastore.Hooks{})
+	must(t, err)
+	ref, err := reg.VersionRef(f.Ref.Kind, f.Ref.ID, f.Ref.Version)
+	must(t, err)
+	manifest, _, err := mustManifests(t, f.storage.store, reg).Get(t.Context(), ref)
+	must(t, err)
+	file, found := manifest.Get("source.mp4")
+	if !found || layout.BlobArea(file.Blob) != layout.AreaInternal || file.Master == nil || file.Master.Blob != file.Blob {
+		t.Fatalf("the released original moved, or is not its own master: %+v", file)
+	}
+	item, err := reg.Item(ref)
+	must(t, err)
+	_, hash, _ := layout.SplitBlobRef(file.Blob)
+	for obj, err := range f.storage.store.List(t.Context(), item.Prefix()) {
+		must(t, err)
+		if strings.HasSuffix(obj.Key, "/"+hash) && obj.Key != item.Prefix()+file.Blob {
+			t.Fatalf("the original is stored twice: %s", obj.Key)
+		}
+	}
+	policy.denied.Store(true)
+	_, err = reader.GetContentVersionDownload(t.Context(), f.Ref.ID, f.Ref.Version)
+	requireError(t, err, 403, "download_unavailable")
+	if refused, _ := get(""); refused.StatusCode == http.StatusOK {
+		t.Fatal("a granted transfer outlived the policy's refusal")
+	}
+	policy.denied.Store(false)
+	// Withdrawal closes the transfer: the version is no longer released.
+	_, err = a.engine.Client().PostContentUnpublish(t.Context(), f.Ref.ID)
+	must(t, err)
+	waitForWithin(t, 45*time.Second, func() bool {
+		response, _ := get("")
+		return response.StatusCode != http.StatusOK
+	})
 }
 
 // A gallery whose page source cannot be read must refuse the download up
@@ -187,10 +139,9 @@ func TestZIPDownloadRefusesUnreadablePagesBeforeCharging(t *testing.T) {
 	a := w.apps[0]
 	storage := attachMedia(t, w, a, func(c *ck.Config) {
 		kind := &c.Media.Config.Kinds[0]
-		kind.Publish = &media.Publish{Pages: "pages/{name}", Renditions: []string{"reader"}, Download: "archive"}
+		kind.Publish = &media.Publish{Pages: "pages/{name}", Renditions: []string{"reader"}}
 		kind.Private = append(kind.Private,
-			media.Private{Name: "archive-pages", From: "pages/{name}", To: "download-pages/{name}{ext}", Image: &media.Image{Format: media.ImageFormatSource}},
-			media.Private{Name: "archive", To: "pages.zip", Zip: "download-pages/", HostOnly: true})
+			media.Private{Name: "archive-pages", From: "pages/{name}", To: "download-pages/{name}{ext}", Image: &media.Image{Format: media.ImageFormatSource}})
 		c.Media.Downloads = versions.Downloads{Anonymous: []versions.Quota{{Limit: 1, Per: 24 * time.Hour}}}
 	})
 	admin := a.engine.Client()
@@ -240,6 +191,10 @@ func TestZIPDownloadRefusesUnreadablePagesBeforeCharging(t *testing.T) {
 	must(t, err)
 	_, err = storage.store.Put(t.Context(), item.ManifestKey(), bytes.NewReader(rewritten), int64(len(rewritten)), media.PutOptions{ContentType: "application/json"})
 	must(t, err)
+	// Reads trust the item cache's revision: drop its row, as a rebuild
+	// would find it, so the next read fetches the rewritten manifest.
+	_, err = w.pool.Exec(t.Context(), `DELETE FROM `+pgx.Identifier{w.schema, "content_media_items"}.Sanitize()+` WHERE content_version_id=$1`, ref.Version)
+	must(t, err)
 
 	// Twice under a one-download quota: a charged refusal would make the second 429.
 	for range 2 {
@@ -252,8 +207,12 @@ func TestZIPDownloadRefusesUnreadablePagesBeforeCharging(t *testing.T) {
 // under its previous one: a ticket from before a rotation still transfers,
 // and stops once the previous key is dropped.
 func TestDeliveryRotationKeepsTickets(t *testing.T) {
-	f := newTinyHLSConfiguredFixture(t, false, nil)
-	a := f.app
+	// A gallery's pages ZIP is a ticketed transfer, as a video's original is.
+	g := newReleasedGallery(t, nil, chapterImage(t, 21))
+	g.publish(t)
+	g.awaitReleased(t)
+	a := g.app
+	ref := g.ref
 	restart := func(t *testing.T, signing, previous string) {
 		t.Helper()
 		a.server.Close()
@@ -270,7 +229,7 @@ func TestDeliveryRotationKeepsTickets(t *testing.T) {
 		t.Helper()
 		var grant versions.FileDownload
 		waitForWithin(t, 45*time.Second, func() bool {
-			reply, err := a.client("").GetContentVersionDownload(t.Context(), f.Ref.ID, f.Ref.Version)
+			reply, err := a.client("").GetContentVersionDownload(t.Context(), ref.ID, ref.Version)
 			must(t, err)
 			if reply.Status == http.StatusAccepted {
 				return false
@@ -285,14 +244,14 @@ func TestDeliveryRotationKeepsTickets(t *testing.T) {
 	}
 	transfer := func(t *testing.T, ticket string) int {
 		t.Helper()
-		response, err := http.Get(a.server.URL + "/content/v1/contents/" + f.Ref.ID + "/versions/" + f.Ref.Version + "/" + ticket)
+		response, err := http.Get(a.server.URL + "/content/v1/contents/" + ref.ID + "/versions/" + ref.Version + "/" + ticket)
 		must(t, err)
 		_, err = io.Copy(io.Discard, response.Body)
 		response.Body.Close()
 		must(t, err)
 		return response.StatusCode
 	}
-	original := f.storage.signing
+	original := g.storage.signing
 	restart(t, original, "")
 	old := ticket(t)
 	if code := transfer(t, old); code != http.StatusOK {
@@ -317,4 +276,93 @@ func TestDeliveryRotationKeepsTickets(t *testing.T) {
 	if code := transfer(t, fresh); code != http.StatusOK {
 		t.Fatalf("current-key ticket transferred HTTP%d", code)
 	}
+}
+
+// sendBufferListener keeps each accepted connection's socket send buffer
+// small, so a slow reader holds the server's writes instead of the kernel.
+type sendBufferListener struct{ net.Listener }
+
+func (l sendBufferListener) Accept() (net.Conn, error) {
+	c, err := l.Listener.Accept()
+	if tcp, ok := c.(*net.TCPConn); ok {
+		_ = tcp.SetWriteBuffer(4096)
+	}
+	return c, err
+}
+
+func TestDownloadOutlivesHostWriteTimeout(t *testing.T) {
+	// Hosts run their API servers with a WriteTimeout. A download a slow
+	// client reads for longer than that still completes byte for byte.
+	const writeTimeout = 2 * time.Second
+	f := newTinyHLSConfiguredFixture(t, false, nil)
+	a := f.app
+	a.server.Close()
+	must(t, a.engine.Close(t.Context()))
+	a.deps.Downloads = &transferDownloadPolicy{}
+	var err error
+	a.engine, err = ck.New(t.Context(), a.cfg, a.deps)
+	must(t, err)
+	routes, err := a.engine.Routes(ck.Routes{Prefix: "/content", Groups: a.engine.RouteGroups()})
+	must(t, err)
+	mux := http.NewServeMux()
+	for _, route := range routes {
+		mux.Handle(route.Path, route.Handler)
+	}
+	host := httptest.NewUnstartedServer(withSessionProofs(t, mux))
+	host.Config.WriteTimeout = writeTimeout
+	host.Listener = sendBufferListener{host.Listener}
+	host.Start()
+	t.Cleanup(host.Close)
+	a.server = host
+	must(t, a.engine.StartJobs(t.Context()))
+	if len(f.Source) < 32<<10 {
+		t.Fatalf("a %d-byte source fits in the socket buffers; the download would never wait on the reader", len(f.Source))
+	}
+	t.Run("CK-J13-S11_a_slow_download_outlives_the_host_servers_WriteTimeout", func(t *testing.T) {
+		var grant versions.FileDownload
+		waitForWithin(t, 45*time.Second, func() bool {
+			reply, err := a.client("").GetContentVersionDownload(t.Context(), f.Ref.ID, f.Ref.Version)
+			must(t, err)
+			if reply.Status == http.StatusAccepted {
+				return false
+			}
+			must(t, reply.Decode(&grant))
+			return grant.URL != ""
+		})
+		// A small receive buffer, read a KiB at a time over about 2.5 write timeouts.
+		dialer := &net.Dialer{Control: func(_, _ string, c syscall.RawConn) error {
+			var set error
+			if err := c.Control(func(fd uintptr) { set = syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_RCVBUF, 4096) }); err != nil {
+				return err
+			}
+			return set
+		}}
+		slow := &http.Client{Transport: &http.Transport{DialContext: dialer.DialContext, DisableCompression: true}}
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, host.URL+"/content/v1/contents/"+f.Ref.ID+"/versions/"+f.Ref.Version+"/"+grant.URL, nil)
+		must(t, err)
+		response, err := slow.Do(req)
+		must(t, err)
+		defer response.Body.Close()
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("download: HTTP%d", response.StatusCode)
+		}
+		pause := 5 * writeTimeout / 2 / time.Duration(len(f.Source)/1024+1)
+		start := time.Now()
+		var got bytes.Buffer
+		chunk := make([]byte, 1024)
+		for {
+			n, err := response.Body.Read(chunk)
+			got.Write(chunk[:n])
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				t.Fatalf("download cut after %d of %d bytes and %v: %v", got.Len(), len(f.Source), time.Since(start), err)
+			}
+			time.Sleep(pause)
+		}
+		if elapsed := time.Since(start); elapsed <= writeTimeout || !bytes.Equal(got.Bytes(), f.Source) {
+			t.Fatalf("download: %d of %d bytes in %v (write timeout %v)", got.Len(), len(f.Source), elapsed, writeTimeout)
+		}
+	})
 }

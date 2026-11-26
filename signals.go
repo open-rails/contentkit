@@ -8,11 +8,9 @@ import (
 	"sync"
 	"time"
 
-	mediastore "github.com/open-rails/contentkit/internal/mediastore"
 	signalstore "github.com/open-rails/contentkit/internal/signalstore"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
-	"github.com/riverqueue/river"
 
 	"github.com/open-rails/contentkit/signal"
 )
@@ -28,14 +26,14 @@ const (
 	signalRetryMax   = 30 * time.Second
 )
 
-// signalPlane keeps a configured ClickHouse signal plane: signals are on
-// while it answers and off (the content model and the contentkit_clickhouse
-// probe say so) while it doesn't. Only start and its loop change the state.
+// signalPlane keeps a configured ClickHouse signal plane: the activity log is
+// written while it answers; while it doesn't, rows wait in the process's
+// buffer and the contentkit_clickhouse probe says why. Only start and its
+// loop change the state.
 type signalPlane struct {
 	connect func(context.Context) (signal.Conn, error) // open/check, optionally migrate in compatibility mode
 	up      func(signal.Conn) error                    // signals on
 	down    func()                                     // signals off
-	afterUp func()                                     // catch-up after publishing recovery
 	log     *slog.Logger
 
 	bootWait, checkEvery, checkWait, retryMin, retryMax time.Duration
@@ -123,9 +121,6 @@ func (p *signalPlane) attempt(ctx context.Context) bool {
 	}
 	p.conn, p.err = conn, nil
 	p.mu.Unlock()
-	if p.afterUp != nil {
-		p.afterUp()
-	}
 	return true
 }
 
@@ -180,7 +175,6 @@ func (e *Engine) newSignals(deps Deps) *signalPlane {
 			return nil
 		},
 		func() { e.hub.SetSignals(nil) })
-	p.afterUp = e.signalsBack
 	return p
 }
 
@@ -218,19 +212,4 @@ func (e *Engine) connectSignals(ctx context.Context, host signal.Conn) (signal.C
 		return nil, fmt.Errorf("contentkit: signal schema unavailable (run contentkit.MigrateClickHouse if migrations are missing): %w", err)
 	}
 	return conn, nil
-}
-
-// signalsBack queues preferences the signal plane missed while it was down.
-// Before Start the periodic preference job's first run does it.
-func (e *Engine) signalsBack() {
-	c := e.jobs.bound()
-	if c == nil {
-		return
-	}
-	opts := &river.InsertOpts{Queue: queueContentKit, MaxAttempts: 3, UniqueOpts: mediastore.PendingOnce}
-	ctx, cancel := context.WithTimeout(context.Background(), signalCheckWait)
-	defer cancel()
-	if _, err := c.Insert(ctx, preferenceSyncArgs{}, opts); err != nil {
-		e.log.Warn("contentkit: could not queue preference catch-up; the periodic sync will", "err", err)
-	}
 }

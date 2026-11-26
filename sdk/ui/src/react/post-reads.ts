@@ -1,7 +1,7 @@
 import { useCallback, useContext, useEffect, useRef, useSyncExternalStore } from "react";
 import type { ContentKitClient } from "../client/client.js";
 import { ContentKitContext } from "./context.js";
-import { useReadingEngagement } from "./use-engagement.js";
+import { useReadingProgress } from "./use-reading.js";
 import { useContentScope } from "./use-resource.js";
 
 // A guest's posts read in this browser, and since when it has followed the list.
@@ -98,20 +98,19 @@ export function usePostReads(windowDays = 30): PostReads {
 
 export interface PostReadingOptions {
   client?: ContentKitClient;
-  kind?: string;
   /** Visible, focused attention before a guest's browser counts the post read; default 3 seconds. */
   guestReadAfter?: number;
 }
 
 /**
- * Attach to a text post's body. Its visible, focused attention is measured
- * (never a raw open), so the account's history marks it read; a guest's
- * browser marks it read after guestReadAfter of attention.
+ * Attach to a text post's body. It reports the post's reading, so the
+ * reader's reading state marks it read; a guest's browser also marks it
+ * read after guestReadAfter of attention.
  */
-export function usePostReading(contentId: string | null | undefined, versionId?: string, options: PostReadingOptions = {}): (element: HTMLElement | null) => void {
+export function usePostReading(contentId: string | null | undefined, options: PostReadingOptions = {}): (element: HTMLElement | null) => void {
   const { scope } = useContentScope();
   const guest = useContext(ContentKitContext)?.viewer === null;
-  const engagement = useReadingEngagement(contentId, versionId, { client: options.client, kind: options.kind });
+  const reading = useReadingProgress(contentId, { client: options.client, length: 1 });
   const body = useRef<HTMLElement | null>(null);
   const after = options.guestReadAfter ?? 3000;
   useEffect(() => {
@@ -129,7 +128,7 @@ export function usePostReading(contentId: string | null | undefined, versionId?:
     }, tick);
     return () => clearInterval(timer);
   }, [guest, contentId, scope, after]);
-  const { text } = engagement;
+  const { text } = reading;
   return useCallback(
     (element: HTMLElement | null) => {
       body.current = element;

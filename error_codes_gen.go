@@ -62,8 +62,6 @@ const (
 	CodeNotReady = "not_ready"
 	// CodeNotUploaded (409): A commit names an upload that has not landed; `blobs` lists the ones to upload again.
 	CodeNotUploaded = "not_uploaded"
-	// CodeQuotaExceeded (413): The uploader's storage quota is used up.
-	CodeQuotaExceeded = "quota_exceeded"
 	// CodeRateLimited (429): Too many requests; retry after `retry_after` seconds (also the Retry-After header).
 	CodeRateLimited = "rate_limited"
 	// CodeTenantMismatch (500): A host port answered with another tenant's data: a configuration fault.

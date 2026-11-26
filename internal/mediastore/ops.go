@@ -217,9 +217,6 @@ func (o *opRun) apply(n int, op media.Op) error {
 					gone = append(gone, x.Path)
 				}
 			}
-			for _, p := range gone {
-				o.dropZips(p)
-			}
 		}
 		o.dropUploads(gone)
 	case media.OpRename:
@@ -238,18 +235,6 @@ func (o *opRun) dropUploads(paths []string) {
 		return slices.Contains(paths, file.Path) || !file.IsUpload() && slices.Contains(paths, file.From)
 	})
 	o.m.index = nil
-}
-
-// dropZips removes zips bundling the upload at path or its outputs; the
-// worker builds them again without it.
-func (o *opRun) dropZips(path string) {
-	for i := range o.k.Private {
-		z := &o.k.Private[i]
-		if z.Zip == "" || !strings.HasPrefix(path, z.Zip) && !slices.ContainsFunc(o.m.Files, func(x media.File) bool { return x.From == path && strings.HasPrefix(x.Path, z.Zip) }) {
-			continue
-		}
-		o.m.Files = slices.DeleteFunc(o.m.Files, func(x media.File) bool { return x.Preset == z.Name && x.From == z.Zip })
-	}
 }
 
 // put adds or replaces an upload.
@@ -323,7 +308,7 @@ func (o *opRun) put(op media.Op) error {
 		page, _ := pageMetadata(old.Meta)
 		legacy = page["schema_version"] == nil && page["name"] == nil
 		if old.Source() == f.Source() {
-			f.W, f.H, f.Dur = old.W, old.H, old.Dur
+			f.W, f.H, f.Dur, f.Range = old.W, old.H, old.Dur, old.Range
 		}
 		if f.Meta == nil {
 			f.Meta = old.Meta
@@ -392,9 +377,6 @@ func (o *opRun) put(op media.Op) error {
 		}
 		old := stripPending(m.Files[i])
 		old.CreateID = f.CreateID
-		if old.Key() == f.Key() {
-			f.Public = old.Public
-		}
 		if reflect.DeepEqual(old, f) {
 			m.Files[i].CreateID = f.CreateID
 			return nil // unchanged source and edit
@@ -613,7 +595,6 @@ func (o *opRun) copy(op media.Op, src []media.File) error {
 		return uploadErr(media.CodeNotFound, "no upload %q in item %s", op.From.Path, op.From.ID)
 	}
 	f := src[0]
-	f.Public = nil    // copied originals never transfer another item's allocation
 	f.Admission = nil // copied ZIPs must be admitted by their destination owner
 	if op.Meta != nil {
 		f.Meta = maps.Clone(op.Meta)

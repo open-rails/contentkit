@@ -86,6 +86,8 @@ jobs:
         "$RUNNER_TEMP/actionlint" -shellcheck= -pyflakes=
     - name: Supply-chain guards
       run: bash .github/scripts/check-supply-chain.sh
+    - name: Released migrations are unchanged
+      run: bash scripts/check-released-migrations.sh
     - name: Select affected checks conservatively
       id: areas
       env:

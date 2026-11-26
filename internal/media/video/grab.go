@@ -16,12 +16,12 @@ import (
 	mediastore "github.com/open-rails/contentkit/internal/mediastore"
 
 	"github.com/open-rails/contentkit/media"
-	"github.com/open-rails/contentkit/media/layout"
 )
 
 // grabFrames grabs the frames of uploads declaring Upload.Frames that have
-// none from their video's current blob: at Frame.T, or the first detailed
-// frame when Frame.Auto. A frame From another item's video is grabbed once.
+// none, or were grabbed from another master, from their video's current
+// master once it is made: at Frame.T, or the first detailed frame when
+// Frame.Auto. A frame From another item's video is grabbed once.
 // Each is recorded as the upload's PNG blob, at the video's display size
 // (the space of its edit), and handed to the image job.
 func (e *Encoder) grabFrames(ctx context.Context, item mediastore.Item) error {
@@ -48,7 +48,7 @@ func (e *Encoder) grabFrames(ctx context.Context, item mediastore.Item) error {
 				continue
 			}
 			ok = v.Path != ""
-		} else if v, ok = item.Kind().FramesVideo(man, f.Path); !ok || v.Blob == "" || f.Blob != "" && f.Frame.Of == v.Blob {
+		} else if v, ok = item.Kind().FramesVideo(man, f.Path); !ok || v.Blob == "" || f.Blob != "" && mediastore.FrameOf(f, v) || item.Kind().MasterPending(v) {
 			continue
 		}
 		if fail := v.Fail(); !ok || fail != nil || v.Gone || v.Blob == "" {
@@ -114,6 +114,11 @@ func (e *Encoder) grab(ctx context.Context, item mediastore.Item, f media.File, 
 			return err
 		}
 	}
+	if src.url != "" && v.Range != media.RangeSDR {
+		if src.toSDR, err = sourceToSDR(ctx, src.url); err != nil {
+			return err
+		}
+	}
 	dir, err := os.MkdirTemp(e.c.TempDir, tempPattern)
 	if err != nil {
 		return err
@@ -140,16 +145,19 @@ func (e *Encoder) grab(ctx context.Context, item mediastore.Item, f media.File, 
 		return err
 	}
 	sum := sha256.Sum256(body)
-	blob, size, err := e.putBlob(ctx, item, layout.AreaPrivate, bytes.NewReader(body), int64(len(body)), sum[:], "image/png", nil)
+	blob, size, err := e.putBlob(ctx, item, item.Kind().Area(""), bytes.NewReader(body), int64(len(body)), sum[:], "image/png", nil)
 	if err != nil {
 		return err
 	}
 	grabbed := media.File{Blob: blob}
-	// The still is the frame's upload bytes, charged to its commit's owner.
-	err = e.publishCharged(ctx, item, []media.File{grabbed}, f.Admission, func(m *mediastore.Manifest) error {
+	err = e.publish(ctx, item, []media.File{grabbed}, func(m *mediastore.Manifest) error {
 		if f.Frame.From == nil {
-			if _, err := current(m, v.Path, v.Blob); err != nil {
+			cur, err := current(m, v.Path, v.Blob)
+			if err != nil {
 				return err
+			}
+			if mediastore.InputHash(cur) != mediastore.InputHash(v) {
+				return errStale // a new master: grabbed again from it
 			}
 		}
 		i := m.Find(f.Path)
@@ -165,15 +173,12 @@ func (e *Encoder) grab(ctx context.Context, item mediastore.Item, f media.File, 
 			return errStale // charged under another commit's policy
 		}
 		g.Blob, g.Type, g.Size, g.W, g.H, g.Failed = blob, "image/png", size, w, h, nil
-		g.Frame = &media.Frame{T: t, Auto: g.Frame.Auto, Of: v.Blob, From: g.Frame.From}
+		g.Frame = &media.Frame{T: t, Auto: g.Frame.Auto, Of: mediastore.Input(v).Blob, From: g.Frame.From}
 		if g.Edit.Check(w, h) != nil { // made for another shape: centred instead
 			g.Edit = nil
 		}
 		return nil
 	})
-	if ue := (*media.UploadError)(nil); errors.As(err, &ue) && ue.Code == media.CodeQuota {
-		return &PermanentError{&media.ImageError{Code: media.CodeQuota, Message: ue.Message}}
-	}
 	if err == nil {
 		e.c.Logger.InfoContext(ctx, "media/video: frame", "ref", item.Ref().String(), "path", f.Path, "time", t, "auto", f.Frame.Auto)
 	}
@@ -214,12 +219,28 @@ func (e *Encoder) measure(ctx context.Context, item mediastore.Item, v media.Fil
 			return v, err
 		}
 	}
-	v.W, v.H, v.Dur = pl.width, pl.height, pl.duration
+	v.W, v.H, v.Dur, v.Range = pl.width, pl.height, pl.duration, pl.color.dynamicRange()
 	return v, nil
 }
 
+// sourceToSDR is the tone mapping of the HDR source at url, from its color.
+func sourceToSDR(ctx context.Context, url string) (string, error) {
+	pr, err := probeRemote(ctx, url)
+	if err != nil {
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+		return "", &PermanentError{err}
+	}
+	pl, err := newPlan(pr)
+	if err != nil {
+		return "", &PermanentError{err}
+	}
+	return pl.color.toSDR(), nil
+}
+
 func (e *Encoder) sourceURL(ctx context.Context, item mediastore.Item, v media.File) (string, error) {
-	key, err := item.Blob(v.Blob)
+	key, err := item.Blob(mediastore.Input(v).Blob)
 	if err != nil {
 		return "", err
 	}
@@ -228,12 +249,13 @@ func (e *Encoder) sourceURL(ctx context.Context, item mediastore.Item, v media.F
 }
 
 // frameSource is where frames are cut: the widest current rendition of the
-// video (H.264 when there is one, any ffmpeg decodes it), read by range, or
-// else the source itself.
+// video (SDR, then H.264 when there is one, any ffmpeg decodes it), read by
+// range, or else the source itself. An HDR input is tone-mapped (toSDR).
 type frameSource struct {
-	key  string
-	segs []media.Segment
-	url  string
+	key   string
+	segs  []media.Segment
+	url   string
+	toSDR string
 }
 
 func (e *Encoder) frameSource(ctx context.Context, item mediastore.Item, man *mediastore.Manifest, v media.File) (frameSource, error) {
@@ -245,7 +267,8 @@ func (e *Encoder) frameSource(ctx context.Context, item mediastore.Item, man *me
 		fp := e.fp(p, v)
 		for _, o := range man.Outputs(v.Path, p.Name) {
 			if o.FP == fp && o.Track != nil && o.Track.Kind == media.TrackVideo && (best == nil ||
-				cmp.Or(o.W-best.W, boolInt(o.Track.Codec == string(media.CodecH264))-boolInt(best.Track.Codec == string(media.CodecH264))) > 0) {
+				cmp.Or(boolInt(o.Range == media.RangeSDR)-boolInt(best.Range == media.RangeSDR), o.W-best.W,
+					boolInt(o.Track.Codec == string(media.CodecH264))-boolInt(best.Track.Codec == string(media.CodecH264))) > 0) {
 				best = &o
 			}
 		}
@@ -259,17 +282,21 @@ func (e *Encoder) frameSource(ctx context.Context, item mediastore.Item, man *me
 		return frameSource{}, err
 	}
 	key, _ := item.Blob(best.Blob)
-	return frameSource{key: key, segs: idx.Segments}, nil
+	src := frameSource{key: key, segs: idx.Segments}
+	if best.Range != media.RangeSDR {
+		src.toSDR = toneMap // the rendition declares its color
+	}
+	return src, nil
 }
 
 // input is an ffmpeg input at t: a local snippet of the rendition's
 // segments around t (written to path), or the source.
 func (s frameSource) input(ctx context.Context, store media.Store, t float64, path string) (frameInput, error) {
 	if s.url != "" {
-		return frameInput{path: s.url, opts: remoteInputOptions(sourceDemuxers), offset: t}, nil
+		return frameInput{path: s.url, opts: remoteInputOptions(sourceDemuxers), offset: t, toSDR: s.toSDR}, nil
 	}
 	start, err := snippet(ctx, store, s.key, s.segs, t, t, path)
-	return frameInput{path: path, opts: ownMP4, offset: t - start}, err
+	return frameInput{path: path, opts: ownMP4, offset: t - start, toSDR: s.toSDR}, err
 }
 
 // autoFrame picks the earliest sampled frame with detail, else the most detailed.

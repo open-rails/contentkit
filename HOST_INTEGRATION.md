@@ -25,10 +25,12 @@ for _, r := range routes {
 }
 ```
 
+Behind PgBouncer in transaction mode, `Deps.Postgres` is the PgBouncer pool and `Deps.PostgresSession` the direct configuration ([docs/pgbouncer.md](docs/pgbouncer.md)).
+
 ### Jobs
 
-ContentKit runs its background work (search indexing, preference sync,
-popularity refresh, publication, retention and release work) on its own River
+ContentKit runs its background work (search indexing, the analytics job and
+its ranking precompute, publication, retention and release work) on its own River
 client, on `Deps.Postgres` in `Config.Database.RiverSchema` (default
 `{schema}_river`), never in a host's fleet or schema. `Start` builds that
 client so requests enqueue; it works nothing. The process that works jobs
@@ -103,7 +105,7 @@ against an embedded engine (`Engine.Client()`) and a remote one (`NewClient`).
 | `catalog.RefreshPaths`, `Engine.ReconcileFacets` | `Engine.Reconcile` (`contentkit reconcile`) |
 | `Engine.RiverJobs`, `WithRiverClient` | `Start` in API processes, `StartJobs` in the worker process ([Jobs](#jobs)) |
 | `Engine.SetAccountDeleted`/`AnonymizeAccount` from a remote host | `PutAccountDeleted`, `PostAccountAnonymize` |
-| `media.NewRegistry`, `media.Hooks`, `media/worker`, `media/workqueue`, `media/image`, `media/video` | the stock `contentkit-media-worker` image, `MEDIA_KINDS_FILE` from `Config.MediaRegistry()` |
+| `media.NewRegistry`, `media.Hooks`, `media/worker`, `media/workqueue`, `media/image`, `media/video` | the stock `contentkit-media-worker` image, `MEDIA_KINDS_FILE` from `Config.MediaRegistry()`; with master hooks, a worker binary of the host's own over `media/worker.Main` ([Masters](#masters-mediakindmaster)) |
 | `workqueue.Migrate`, `migrations.Postgres` | `MigratePostgres` |
 | `access.WithMemo`, `access.NewGate` | none: the engine memoizes each request |
 | `catalog.ErrNotFound`, `entities.ErrConflict`, … | `*contentkit.Error` `Code` (`contentkit.CodeNotFound`, …) |
@@ -199,8 +201,7 @@ A host mounting a module alone passes the same Auth: `content.Options.Auth`
 `contenturl.Router.Handler` needs none.
 
 Hosts use the routes and `ck.Client()` (the same surface in process).
-Search, typeahead, signals and discovery run inside the engine; their routes
-land with #122.
+Search, typeahead, activity and discovery run inside the engine.
 
 Ordinary content deletion always addresses versions: `Catalog.DeleteVersions` in
 embedded Go, `Client.DeleteContentVersion` remotely, or
@@ -397,8 +398,8 @@ download charged once to `media.downloads`:
 content:
   content_kinds:
     video:
-      download: {serve: original}   # default of players; or an MP4 preset ("mp4-1080"); {off: true} for none
-    gallery: {}                     # readers serve pages: the media kind's Publish.Download zip
+      download: {serve: original}   # default of players: the video as uploaded; {off: true} for none
+    gallery: {}                     # readers serve pages: a ZIP of the released pages
 media:
   downloads:
     anonymous: [{limit: 5, per: 1h}]   # by address
@@ -422,12 +423,17 @@ media:
   allows everything and marks nothing.
 - The route answers `200` JSON `FileDownload{url, name, type, size,
   expires_at}`; navigate to `url` (contentkit-ui's `useVersionDownload` and
-  `VersionDownloadButton` do). Public and private files are the media host's,
-  a private one with an exact-file token, so bytes never pass the app;
-  without the policy's `Name`, files are named `{title} [{version code}].{ext}`,
-  zips by the zip preset's `Download` template. Zips and retained originals are
-  `archive?for=&mark=&name=&ticket=`, relative to the download route:
-  `GET .../versions/{vid}/archive` streams them, marking the ticket's pages.
+  `VersionDownloadButton` do). It is `archive?for=&mark=&name=&ticket=`
+  (`&file=true` for an original), relative to the download route:
+  `GET .../versions/{vid}/archive` streams the masters where they are stored
+  (the originals under the identity recipe): a ZIP of the released pages, or
+  the video's master. Unmarked, the same revision is byte-identical on every
+  request (exact `Content-Length`, `ETag`, ranges), cached privately. A ZIP
+  with marked pages is marked and zipped anew for every request, never
+  cached (`Cache-Control: private, no-store`, `CDN-Cache-Control: no-store`,
+  no length, validator or ranges). Files are named by the policy's `Name`,
+  else the title, plus the file's extension.
+- Once the request is read, `archive` clears the connection's read and write deadlines, so a host server's `ReadTimeout` and `WriteTimeout` never cut a download; the progress stream bounds each write instead. Middleware that wraps the `http.ResponseWriter` must implement `Unwrap`, or the host server's timeouts still apply.
 - `202 Pending` while the file is placed or produced, `403` locked or
   `download_unavailable`, `404` no download for the kind, `409 no_download`
   when the version has nothing to serve, `429 rate_limited` with
@@ -473,8 +479,9 @@ Ports (in `content` unless qualified):
 **Authors.** Comments, replies, the latest-comments feed, held items and
 bans show each author as `{id, name, username, avatar, avatar_srcset}`:
 `name` and `username` from `UserInfo.Get` (never the email), with one `Get`
-per response, never per author, and the avatar at its stable URL, built
-from the id (`Config.Accounts.Avatars`, Avatars below). An id the directory does not
+per response, never per author, and the avatar's current image, read from
+the item cache in one query per response (`Config.Accounts.Avatars`, Avatars
+below), else the kind's default. An id the directory does not
 hold (a deleted account) has no author; a directory failure is logged and
 leaves bare ids, never failing the response. Without `UserInfo` authors are
 bare ids.
@@ -528,9 +535,9 @@ file; one not rendered yet stays as it is.
 Public files exist only while the item is live; its editors see an
 unpublished item's images through an editor read (the SDK's `useContent`).
 
-There is no `Recorder` and no `Moderation` port: reactions and favorites feed
-the signal plane through ContentKit's own preference outbox, and the
-`ContentModerator` decides comment publication.
+There is no `Recorder` and no `Moderation` port: the server logs reactions and
+favorites to the activity log as it writes them, and the `ContentModerator`
+decides comment publication.
 
 The tenant is pinned at construction and stamped on every row; a `ContentRef`
 of another tenant passed to any read is `content.ErrTenant`, never remapped.
@@ -619,7 +626,8 @@ Banned-word rules mask the stored name or reject it with `422 moderation_rejecte
 ## Interaction limits
 
 ContentKit limits each actor's interactions itself: the user id, or the IP
-for an anonymous actor (an actor with neither is not limited here). Hosts
+for an anonymous actor (an actor with neither, and `Engine.Client`, is not
+limited here; a credential, even a staff key, always is). Hosts
 keep no limiter around these routes; the edge (Traefik) keeps the generic
 per-IP ceiling. Every attempt spends one, so undoing (unfavorite,
 `DELETE .../reaction`) costs the same as doing. Each rate is "at most `Count`
@@ -732,12 +740,10 @@ are `NULL` for unknown history, an empty string for native writes, and a nonempt
 string for an import source. Native writes, including same-value actions after an
 import, set the native marker. Import clears protect native-marked and
 other-source rows; non-clear imports update only their own source's rows.
-Hosts must select only their own historical imports when clearing unknown rows.
-PostgreSQL migration 0067 is additive: existing rows default to `NULL`, with no
-backfill or ownership inference from timestamps or account IDs.
+Hosts must select only their own historical imports when clearing unknown rows;
+nothing infers ownership from timestamps or account IDs.
 `LegacyReadingRecord.Removed` clears the separate legacy progress fact with its
-source change time in `LastReadAt` and optional `Revision`; native measured reading stays. ClickHouse migration 0002
-adds that tombstone. See [import details](docs/import.md) for ordering, bulk
+source change time in `LastReadAt` and optional `Revision`; native measured reading stays. See [import details](docs/import.md) for ordering, bulk
 recounts and host call examples.
 
 `closes_at` (optional, `PATCH`-able, `null` clears it) and `is_active = false`
@@ -748,6 +754,30 @@ visible only to staff until their opening time.
 Free-text submission, automatic grouping and classifier dependencies are
 removed. The database stores only choice polls; questions have no kind column
 or answer table.
+
+## Feedback after reactions
+
+`Config.Interactions.Feedback` asks readers why they liked, favorited or disliked content. Only the content kinds in `kinds` ask, each naming the entity kinds its answers pick from:
+
+```yaml
+interactions:
+  feedback:
+    kinds:
+      gallery: {tags: [tag], artists: [artist], series: [series, character]}
+    favorite: 0.5   # share of each reaction asked about; these are the defaults
+    like: 0.2
+    dislike: 0.3
+    per_day: 1      # prompts per person in 24 hours
+```
+
+After a reaction the client calls `POST /contents/{id}/feedback` with the reaction (`like`, `favorite` or `dislike`). It answers a prompt, recorded as offered, only when the reader holds that reaction now, the reaction is sampled (the same draw every time for one person, item and reaction), the reader has had fewer than `per_day` prompts in 24 hours and has never been asked about the item. `PATCH /contents/{id}/feedback` stores the answer:
+
+- like or favorite: `artwork`, `artist`, `story`, `series`, `tag` (naming one of the item's tags) or `other`; the answer's `follow_up` is following the artist or series, or browsing the tag.
+- dislike: `bad_art`, `bad_story`, `not_into` (naming one of up to three culprit tags: those the domain's content filters offer, or that the reader already dislikes), `misleading` (cover, title or tags) or `other`.
+- `other` takes up to 280 characters of text.
+- `not_into` a tag the filters can hide (`hideable`) suggests hiding it; `hide: true` writes the account's `content_filter_prefs`, and a signed-out browser keeps the choice itself.
+
+A signed-out browser is the person by its anonymous id (`ContentKit-Anonymous-Id`); its prompts and answers count as its activity. `content_reaction_feedback` keeps one row per person and item: the reaction, the answer, the tag suggested for hiding and whether it was taken. Account erasure deletes the account's rows, and anonymous expiry an idle browser's. An answer is logged as its reaction with the reason; the text never leaves PostgreSQL and ContentKit does not analyze it. An optional AI layer can read it through a port.
 
 ## Account lifecycle and interaction erasure
 
@@ -801,8 +831,8 @@ the signed-in/anonymous reader split changes. Privileged content/entity imports
 and moderator provenance remain host responsibilities; this is not a general
 backup-restore or privileged-write policy.
 
-The signal plane follows the [signal-plane contract](#signal-plane-account-deletion).
-`MigrateClickHouse` records in the account schema that the app has a signal plane (run `MigratePostgres` first). An app whose plane was never provisioned has no signals to erase; once one was, an engine without ClickHouse returns `ErrSignalPlaneRequired` and the deletion stays pending. Any configured-plane failure returns an error: keep the deletion pending and retry.
+Reading follows the [analytics erasure contract](#analytics-account-deletion).
+`MigrateClickHouse` records in the account schema that the app has a signal plane (run `MigratePostgres` first). An app whose plane was never provisioned has no activity to erase; once one was, an engine without ClickHouse returns `ErrSignalPlaneRequired` and the deletion stays pending. Any configured-plane failure returns an error: keep the deletion pending and retry.
 
 Content anonymization commits atomically:
 
@@ -816,9 +846,9 @@ Content anonymization commits atomically:
   they set stay, without their id);
 - location rules and their history keep what changed and when, without the subject as creator, updater or actor.
 
-After the avatar erasure, the subject leaves the media journal and quota ledger: commits keep no actor or quota owner of theirs, and their usage, reservations, releases and upload rates go. An avatar's folder path keeps the account id: it is the permanent storage fence that keeps a purged id's avatar unwritable, and its rows are folder bookkeeping, not attribution.
+Media stores no account id: manifests name no uploader and no editor who restored pages, and the commit rate limit forgets an uploader one window after its last commit. An avatar's folder path keeps the account id: it is the permanent storage fence that keeps a purged id's avatar unwritable, and its cache row is folder bookkeeping, not attribution.
 
-Every writer that stores an account id takes the subject fence and refuses an erased one: comments, reactions, favorites, votes, reposts, content creation (`created_by`) and creators, channel owners, imports naming them (`erased`) and media upload grants. A purged id is never reactivated.
+Every writer that stores an account id takes the subject fence and refuses an erased one: comments, reactions, favorites, votes, reposts, content creation (`created_by`) and creators, channel owners and imports naming them (`erased`). Media upload grants refuse an erased account too; since a commit stores no account id, they need no fence. A purged id is never reactivated.
 
 Other tenants and subjects and externally stored media are untouched.
 Every guarded writer takes the subject fence before other source locks.
@@ -877,7 +907,7 @@ that fits the reader (`display_language` first, then position).
   (`unseen|in_progress|completed`, signed in), `language` (only content
   serving it), `display_language`, `mode` (`lock` marks locked cards,
   `hide` lists only what the reader opens), `sort` (`newest`, `oldest`,
-  `title`, `popular[:period]`, `top_rated`, `most_favorited`,
+  `title`, `popular` (with `kind` and `window`; see [Popularity](docs/popularity.md)), `top_rated`, `most_favorited`,
   `position` in the first of `groups`, which must be of an ordered entity
   kind, `random`), `cursor`, `limit`. A reader's content filters never hide
   an entity's content from a list requiring that entity: a hidden tag's page
@@ -893,10 +923,10 @@ that fits the reader (`display_language` first, then position).
 - A query is at most 1 KiB, 256 characters and 16 words, and each word at most 128 characters once normalized (compatibility characters can spell several letters); anything longer answers `400 invalid_request` on `/search`, `/typeahead` and `/manage/search-suggestions` before any retrieval. Search tolerates a typo only in words of 3 to 16 characters, within a bounded set of spellings per query. Typeahead suggests an entity only when the domain lists one of its works, and entity cards' counts and automatic covers come only from works inside the domain and the visitor's location rules.
 - A `summary` counts at most 10,000 contents; a larger selection answers lower-bound counts with `truncated: true`.
 - Cursors are opaque: one whose value, content id or seed is malformed, or from another sort, answers `400 invalid_request`, as do `tz=Local` and `time_zone=Local`. A `newest`/`oldest` cursor issued before v0.139 is refused once; restart from the first page.
-- `GET /contents/{id}/similar`, `GET /recommendations`: co-engagement
-  candidates, admitted through the reader's visibility.
-  Recommendations fill from the last 30 days' popularity, then all-time,
-  then the newest content the reader has not seen.
+- `GET /contents/{id}/similar`, `GET /recommendations`: candidates admitted
+  through the reader's visibility; see [discovery candidates](#discovery-candidates).
+  Recommendations fill from the last 30 days' popularity, then the newest
+  content the reader has not seen, disliked or hidden.
 - `GET /release-dates` (`by=day|month`, the list filters): counts and free
   counts per date.
 - `GET /releases` (`days=10`, `time_zone=America/Denver`, the reader/content
@@ -906,16 +936,17 @@ that fits the reader (`display_language` first, then position).
   days, defaults to 10 and UTC, and has no item count cap or cursor. Reveal
   cards from that response in the browser; mount thumbnails only as needed.
   Future, unlisted and deleted publications are excluded.
-- Popular ordering uses the shared ContentKit quality score, not personal
-  affinity.
+- Popular ordering uses the shared quality-weighted popularity of the site,
+  not personal affinity.
 - `GET /content-filters` (public): the configured `content_filters`, their
   entrypoint defaults and the current reader's effective settings.
   `PATCH /me/content-filters` atomically merges submitted shared entity choices,
   preserving omitted values. One entity choice
   applies across the configured `content_filters.applies_to` content kinds.
-  `POST /me/content-filters/initialize` adopts a new account's guest choices
-  only when no saved settings exist; its `account_id` must match the signed-in
-  account. Trigger initialization on registration, never ordinary sign-in.
+  `POST /me/content-filters/merge` carries a browser's guest choices into the
+  signed-in account at each sign-in: a choice fills an entity the account has
+  not set, and a hide wins over the account's show. Its `account_id` must match
+  the signed-in account; the SDK sends each set of guest choices once.
   Guest browsers persist choices locally and send
   `ContentKit-Reader-Preferences: {"filters":[{"entity_id":"configured-entity-id","visible":false}]}`.
   The header is ignored for authenticated accounts, grants no access, and
@@ -924,44 +955,43 @@ that fits the reader (`display_language` first, then position).
   host's CORS policy, and prune stale browser choices against a public
   `GET /content-filters` without the header before attaching them to reads.
   Account language remains the host's existing profile preference.
-- `GET|DELETE /me/history`, `POST /signals` (explicit clicks; signed out,
-  `session` names the browser), `POST /exposures`.
+- `GET|DELETE /me/history`, `GET /me/continue` (started, unfinished reads),
+  `PUT|DELETE /contents/{id}/hidden`, `POST /activity` (opens and progress),
+  `POST /me/anonymous-link` (sent once at sign-in); see
+  [activity and reading state](#activity-and-reading-state).
 - `GET /me/favorites`: what the reader favorited, contents as cards or
   channels, most recent first.
 - `GET /sitemap/contents?kind=`, `GET /sitemap/entities?kind=` (open): the
   request site's live, listed pages by id (`cursor`, up to 10000 a page),
   each with `lastmod` and its path per language it serves. Content filters
   and access don't apply.
-- Staff (`root:content:view-restricted`): `GET /stats/activity` (views,
-  viewers and signed-in viewers per day) and `GET /stats/top` (`metric`
+- Staff (`root:content:view-restricted`): `GET /stats/active` (active people
+  per day by access, from `audience_daily`) and `GET /stats/top` (`metric`
   views or comments, `period`, `access`, `tiers`). `GET /me/stats`: the
   reader's finished contents per kind, comments and the reactions they got.
-- `GET|DELETE /me/searches` (signed out, `session`): the reader's recent
-  searches, one per query, newest first, which `GET /search` keeps (its
-  `session` names a signed-out browser). A clear deletes them (`?query=`
+- `GET|DELETE /me/searches`: the reader's recent searches (signed out, its
+  anonymous id's), one per query, newest first, which `GET /search` keeps. A clear deletes them (`?query=`
   only that one); erasure deletes them too, and an hourly job deletes those
   unused for 180 days and any recorded while an erasure ran.
 
 A card carries title and path in the display language, cover renditions, the
 version (languages, traits, pages, duration), the version's entities with pages
 by kind, likes, dislikes, favorites and all-time viewers, the access decision
-(`allowed`, `sell`, `requires`, `preview`, `releases`), the signed-in
-reader's favorite and progress, `published_at` and attributes. Content
-detail (`GET /contents/{id}`, `.../versions/{vid}`) carries the same
+(`allowed`, `sell`, `requires`, `preview`, `releases`), the reader's
+favorite and reaction (signed in) and reading state (progress against the
+version's length, position, outcome, hidden), `published_at` and attributes.
+Content detail (`GET /contents/{id}`, `.../versions/{vid}`) carries the same
 `viewer` standing on the item and each version, to resume from. Without a
-signal plane (no ClickHouse, or one that is down, which fails the
-`contentkit_clickhouse` probe with the cause) the engine runs on Postgres:
-`GET /v1/kinds` says `"signals": false`, contentkit-ui sends no signals or
-exposures, popular sorts use what `content_facets` holds, and signal reads
-and writes answer 501 `not_configured`, or 503 `unavailable` while a
-configured one is down. The engine retries a down ClickHouse in the
-background (migrations, connection, schema) and pings a live one every 30
-seconds with the driver's protocol ping, not a query; the probe reports what
-that loop last found and sends nothing itself. Signals come back on without a
-restart, and contentkit-ui reads the model again a minute after it last found
-them off.
+signal plane the engine runs on Postgres: `GET /v1/kinds` says
+`"signals": false`, contentkit-ui reports nothing and `POST /v1/activity`
+answers 501 `not_configured`; reading state stays empty. A configured
+ClickHouse that is down fails the `contentkit_clickhouse` probe with the
+cause; activity waits in each process's buffer meanwhile, and the engine
+retries in the background (migrations, connection, schema) and pings a live
+one every 30 seconds with the driver's protocol ping.
 
-A signal read serving a request (history, states, similar, recommendations, popular lists, stats, attribution) gets a ten-second deadline when its context has none, which the driver also sends as `max_execution_time`, and a 1 GiB `max_memory_usage`; a job's own deadline stands. Set `Config.ClickHouse.TLS` (`tls`) to connect to `Addr` over TLS, ClickHouse's secure native port, verifying the server against the system roots or `ca_file`; `MigrateClickHouse` and the engine's own migrations use the same TLS. Without it the password crosses in clear, so keep a plain connection on a private network.
+Only the staff report reads ClickHouse to serve a request; it carries a 20 s
+`max_execution_time` and a 1 GiB `max_memory_usage`. Set `Config.ClickHouse.TLS` (`tls`) to connect to `Addr` over TLS, ClickHouse's secure native port, verifying the server against the system roots or `ca_file`; `MigrateClickHouse` and the engine's own migrations use the same TLS. Without it the password crosses in clear, so keep a plain connection on a private network.
 
 ## Search job
 
@@ -975,15 +1005,19 @@ and a stale build never overwrites a newer one.
 
 ## Media
 
-Media is a self-describing file system in one private bucket; no database
-table records what media exists. The app declares everything in one registry
+Media is a self-describing file system in the app's own private bucket; no
+database table records what media exists. The app declares everything in one registry
 at startup (`media.Config`); ContentKit hard-codes no kinds, names or
 layouts.
 
-- **Items.** App media uses `tenant/{tenant}/app/{app}/{kind}/{id}/`.
-  For a content kind, `id` is the version ID; a content has no item of its
-  own. Account media uses `tenant/{tenant}/account/{kind}/{id}/`.
-  Both roots derive from `Config.Scope`. An item holds
+- **One bucket per app.** The bucket is the tenancy boundary: keys name no
+  tenant or app, so two apps never share a bucket. `Config.Scope` names
+  database partitions and refs only. A hosted deployment gives each tenant
+  app its own bucket and S3 credentials.
+- **Items.** App media uses `{kind}/{id}/`. For a content kind, `id` is the
+  version ID; a content has no item of its own. Account media uses
+  `_accounts/{kind}/{id}/` in the avatar primary's bucket. Top-level names
+  starting with `_` and `work/` are reserved: no kind takes them. An item holds
   `manifest.json` (gzip JSON, never served), `private/` (hash-named blobs:
   uploads, derived files, editor views), `public/` (published renditions
   such as `cover-460-{generation}.webp`) and `temp/` (in-flight server-side
@@ -997,22 +1031,19 @@ layouts.
   kind's reader (its page segments, a locked version's previews (its rule's,
   else its kind's `preview`) and its playback) is planned by
   `GET /v1/contents/{id}/versions/{vid}/reader`. Page-archive
-  imports, reader metadata and downloads (a host watermark, quota buckets)
+  imports, reader metadata and downloads (a host watermark, download quotas)
   complete it. A reader version with no cover of its own gets its leading
   released page as its cover (an upload marked `auto_cover`); a cover an
   editor uploads replaces it for good.
-- **Manifest.** An ordered virtual file system over the item's private
-  blobs: each Upload's files in natural order unless an op reorders them,
-  then each private preset's outputs in their uploads' order. A derived file
-  records `from`, `preset` and `fp` (its inputs' fingerprint); it is stale
-  exactly when the fingerprint no longer matches. Each upload records its
-  public publications: the current generation of each preset and, while
-  the worker writes one, its successor.
-- **URLs.** `https://media.<site>/v1/tenant/{tenant}/app/{app}/{kind}/{id}/{public|private|download}/{name}`.
-  Public names carry a generation that changes on every render, so a URL
-  built from a preset's `to` template is never valid: it serves the kind's
-  default image, or 404 when the preset declares no `Default`. Build public
-  URLs with the lookup in "Public image URLs".
+- **Manifest.** An ordered virtual file system over the item's blobs, each
+  named `{area}/{sha256}`: each Upload's files in natural order unless an op
+  reorders them, then each preset's outputs in their uploads' order. A
+  derived file records `from`, `preset` and `fp` (its inputs' fingerprint);
+  it is stale exactly when the fingerprint no longer matches.
+- **URLs.** `https://media.<site>/v1/{kind}/{id}/{public|private}/{sha256}`.
+  Names are hashes, so no URL is built from a preset's `to` template: reads
+  and listings carry them (see "Public image URLs"), and a preset's default
+  image is in `GET /v1/media/presets`.
 
 ### Registry
 
@@ -1025,7 +1056,6 @@ var Gallery = media.Kind{Name: "gallery", KeepOriginals: true,
 	Private: []media.Private{
 		{Name: "thumb", From: "originals/{name}", To: "thumb/{name}.webp", Image: &media.Image{Width: 460, Height: 650, Fit: media.FitCover}},
 		{Name: "high", From: "originals/{name}", To: "high/{name}.webp", Image: &media.Image{Quality: 90}},
-		{Name: "zip", To: "download/pages.zip", Download: "{title}.zip", Zip: "high/"},
 	},
 	Public: []media.Public{
 		{Name: "cover", From: "cover", To: "cover-{w}.webp", Widths: []int{230, 460, 920},
@@ -1042,7 +1072,6 @@ var Video = media.Kind{Name: "video", KeepOriginals: true,
 	},
 	Private: []media.Private{
 		{Name: "hls", From: "source", To: "hls/", HLS: &media.HLS{Ladder: []int{2160, 1080, 480}}},
-		{Name: "mp4-1080", From: "source", To: "video/source-1080p.mp4", Download: "{title} (1080p).mp4", MP4: media.Rung(1080)},
 		{Name: "vtt", From: "subs/{name}", To: "vtt/{name}.vtt", Subtitles: &media.Subtitles{}},
 	},
 	Public: []media.Public{{Name: "poster", From: "poster", To: "poster-{w}.webp", Widths: []int{640, 1280, 1920}, Default: "poster.png"}},
@@ -1063,22 +1092,24 @@ worker, _ := cfg.MediaRegistry() // the stock worker's MEDIA_KINDS_FILE
   `avatar.User()` (`github.com/open-rails/contentkit/media/avatar`) is the
   standard kind: JPEG, PNG and WebP up to 10 MiB, square WebP at 64, 128,
   256 and 512 pixels, a default silhouette (publish it with the other
-  defaults: `media-worker publish-defaults`). Its preset is `Stable`:
-  besides its generations, the current image is kept at the logical names
-  (`avatar-128.webp`), so its URL is built from the person's id and the
-  gateway serves the default there until one is uploaded.
-  `Registry.Avatars(ids...)` builds them without a lookup. A host building
+  defaults: `media-worker publish-defaults`). An avatar's URL names its
+  hash, so listings read it from the item cache (one query per response)
+  and show the default until one is uploaded. A host building
   its own media without the engine authorizes the kind in `CanUpload`: a
   person their own, staff anyone's (exempt).
 
 - **Uploads** are paths: a literal (`cover`) or a pattern (`originals/{name}`); a file's path adds its extension (`cover.png`), and a put to the same stem replaces it. `Max` caps an Upload's files, frames included, `MaxPixels` lowers the image processor's decoded-pixel bound for its images (avatars: 25 MP), `Frames` lets the `frame` op grab the upload from a video upload (it must accept `image/png`; no other upload takes frames), `Named` lets the server name it (`i-{uuid}`, inline images; it needs a `Max`). `Required` holds a version back until it has an attached upload there: its media state reads `missing` and its publication waits, and a live release without one is withdrawn when it is re-planned.
 - **Private presets** have one producer: `Image` (with `Shapes`, below),
   `HLS` (byte-range fMP4 ladder, audio and subtitle tracks, seek sprite; each
-  track's segment table is its own private blob), `MP4` (one rung, H.264),
-  `Zip` (the files under a prefix, in manifest order), `Audio` (an HLS track
-  and an M4A) or `Subtitles` (clean WebVTT; a video lists them after its own
-  tracks). Nothing is upscaled.
-  Image presets default to WebP. A private preset with `Image.Format: media.ImageFormatSource` must end its `To` with `{ext}` (the upload's original extension), such as `download-pages/{name}{ext}`. With an inside fit and no edit, a source within its width/height box passes through with its pixels byte-for-byte and its metadata (EXIF, XMP, IPTC, comments, trailing data) dropped, orientation and colour profile kept; `Image.KeepMetadata` keeps all of it and is required for AVIF, HEIF and TIFF uploads. `Width: 6000, Height: 6000` bounds either edge proportionally; zero leaves an edge unbounded. Oversized or edited JPEG, PNG, WebP and GIF files retain their codec, including animation; other accepted codecs support unchanged passthrough only. Keep archival uploads with `KeepOriginals: true`; a ZIP preset over `download-pages/` packs the resulting original-format pages in reading order. Upgrade the worker/gateway cohort before declaring this registry, then regenerate existing items to replace an old download rendition. `Shapes` give an image preset another `Image` for uploads of another aspect (width:height), wider than `WiderThan` and no wider than `NoWiderThan` (unset is open). They are data, so the stock worker runs them; they never overlap and keep the preset's format and animation; an upload in none renders `Image`. Tall pages keep more height, wide pages more width:
+  track's segment table is its own blob) or `Subtitles` (clean WebVTT; a
+  video lists them after its own tracks). A video's original is kept as
+  uploaded and is what its download serves. Nothing is upscaled. An HDR
+  upload (PQ or HLG transfer) keeps its range in 10-bit AV1 with its
+  primaries and HDR10 static metadata; its H.264 rungs, sprite and frames
+  are tone-mapped to BT.709 SDR, and each master playlist variant states its
+  `VIDEO-RANGE`. An SDR upload is encoded as before. Dolby Vision and HDR10+
+  dynamic metadata are dropped: their HDR10 or HLG base is what is kept.
+  Image presets default to WebP. A private preset with `Image.Format: media.ImageFormatSource` must end its `To` with `{ext}` (the upload's original extension), such as `download-pages/{name}{ext}`. With an inside fit and no edit, a source within its width/height box passes through with its pixels byte-for-byte and its metadata (EXIF, XMP, IPTC, comments, trailing data) dropped, orientation and colour profile kept; `Image.KeepMetadata` keeps all of it and is required for AVIF, HEIF and TIFF uploads. `Width: 6000, Height: 6000` bounds either edge proportionally; zero leaves an edge unbounded. Oversized or edited JPEG, PNG, WebP and GIF files retain their codec, including animation; other accepted codecs support unchanged passthrough only. Keep archival uploads with `KeepOriginals: true`. A reader kind's `Publish.Download` names such a `HostOnly` preset: the pages ZIP then carries a page's bounded rendition in place of an oversized original. `Shapes` give an image preset another `Image` for uploads of another aspect (width:height), wider than `WiderThan` and no wider than `NoWiderThan` (unset is open). They are data, so the stock worker runs them; they never overlap and keep the preset's format and animation; an upload in none renders `Image`. Tall pages keep more height, wide pages more width:
 
   ```json
   {"name": "low", "from": "originals/{name}", "to": "low-res/{name}.webp",
@@ -1101,16 +1132,15 @@ worker, _ := cfg.MediaRegistry() // the stock worker's MEDIA_KINDS_FILE
   presets' sources are always kept). Except a version's declared audio
   (`Publish.Playback`), the read API never returns an upload's path or URL
   to viewers.
-- **Host-only presets.** `Private.HostOnly` keeps an Image, MP4 or Zip output out of generic reads, downloads and playlists.
+- **Host-only presets.** `Private.HostOnly` keeps an Image output out of generic reads and playlists.
 - **`private/` is all or nothing.** One token per item opens every private file of it; a version's `private/` holds only released files. `HostOnly` outputs, of every kind, stay in `internal/`, which no token reaches.
 - **Defaults.** A kind's `Defaults` (an `fs.FS`, e.g. `go:embed`) holds the
   images its public presets name in `Public.Default`; the registry checks
   they exist. A shared kind ships its own, so importing apps merge nothing.
-- **Shared kinds.** Account avatars use `tenant/{tenant}/account/{kind}/{id}/`.
-  One app owns the shared avatar journal and worker; other sites reach it
+- **Shared kinds.** Account avatars use `_accounts/{kind}/{id}/` in the
+  primary's bucket. One app (the primary) writes them; other sites reach it
   through its API (Avatars below) and serve its files from their media hosts
-  (a `MEDIA_GATEWAY_ROUTES` entry for the tenant account root). The root is
-  derived from `Config.Scope`.
+  (their `MEDIA_GATEWAY_ROUTES` entry's `accounts` names the primary's bucket).
 - The stock worker reads the registry as JSON (`MEDIA_KINDS_FILE`; hooks
   are not included): an engine's is `Config.MediaKinds()`, printed
   by `contentkit media-config`.
@@ -1128,12 +1158,18 @@ cfg.Accounts.Avatars = &contentkit.AvatarsConfig{
 }
 ```
 
-- Every author and the content model's `avatars` (`GET /v1/kinds`, a
-  `Stable` preset rule) name avatars at the site's own media host,
-  `{media}/v1/tenant/{tenant}/account/user/{id}/public/avatar-{w}.webp`:
-  nothing is looked up. The gateway's resource policy is same-site, so each
-  site's host serves them: every media host has a `MEDIA_GATEWAY_ROUTES`
-  entry for the tenant account root, pointing at the primary's bucket.
+- Every author is listed with the avatar's current image, read from the
+  tenant's account item cache (`content_media_items` in the account schema,
+  which every site of the tenant reads), else the kind's default, read from
+  the same cache; the content model's `avatars` (`GET /v1/kinds`) is the
+  preset rule with its `default_image`. The primary publishes the default
+  (`media-worker publish-defaults` with `DATABASE_URL` and
+  `MEDIA_ACCOUNT_SCHEMA`) into `_accounts/user/_default/` in its bucket
+  and that cache; other sites publish no account defaults. URLs are at the
+  site's own media host, `{media}/v1/_accounts/user/{id}/public/{sha256}`. The
+  gateway's resource policy is same-site, so each site's host serves them:
+  every media host's `MEDIA_GATEWAY_ROUTES` entry names the primary's bucket
+  in `accounts`.
 - On the other site, a person's avatar presigns, commits and editor reads
   (`/v1/media/upload/{presign,commit}`, `/v1/media/{kind}/{id}`) go through
   its own routes, which forward them to the primary's with `Key`: only
@@ -1147,8 +1183,9 @@ cfg.Accounts.Avatars = &contentkit.AvatarsConfig{
   keys (AuthKit API keys in the root group, a role with that permission
   alone), which it answers with token URLs rather than cookies.
 - contentkit-ui's `AvatarUpload` defaults to the viewer's avatar from the
-  content model, `useAvatar(id)` builds an image, and both work unchanged
-  on either site.
+  content model, `useAvatar(id)` shows the viewer's own (anyone else's
+  comes with what they wrote) or the default, and both work unchanged on
+  either site.
 - `AnonymizeAccount` erases avatars on the primary only; people are shared,
   so the primary's deletion (the account deletion every site shares) removes
   them.
@@ -1216,8 +1253,7 @@ The media route group serves the read API at `/v1/media`
   file's type. With `editor` (editors only), the
   uploads come with `edit`, `frame`, `meta`, `pending`, `failed`, encode
   `progress` and an `editor_url`: the editor view, rendered on demand by the
-  worker (`ReaderOptions.Queue`) into `private/` under the hash of its source
-  and `Config.Editor`, and swept a grace period later. An editor read also
+  worker (`ReaderOptions.Queue`) from its source and `Config.Editor`. An editor read also
   carries the kind's `uploads`: each upload path's types, `max_bytes`,
   `max` files, crop `aspect` and `min_width`, and for video its limits in
   effect and the `min_aspect`/`max_aspect` its HLS presets accept, so
@@ -1225,43 +1261,30 @@ The media route group serves the read API at `/v1/media`
   fields, even for served originals.
 - `GET /presets` lists every kind's public preset rules (`base`,
   `namespace`, `kind`, `name`, `from`, `to`, `widths`, `aspect`, `min_width`,
-  `first`): crop bounds and widths without a read. Published files carry a
-  generation suffix, so a URL built from `to` is not an item's image; its
-  current images come from a read's `public` (or, server-side, the lookup
-  below).
+  `default_image`): crop bounds, widths and the preset's default without a
+  read. Files are named by their hash: an item's current images come from a
+  read's `public` (or, server-side, the cache below).
 - `GET /{kind}/{id}/hls/{dir}master.m3u8` (a ladder in `hls`), `{path}.m3u8`
   (a track) and `{dir}sprite.vtt` are built per request from the manifest's
   tracks and their index blobs (cached per item and hash, 16 MiB per process).
 
 ### Public image URLs
 
-Every item's current publications are projected into Postgres
-(`content_media_publications`) in the same journal transaction that makes
-them current, so server-side rendering resolves a whole page with one
-indexed query and no bucket read. `*media.Manifests` (`jobs.Manifests()`):
-
-- `Images(ctx, media.ImageQuery{Ref, Preset, Name}...)` answers many queries in
-  one read: an item's images, one preset's, or one upload's by its `{name}`
-  (an inline image's `i-{uuid}`). Store names, not URLs, and resolve them
-  when rendering; post bodies store references (Interactions).
-  `image.URL(width)` picks a rendition, `image.SrcSet()` gives `srcset`.
-- `Registry.DefaultImage` is a preset's default.
-
-A republish keeps the current files published until their successor is
-ready, and cleanup retires a generation only after the projection names the
-next one. Browsers keep using a read's `public` or `usePublicImage`.
+Every item's current public images are cached in Postgres (`content_media_items`) after each manifest write, so server-side rendering resolves a whole page with one indexed query and no bucket read: listings, authors, covers and post bodies carry their URLs. Store names, not URLs; post bodies store references (Interactions). `image.URL(width)` picks a rendition, `image.SrcSet()` gives `srcset`. Browsers use a read's `public` or `usePublicImage`.
 
 ### Public storage classes
 
-- Declared public presets remain public before release and after unpublishing.
-  Publication and billing changes only change database access policy and private
-  token issuance. There is no exposure method or worker.
+- Declared public presets are public before release and after unpublishing.
+  Publication and billing change only database access policy, private token
+  issuance and which files a release moves into `private/`.
 - Render the defaults from the deploy step with the worker image:
-  `media-worker publish-defaults` (`MEDIA_KINDS_FILE`, `MEDIA_S3_*`, no
-  database) writes each `Public.Default` to
-  `{ns}/{kind}/_default/public/sha256-{digest}.webp` and prints the
-  gateway's `MEDIA_GATEWAY_DEFAULTS`. The images come from
-  `MEDIA_DEFAULTS_DIR`, over ContentKit's own (the avatar silhouette).
+  `media-worker publish-defaults` (`MEDIA_KINDS_FILE`, `MEDIA_S3_*`)
+  writes each kind's `Public.Default` images into its `_default` item, from
+  `MEDIA_DEFAULTS_DIR` over ContentKit's own (the avatar silhouette). App
+  kinds need no database. The avatar primary's account kind also needs
+  `DATABASE_URL` and `MEDIA_ACCOUNT_SCHEMA`: its defaults are recorded in
+  the tenant account cache, where every site reads them. Repeating it writes
+  nothing (and records what a restored database lost).
 
 ### Processing and readiness
 
@@ -1270,21 +1293,12 @@ next one. Browsers keep using a read's `public` or `usePublicImage`.
   itself (a changed spec or recipe after a deploy) and visits every item of
   the kind; the `regenerate` op does one item. A `meta` change rewrites download names only.
 - An item is ready when no attached upload is pending (including declared
-  public presets) and every zip packs its inputs; failed once
-  nothing is pending and an upload failed for its current blob and edit.
-  Processor completion appends a retained processing fact and queues real
-  version metadata work in one transaction; hosts follow it through the event
-  log, never inside the transaction.
-- Manifests stop at `media.MaxManifestBytes` (16 MiB of JSON). A commit is
-  refused (413 `too_large`) when the item, processed, would pass that. If
-  outputs still overrun it, the worker marks the item `full` instead of
-  recording them: producers write no private output for it (public files
-  still render), readiness is `full` and editor reads say `full: true`,
-  until a commit frees the bytes the refused record was short of (the
-  manifest's `deficit`, counting what removed uploads would still have
-  added); a smaller shrink or removal re-runs nothing.
-  The SDK's `waitFor` rejects with `too_large` while an item is full.
-  Failure messages are capped at 300 bytes.
+  public presets); failed once nothing is pending and an upload failed for
+  its current blob and edit. The item cache appends a retained processing
+  fact when an item's status changes, in the transaction that records the
+  manifest write; hosts follow it through the event log.
+- Manifests stop at `media.MaxManifestBytes` (16 MiB of JSON); a write past
+  it fails. Failure messages are capped at 300 bytes.
 - Each process keeps a fixed 128 MiB cache of decoded manifests, each about
   three times its JSON: the largest costs 48 MiB, and a read that misses
   decodes it again (about 0.5 s and 120 MiB at 16 MiB, anonymous reads
@@ -1300,7 +1314,7 @@ next one. Browsers keep using a read's `public` or `usePublicImage`.
   container's declared duration and rate. `Upload.Video`
   (`media.VideoLimits`) caps an upload's running time, frame area, output
   frame rate and planned encode work (output pixels × output frames over
-  its HLS and MP4 rungs and codecs); zero fields take
+  its HLS rungs and codecs); zero fields take
   `media.DefaultVideoLimits` (4 h, 60 fps, 8192×4320 px, 4e13). An upload
   past them, or a video averaging under one frame a second, fails before
   any encode with `video_too_long`, `video_too_large` or
@@ -1312,32 +1326,10 @@ next one. Browsers keep using a read's `public` or `usePublicImage`.
 
 ### File retirement, deletion and erasure
 
-- Manifest edits admit their exact next manifest and ingest job in PostgreSQL
-  before the conditional S3 write. Ingest retries that admitted operation.
-  Removed keys remain durable intents for the existing content purge. A file shared by retained entries stays live;
-  reordering entries does not delete or rename it.
-- The existing content-deletion sweep calls `jobs.PurgeRetired(ctx, limit)`
-  for database-recorded allocation and deletion deadlines. It does not search the bucket for unreferenced files. Unfinished
-  private allocations retain `JobsConfig.Grace` (24 h by default); temporary
-  uploads and caches expire after seven days and must then be uploaded again.
-  Known retired keys receive a bounded retry to catch already-issued writes.
-  Unknown objects require an explicit integrity investigation.
-- Configure the S3 adapter's lifecycle policy and allow `x-amz-tagging` in
-  upload CORS. Worker credentials also need `s3:PutObjectTagging` and
-  `s3:DeleteObjectTagging`. Canonical temp objects receive an expiry tag; copies into
-  permanent storage clear it. `Store.Configure` preserves unrelated lifecycle
-  rules, expires temp objects and aborts multipart uploads after seven days.
-  Use equivalent server settings where multipart lifecycle is unsupported.
-- `jobs.RetireItemsTx(ctx, tx, media.Deletion{Ref, Owner})` records an
-  incarnation-bound deletion with the owning tombstone; executing it makes a
-  soft-deleted item's fence permanent. `RetirementStartedTx`
-  prevents restoration after the claim; `RetirementComplete` permits the owner
-  to mark completion only after physical deletion succeeds. The content purge
-  retains exact late-write targets after the owning row is finalized.
-  `Jobs.Erase` is synchronous permanent erasure; `Jobs.Purge` is an explicit
-  reset with a stable operation ID. Neither needs a media host queue.
-- Restore: `s3.Store.Restore(ctx, prefix, t)` brings back manifests and
-  their referenced blobs. Normal processing rebuilds declared public presets.
+- A manifest edit that stops referencing a file moves it to the manifest's `retired` list with a due time: 7 days for a replaced file, an hour for a release's leftovers, at once for withdrawn, taken-down or erased files. A file shared by retained entries stays live; reordering entries does not delete or rename it.
+- Garbage collection (`contentkit_media_gc`, one job per item) deletes retired files once due, and after a write lists the item's folder once for orphans older than a day. Nothing lists the bucket otherwise.
+- Configure the S3 adapter's lifecycle policy and allow `x-amz-tagging` in upload CORS. Worker credentials also need `s3:PutObjectTagging` and `s3:DeleteObjectTagging`. `Store.Configure` preserves unrelated lifecycle rules, expires what is left in `tmp/` (staged uploads, a killed encode's video chunks) and aborts multipart uploads after seven days. Use equivalent server settings where multipart lifecycle is unsupported.
+- Soft deletion records the deletion in the manifest and writes the item's gateway fence; restoring removes it. Erasure (`Jobs.Erase`) writes the permanent fence and an empty manifest whose files are all retired and due, then deletes everything else in the item's folder; restoring is refused from the tombstone on.
 
 ## Upgrading from v0.69
 
@@ -1359,7 +1351,7 @@ public URLs: a body that names one keeps naming a file that goes stale.
   (`editorBody`, `imageSrc(name)`, `coverSrc`); `media.uploadInline` adds
   `ref`, and its `url` is a preview (null while none exists);
   `posts.imageURL` is `posts.inlineImage`. `defaultImage` and `usePublicImage` give no image for
-  a preset without a default (`PresetRule.default`).
+  a preset without a default (`PresetRule.default_image`).
 
 ## Upgrading from v0.70
 
@@ -1403,6 +1395,61 @@ gates (Auth). No compatibility: the old ports are gone.
   in the request. Custom wrappers must use that signature; embedded hosts
   pass the client returned by `Engine.MerchantBySlug`.
 
+## Masters (`media.Kind.Master`)
+
+Renditions derive from each upload's master, and downloads serve it. With no
+`master` recipe (the default) the master is the original: the manifest names
+its hash, and nothing more is stored. A recipe names host hooks in order:
+
+```yaml
+media:
+  kinds:
+    - name: gallery
+      master: {steps: [{hook: deskew, version: "2", params: {max_degrees: 3}}]}
+```
+
+A hook implements `media.MasterHook`: `Name` (what recipes call it), `Version`,
+and `Process`, which reads `MasterInput.Path` and writes `Out`, or answers
+`Unchanged`; it may hand the file to an external job. A changed result must be
+lossless: WebP lossless (`image/webp`), PNG past 16,383 px, or FFV1 in
+Matroska. A video hook writes the whole file, audio and subtitle tracks
+included. While a hook fails the upload keeps its previous master and
+renditions.
+
+The stock image registers no hooks. A host with hooks builds its own worker
+binary from `media/worker`, which is the stock command with them:
+
+```go
+package main
+
+import "github.com/open-rails/contentkit/media/worker"
+
+func main() { worker.Main(deskew.Hook{}, upscale.New()) }
+```
+
+It takes the stock image's environment and subcommands. Build it against the
+libvips the stock image ships and run it on that image:
+
+```dockerfile
+FROM golang:1.26-trixie AS build
+RUN apt-get update && apt-get install -y --no-install-recommends libvips-dev
+WORKDIR /src
+COPY . .
+RUN CGO_ENABLED=1 go build -trimpath -o /out/media-worker ./cmd/media-worker
+
+FROM ghcr.io/open-rails/contentkit-media-worker:vX.Y.Z
+COPY --from=build /out/media-worker /media-worker
+```
+
+A worker refuses to start while a recipe names a hook it lacks or at another
+version, so the stock image never runs a hooked kind's jobs, and a hook's new
+behaviour is a version bump. In process, `worker.New` takes the same hooks in
+`Config.Hooks`. After changing a recipe or a preset's spec, run
+`contentkit regenerate -kind gallery` (`Engine.RegenerateMedia`): masters
+whose recipe changed are made again, then everything derived from them: image
+renditions, and for a video its HLS renditions, seek sprite, grabbed frames
+(posters) and their renditions.
+
 ## Media worker schema
 
 Each host names its own media worker River schema, e.g. `doujins_media_worker`
@@ -1431,17 +1478,16 @@ the host's periodic jobs. The worker migrates its schema itself.
   CookieDomain: "<site domain>"}`); URL delivery only for apps without cookies.
   Either way one item token opens the whole item's `private/`, and viewers
   without access get none.
-- **Media gateway config**: `MEDIA_GATEWAY_ROUTES` lists each root a media
-  host serves: `{"host", "scope": {"tenant_id", "app_id"}, "bucket",
-  "origins"}` for the app and the same without `app_id` for account media,
-  whose bucket is the avatar primary's. URL paths use the tenant/app or
-  tenant/account roots above. `origins` are exactly your sites' origins
+- **Media gateway config**: `MEDIA_GATEWAY_ROUTES` lists each media host
+  once: `{"host", "bucket", "accounts", "origins"}`, its app's bucket and,
+  in `accounts`, the bucket holding the tenant's `_accounts/` media (the
+  avatar primary's; omit it when the site shows no avatars). An item token
+  is bound to its bucket, so one gateway key serves many apps without one
+  app's token opening another's item. `origins` are exactly your sites' origins
   (`https://<domain>`, `https://www.<domain>`; no wildcards, no third
-  parties); `MEDIA_GATEWAY_DEFAULTS` the public names that fall back to a kind's
-  `_default` item. `Cross-Origin-Resource-Policy` is always `same-site`.
-- **Bucket**: one per app, private (no public ACL or policy); the gateway's
-  key reads only `*/private/*` and `*/public/*` of each; only the hosts write.
-- **CDN**: may cache `public/` in a shared cache. Generation-named URLs answer `public, max-age=31536000, immutable`; stable names and default images answer `public, max-age=300, stale-while-revalidate=86400` with ETag revalidation. ContentKit does not enqueue CDN invalidation jobs. Never cache `private/` in a shared cache: the token is not part of a cache key the CDN checks, so a cached object would be served without one. Private blobs are hash-named and answer `private, max-age=31536000, immutable` with `CDN-Cache-Control: no-store`, so a CDN that ignores `private` still stores none: tokens guard new reads, not copies a browser already holds, so expiry, key rotation and deletion don't reach those. Every media answer carries `Referrer-Policy: no-referrer`, so a page a media file links to never sees its tokened URL. The gateway sets these headers itself and ignores any `Cache-Control` stored on the object. A CDN hit skips the deletion fence, so a deleted `public/` file can stay served until that copy expires.
+  parties). `Cross-Origin-Resource-Policy` is always `same-site`.
+- **Bucket**: one per app, private (no public ACL or policy), and never versioned: media writes refuse a bucket that ever had versioning. The gateway's key reads only `*/private/*` and `*/public/*` of each; only the hosts write.
+- **CDN**: may cache `public/` in a shared cache. Every name is a hash, so public files answer `public, max-age=31536000, immutable`. ContentKit does not enqueue CDN invalidation jobs. Never cache `private/` in a shared cache: the token is not part of a cache key the CDN checks, so a cached object would be served without one. Private blobs are hash-named and answer `private, max-age=31536000, immutable` with `CDN-Cache-Control: no-store`, so a CDN that ignores `private` still stores none: tokens guard new reads, not copies a browser already holds, so expiry, key rotation and deletion don't reach those. Every media answer carries `Referrer-Policy: no-referrer`, so a page a media file links to never sees its tokened URL. The gateway sets these headers itself and ignores any `Cache-Control` stored on the object. A CDN hit skips the deletion fence, so a deleted `public/` file can stay served until that copy expires.
 - **Denials are 404 by design**: a missing, malformed, expired, wrong-scope
   or unknown-key token on `private/` gets the same response as a
   missing object (status, headers, body; `Cache-Control: no-store`), decided
@@ -1468,7 +1514,8 @@ the host's periodic jobs. The worker migrates its schema itself.
     every anonymous viewer in one count. The per-process count forgets some
     viewers once it is full, and they start again.
   - `HandlerOptions.Limit` bounds requests to the read API (at most `Burst`
-    per `Burst/PerSecond` per viewer; default 120 per minute).
+    per `Burst/PerSecond` per viewer; default 120 per minute). `Engine.Client`
+    is not a viewer and is not limited; every credential is.
   - The ingress of the media host limits downloads per IP (Traefik's
     `rateLimit`). Clients treat its 429 as "over the limit" and do not retry
     in a loop (the SDK does not).
@@ -1515,81 +1562,58 @@ encodings. Descriptive membership fields refer to entities; access-rule `group_i
 `group`/`group_ppv` refer to paid channel membership. Real AuthKit permission
 groups hold editorial roles independently of those read entitlements.
 
-## Preference boundary (reactions and favorites into the signal plane)
+## Activity and reading state
 
-Reactions and favorites reach the signal plane straight from their own rows.
-`content_reactions.value` is -1/0/1 and `content_favorites.value` is 1/0:
-neutral and unfavorite keep the row at 0. Every value change stamps the row
-with `revision` from `content_preference_revision_seq` under the row lock; a
-no-op allocates nothing. Only authenticated rows export; anonymous (IP)
-reactions and comment threads never do.
+The activity log is ClickHouse's `activity` table: every open, progress
+report, reaction, favorite, hide and search, 90 days. A row's subject is the
+account id, else a hash of the browser's anonymous id, which the SDK keeps in
+local storage, sends as `ContentKit-Anonymous-Id` while signed out and
+replaces at sign-out. The API stamps the site (domain and language), the
+access (`anonymous`, `account` or the tiers the token claims), the local UTC
+offset (`ContentKit-UTC-Offset`, else Cloudflare's `cf-timezone`) and the time.
+Each process buffers rows and writes them every second as one
+`INSERT … VALUES` with `async_insert=1, wait_for_async_insert=1`.
 
-- **Reference**: the reaction row, the counts rollup and the export all use
-  the resolver's canonical reference (`Resolution.Ref`); comment reactions
-  never export. `Counts` reads exactly the reference given.
-- **Sync**: the engine's preference job runs every 30 s. It sends rows past the tenant's watermark in revision
-  order as one `signal` event per subject × reference × axis (`Type` = axis,
-  `EventID` = `"current"`, `Revision`, `OccurredAt` =
-  row `updated_at`, `Value`), then records a checkpoint; the newest revision
-  wins, so re-sends are harmless. Each scan restarts from the newest
-  checkpoint older than `Options.PreferenceSyncOverlap` (default 5m) before
-  the previous sync: a write is delivered if its transaction commits within
-  the overlap of allocating its revision. A failed sync advances nothing.
-- **Repair**: the engine re-sends every preference daily (zeros included),
-  which repairs a sink loss.
-- **Account deletion**: `ck.AnonymizeAccount` moves the subject's rows to
-  an anonymous key behind the source fence and fences the signal plane, which
-  drops any late send.
-- **Restore**: after restoring PostgreSQL against a retained signal plane, the
-  preference revision floor must be raised to the sink's newest revision
-  before writers resume: `POST /v1/import` with `preference_floor` (only ever
-  advancing).
+The analytics job runs every 15 minutes, one at a time. It folds each new
+sign-in link (`anonymous_links`) into its account (reading state and history
+merge; reactions and recent searches are re-keyed where the account has
+none), then recomputes each touched person × gallery × day's outcome from the
+log (bounce, neutral, good or complete by the fraction read at a minimum
+pace) into `reading_state` by maximum and latest, and rewrites that day's
+packed `reading_history`. It rebuilds today's `content_daily` and
+`audience_daily` hourly, yesterday's once after midnight, and deletes erased
+rows daily. Every write is a recompute or a max/latest merge, so a repeated
+run is harmless. Hiding writes `reading_state` at once.
 
-## Signal-plane account deletion
+Legacy reading imports (`legacy_reading`) merge into `reading_state` the same
+way.
 
-`AnonymizeAccount` completes its signal step only when:
+## Analytics account deletion
 
-1. the old account is recorded in the `erasures` ledger with `insert_quorum` =
-   every replica; a down replica fails fast and moves nothing;
-2. every row of the account in signals, compact state, daily contributions,
-   exposures and the kept pre-ContentKit tables is copied to the anonymous key
-   and deleted on every replica (`mutations_sync = 2`), re-counted as zero;
-3. from the moment the ledger row is durable, every write, read, projection
-   and export evaluates the ledger inside its own statement.
-
-The subject key is dead in that tenant forever. Residue (rows that landed
-after the fence or came back with a restore) is unreadable. After a restore,
-run `ReplayErasureFences` for the accounts deleted since the backup. A shared account exists in every tenant:
-each host erases its own tenant.
+`AnonymizeAccount` records the account and the anonymous ids folded into it in
+ClickHouse's `erasures` (an `insert_quorum` of every replica; a down replica
+fails it), so every read of the log drops their rows at once and the daily
+delete removes them, then deletes their `reading_state`, `reading_history`
+and links and records the anonymous ids as erased, so their late rows never
+count. After a restore, run `ReplayErasureFences` for the accounts deleted
+since the backup. Each host erases its own tenant.
 
 ## Discovery candidates
 
-Similar and recommended lists get their candidates from co-engagement over
-the signal plane. The recommender applies one policy to them: tenant and kinds,
-never the anchor, seen and disliked works, the reader's visibility (admission
-in one batch), dedupe, limit, and the popularity fill.
+Similar lists are the contents sharing the anchor's most specific entities (rarer ones count more) and its artist, computed in Postgres and cached per content. Recommendations seed from the reader's recent good or complete reads and fuse each seed's similar list. The recommender applies one policy to its candidates: tenant and kinds, never the anchor, seen, disliked and hidden works, the reader's visibility (admission in one batch), dedupe, limit, and the popularity fill.
 
-## Popularity (policy-ranked)
+## Popularity
 
-Hosts declare popularity presets per content kind and scope. Preset requests
-read stored rankings; arbitrary whole-UTC-day ranges read prepared daily counts.
-The score is the mean daily `U/(N+20)`, where `U` counts qualified participants
-once per person/item/day and `N` is the day's active eligible audience. Arbitrary
-range requests outside trustworthy prepared coverage are rejected; an unprepared
-preset stays pending. Recent days remain provisional through the 24-hour receipt window,
-then finalized days are retained and reused until an explicit rebuild. See
-[docs/popularity-policy.md](docs/popularity-policy.md) for qualification,
-coverage, refresh and retention semantics. `top_rated` keeps its separate
-rating behavior.
+Popular lists rank by quality-weighted person-days from ClickHouse's `content_daily`, per site, over featured windows precomputed after each hourly rebuild, calendar months and years, or ranges of days. Pages never query ClickHouse for featured windows, and a failed precompute leaves the previous ranking served. See [docs/popularity.md](docs/popularity.md). `top_rated` keeps its separate rating behavior.
 
 ## Migration checklist
 
 - Import legacy data through `POST /v1/import` ([docs/import.md](docs/import.md)), never into ContentKit's tables.
 - Create and reuse one `contentkit.Engine` per tenant.
-- Read lists, search and recommendations through the discovery routes; send actual reading snapshots through `POST /engagement` and explicit clicks through `POST /signals`.
+- Read lists, search and recommendations through the discovery routes; report reading with the SDK's `useReadingProgress` (`POST /activity`).
 - Run migrations explicitly through the host's development/deployment command ([docs/migration.md](docs/migration.md)); app startup checks schema readiness.
 - Wire `Options.Moderator` when comments require screening and grant `root:moderation:review` to reviewers. Polls use predefined choices.
-- Adopt the preference boundary (doujins #888 / hentai0 #594): pin this ContentKit, delete the callback-time bridge (`internal/social` `recorder`, `discovery.Recorder.Reaction`, `socialReactionSignal`) and every per-delivery signal-identity adapter, wire `Engine.AnonymizeAccount` into deletion and move favorite and reaction readers onto the routes.
+- Wire `Engine.AnonymizeAccount` into deletion and read favorites and reactions through the routes.
 - Replace `socialkit` imports with `content`: `EntityRef`/`EntityKey`/`entity_type`/`entity_id` → `contentref.ContentRef`/`ContentKey`/`content_kind`/`content_id`; `Entities` → `Resolver`; `Content` → `Processor`; `EntityTypes` → `ContentKinds`; `parent_id` → `reply_to_id`; `Counts(kind, id)` → `Counts([]ContentRef)`; delete the `Recorder` and `Moderation` adapters.
 - Replace `content.Options.Storage`/`Media` (`StorageConfig`, `MediaStore`) with `Options.Media` over media, register the content kinds' `Named` body uploads (`Body`, a private image preset) and the `poll` kind with its public preset, and move image uploads to the SDK's `upload` plus the image routes above.
 - Adopt the one media model (v0.62.0): declare the registry (`media.Config`), use version ids as item ids, replace slots with upload paths and public presets, and wire the hooks; see "Media".
@@ -1695,6 +1719,6 @@ visitor. It applies that IP's location rules and the host's content-filter domai
 the trusted client IP, not an unverified forwarded header. HTTP integrations set
 `Config.TrustedProxies` or rewrite `RemoteAddr` in their own trusted-proxy step ([Client address](#client-address)). Each request reads enabled
 rules for its tenant and domain from Postgres; replicas retain no rule cache.
-Catalog totals and the global precomputed entity popularity ordering remain
-aggregate statistics, while returned content and public entity counts are
-filtered for the current visitor.
+Catalog totals and the cached popularity rankings remain aggregate statistics,
+while returned content and public entity counts are filtered for the current
+visitor.

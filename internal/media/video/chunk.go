@@ -17,7 +17,9 @@ import (
 
 	mediastore "github.com/open-rails/contentkit/internal/mediastore"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/riverqueue/river"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/open-rails/contentkit/internal/media/workqueue"
 	"github.com/open-rails/contentkit/media"
@@ -40,7 +42,7 @@ func (c WorkerConfig) encodeChunk(ctx context.Context, run encodeRun, ch encodeC
 	if r < 0 {
 		return c.cancelRun(ctx, run.ID)
 	}
-	url, err := e.store.PresignGet(ctx, run.SourceKey, 2*time.Hour)
+	url, err := e.store.PresignGet(ctx, w.key, 2*time.Hour)
 	if err != nil {
 		return err
 	}
@@ -143,11 +145,13 @@ type runWork struct {
 	fp     string
 	pl     plan
 	stages []rung
+	key    string // the source: the upload's master where the manifest has it now
 }
 
 // current loads a run's work; false when the run is superseded: the folder,
-// the upload's blob or the preset's fingerprint changed, or the source is
-// gone.
+// the upload's blob or the preset's fingerprint (which covers its master)
+// changed, or the source is gone. The source is read where the manifest
+// names it: a release moves a master of its own to private/ mid-run.
 func (c WorkerConfig) current(ctx context.Context, run encodeRun) (runWork, bool, error) {
 	e := c.Encoder
 	var w runWork
@@ -168,8 +172,10 @@ func (c WorkerConfig) current(ctx context.Context, run encodeRun) (runWork, bool
 	if w.p, w.fp, ok = e.runPreset(w.item.Kind(), w.f, run.Spec); !ok {
 		return w, false, nil
 	}
-	obj, err := e.store.Head(ctx, run.SourceKey)
-	if errors.Is(err, mediastore.ErrNotFound) || err == nil && obj.ETag != run.SourceETag {
+	if w.key, err = w.item.Blob(mediastore.Input(w.f).Blob); err != nil {
+		return w, false, nil
+	}
+	if _, err := e.store.Head(ctx, w.key); errors.Is(err, mediastore.ErrNotFound) {
 		return w, false, nil
 	} else if err != nil {
 		return w, false, err
@@ -220,8 +226,9 @@ func (c WorkerConfig) overTenantShare(ctx context.Context, tenant string) (bool,
 	return otherWaiting && own > max(1, running/2), nil
 }
 
-// putChunk stores a chunk's rendition in the item's temp/ area until
-// assembly; the sweep removes leftovers by age.
+// putChunk stores a chunk's rendition as the run's scratch in the item's
+// tmp/ until its rung is assembled (dropChunks); the bucket's lifecycle
+// expires what a killed run leaves.
 func (e *Encoder) putChunk(ctx context.Context, item mediastore.Item, runID string, ordinal int, name, path string) (string, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -234,7 +241,10 @@ func (e *Encoder) putChunk(ctx context.Context, item mediastore.Item, runID stri
 		return "", err
 	}
 	sum := h.Sum(nil)
-	key := item.TempPrefix() + fmt.Sprintf("%s-%d-%s-%s.mp4", runID, ordinal, name, hex.EncodeToString(sum[:16]))
+	key, err := item.Scratch(runID, fmt.Sprintf("%d-%s-%s.mp4", ordinal, name, hex.EncodeToString(sum[:16])))
+	if err != nil {
+		return "", err
+	}
 	if obj, err := e.store.Head(ctx, key); err == nil && obj.Size == size {
 		return key, nil
 	} else if err != nil && !errors.Is(err, mediastore.ErrNotFound) {
@@ -266,11 +276,63 @@ func (c WorkerConfig) completeChunk(ctx context.Context, run encodeRun, ch encod
 	return snoozeOnShutdown(ctx, err)
 }
 
+// cancelRun ends a superseded run, deleting its chunks first so a failed
+// DELETE leaves the run for the next attempt to cancel again.
 func (c WorkerConfig) cancelRun(ctx context.Context, id string) error {
+	if err := c.dropChunks(ctx, id); err != nil {
+		return err
+	}
 	_, err := c.Pool.Exec(ctx, `UPDATE `+c.runTable()+`
 SET state = 'cancelled', updated_at = now() WHERE id = $1 AND state != 'complete'`, id)
 	return err
 }
+
+// dropChunks deletes the chunk renditions a run recorded. Their rows keep
+// the keys: deleting again is harmless.
+func (c WorkerConfig) dropChunks(ctx context.Context, id string) error {
+	keys, err := c.chunkKeys(ctx, c.Pool, id)
+	if err != nil {
+		return err
+	}
+	return c.Encoder.deleteScratch(ctx, keys)
+}
+
+// chunkKeys lists the chunk renditions a run recorded.
+func (c WorkerConfig) chunkKeys(ctx context.Context, q interface {
+	Query(context.Context, string, ...any) (pgx.Rows, error)
+}, id string) ([]string, error) {
+	rows, err := q.Query(ctx, `SELECT output FROM `+c.chunkTable()+` WHERE run_id = $1 AND output IS NOT NULL ORDER BY ordinal`, id)
+	if err != nil {
+		return nil, err
+	}
+	outputs, err := pgx.CollectRows(rows, pgx.RowTo[map[string]string])
+	if err != nil {
+		return nil, err
+	}
+	var keys []string
+	for _, o := range outputs {
+		keys = append(keys, slices.Sorted(maps.Values(o))...)
+	}
+	return keys, nil
+}
+
+// deleteScratch deletes scratch keys, a few at a time; an absent one is
+// deleted.
+func (e *Encoder) deleteScratch(ctx context.Context, keys []string) error {
+	g, gctx := errgroup.WithContext(ctx)
+	g.SetLimit(scratchDeletes)
+	for _, key := range keys {
+		g.Go(func() error {
+			if err := e.store.Delete(gctx, key); err != nil && !errors.Is(err, mediastore.ErrNotFound) {
+				return err
+			}
+			return nil
+		})
+	}
+	return g.Wait()
+}
+
+const scratchDeletes = 8
 
 // removeRendition removes a rendition's files from a failed pass.
 func removeRendition(dir, v string) error {

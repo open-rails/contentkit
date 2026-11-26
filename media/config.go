@@ -4,9 +4,9 @@
 // A database journal records conditional manifest writes, pending allocations
 // and exact retirement effects, including interrupted uploads and caches.
 //
-// Scoped roots are tenant/<tenant>/app/<app>/<kind>/<item>/; versioned
-// content uses the version as the physical item ID. Account media uses
-// tenant/<tenant>/account/. Legacy roots remain documented in media/layout.
+// Each app has its own bucket: items are {kind}/{item}/, and versioned
+// content uses the version as the physical item ID. Account media is
+// _accounts/{kind}/{item}/ in the avatar primary's bucket (media/layout).
 package media
 
 import (
@@ -21,13 +21,12 @@ import (
 
 // Config is the app's media registry, as data (NewRegistry).
 type Config struct {
-	// Namespace is the app's own namespace, e.g. "doujins": its kinds' items
-	// live under {Namespace}/{kind}/{id}/.
-	Namespace string `json:"namespace,omitempty"`
-	// Scope derives object roots and internal partitions; Namespace is legacy-only.
-	Scope layout.Scope `json:"scope,omitzero"`
+	// Scope is the app (tenant and app IDs): its refs' namespace and
+	// database partitions. It is never part of an object key: the bucket is
+	// the app's own.
+	Scope layout.Scope `json:"scope"`
 	// BaseURL is the site's media origin, e.g. "https://media.doujins.ai":
-	// every URL is {BaseURL}/v1/{namespace}/{kind}/{id}/{public|private}/{name}.
+	// every URL is {BaseURL}/v1/{kind}/{id}/{public|private}/{name}.
 	// It is https; plain http only for a loopback host, since item tokens
 	// travel to it.
 	BaseURL string `json:"base_url,omitempty"`
@@ -57,10 +56,8 @@ var DefaultEditor = Image{Width: 2048, Height: 2048, Quality: 82}
 // validates it into a RegisteredKind.
 type Kind struct {
 	Name string `json:"name"`
-	// Namespace is "" for Config.Namespace, or a shared one such as
-	// "accounts" whose items every app importing the kind serves.
-	Namespace string `json:"namespace,omitempty"`
-	// Account places this kind in the tenant account root of a scoped registry.
+	// Account makes this kind the tenant's account media, shared by its
+	// apps: partitioned by tenant, under _accounts/ in the bucket.
 	Account bool `json:"account,omitempty"`
 	// Versions marks a content kind (ForContent). Each version owns its
 	// folder; its parent content exists in the catalog, not in storage.
@@ -75,12 +72,16 @@ type Kind struct {
 	// always kept, so unhiding can render them again, as are body images,
 	// which new versions copy.
 	KeepOriginals bool `json:"keep_originals,omitempty"`
-	// Download is what a version's download serves: a literal upload (the
-	// original) or an MP4 or Zip preset. ForContent sets
-	// it from the content kind's download; "" serves none.
+	// Download is what a version's download serves: a literal upload (its
+	// master, streamed by the API) or Publish.Pages (a ZIP of the released
+	// pages' masters, streamed by the API).
+	// ForContent sets it from the content kind's download; "" serves none.
 	Download string    `json:"download,omitempty"`
 	Private  []Private `json:"private,omitempty"`
 	Public   []Public  `json:"public,omitempty"`
+	// Master is the recipe making each image and video upload's master
+	// (Recipe); nil is the identity: the original is the master.
+	Master *Recipe `json:"master,omitempty"`
 	// Defaults holds the images the kind's public presets name in
 	// Public.Default, so a shared kind ships its own (go:embed). A registry
 	// read from JSON (the stock worker) has none; PublishDefaults needs them.
@@ -146,8 +147,9 @@ type Publish struct {
 	// Import is the {name} upload of page archives (application/zip),
 	// expanded into Pages in name order.
 	Import string `json:"import,omitempty"`
-	// Download is the HostOnly Zip preset of the version's pages, which a
-	// download serves when its content kind serves pages.
+	// Download names an optional HostOnly source-format Image preset from
+	// Pages: a page larger than its box is zipped as that rendition, which
+	// exists only for such pages; every other page is zipped as uploaded.
 	Download string `json:"download,omitempty"`
 }
 
@@ -158,16 +160,18 @@ type VideoLimits struct {
 	MaxSeconds float64 `json:"max_seconds,omitempty"` // real running time
 	MaxFPS     float64 `json:"max_fps,omitempty"`     // output frame rate (at most 60); a faster source is encoded at it
 	MaxPixels  int     `json:"max_pixels,omitempty"`  // displayed frame area
-	// MaxWork bounds the planned encode: the sum over the HLS and MP4
-	// presets' rungs and codecs of output pixels × output frames.
+	// MaxWork bounds the planned encode: the sum over the HLS presets'
+	// rungs and codecs of output pixels × output frames.
 	MaxWork float64 `json:"max_work,omitempty"`
 }
 
-// Private derives files in private/, recorded in the manifest with their
-// provenance (File.From, Preset, FP). Exactly one producer is set.
+// Private derives files from an upload, recorded in the manifest with their
+// provenance (File.From, Preset, FP) and stored under their hash: in
+// private/, or internal/ until a version's release moves them. Exactly one
+// producer is set.
 type Private struct {
 	Name string `json:"name"`
-	// From is an upload path or pattern; "" for Zip.
+	// From is an upload path or pattern.
 	From string `json:"from,omitempty"`
 	// To is the output path template: a file ("low-res/{name}.webp",
 	// "video/source-1080p.mp4") or, for producers with several outputs, a
@@ -177,17 +181,12 @@ type Private struct {
 	// Download is the human name template a download read signs into the
 	// URL, filled from the manifest's meta and {name}: "{title}.zip".
 	Download string `json:"download,omitempty"`
-	// HostOnly leaves this Image, MP4 or Zip preset out of generic reads and
-	// playlists. Its outputs stay in internal/, which no token opens: a
-	// version's are served only by the authorized host download transfer,
-	// another kind's only to editors. They never share an allocation with
-	// ordinary served outputs, because an item token opens every private file
-	// in its folder.
+	// HostOnly leaves this Image preset out of generic reads. Its outputs
+	// stay in internal/, which no token opens: a version's are served only by
+	// the authorized ZIP download, another kind's only to editors.
 	HostOnly  bool       `json:"host_only,omitempty"`
 	Image     *Image     `json:"image,omitempty"`
 	HLS       *HLS       `json:"hls,omitempty"`
-	MP4       *MP4       `json:"mp4,omitempty"`
-	Zip       string     `json:"zip,omitempty"` // the files under this prefix, in manifest order: "high/"
 	Subtitles *Subtitles `json:"subtitles,omitempty"`
 	// Shapes render an Image preset's uploads of another shape: an upload
 	// whose oriented size is in one renders its Image, any other (or one not
@@ -226,26 +225,20 @@ func (s Shape) contains(d Dims) bool {
 
 func wider(a, b Aspect) bool { return a.W*b.H > b.W*a.H }
 
-// Public is a fixed public image: {To} with {w} at each of Widths (or one
-// file without Widths), rendered from an upload through its edit, at
-// public/{name}. With Widths, each width is Image at that width: in the
-// shape of its Width×Height box (both or neither), fitted per Fit, else of
-// the edit. It is never in the manifest; the object carries its from and fp
-// as metadata. A missing one is served Default by the media gateway.
+// Public is a public image: {To} with {w} at each of Widths (or one file
+// without Widths), rendered from an upload through its edit and recorded in
+// the manifest as the upload's outputs, stored in public/ under their hash.
+// With Widths, each width is Image at that width: in the shape of its
+// Width×Height box (both or neither), fitted per Fit, else of the edit.
 type Public struct {
 	Name   string `json:"name"`
 	From   string `json:"from"`
 	To     string `json:"to"` // "cover-{w}.webp", "{name}.webp"
 	Widths []int  `json:"widths,omitempty"`
 	Image  Image  `json:"image"`
-	// Default is a path in Kind.Defaults, rendered to the kind's _default
-	// item at every width (PublishDefaults).
+	// Default is a path in Kind.Defaults, rendered into the kind's _default
+	// item at every width (PublishDefaults) and shown while an item has none.
 	Default string `json:"default,omitempty"`
-	// Stable also keeps the current image at the logical names (To without
-	// a generation), overwritten in place: a URL built from the item's id,
-	// which the gateway answers with Default while none is current. One
-	// image per item: no {name}.
-	Stable bool `json:"stable,omitempty"`
 }
 
 // Image is a rendering, WebP by default. Source-format private presets retain
@@ -323,11 +316,6 @@ type HLS struct {
 	MaxAspect float64 `json:"max_aspect,omitempty"`
 }
 
-// MP4 is a muxed H.264 MP4 at one rung (short side), with the default audio.
-type MP4 struct {
-	Rung int `json:"rung"`
-}
-
 // Subtitles converts SRT, SSA/ASS and WebVTT to clean UTF-8 WebVTT. A video
 // lists the item's converted subtitles as tracks after its own.
 type Subtitles struct{}
@@ -346,9 +334,6 @@ const (
 // Fit is an image within an n×n box.
 func Fit(n int) *Image { return &Image{Width: n, Height: n} }
 
-// Rung is an MP4 at short side n.
-func Rung(n int) *MP4 { return &MP4{Rung: n} }
-
 // UploadAuthorizer is the app's upload permission check, run at presign and
 // commit against what is written.
 type UploadAuthorizer interface {
@@ -364,11 +349,10 @@ type UploadTarget struct {
 }
 
 // UploadGrant is the app's verdict. Exempt (trusted roles) skips the
-// UploadLimiter; Owner is the quota owner, "" for none.
+// upload rate limit.
 type UploadGrant struct {
 	Allowed bool
 	Exempt  bool
-	Owner   string
 	// ArchiveTo explicitly approves every generated filename in this configured
 	// destination pattern. Empty does not authorize expansion.
 	ArchiveTo string

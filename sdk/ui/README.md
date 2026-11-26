@@ -259,10 +259,10 @@ const { image, rule, isDefault } = usePublicImage({ kind: "user", id: userId }, 
 
 An item's image for a public preset: the exact renditions from a read's
 `public`, or from a host listing passed as `image` (no read), else the
-kind's default image when the preset has one (`rule.default`), else none.
-Published files carry a generation, so a URL built from a preset template
-only ever names the default; `rule` (from `GET /media/presets`) gives the
-shape, widths and narrowest edit.
+kind's default image when the preset has one (`rule.default_image`), else
+none. Files are named by their hash, so no URL is built from a preset
+template; `rule` (from `GET /media/presets`) gives the shape, widths,
+narrowest edit and default.
 
 ### useCanonicalContent
 
@@ -439,19 +439,19 @@ For custom interfaces, pass selection-specific `counts` to
 `ContentFilterSettings` or the controlled `ContentFilterDialog`; omit `counts`
 for ordinary settings without listing totals.
 
-`<PopularContentGrid query={{ kind: "gallery" }} />` supplies four visible tabs
-for 7-day, 90-day, 365-day and all-time activity and loads further pages as the
-reader scrolls. Publication age is unrestricted, so older content can trend
-again. `period` and `onPeriodChange`
-optionally keep its state in the host's URL. For a homepage preview, pass
-`popularQuery("7d", { kind: "gallery", limit: 6 })` to a `ContentRail`'s `list`.
+`<PopularContentGrid query={{ kind: "gallery" }} />` shows a tab per featured
+window (this week, last 30 days, last 90 days, this year, all time, each
+including today) and loads further pages as the reader scrolls. Publication age
+is unrestricted, so older content can trend again. `window` and
+`onWindowChange` optionally keep its state in the host's URL. For a homepage
+preview, pass `popularQuery("week", { kind: "gallery", limit: 6 })` to a
+`ContentRail`'s `list`.
 
-For a historical activity window, pass `period={{ from: "2026-04-01", until:
-"2026-05-01" }}` and `query={{ kind: "gallery" }}`. Dates are UTC, with an
-inclusive start and exclusive end. No preset tab is selected for a custom
-range; selecting a tab calls `onPeriodChange` so the host can replace the range
-in its URL with that rolling preset. `popularQuery` accepts the same range
-object and sends `sort=popular&activity_from=...&activity_until=...`.
+`window` also takes a calendar month (`"month:2026-10"`), a year
+(`"year:2025"`) or UTC days (`"2026-04-01..2026-04-30"`, both included); no
+tab is selected for those, and selecting a tab calls `onWindowChange`.
+`popularBetween(from, last, filters)` builds the same days window. The grid
+shows while the site records signals (`useKinds().kinds.signals`).
 
 ### MediaFolderEditor
 
@@ -581,6 +581,7 @@ fullscreen and a mini player.
   what expand opens are the host's.
 - **Theming:** `appearance.variables.playerAccent` colors the played range
   and pressed toggles (default white). Menus are always dark.
+- **Quality and HDR:** Auto streams the highest rung the connection sustains, capped at the player's rendered size times `devicePixelRatio` (hls.js `capLevelToPlayerSize`), so fullscreen on a high-resolution screen reaches the top rung and a small embed doesn't. An HDR upload's ladder has 10-bit AV1 rungs labelled `VIDEO-RANGE=PQ` or `HLG` and tone-mapped SDR H.264 rungs. The player plays HDR only when the screen matches `(dynamic-range: high)` and `MediaCapabilities.decodingInfo` confirms the rung's codec with its transfer; otherwise SDR. The browser renders the video; it is never drawn through a canvas. `QualityLevel.range` is the range playing. A host with its own hls.js setup applies the same choice with `otherLevels(hls.levels, hls.firstLevel)` (indices to `removeLevel`) from `@openrails/contentkit-ui/client`; Safari's native HLS chooses by `VIDEO-RANGE` itself.
 
 ## Comments, reactions and polls
 
@@ -614,6 +615,18 @@ option; polls do not display a separate sign-in button:
 <Poll language={lang} variant="embedded" footer={<a href="/polls">Poll history</a>} />
 ```
 
+### Feedback after reactions
+
+`ReactionFeedbackPrompt` asks why after a like, favorite or dislike made through the client (`ReactionButtons`, `FavoriteButton`): "What did you like?" (the artwork, the artist's style, the story, the series or characters, a tag, something else) or "What didn't you like?" (bad art, bad story, "Not into ‹tag›" for up to three likely culprit tags, misleading, something else). The server decides whether to ask: a share of each reaction (`Config.Interactions.Feedback`), about one prompt a day per person, never twice for one item. "Not into ‹tag›" on a tag the filters can hide offers "Hide galleries tagged ‹tag›?", never preselected; signed in it writes the account's content filters, signed out the browser's, which carry over at sign-in. Override the copy through the `feedback.*` messages.
+
+```tsx
+<ReactionButtons item={{ type: "contents", id }} />
+<FavoriteButton item={{ type: "contents", id }} />
+<ReactionFeedbackPrompt item={{ id }} filtersHref="/settings/filters" reportHref={`/report/${id}`} onFollow={(e) => follow(e.id)} />
+```
+
+To render your own, `useReactionFeedback(item)` gives the prompt and `answer`, `hide` and `dismiss`; underneath, `client.feedback.ask`, `answer` and `hide` are the calls.
+
 ## Entities
 
 Tags, artists, series, characters and rails: the kinds the site's
@@ -632,9 +645,10 @@ const content = useContentEntities(contentId); // content.set(memberships, kinds
 
 - **`EntityDirectory`**: one kind's entities with A–Z buckets (`letter` and
   `onLetterChange` to keep it in the URL), content counts, `layout` list or
-  grid, paged. With `popular`, for a kind with `popular` configured, the
-  first button reads "Popular" instead of "All". Entities rank by recent account
-  favourites, refreshed hourly; unranked entities follow by content count. **`EntityHeader`**: an entity page's cover, names, description,
+  grid, paged. With `popular` the first button reads "Popular" instead of
+  "All": entities rank by the sum of their contents' popularity on the site
+  over `window` (the week by default); those without activity follow by
+  content count. **`EntityHeader`**: an entity page's cover, names, description,
   typed attributes, parent, scope and sub-entities. Links go to each entity's
   canonical path (`href` overrides) through the provider's `navigate`.
 - **`EntityEditor`** (staff): create, or edit slug, parent, scope, declared
@@ -763,42 +777,17 @@ The forward schema migration preserves existing text in its existing editions
 without moving or deleting any source images. Hosts use the normal migration
 command; no additional title-copy helper or background worker is needed.
 
-## Daily readership statistics
+## Daily active people
 
-`StatsDashboard` charts distinct engaged readers for the past ten UTC days.
-It reads `GET /stats/activity?kind=gallery&days=10`; opening a page without
-reading does not count. A subject needs at least one second of measured active
-reading and nonempty page coverage. Counts are distinct per day, not across the
-whole period, and the same anonymous person using different browser identities
-can count more than once.
-
-The host defines audience groups on the server, for example:
-
-```go
-cfg.ActivityCohorts = []signal.ActivityCohort{
-    {ID: "supporter", Identity: signal.ActivityAccount, AnyTier: []string{"paid"}},
-    {ID: "member", Identity: signal.ActivityAccount},
-    {ID: "guest", Identity: signal.ActivityAnonymous},
-}
-```
-
-The first matching group wins for each subject/day. Tier eligibility comes
-from trusted observations on that day; an account that gains a matching tier
-is counted once in that group, even if it also read before upgrading. A host
-that omits groups gets only the overall total. Unmatched readers also remain
-in that total. Labels, colors and display order belong to the host UI:
+`StatsDashboard` and `useActive({ days })` read `GET /stats/active`: distinct people active on the site per UTC day, by access (`anonymous`, `account`, or the tiers an account's token claimed), from the analytics job's daily rollups. People are distinct within a day only. Labels and colors per access value belong to the host:
 
 ```tsx
-<StatsDashboard kinds={["gallery"]} days={10} series={[
-  { id: "guest", label: "Guests", color: "#3987e5" },
-  { id: "member", label: "Members", color: "#e98042" },
-  { id: "supporter", label: "Supporters", color: "#21a87e" },
+<StatsDashboard days={10} series={[
+  { id: "anonymous", label: "Guests", color: "#3987e5" },
+  { id: "account", label: "Members", color: "#e98042" },
+  { id: "premium", label: "Premium", color: "#21a87e" },
 ]} />
 ```
-
-The endpoint returns `cohorts: string[]` and each day's `cohorts` count map,
-`readers` total and `active_ms`. The chart uses line series, zero-filled days,
-an accessible daily table and no built-in commercial audience categories.
 
 ## Admin flows
 
@@ -1173,81 +1162,27 @@ null from `load` when no language is saved. A localized URL does not change a
 stored preference: only an explicit language selection does. The language
 callback still belongs to the host's router.
 
-On a confirmed **new registration**, call
-`contentkit.preferences.inheritAfterRegistration(userId)`. Never call it for an
-ordinary sign-in. The captured guest choices are retried once that account's
-authenticated transport is ready; failed transfers remain pending in localStorage.
-Existing account filter records are preserved. A confirmed new registration
-inherits the guest language over its initial default; retries preserve a later
-language choice. Ordinary sign-ins never import guest preferences.
-`useReaderPreferences()` exposes the preferred language, pending/error state and
-a retry action. ReaderSettings shows an incomplete transfer and lets the reader
-retry it. Guest preferences are retained separately after registration and logout.
+Every sign-in carries the browser's guest filter choices into the account once
+(`preferences.carryGuestFilters()`, run by `configure`): the server fills what
+the account has not set, and a hide wins. The browser keeps them as its
+signed-out choices. On a confirmed **new registration**, call
+`contentkit.preferences.inheritAfterRegistration(userId)` to save the guest
+language over the account's initial default; retries preserve a later language
+choice and failed transfers remain pending in localStorage. Never call it for an
+ordinary sign-in. `useReaderPreferences()` exposes the preferred language,
+pending/error state and a retry action, which also retries a failed carry-over.
 
-### Measured engagement
+### Reading activity
 
-`useReadingEngagement(contentId, versionId, options)` measures loaded, visible
-content while the page is focused. Keep the hook above the horizontal/vertical
-reader switch so a mode change retains its visit. Attach `engagement.page(index,
-filename)` to the actual image element (zero-based index), or `engagement.video`
-to the playing video. `engagement.setResume(filenameOrAnchor)` records the opaque
-reader selector separately from measured coverage. Optional
-`[data-reader-viewport]` on the reader container clips page measurements to that
-viewport, including long-page breakpoint readers.
+Requests carry `ContentKit-UTC-Offset` and, signed out, `ContentKit-Anonymous-Id`: a random id the browser keeps in local storage (`anonymousId()`). The server keeps a signed-out reader's reading state, hidden items and recent searches under it. Allow both headers in the host's CORS policy. When the provider's viewer becomes an account, the client posts `POST /me/anonymous-link` once with the anonymous id it used, so that reading folds into the account, then starts a fresh one; signing out also starts a fresh one.
 
-Opening the route, preloading an image and changing the page selector produce
-no engagement on their own. The tracker measures the visible part of each image
-and focused active milliseconds; multiple visible pages share elapsed attention.
-Static-page attention pauses after 60 seconds without genuine input (configurable
-with `idleAfter`). Visible, focused playback continues without requiring mouse
-motion, but pauses, buffering and seeks do not become watched coverage. Suspended
-timer gaps over five seconds are discarded rather than guessed.
+`useReadingProgress(contentId, { length, source })` reports one reading: an open when it mounts, then progress (active time on a visible tab with input in the last 60 seconds or playback, the furthest and current page or second, the length) every five active minutes and when the reader leaves (unmount, hidden tab, `pagehide` with keepalive), skipping unchanged reports. Keep it above the reader's mode switch. Attach `reading.page(index)` to each page's image (zero-based; the most visible page is the current one) or call `reading.setPage(n)` (1-based) in a paged reader; pass `reading` to `VideoPlayer`/`VideoMiniPlayer` (`reading={reading}`), or `reading.video(element)`; posts use `usePostReading`. Pass `enabled: false` to honor consent.
 
-Page changes stay local. Cumulative snapshots flush at most every 120 seconds
-(`checkpointInterval` may shorten this), and on hiding/exiting the page or
-unmounting the reader. `engagement.flush()` offers an explicit checkpoint.
-Each segment captures its own immutable server activity receipt when observation
-starts, retaining event-time premium/free access across retries; a later receipt
-never reclassifies earlier attention. Revisions replace the same segment, rather
-than incrementing visit or page-open counters. Positive short partials are kept
-so later measured attention can accumulate; qualification happens server-side.
+Cards report an open when clicked, with the list's surface, the 1-based position and, for search results, the page's `request_id`; the reader page's own open is then skipped. `useOpen()` reports one for a custom card. `ActivityReporter` (`reporterFor(client)`) batches events into `POST /activity` and stops while the content model's `signals` is false; `ProgressTracker` is the framework-free tracker.
 
-Use `enabled` to honor the host's consent and authentication-readiness policy.
-With an explicitly signed-out provider (`viewer={null}`), positive partials also
-save browser-local resume/history across tabs. This remains useful when the signal
-plane is unavailable, without inventing remote analytics. Account history stays
-server-owned. An account switch discards old in-flight observations instead of
-assigning them to the next account. The optional `kind` groups local guest history
-only; remote requests never trust a browser-supplied content kind.
+The server turns these into reading state about 15 minutes later: each card's `viewer` carries `seen`, `completed`, `outcome`, `progress`/`progress_max`/`percent` and `position`, for signed-out readers too. `useContinue()` lists what the reader started and did not finish (`GET /me/continue`); `view_status: "unseen"` lists only what is new to them. `useHistory` is the signed-in reader's history.
 
-`useHistory` retains previously read items for guests and accounts.
-Guest cards hydrate through `client.discovery.knownCards({ ids })`
-(`GET /content-cards?ids=…`, at most 100 IDs, caller order), rather than a browse
-listing. This read records no engagement. Current domain rules, reader filters,
-languages, publication/deletion state and access decisions still apply; hidden
-items are omitted and locked cards use normal redaction. Published items use
-the same domain, filter and access policy in `/contents` and search.
-
-
-For a custom integration, `EngagementTracker` accepts injected `begin` and
-`submit` callbacks. `client.discovery.activityContexts(targets, session, language)`
-exposes `POST /activity-contexts`; `client.discovery.engagement(snapshots, options)`
-exposes `POST /engagement`. Capture receipts when their segments begin, not when
-delayed batches flush. A missing, disabled or invalid receipt prevents remote
-engagement submission and never falls back to legacy route-open tracking.
-
-`useExposure(items, options)` separately records cumulative rendered and visible
-list placements and attributes clicks to their original ranks. Hidden paid tiles
-are not impressions. An explicit item `position` preserves gaps from omitted
-cards. Each new placement receives a server context; the client supplies no
-premium-status or eligibility claims. End custom `Beacons.exposure` receipt state
-with `endExposure(renderId)` when its list leaves the page; `useExposure` does this
-automatically. These bounded exposure/click packets serialize keepalive requests;
-exit delivery remains best effort.
-
-The staff dashboard and SDK statistics queries use measured people and active
-time, with comments ranking retained. See [statistics semantics](docs/statistics.md)
-for daily distinctness, qualification and active-time units.
+`useHide(contentId, { hidden: card.viewer?.hidden })` hides an item from every list the reader is served, optimistically, with `undo()`; `client.discovery.hide(id)`/`unhide(id)` are the plain calls.
 
 ## Billing boundary
 

@@ -9,6 +9,7 @@ import (
 	"math"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/open-rails/authkit/auth"
@@ -48,12 +49,12 @@ var routes = []httpapi.Route[handler]{
 		Responses: []httpapi.Reply{httpapi.NoContent}},
 		Serve: httpapi.H(handler.setMeta)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/contents/{id}/versions/{version}/download", Resource: "reader", Auth: httpapi.Public,
-		Doc:       "Grants a version's download, what its kind's download serves (the original, a rendition, its pages as a zip), as the host's download policy allows and names, charged to the viewer's download quota: a FileDownload whose short-lived URL serves it as an attachment. The URL is the media host's for an already served file, or the existing archive transfer route's for a ZIP or internal original/rendition (relative to this one). Includes only the released, download-authorized pages in manifest order. 202 while it is prepared; 403 download_unavailable with the policy's reason and available_at; 409 no_download when the version has nothing to serve.",
+		Doc:       "Grants a version's download, what its kind's download serves (its pages' masters as a ZIP, or its downloadable upload's master, the original under the identity recipe), as the host's download policy allows and names, charged to the viewer's download quota: a FileDownload whose short-lived URL, the archive transfer route relative to this one, streams it as an attachment. Includes only the released, download-authorized pages in manifest order. 202 while it is prepared; 403 download_unavailable with the policy's reason and available_at; 409 no_download when the version has nothing to serve.",
 		Responses: []httpapi.Reply{httpapi.OK(versions.FileDownload{}), httpapi.Accepted(versions.Pending{})},
 		Errors:    []string{httpapi.CodeForbidden, versions.CodeDownloadUnavailable, httpapi.CodeRateLimited, versions.CodeNoDownload}},
 		Serve: httpapi.H(handler.download)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/contents/{id}/versions/{version}/archive", Resource: "reader", Auth: httpapi.Public,
-		Doc:       "Streams the ZIP or exact configured single file a download granted after repeating access, publication, chapter and policy checks. Internal originals and HostOnly renditions never gain a gateway URL. Ordinary ZIPs are generated on demand and cached privately; personalized ZIPs are never cached. Signed editor authority and token-tier claims delegate only this transfer until ticket expiry, like a private media URL. 404 for an expired, stale or foreign ticket.",
+		Doc:       "Streams the ZIP or exact configured single file a download granted after repeating access, publication, chapter and policy checks, reading masters where they are stored: internal originals and HostOnly renditions never gain a gateway URL. An unwatermarked download is the same bytes for its revision (Content-Length, ETag, ranges) and cached privately; a watermarked ZIP is marked and zipped anew for each request and never cached (private, no-store). Signed editor authority and token-tier claims delegate only this transfer until ticket expiry, like a private media URL. 404 for an expired, stale or foreign ticket.",
 		Query:     []httpapi.Param{httpapi.Text("for", "the viewer the ticket is for"), httpapi.Text("account", "the bound account in this tenant"), httpapi.Text("account_set", "signed tenant membership presence: true or false"), httpapi.Text("kind", "the viewer subject kind"), httpapi.Text("editor", "signed exact-transfer editor capability: true or false"), httpapi.Text("claims", "signed configured token-tier claims as a JSON string array"), httpapi.Text("mark", "the pages to mark, from 1: 3,5,7"), httpapi.Text("name", "the attachment file name"), httpapi.Text("file", "true for a signed exact single-file transfer"), httpapi.Text("revision", "the exact ordered source revision"), httpapi.Text("pages", "the exact authorized ZIP page count"), httpapi.Text("ticket", "the download's ticket")},
 		Responses: []httpapi.Reply{httpapi.OK(httpapi.Stream{ContentType: "application/zip"}), httpapi.OK(httpapi.Stream{ContentType: "application/octet-stream"}), httpapi.Accepted(versions.Pending{})},
 		Errors:    []string{httpapi.CodeForbidden, versions.CodeDownloadUnavailable, versions.CodeNoDownload}},
@@ -172,15 +173,47 @@ func (h handler) archive(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, r, err)
 		return
 	}
-	w.Header().Set("Content-Type", a.Type)
-	if a.single {
-		w.Header().Set("Content-Type", "application/octet-stream")
-		w.Header().Set("Content-Length", strconv.FormatInt(a.Size, 10))
+	hdr := w.Header()
+	hdr.Set("Content-Type", a.Type)
+	hdr.Set("Content-Disposition", layout.Attachment(a.Name))
+	// The request is read and the body may outlast a host server's
+	// ReadTimeout or WriteTimeout: neither may cut the download.
+	rc := http.NewResponseController(w)
+	_ = rc.SetReadDeadline(time.Time{})
+	_ = rc.SetWriteDeadline(time.Time{})
+	if a.Marked() {
+		// Watermarked: marked and zipped anew for this request, with no
+		// length, validator or ranges; no cache, shared or private, keeps it.
+		hdr.Set("CDN-Cache-Control", "no-store")
+		w.WriteHeader(http.StatusOK)
+	} else {
+		// The same revision is the same bytes: the viewer's cache may keep
+		// it and a client may resume it. The URL is the viewer's ticket.
+		hdr.Set("Cache-Control", "private, max-age=31536000, immutable")
+		hdr.Set("ETag", `"`+a.Revision+`"`)
+		hdr.Set("Accept-Ranges", "bytes")
+		start, end, partial, ok := byteRange(r.Header.Get("Range"), a.Size)
+		if r.Header.Get("If-Range") != "" && r.Header.Get("If-Range") != `"`+a.Revision+`"` {
+			partial = false
+		}
+		if !ok {
+			hdr.Set("Content-Range", "bytes */"+strconv.FormatInt(a.Size, 10))
+			w.WriteHeader(http.StatusRequestedRangeNotSatisfiable)
+			return
+		}
+		if partial {
+			hdr.Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, a.Size))
+			hdr.Set("Content-Length", strconv.FormatInt(end-start+1, 10))
+			w.WriteHeader(http.StatusPartialContent)
+			if _, err := a.WriteRange(w, start, end); err != nil && r.Context().Err() == nil {
+				h.log.ErrorContext(r.Context(), "versions: archive range failed", "version", target(r).Version, "error", err)
+				panic(http.ErrAbortHandler)
+			}
+			return
+		}
+		hdr.Set("Content-Length", strconv.FormatInt(a.Size, 10))
+		w.WriteHeader(http.StatusOK)
 	}
-	w.Header().Set("Content-Disposition", layout.Attachment(a.Name))
-	// The request is read: a server's ReadTimeout must not cut the download.
-	_ = http.NewResponseController(w).SetReadDeadline(time.Time{})
-	w.WriteHeader(http.StatusOK)
 	if _, err := a.WriteTo(w); err != nil {
 		if r.Context().Err() == nil {
 			h.log.ErrorContext(r.Context(), "versions: archive stream failed", "version", target(r).Version, "error", err)
@@ -188,6 +221,44 @@ func (h handler) archive(w http.ResponseWriter, r *http.Request) {
 		// Headers may already be sent. Terminate the transport so clients see
 		// an incomplete transfer instead of a successful truncated ZIP.
 		panic(http.ErrAbortHandler)
+	}
+}
+
+// byteRange parses a single "bytes=a-b" range of a size-byte body: partial
+// for a satisfiable range, ok false for an unsatisfiable one. Anything else
+// (none, several, malformed) serves the whole body.
+func byteRange(header string, size int64) (start, end int64, partial, ok bool) {
+	spec, found := strings.CutPrefix(header, "bytes=")
+	if !found || strings.Contains(spec, ",") {
+		return 0, size - 1, false, true
+	}
+	a, b, found := strings.Cut(spec, "-")
+	if !found {
+		return 0, size - 1, false, true
+	}
+	switch {
+	case a == "":
+		n, err := strconv.ParseInt(b, 10, 64)
+		if err != nil || n <= 0 {
+			return 0, size - 1, false, true
+		}
+		return max(0, size-n), size - 1, true, true
+	default:
+		s, err := strconv.ParseInt(a, 10, 64)
+		if err != nil || s < 0 {
+			return 0, size - 1, false, true
+		}
+		if s >= size {
+			return 0, 0, false, false
+		}
+		e := size - 1
+		if b != "" {
+			if e, err = strconv.ParseInt(b, 10, 64); err != nil || e < s {
+				return 0, size - 1, false, true
+			}
+			e = min(e, size-1)
+		}
+		return s, e, true, true
 	}
 }
 

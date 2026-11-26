@@ -392,7 +392,6 @@ export const admin: typeof en = {
   },
   stats: {
     title: "統計",
-    kind: "コンテンツ",
     activity: "日別の閲覧者数",
     visitorsNote: "1件以上を閲覧・再生した人を1日1回として集計します。",
     days: "日数",
@@ -400,7 +399,6 @@ export const admin: typeof en = {
     today: "今日",
     visitors: "閲覧者",
     peak: "最大 {count}",
-    activeTime: "アクティブ時間",
     date: "日付",
     showTable: "表を表示",
     noActivity: "この期間に測定された利用はありません。",

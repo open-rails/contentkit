@@ -3,7 +3,7 @@ import type { ContentKitClient } from "../client/client.js";
 import type { ContentKitError } from "../client/errors.js";
 import type { ReadResult, RefBody } from "../client/generated/wire.js";
 import type { PresetRule } from "../client/generated/wire.js";
-import { defaultImage, isPattern, ruleDir, stableImage } from "../client/media/rules.js";
+import { defaultImage, isPattern, ruleDir } from "../client/media/rules.js";
 import type { PublicPreset } from "../client/public.js";
 import { useOptionalContentKitClient, useReadScope } from "./context.js";
 import { useKinds } from "./entities.js";
@@ -71,7 +71,7 @@ export interface UsePublicImage {
  * commits through the same client.
  */
 export function usePublicImage(item: RefBody, preset: string, o: PublicImageOptions = {}): UsePublicImage {
-  const { kind, id, version } = item;
+  const { kind } = item;
   const client = useOptionalContentKitClient(o.client);
   const { presets, loaded, error: presetError, reload: reloadPresets } = usePresets({ client });
   const rule = presets.find((p) => p.kind === kind && p.name === preset);
@@ -83,18 +83,19 @@ export function usePublicImage(item: RefBody, preset: string, o: PublicImageOpti
     const own = listed ? o.image : r.read?.public?.find((p) => p.preset === preset);
     if (own && own.renditions.length) return { image: { preset, renditions: own.renditions, aspect: ("aspect" in own && own.aspect) || rule?.aspect }, isDefault: false };
     if (!listed && !r.read) return { image: null, isDefault: false };
-    const def = rule && defaultImage(rule, id, version);
+    const def = rule && defaultImage(rule);
     return def ? { image: def, isDefault: true } : { image: null, isDefault: false };
-  }, [listed, o.image, r.read, preset, rule, id, version]);
+  }, [listed, o.image, r.read, preset, rule]);
   const reloadRead = r.reload;
   const reload = useCallback(() => { if (presetError) reloadPresets(); reloadRead(); }, [presetError, reloadPresets, reloadRead]);
   return { ...image, rule, loading: !loaded || r.loading, error: r.error ?? presetError, reload };
 }
 
 /**
- * A person's avatar. The signed-in viewer reads their current immutable
- * publication and follows upload/crop/removal events. Other accounts keep the
- * stable public URL without one API request per author in a listing.
+ * A person's avatar. The signed-in viewer reads their current image and
+ * follows upload/crop/removal events. Another account's is listed by the API
+ * beside what it wrote (an author's avatar); without one this shows the
+ * kind's default.
  */
 export function useAvatar(userId: string | null | undefined, o: { client?: ContentKitClient } = {}): PublicPreset | null {
   const { client, viewer } = useContentScope(o.client);
@@ -130,7 +131,7 @@ export function useAvatar(userId: string | null | undefined, o: { client?: Conte
 
   return useMemo(() => {
     if (!rule || !userId) return null;
-    if (!own) return stableImage(rule, userId);
+    if (!own) return defaultImage(rule);
     const publication = read?.public?.find((p) => p.preset === rule.name);
     return publication?.renditions.length ? { preset: rule.name, aspect: rule.aspect, renditions: publication.renditions } : null;
   }, [rule, userId, own, read]);

@@ -35,6 +35,7 @@ export type SocialOperation =
   | "ban.lift"
   | "reaction.save"
   | "favorite.save"
+  | "feedback.save"
   | "poll.load"
   | "poll.vote"
   | "poll.save"

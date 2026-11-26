@@ -55,16 +55,14 @@ type Config struct {
 	// Media is the media registry and how it is served; nil runs without
 	// media (no upload or media route groups, no post and poll images).
 	Media *MediaConfig `yaml:"media" json:"media"`
-	// ClickHouse is the signal plane: signals, exposures, history,
-	// preferences, popularity and recommendations from signals. Unset, or
-	// while a configured one is down, they are off: the content model says
-	// so (signals: false), lists sort on what Postgres holds and the
-	// contentkit_clickhouse probe fails with the cause. The engine retries a
-	// down one in the background and turns signals back on when it answers.
+	// ClickHouse is the signal plane: the activity log every open, read,
+	// reaction, favorite, hide and search is logged to, which the analytics
+	// job folds into PostgreSQL's reading state and the daily rollups.
+	// Unset, nothing is logged and reading state stays empty: the content
+	// model says so (signals: false). While a configured one is down, rows
+	// wait in each process's buffer, the contentkit_clickhouse probe fails
+	// with the cause and the engine retries in the background.
 	ClickHouse ClickHouseConfig `yaml:"clickhouse" json:"clickhouse"`
-	// ActivityCohorts defines application-owned daily readership buckets. First
-	// match wins; nil reports totals without audience-specific categories.
-	ActivityCohorts []signal.ActivityCohort `yaml:"activity_cohorts,omitempty" json:"activity_cohorts,omitempty"`
 	// Accounts declares one shared account space for avatars and account
 	// erasure records.
 	// It does not combine this site's content catalog with any other site's.
@@ -75,7 +73,14 @@ type Config struct {
 	Jobs JobsConfig `yaml:"jobs" json:"jobs"`
 	// EventRetention keeps catalog facts independently of readers; zero is fourteen days.
 	EventRetention time.Duration `yaml:"event_retention,omitempty" json:"event_retention,omitempty"`
+	// AnonymousRetention keeps a signed-out visitor's reading state, history
+	// and recent searches this long after their last activity; their
+	// reactions stay, unlinked. Zero is thirty days.
+	AnonymousRetention time.Duration `yaml:"anonymous_retention,omitempty" json:"anonymous_retention,omitempty"`
 }
+
+// DefaultAnonymousRetention is Config.AnonymousRetention's zero value.
+const DefaultAnonymousRetention = 30 * 24 * time.Hour
 
 // DatabaseConfig names the Postgres schemas New validates or migrates; the
 // pool's role owns them. Shared account metadata may use its separately configured schema.
@@ -100,13 +105,17 @@ type InteractionsConfig struct {
 	CommentMaxLength int `yaml:"comment_max_length" json:"comment_max_length"`
 	// DuplicateWindow refuses identical comments within this duration; zero disables it.
 	DuplicateWindow time.Duration `yaml:"duplicate_window" json:"duplicate_window"`
-	// Limits are the per-actor rate limits, shared through Deps.Redis.
+	// Limits are the per-actor rate limits, shared through Deps.Redis;
+	// Engine.Client has none.
 	Limits LimitsConfig `yaml:"limits" json:"limits"`
 	// ModeratorTimeout bounds one moderation call (default 5s);
 	// ModeratorCooldown is how long writes are held after it failed
 	// repeatedly (default 30s).
 	ModeratorTimeout  time.Duration `yaml:"moderator_timeout" json:"moderator_timeout"`
 	ModeratorCooldown time.Duration `yaml:"moderator_cooldown" json:"moderator_cooldown"`
+	// Feedback is when readers are asked why they liked, favorited or
+	// disliked content; a kind it does not name is never asked about.
+	Feedback discovery.FeedbackConfig `yaml:"feedback" json:"feedback"`
 }
 
 // LimitsConfig is content.Limits as data: nil rates take the defaults.
@@ -137,7 +146,8 @@ type MediaConfig struct {
 	// ProcessOnUpload has the SDK commit each upload as soon as it lands.
 	ProcessOnUpload bool `yaml:"process_on_upload" json:"process_on_upload"`
 	// CommitLimit limits each uploader's commits; ReadLimit each viewer's
-	// reads. Zero takes media's defaults; Deps.Redis shares them.
+	// reads, never Engine.Client's. Zero takes media's defaults; Deps.Redis
+	// shares them.
 	CommitLimit RateLimitConfig `yaml:"commit_limit" json:"commit_limit"`
 	ReadLimit   RateLimitConfig `yaml:"read_limit" json:"read_limit"`
 	// Issuance limits the items each viewer opens per hour.
@@ -148,18 +158,18 @@ type MediaConfig struct {
 }
 
 // AvatarsConfig is people's avatars, keyed by the auth subject and shown
-// beside comment authors and in moderation lists at URLs built from the
-// person's id (the kind's Stable preset), so nothing looks one up. Of the
-// sites sharing an account store, one holds them: the primary. Another
-// sets Primary and keeps none: its people's avatar uploads, edits and
-// editor reads go to the primary with Key, its media host serves the
-// primary's files (the gateway maps the kind's namespace to the primary's
-// bucket), and the primary's AnonymizeAccount erases them.
+// beside comment authors and in moderation lists from the tenant account
+// item cache, else the kind's default. Of the sites sharing an account
+// store, one holds them and the defaults: the primary. Another sets Primary
+// and keeps none: its people's avatar uploads, edits and editor reads go to
+// the primary with Key, its media host serves the primary's files (its
+// gateway Route's accounts names the primary's bucket, where they are under
+// _accounts/), and the primary's AnonymizeAccount erases them.
 type AvatarsConfig struct {
 	// Kind is the avatar kind; nil is avatar.User() (accounts/user).
 	Kind *media.Kind `yaml:"kind" json:"kind"`
-	// Preset is the kind's Stable public preset people are shown with;
-	// empty is "avatar".
+	// Preset is the kind's public preset people are shown with; empty is
+	// "avatar".
 	Preset string `yaml:"preset" json:"preset"`
 	// Primary is the primary's ContentKit API base, as its routes are
 	// mounted ("https://doujins.dev/api/v1/contentkit"); empty: this engine
@@ -171,8 +181,7 @@ type AvatarsConfig struct {
 	Key string `yaml:"key" json:"key"`
 }
 
-// MediaKinds is the media registry Config.Media serves, in the tenant's
-// namespace: content kinds' media are their versions', each entity kind
+// MediaKinds is the media registry Config.Media serves, scoped to the app: content kinds' media are their versions', each entity kind
 // gains cover media (media.ForContent), and the avatar primary holds the
 // avatar kind (Config.Accounts.Avatars). The media worker
 // runs it from MediaRegistry's JSON.
@@ -194,9 +203,13 @@ func (c Config) MediaKinds() (media.Config, error) {
 	if mc.Avatars != (media.Avatars{}) {
 		return media.Config{}, errors.New("contentkit: people's avatars are Config.Accounts.Avatars, not Config.Media.Avatars")
 	}
+	for _, k := range mc.Kinds {
+		if k.Account {
+			return media.Config{}, fmt.Errorf("contentkit: kind %q: account media is Config.Accounts.Avatars', held by the avatar primary", k.Name)
+		}
+	}
 	if a := c.avatars; a != nil && a.Primary == "" {
 		kind, preset := a.kind()
-		kind.Namespace = ""
 		kind.Account = true
 		mc.Kinds = append(slices.Clone(mc.Kinds), kind)
 		mc.Avatars = media.Avatars{Kind: kind.Name, Preset: preset}
@@ -302,8 +315,16 @@ type JobsConfig struct {
 // Deps is everything the engine reaches outside its process: connections and
 // providers. The host owns each; Close leaves them open.
 type Deps struct {
-	// Postgres is the pool ContentKit's schemas live in. Required.
+	// Postgres is the pool ContentKit's schemas live in. Required. With
+	// PostgresSession it may be a transaction-pooling PgBouncer; its
+	// DefaultQueryExecMode is then cache_describe, exec or simple_protocol.
 	Postgres *pgxpool.Pool
+	// PostgresSession is a direct configuration of the same database and
+	// role, without the pooler, for what needs a session: advisory locks held
+	// across transactions, River's LISTEN and migrations. ContentKit dials and
+	// closes those connections itself. Nil dials them with Postgres's
+	// configuration, which must then be direct.
+	PostgresSession *pgxpool.Config
 	// ClickHouse is the signal plane's connection; nil opens one from
 	// Config.ClickHouse.Addr, or runs without the signal plane.
 	ClickHouse signal.Conn
@@ -332,9 +353,6 @@ type Deps struct {
 	// over an embedded engine or the remote client): held entitlement keys
 	// and prices, free grants. Nil holds no keys and sells nothing.
 	Billing access.Billing
-	// ActivitySigner optionally signs event-time audience receipts for apps
-	// without media. Media apps reuse their persistent delivery signer.
-	ActivitySigner discovery.ActivitySigner
 	// Scopes provisions and retires the AuthKit groups of auth_scope entity
 	// kinds (adapters/authkit.Scopes over an AuthKit client); nil leaves
 	// auth_scope to staff.

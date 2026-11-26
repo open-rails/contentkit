@@ -1,7 +1,6 @@
 import { ContentKitError } from "../errors.js";
 import type { ErrorDetails, PresetRule, ReadResult, UploadRule } from "../generated/wire.js";
-import { fill, publicURL, type PublicPreset } from "../public.js";
-import { ratio } from "../aspect.js";
+import type { PublicPreset } from "../public.js";
 import { stem } from "./client.js";
 
 const NO_RULES: UploadRule[] = [];
@@ -214,29 +213,13 @@ export function presetFor(presets: readonly PresetRule[], kind: string, path: st
 }
 
 /**
- * The kind's default image for a preset, at every width: what the gateway
- * serves for an item without its own (a URL from the template never names a
- * current file). null when the preset has no default (`rule.default`).
+ * The kind's default image for a preset, at every width: what to show for an
+ * item without its own. The server reads it (`rule.default_image`); files are
+ * named by their hash, so no URL is built from a template. null when the
+ * preset has none.
  */
-export function defaultImage(rule: PresetRule, id: string, version?: string): PublicPreset | null {
-  if (!rule.default || rule.to.includes(NAME)) return null;
-  return logicalImage(rule, id, version);
-}
-
-/**
- * A Stable preset's image of an item (`rule.stable`, e.g. the content
- * model's `avatars`): URLs built from the id that show its current image,
- * else the default. null for any other preset.
- */
-export function stableImage(rule: PresetRule, id: string): PublicPreset | null {
-  return rule.stable ? logicalImage(rule, id) : null;
-}
-
-function logicalImage(rule: PresetRule, id: string, version?: string): PublicPreset {
-  const r = ratio(rule.aspect);
-  return {
-    preset: rule.name,
-    aspect: rule.aspect,
-    renditions: rule.widths.map((w) => ({ url: publicURL(rule.base, rule.namespace, rule.kind, id, fill(rule.to, { w }), version, rule.root), w, ...(r ? { h: Math.round(w / r) } : {}) })),
-  };
+export function defaultImage(rule: PresetRule): PublicPreset | null {
+  const d = rule.default_image;
+  if (!d || !d.renditions.length) return null;
+  return { preset: rule.name, aspect: rule.aspect, renditions: d.renditions };
 }

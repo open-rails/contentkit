@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math"
 	"os"
 	"path/filepath"
 	"slices"
@@ -14,7 +13,6 @@ import (
 	mediastore "github.com/open-rails/contentkit/internal/mediastore"
 
 	"github.com/open-rails/contentkit/media"
-	"github.com/open-rails/contentkit/media/layout"
 )
 
 // assemble joins a run's chunks and publishes its stage: an HLS rung (the
@@ -53,20 +51,20 @@ func (c WorkerConfig) assemble(ctx context.Context, run encodeRun, jobID int64) 
 			return err
 		}
 		defer os.RemoveAll(dir)
-		url, err := e.store.PresignGet(ctx, run.SourceKey, 2*time.Hour)
+		url, err := e.store.PresignGet(ctx, w.key, 2*time.Hour)
 		if err != nil {
 			return err
 		}
-		if w.p.HLS != nil {
-			err = e.assembleHLS(ctx, w, k, chunks, dir, url.URL, fp)
-		} else {
-			err = e.assembleMP4(ctx, w, chunks, dir, url.URL, fp)
-		}
+		err = e.assembleHLS(ctx, w, k, chunks, dir, url.URL, fp)
 		if errors.Is(err, errStale) {
 			return c.cancelRun(ctx, run.ID)
 		} else if err != nil {
 			return snoozeOnShutdown(ctx, err)
 		}
+	}
+	// The rung is recorded: its chunks are spent.
+	if err := c.dropChunks(ctx, run.ID); err != nil {
+		return snoozeOnShutdown(ctx, err)
 	}
 	done := progress.item(media.PhaseImages)
 	err = e.grabFrames(ctx, w.item)
@@ -106,9 +104,6 @@ func (e *Encoder) clearSettled(ctx context.Context, w runWork) error {
 // run's fingerprint.
 func (w runWork) settled(e *Encoder, m *mediastore.Manifest) bool {
 	outs := m.Outputs(w.f.Path, w.p.Name)
-	if w.p.MP4 != nil {
-		return len(outs) == 1 && outs[0].FP == w.fp
-	}
 	return stagesDone(outs, w.to(), w.fp, w.stages, e.c.Codecs) == len(w.stages)
 }
 
@@ -116,25 +111,12 @@ func (w runWork) settled(e *Encoder, m *mediastore.Manifest) bool {
 // its manifest edit).
 func (w runWork) published(e *Encoder, k int) bool {
 	outs := w.man.Outputs(w.f.Path, w.p.Name)
-	if w.p.MP4 != nil {
-		return len(outs) == 1 && outs[0].FP == w.fp
-	}
 	return stagesDone(outs, w.to(), w.fp, w.stages, e.c.Codecs) > k
 }
 
 func (e *Encoder) assembleHLS(ctx context.Context, w runWork, k int, chunks []encodeChunk, dir, src string, fp *fileProgress) error {
 	to, r, pl := w.to(), w.stages[k], w.pl
-	var mp4s []*media.Private // MP4 presets remuxed from this rung's H.264
-	if slices.Contains(e.c.Codecs, media.CodecH264) {
-		for _, q := range w.item.Kind().PrivateFor(w.f.Path) {
-			if q.MP4 != nil && q.MP4.Rung == r.n && e.todo(w.man, w.f, q) {
-				mp4s = append(mp4s, q)
-			}
-		}
-	}
-	// The first stage encodes the source's audio and text tracks; a later
-	// one muxing an MP4 fetches the published default audio track.
-	audio := ""
+	// The first stage encodes the source's audio and text tracks.
 	if k == 0 {
 		if len(pl.audio)+len(pl.subs) > 0 {
 			if err := ladder(ctx, src, dir, pl, pass{enc: encoding{threads: e.c.Threads}}, nil); err != nil {
@@ -145,20 +127,8 @@ func (e *Encoder) assembleHLS(ctx context.Context, w runWork, k int, chunks []en
 		if pl.subs, err = keepSubs(ctx, e.c.Logger, dir, pl.subs); err != nil {
 			return err
 		}
-		if _, i, ok := pl.defaultAudio(); ok {
-			audio = filepath.Join(dir, fmt.Sprintf("a%d.mp4", i))
-		}
-	} else if len(mp4s) > 0 {
-		for _, o := range w.man.Outputs(w.f.Path, w.p.Name) {
-			if o.Track != nil && o.Track.Kind == media.TrackAudio && o.Track.Default {
-				audio = filepath.Join(dir, "default-audio.mp4")
-				if err := e.fetch(ctx, w.item, o.Blob, audio, fp); err != nil {
-					return err
-				}
-			}
-		}
 	}
-	var outs, mp4Files []media.File
+	var outs []media.File
 	spriteCodec := e.c.Codecs[0]
 	if slices.Contains(e.c.Codecs, media.CodecH264) {
 		spriteCodec = media.CodecH264
@@ -171,23 +141,16 @@ func (e *Encoder) assembleHLS(ctx context.Context, w runWork, k int, chunks []en
 			return err
 		}
 		if k == 0 && codec == spriteCodec {
-			if err := e.spriteFromRendition(ctx, path, dir, pl, r); err != nil {
+			if err := e.spriteFromRendition(ctx, path, dir, pl, r, codec); err != nil {
 				return err
 			}
-		}
-		if codec == media.CodecH264 && len(mp4s) > 0 {
-			files, err := e.muxMP4(ctx, w, mp4s, path, audio, width, height, fp)
-			if err != nil {
-				return err
-			}
-			mp4Files = append(mp4Files, files...)
 		}
 		fp.set(media.PhaseUploading)
 		o, err := e.stream(ctx, w.item, dir, name, renditionPath(to, r.n, codec), "video/mp4", fp)
 		if err != nil {
 			return err
 		}
-		o.W, o.H, o.FP = width, height, w.fp
+		o.W, o.H, o.FP, o.Range = width, height, w.fp, pl.rangeOf(codec)
 		o.Track.Kind, o.Track.Codec, o.Track.Codecs = media.TrackVideo, string(codec), codecs
 		outs = append(outs, o)
 		if err := os.Remove(path); err != nil {
@@ -216,7 +179,10 @@ func (e *Encoder) assembleHLS(ctx context.Context, w runWork, k int, chunks []en
 		outs = append(append(outs, subs...), sprite)
 	}
 	fp.set(media.PhasePublishing)
-	return e.publish(ctx, w.item, append(outs, mp4Files...), func(m *mediastore.Manifest) error {
+	for i := range outs {
+		outs[i].Input = mediastore.InputHash(w.f)
+	}
+	return e.publish(ctx, w.item, outs, func(m *mediastore.Manifest) error {
 		g, err := current(m, w.f.Path, w.f.Blob)
 		if err != nil {
 			return err
@@ -245,92 +211,13 @@ func (e *Encoder) assembleHLS(ctx context.Context, w runWork, k int, chunks []en
 		if w.settled(e, m) {
 			m.ClearPending(g.Path, w.p.Name)
 		}
-		return setMP4s(m, g.Path, mp4Files)
+		return nil
 	})
-}
-
-// assembleMP4 publishes an MP4 run: its H.264 rung muxed with the source's
-// default audio track.
-func (e *Encoder) assembleMP4(ctx context.Context, w runWork, chunks []encodeChunk, dir, src string, fp *fileProgress) error {
-	r, pl := w.stages[0], w.pl
-	name := renditionName(r.n, media.CodecH264)
-	width, height, _, err := e.assembleRendition(ctx, dir, name, r, chunks)
-	if err != nil {
-		return err
-	}
-	audio := ""
-	if a, _, ok := pl.defaultAudio(); ok {
-		pl.audio, pl.subs = []track{a}, nil
-		if err := ladder(ctx, src, dir, pl, pass{enc: encoding{threads: e.c.Threads}}, nil); err != nil {
-			return err
-		}
-		audio = filepath.Join(dir, "a0.mp4")
-	}
-	files, err := e.muxMP4(ctx, w, []*media.Private{w.p}, filepath.Join(dir, name+".mp4"), audio, width, height, fp)
-	if err != nil {
-		return err
-	}
-	fp.set(media.PhasePublishing)
-	return e.publish(ctx, w.item, files, func(m *mediastore.Manifest) error {
-		g, err := current(m, w.f.Path, w.f.Blob)
-		if err != nil {
-			return err
-		}
-		if e.fp(w.p, g) != w.fp {
-			return errStale
-		}
-		return setMP4s(m, g.Path, files)
-	})
-}
-
-// muxMP4 muxes a rendition and an audio track into the MP4 presets' file.
-func (e *Encoder) muxMP4(ctx context.Context, w runWork, presets []*media.Private, video, audio string, width, height int, fp *fileProgress) ([]media.File, error) {
-	out := strings.TrimSuffix(video, ".mp4") + "-muxed.mp4"
-	if err := mux(ctx, video, audio, out); err != nil {
-		return nil, err
-	}
-	defer os.Remove(out)
-	fp.set(media.PhaseUploading)
-	type put struct {
-		blob string
-		size int64
-	}
-	shared := map[string]put{} // a non-version kind's presets share one allocation per area
-	var files []media.File
-	for _, q := range presets {
-		// Presets can have different publication policy (notably HostOnly).
-		// Reuse the encoded bytes, but never share a physical allocation
-		// whose move into public/private would also expose an internal one.
-		area := w.item.Kind().Area(q.Name)
-		p, ok := shared[area]
-		if !ok || w.item.Kind().Versions {
-			blob, size, err := e.put(ctx, w.item, area, out, "video/mp4", fp)
-			if err != nil {
-				return nil, err
-			}
-			p = put{blob, size}
-			shared[area] = p
-		}
-		blob, size := p.blob, p.size
-		files = append(files, media.File{Path: w.item.Kind().OutputPath(q, w.f.Path), Blob: blob, Type: "video/mp4", Size: size,
-			W: width, H: height, Dur: math.Round(w.pl.duration*1000) / 1000, Preset: q.Name, FP: e.fp(q, w.f)})
-	}
-	return files, nil
-}
-
-// setMP4s records MP4 preset outputs (File.Preset names each one's preset).
-func setMP4s(m *mediastore.Manifest, from string, files []media.File) error {
-	for _, f := range files {
-		if err := m.SetOutputs(from, f.Preset, []media.File{f}); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 // sprite stores a first stage's seek sprite and its grid.
 func (e *Encoder) sprite(ctx context.Context, item mediastore.Item, dir, to string, pl plan, fp *fileProgress) (media.File, error) {
-	blob, size, err := e.put(ctx, item, layout.AreaPrivate, filepath.Join(dir, "sprite.jpg"), "image/jpeg", fp)
+	blob, size, err := e.put(ctx, item, outputArea(item), filepath.Join(dir, "sprite.jpg"), "image/jpeg", fp)
 	if err != nil {
 		return media.File{}, err
 	}
@@ -432,8 +319,9 @@ func (e *Encoder) assembleRendition(ctx context.Context, dir, name string, r run
 
 // spriteFromRendition samples the already-assembled first rung, so the light
 // job never decodes a whole 4K source merely to produce thumbnails.
-func (e *Encoder) spriteFromRendition(ctx context.Context, path, dir string, p plan, rung rung) error {
+func (e *Encoder) spriteFromRendition(ctx context.Context, path, dir string, p plan, rung rung, codec media.Codec) error {
 	p.video, p.audio, p.subs = 0, nil, nil
+	p.color, _ = p.color.output(codec)
 	ps := pass{rung: rung, sprite: true, noTracks: true,
 		enc: encoding{threads: e.c.Threads}}
 	return ladder(ctx, path, dir, p, ps, nil)

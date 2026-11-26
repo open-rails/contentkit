@@ -14,7 +14,9 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/open-rails/contentkit/content"
+	"github.com/open-rails/contentkit/internal/migrations"
 )
 
 func TestMatch(t *testing.T) {
@@ -194,29 +196,13 @@ func TestResolveFromPostgres(t *testing.T) {
 	defer pool.Close()
 	schema := fmt.Sprintf("ck_locations_%d", time.Now().UnixNano())
 	quoted := pgx.Identifier{schema}.Sanitize()
-	if _, err := pool.Exec(t.Context(), "CREATE SCHEMA "+quoted); err != nil {
-		t.Fatal(err)
-	}
-	defer pool.Exec(context.Background(), "DROP SCHEMA "+quoted+" CASCADE")
-	migration, err := os.ReadFile("../migrations/postgres/0070_location_rules.up.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
-	tx, err := pool.Begin(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer tx.Rollback(t.Context())
-	if _, err := tx.Exec(t.Context(), "SET LOCAL search_path TO "+quoted); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := tx.Exec(t.Context(), `CREATE TABLE content_items (tenant_id text,id text,PRIMARY KEY (tenant_id,id)); CREATE TABLE content_entities (tenant_id text,id text,PRIMARY KEY (tenant_id,id))`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := tx.Exec(t.Context(), string(migration)); err != nil {
-		t.Fatal(err)
-	}
-	if err := tx.Commit(t.Context()); err != nil {
+	defer func() {
+		pool.Exec(context.Background(), "DROP SCHEMA IF EXISTS "+quoted+" CASCADE")
+		pool.Exec(context.Background(), "DELETE FROM public.migrations WHERE schema = $1", schema)
+	}()
+	db := stdlib.OpenDBFromPool(pool)
+	defer db.Close()
+	if err := migrations.ApplyPostgres(t.Context(), db, schema); err != nil {
 		t.Fatal(err)
 	}
 	rules := quoted + ".content_location_rules"
@@ -247,10 +233,10 @@ func TestResolveFromPostgres(t *testing.T) {
 			table, column, parent string
 			ids                   []string
 		}{
-			{"content_location_rule_contents", "content_id", "content_items", r.contents},
-			{"content_location_rule_entities", "entity_id", "content_entities", r.tags},
+			{"content_location_rule_contents", "content_id", "content_items (tenant_id,id,kind) SELECT $1,id,'article'", r.contents},
+			{"content_location_rule_entities", "entity_id", "content_entities (tenant_id,id,kind,slug) SELECT $1,id,'tag',id", r.tags},
 		} {
-			if _, err := pool.Exec(t.Context(), `INSERT INTO `+quoted+`.`+target.parent+` SELECT $1,unnest($2::text[]) ON CONFLICT DO NOTHING`, r.tenant, target.ids); err != nil {
+			if _, err := pool.Exec(t.Context(), `INSERT INTO `+quoted+`.`+target.parent+` FROM unnest($2::text[]) id ON CONFLICT DO NOTHING`, r.tenant, target.ids); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := pool.Exec(t.Context(), `INSERT INTO `+quoted+`.`+target.table+` (tenant_id,rule_id,`+target.column+`) SELECT $1,$2,unnest($3::text[])`, r.tenant, r.id, target.ids); err != nil {

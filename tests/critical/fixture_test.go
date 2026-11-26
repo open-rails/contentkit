@@ -66,8 +66,10 @@ type world struct {
 	signer     keys.Signer
 	configure  []func(*ck.Config)
 	// people are the accounts person signed in, by ID.
-	people    sync.Map
-	authStart sync.Once
+	people sync.Map
+	// avatarBuckets are each tenant's avatar primary's bucket, by tenant ID.
+	avatarBuckets sync.Map
+	authStart     sync.Once
 }
 
 type application struct {

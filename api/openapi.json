@@ -11,7 +11,7 @@
         "tags": [
           "kinds"
         ],
-        "summary": "The site's content model: languages, tiers, content kinds, entity kinds, whether signals are recorded now and people's avatar preset.",
+        "summary": "The site's content model: languages, tiers, content kinds, entity kinds, whether activity is logged and people's avatar preset.",
         "responses": {
           "200": {
             "description": "OK",
@@ -5662,7 +5662,7 @@
           {
             "name": "view_status",
             "in": "query",
-            "description": "the signed-in reader's unseen, in_progress or completed contents",
+            "description": "the reader's unseen (new to them: never opened or hidden), in_progress or completed contents; a signed-out reader's by its anonymous id",
             "schema": {
               "type": "string"
             }
@@ -5694,7 +5694,7 @@
           {
             "name": "sort",
             "in": "query",
-            "description": "newest, oldest, title, popular[:bucket], top_rated, most_favorited, position or random; the kind's default, else newest",
+            "description": "newest, oldest, title, popular (needs kind; pages by cursor), top_rated, most_favorited, position or random; the kind's default, else newest",
             "schema": {
               "type": "string"
             }
@@ -5721,17 +5721,9 @@
             }
           },
           {
-            "name": "activity_from",
+            "name": "window",
             "in": "query",
-            "description": "inclusive UTC date; requires activity_until, kind and sort=popular; reads prepared daily activity only",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "activity_until",
-            "in": "query",
-            "description": "exclusive UTC date; requires activity_from, kind and sort=popular",
+            "description": "the popular sort's window of activity days: week (the default), 30d, 90d, year, all, month:YYYY-MM, year:YYYY or YYYY-MM-DD..YYYY-MM-DD (last day included)",
             "schema": {
               "type": "string"
             }
@@ -6427,7 +6419,6 @@
           "conflict",
           "forbidden",
           "not_found",
-          "quota_exceeded",
           "rate_limited",
           "too_large",
           "too_many_files",
@@ -6482,7 +6473,6 @@
         "x-contentkit-errors": [
           "forbidden",
           "not_found",
-          "quota_exceeded",
           "rate_limited",
           "too_large",
           "type_not_allowed"
@@ -6734,7 +6724,6 @@
           "image_too_small",
           "not_found",
           "not_uploaded",
-          "quota_exceeded",
           "rate_limited",
           "too_large",
           "too_many_files",
@@ -7499,7 +7488,15 @@
           {
             "name": "sort",
             "in": "query",
-            "description": "name (the default), count, newest or popular (one kind with popularity; its hourly ranking, then count)",
+            "description": "popular (the default with kind: its popularity on this site over window, then the entities without activity by count), name (the default without kind), count or newest",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "window",
+            "in": "query",
+            "description": "the popular sort's window: week (the default), 30d, 90d, year, all, month:YYYY-MM, year:YYYY or YYYY-MM-DD..YYYY-MM-DD",
             "schema": {
               "type": "string"
             }
@@ -7893,7 +7890,15 @@
           {
             "name": "sort",
             "in": "query",
-            "description": "name, count, newest or popular",
+            "description": "name (the default), count, newest or popular",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "window",
+            "in": "query",
+            "description": "the popular sort's window, as for the public listing",
             "schema": {
               "type": "string"
             }
@@ -9844,7 +9849,7 @@
         "tags": [
           "reader"
         ],
-        "summary": "Grants a version's download, what its kind's download serves (the original, a rendition, its pages as a zip), as the host's download policy allows and names, charged to the viewer's download quota: a FileDownload whose short-lived URL serves it as an attachment. The URL is the media host's for an already served file, or the existing archive transfer route's for a ZIP or internal original/rendition (relative to this one). Includes only the released, download-authorized pages in manifest order. 202 while it is prepared; 403 download_unavailable with the policy's reason and available_at; 409 no_download when the version has nothing to serve.",
+        "summary": "Grants a version's download, what its kind's download serves (its pages' masters as a ZIP, or its downloadable upload's master, the original under the identity recipe), as the host's download policy allows and names, charged to the viewer's download quota: a FileDownload whose short-lived URL, the archive transfer route relative to this one, streams it as an attachment. Includes only the released, download-authorized pages in manifest order. 202 while it is prepared; 403 download_unavailable with the policy's reason and available_at; 409 no_download when the version has nothing to serve.",
         "parameters": [
           {
             "name": "id",
@@ -9924,7 +9929,7 @@
         "tags": [
           "reader"
         ],
-        "summary": "Streams the ZIP or exact configured single file a download granted after repeating access, publication, chapter and policy checks. Internal originals and HostOnly renditions never gain a gateway URL. Ordinary ZIPs are generated on demand and cached privately; personalized ZIPs are never cached. Signed editor authority and token-tier claims delegate only this transfer until ticket expiry, like a private media URL. 404 for an expired, stale or foreign ticket.",
+        "summary": "Streams the ZIP or exact configured single file a download granted after repeating access, publication, chapter and policy checks, reading masters where they are stored: internal originals and HostOnly renditions never gain a gateway URL. An unwatermarked download is the same bytes for its revision (Content-Length, ETag, ranges) and cached privately; a watermarked ZIP is marked and zipped anew for each request and never cached (private, no-store). Signed editor authority and token-tier claims delegate only this transfer until ticket expiry, like a private media URL. 404 for an expired, stale or foreign ticket.",
         "parameters": [
           {
             "name": "id",
@@ -10260,18 +10265,18 @@
         ]
       }
     },
-    "/v1/engagement": {
+    "/v1/activity": {
       "post": {
         "tags": [
           "discovery"
         ],
-        "summary": "Records bounded, idempotent measured engagement snapshots: loaded visible page coverage, focused active time or actually played timeline ranges. No opening, preload or page-turn counters. Each segment reuses its original subject-bound access receipt and revision; positive short partials can accumulate across visits.",
+        "summary": "Logs the reader's opens and reading progress: an open names the list it came from; progress is the active time since the last report and the furthest and current page or second. A signed-out reader sends its anonymous id in ContentKit-Anonymous-Id, and every request may send ContentKit-UTC-Offset. Unknown content is skipped.",
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/EngagementBatch"
+                "$ref": "#/components/schemas/Activity"
               }
             }
           }
@@ -10293,7 +10298,6 @@
         "x-contentkit-module": "discovery",
         "x-contentkit-auth": "public",
         "x-contentkit-errors": [
-          "not_found",
           "not_configured"
         ],
         "x-contentkit-error-sets": [
@@ -10303,32 +10307,64 @@
         ]
       }
     },
-    "/v1/activity-contexts": {
+    "/v1/me/anonymous-link": {
       "post": {
         "tags": [
           "discovery"
         ],
-        "summary": "Captures signed, immutable event-time access and eligible audience context before displaying or consuming content. Batches up to 100 targets; clients reuse each receipt for all revisions of one view.",
+        "summary": "Sent once at sign-in: the browser's anonymous id is now this account, so its reading state, history, reactions and recent searches fold into the account's.",
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ActivityContextsInput"
+                "$ref": "#/components/schemas/AnonymousLink"
               }
             }
           }
         },
         "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ActivityContexts"
-                }
-              }
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "discovery",
+        "x-contentkit-auth": "user",
+        "x-contentkit-errors": [],
+        "x-contentkit-error-sets": [
+          "module:discovery",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/contents/{id}/hidden": {
+      "put": {
+        "tags": [
+          "discovery"
+        ],
+        "summary": "Hides a content item from every list the reader is served (\"not interested\"), at once; a signed-out reader hides by its anonymous id.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
             }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
           },
           "default": {
             "$ref": "#/components/responses/Error"
@@ -10343,7 +10379,47 @@
         "x-contentkit-module": "discovery",
         "x-contentkit-auth": "public",
         "x-contentkit-errors": [
-          "not_configured"
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:discovery",
+          "auth",
+          "request"
+        ]
+      },
+      "delete": {
+        "tags": [
+          "discovery"
+        ],
+        "summary": "Shows a hidden content item again: the undo of hiding it.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "No Content"
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "discovery",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [
+          "not_found"
         ],
         "x-contentkit-error-sets": [
           "module:discovery",
@@ -10474,7 +10550,7 @@
           {
             "name": "view_status",
             "in": "query",
-            "description": "the signed-in reader's unseen, in_progress or completed contents",
+            "description": "the reader's unseen (new to them: never opened or hidden), in_progress or completed contents; a signed-out reader's by its anonymous id",
             "schema": {
               "type": "string"
             }
@@ -10702,7 +10778,7 @@
         "tags": [
           "discovery"
         ],
-        "summary": "Keyword search over contents, grouped per content item, personalized for a signed-in reader unless sorted otherwise.",
+        "summary": "Keyword search over contents, grouped per content item, personalized for a reader with reading state unless sorted otherwise. A first page's request_id names the search in the activity log.",
         "parameters": [
           {
             "name": "q",
@@ -10843,7 +10919,7 @@
           {
             "name": "view_status",
             "in": "query",
-            "description": "the signed-in reader's unseen, in_progress or completed contents",
+            "description": "the reader's unseen (new to them: never opened or hidden), in_progress or completed contents; a signed-out reader's by its anonymous id",
             "schema": {
               "type": "string"
             }
@@ -10904,15 +10980,15 @@
           {
             "name": "personalize",
             "in": "query",
-            "description": "false ranks a signed-in reader's results as anyone's",
+            "description": "false ranks the reader's results as anyone's",
             "schema": {
               "type": "boolean"
             }
           },
           {
-            "name": "session",
+            "name": "window",
             "in": "query",
-            "description": "a signed-out reader's session, which keeps its recent searches",
+            "description": "the popular sort's window of activity days: week (the default), 30d, 90d, year, all, month:YYYY-MM, year:YYYY or YYYY-MM-DD..YYYY-MM-DD (last day included)",
             "schema": {
               "type": "string"
             }
@@ -11241,7 +11317,7 @@
           {
             "name": "view_status",
             "in": "query",
-            "description": "the signed-in reader's unseen, in_progress or completed contents",
+            "description": "the reader's unseen (new to them: never opened or hidden), in_progress or completed contents; a signed-out reader's by its anonymous id",
             "schema": {
               "type": "string"
             }
@@ -11482,7 +11558,7 @@
           {
             "name": "view_status",
             "in": "query",
-            "description": "the signed-in reader's unseen, in_progress or completed contents",
+            "description": "the reader's unseen (new to them: never opened or hidden), in_progress or completed contents; a signed-out reader's by its anonymous id",
             "schema": {
               "type": "string"
             }
@@ -11719,7 +11795,7 @@
           {
             "name": "view_status",
             "in": "query",
-            "description": "the signed-in reader's unseen, in_progress or completed contents",
+            "description": "the reader's unseen (new to them: never opened or hidden), in_progress or completed contents; a signed-out reader's by its anonymous id",
             "schema": {
               "type": "string"
             }
@@ -11921,12 +11997,12 @@
         ]
       }
     },
-    "/v1/me/content-filters/initialize": {
+    "/v1/me/content-filters/merge": {
       "post": {
         "tags": [
           "discovery"
         ],
-        "summary": "Initializes the account_id's content filter settings from its guest choices only if no settings exist; account_id must match the authenticated account and retries preserve all saved settings.",
+        "summary": "Carries a signed-out browser's content filter choices into account_id's settings at sign-in: a choice fills an entity the account has not set, and a hide wins over the account's show. account_id must be the authenticated account; resets and entities no domain offers are ignored.",
         "parameters": [
           {
             "name": "language",
@@ -11942,7 +12018,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ContentFiltersInitialization"
+                "$ref": "#/components/schemas/ContentFiltersMerge"
               }
             }
           }
@@ -11971,6 +12047,147 @@
         "x-contentkit-auth": "user",
         "x-contentkit-errors": [
           "forbidden"
+        ],
+        "x-contentkit-error-sets": [
+          "module:discovery",
+          "auth",
+          "request"
+        ]
+      }
+    },
+    "/v1/contents/{id}/feedback": {
+      "post": {
+        "tags": [
+          "discovery"
+        ],
+        "summary": "Offers a feedback prompt after the reader's own like, favorite or dislike of the content: a share of each reaction is asked about, one person is offered about one prompt a day and never two for one item. The prompt is recorded as offered; prompt is null when there is none.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "version",
+            "in": "query",
+            "description": "the version the reaction is on",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "language",
+            "in": "query",
+            "description": "the language of entity names",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FeedbackRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/FeedbackOffer"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "discovery",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [
+          "not_found"
+        ],
+        "x-contentkit-error-sets": [
+          "module:discovery",
+          "auth",
+          "request"
+        ]
+      },
+      "patch": {
+        "tags": [
+          "discovery"
+        ],
+        "summary": "Answers the reader's feedback prompt on the content, or takes or declines its hide suggestion. A taken suggestion hides the tag in an account's content filters; a signed-out browser keeps the choice itself. not_found when no prompt was offered.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "language",
+            "in": "query",
+            "description": "the language of entity names",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FeedbackInput"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReactionFeedback"
+                }
+              }
+            }
+          },
+          "default": {
+            "$ref": "#/components/responses/Error"
+          }
+        },
+        "security": [
+          {},
+          {
+            "host": []
+          }
+        ],
+        "x-contentkit-module": "discovery",
+        "x-contentkit-auth": "public",
+        "x-contentkit-errors": [
+          "forbidden",
+          "not_found"
         ],
         "x-contentkit-error-sets": [
           "module:discovery",
@@ -12086,9 +12303,7 @@
         ],
         "x-contentkit-module": "discovery",
         "x-contentkit-auth": "user",
-        "x-contentkit-errors": [
-          "not_configured"
-        ],
+        "x-contentkit-errors": [],
         "x-contentkit-error-sets": [
           "module:discovery",
           "auth",
@@ -12099,7 +12314,7 @@
         "tags": [
           "discovery"
         ],
-        "summary": "Erases the reader's history: of one content item, one kind or everything.",
+        "summary": "Erases the reader's history: of one content item, one kind or everything. Hidden contents stay hidden.",
         "parameters": [
           {
             "name": "kind",
@@ -12144,25 +12359,95 @@
         ]
       }
     },
-    "/v1/signals": {
-      "post": {
+    "/v1/me/continue": {
+      "get": {
         "tags": [
           "discovery"
         ],
-        "summary": "Records explicit clicks of the signed-in reader or, signed out, the stable browser identity; actual reading and playback use POST /engagement.",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/Signals"
+        "summary": "Continue reading and watching: the reader's contents started but not finished, most recent first, each card with its position; bounced, finished, hidden and disliked ones are left out. A signed-out reader's come from its anonymous id. Filters and access apply.",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "query",
+            "description": "only this content kind",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "card_entities",
+            "in": "query",
+            "description": "the group kinds cards name; every kind with a page by default",
+            "style": "form",
+            "explode": false,
+            "schema": {
+              "type": "array",
+              "items": {
+                "type": "string"
               }
             }
+          },
+          {
+            "name": "language",
+            "in": "query",
+            "description": "only content with a live version in this language",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "display_language",
+            "in": "query",
+            "description": "the language of titles, group names and paths, and the preferred language of each card's version; language by default",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "mode",
+            "in": "query",
+            "description": "lock (the default: everything listed, locked cards marked) or hide (only what the reader opens)",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "description": "the previous page's next_cursor",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "page size: 24 by default, at most 100",
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "ContentKit-Reader-Preferences",
+            "in": "header",
+            "required": false,
+            "description": "Optional anonymous content-filter choices as JSON: {\"filters\":[{\"group_id\":\"configured entity ID\",\"visible\":false}]}. Applied by reads that use content filters; ignored for authenticated accounts. At most 128 configured filters, no duplicate IDs. Never grants access.",
+            "schema": {
+              "type": "string",
+              "maxLength": 8192
+            }
           }
-        },
+        ],
         "responses": {
-          "204": {
-            "description": "No Content"
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContentPage"
+                }
+              }
+            }
           },
           "default": {
             "$ref": "#/components/responses/Error"
@@ -12176,53 +12461,7 @@
         ],
         "x-contentkit-module": "discovery",
         "x-contentkit-auth": "public",
-        "x-contentkit-errors": [
-          "not_found",
-          "not_configured"
-        ],
-        "x-contentkit-error-sets": [
-          "module:discovery",
-          "auth",
-          "request"
-        ]
-      }
-    },
-    "/v1/exposures": {
-      "post": {
-        "tags": [
-          "discovery"
-        ],
-        "summary": "Records result lists a client served, rendered or showed, for click attribution.",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/Exposures"
-              }
-            }
-          }
-        },
-        "responses": {
-          "204": {
-            "description": "No Content"
-          },
-          "default": {
-            "$ref": "#/components/responses/Error"
-          }
-        },
-        "security": [
-          {},
-          {
-            "host": []
-          }
-        ],
-        "x-contentkit-module": "discovery",
-        "x-contentkit-auth": "public",
-        "x-contentkit-errors": [
-          "not_found",
-          "not_configured"
-        ],
+        "x-contentkit-errors": [],
         "x-contentkit-error-sets": [
           "module:discovery",
           "auth",
@@ -12350,16 +12589,8 @@
         "tags": [
           "discovery"
         ],
-        "summary": "The reader's recent searches, newest first, since they last cleared them; a signed-out reader names its session.",
+        "summary": "The reader's recent searches, newest first, since they last cleared them; a signed-out reader's are its anonymous id's (ContentKit-Anonymous-Id).",
         "parameters": [
-          {
-            "name": "session",
-            "in": "query",
-            "description": "a signed-out reader's session, which keeps its recent searches",
-            "schema": {
-              "type": "string"
-            }
-          },
           {
             "name": "limit",
             "in": "query",
@@ -12415,14 +12646,6 @@
         ],
         "summary": "Clears the reader's recent searches: one query, or every one so far.",
         "parameters": [
-          {
-            "name": "session",
-            "in": "query",
-            "description": "a signed-out reader's session, which keeps its recent searches",
-            "schema": {
-              "type": "string"
-            }
-          },
           {
             "name": "query",
             "in": "query",
@@ -12574,21 +12797,13 @@
         ]
       }
     },
-    "/v1/stats/activity": {
+    "/v1/stats/active": {
       "get": {
         "tags": [
           "stats"
         ],
-        "summary": "A content kind's measured readership for every UTC day of the period, newest first: distinct people who read or played it (a visit without reading never counts), split into application-defined cohorts, with their focused active time, from the signal plane.",
+        "summary": "Distinct people active on the site for every UTC day of the period, newest first, by access (anonymous, account or the tiers an account's token claimed), from the analytics job's daily rollups; today is as of its last hourly rebuild.",
         "parameters": [
-          {
-            "name": "kind",
-            "in": "query",
-            "description": "the content kind; required",
-            "schema": {
-              "type": "string"
-            }
-          },
           {
             "name": "days",
             "in": "query",
@@ -12604,7 +12819,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/Activity"
+                  "$ref": "#/components/schemas/ActiveDays"
                 }
               }
             }
@@ -12919,119 +13134,85 @@
           "completed_at"
         ]
       },
-      "Activity": {
-        "type": "object",
-        "properties": {
-          "days": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ActivityDay"
-            }
-          },
-          "cohorts": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          }
-        },
-        "required": [
-          "days",
-          "cohorts"
-        ]
-      },
-      "ActivityContext": {
-        "type": "object",
-        "properties": {
-          "content_id": {
-            "type": "string"
-          },
-          "version_id": {
-            "type": "string"
-          },
-          "token": {
-            "type": "string"
-          },
-          "occurred_at": {
-            "type": "string",
-            "format": "date-time"
-          }
-        },
-        "required": [
-          "content_id",
-          "token",
-          "occurred_at"
-        ]
-      },
-      "ActivityContexts": {
-        "type": "object",
-        "properties": {
-          "enabled": {
-            "type": "boolean"
-          },
-          "contexts": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ActivityContext"
-            }
-          }
-        },
-        "required": [
-          "enabled",
-          "contexts"
-        ]
-      },
-      "ActivityContextsInput": {
-        "type": "object",
-        "properties": {
-          "session": {
-            "type": "string"
-          },
-          "language": {
-            "type": "string"
-          },
-          "targets": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ActivityTarget"
-            }
-          }
-        }
-      },
-      "ActivityDay": {
+      "ActiveDay": {
         "type": "object",
         "properties": {
           "date": {
             "type": "string"
           },
-          "readers": {
+          "people": {
             "type": "integer"
           },
-          "cohorts": {
+          "by_access": {
             "type": "object",
             "additionalProperties": {
               "type": "integer"
             }
-          },
-          "active_ms": {
-            "type": "integer"
           }
         },
         "required": [
           "date",
-          "readers",
-          "cohorts",
-          "active_ms"
+          "people",
+          "by_access"
         ]
       },
-      "ActivityTarget": {
+      "ActiveDays": {
         "type": "object",
         "properties": {
+          "days": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ActiveDay"
+            }
+          }
+        },
+        "required": [
+          "days"
+        ]
+      },
+      "Activity": {
+        "type": "object",
+        "properties": {
+          "language": {
+            "type": "string"
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ActivityEvent"
+            }
+          }
+        }
+      },
+      "ActivityEvent": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string"
+          },
           "content_id": {
             "type": "string"
           },
-          "version_id": {
+          "request_id": {
             "type": "string"
+          },
+          "surface": {
+            "type": "string"
+          },
+          "position": {
+            "type": "integer"
+          },
+          "active_ms": {
+            "type": "integer"
+          },
+          "furthest": {
+            "type": "integer"
+          },
+          "current": {
+            "type": "integer"
+          },
+          "length": {
+            "type": "integer"
           }
         }
       },
@@ -13250,6 +13431,14 @@
           "votes"
         ]
       },
+      "AnonymousLink": {
+        "type": "object",
+        "properties": {
+          "anonymous_id": {
+            "type": "string"
+          }
+        }
+      },
       "ArchiveStatus": {
         "type": "object",
         "properties": {
@@ -13427,9 +13616,6 @@
           "source": {
             "type": "string"
           },
-          "preference_floor": {
-            "type": "integer"
-          },
           "entities": {
             "type": "array",
             "items": {
@@ -13494,12 +13680,6 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/LegacyReadingRecord"
-            }
-          },
-          "signals": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/SignalRecord"
             }
           },
           "deletes": {
@@ -14056,9 +14236,6 @@
           },
           "max_per_owner": {
             "type": "integer"
-          },
-          "uploads": {
-            "$ref": "#/components/schemas/UploadLimits"
           }
         },
         "required": [
@@ -14599,7 +14776,7 @@
           "filters"
         ]
       },
-      "ContentFiltersInitialization": {
+      "ContentFiltersMerge": {
         "type": "object",
         "properties": {
           "account_id": {
@@ -14985,17 +15162,6 @@
           }
         }
       },
-      "CoverageRange": {
-        "type": "object",
-        "properties": {
-          "from": {
-            "type": "integer"
-          },
-          "to": {
-            "type": "integer"
-          }
-        }
-      },
       "Creator": {
         "type": "object",
         "properties": {
@@ -15201,64 +15367,6 @@
           "at"
         ]
       },
-      "EngagementBatch": {
-        "type": "object",
-        "properties": {
-          "session": {
-            "type": "string"
-          },
-          "snapshots": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/EngagementSnapshot"
-            }
-          }
-        }
-      },
-      "EngagementSnapshot": {
-        "type": "object",
-        "properties": {
-          "content_id": {
-            "type": "string"
-          },
-          "version_id": {
-            "type": "string"
-          },
-          "visit_id": {
-            "type": "string"
-          },
-          "origin_click_id": {
-            "type": "string"
-          },
-          "segment_id": {
-            "type": "string"
-          },
-          "revision": {
-            "type": "integer"
-          },
-          "activity_token": {
-            "type": "string"
-          },
-          "active_ms": {
-            "type": "integer"
-          },
-          "resume": {
-            "type": "string"
-          },
-          "pages": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/PageEngagement"
-            }
-          },
-          "watched": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/WatchedRange"
-            }
-          }
-        }
-      },
       "EntitiesCover": {
         "type": "object",
         "properties": {
@@ -15446,6 +15554,9 @@
           "created_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "popularity": {
+            "$ref": "#/components/schemas/EntityPopularity"
           }
         },
         "required": [
@@ -15667,8 +15778,8 @@
               "$ref": "#/components/schemas/Attribute"
             }
           },
-          "popular": {
-            "$ref": "#/components/schemas/EntityPopularity"
+          "artist": {
+            "type": "boolean"
           }
         }
       },
@@ -15686,6 +15797,9 @@
           },
           "total": {
             "type": "integer"
+          },
+          "popularity": {
+            "$ref": "#/components/schemas/PopularWindow"
           }
         },
         "required": [
@@ -15695,12 +15809,19 @@
       "EntityPopularity": {
         "type": "object",
         "properties": {
-          "content_kind": {
-            "type": "string"
+          "score": {
+            "type": "number"
+          },
+          "polarization": {
+            "type": "number"
+          },
+          "read_through": {
+            "$ref": "#/components/schemas/ReadThrough"
           }
         },
         "required": [
-          "content_kind"
+          "score",
+          "polarization"
         ]
       },
       "EntityRecord": {
@@ -16025,59 +16146,6 @@
           "scope"
         ]
       },
-      "ExposureInput": {
-        "type": "object",
-        "properties": {
-          "render_id": {
-            "type": "string"
-          },
-          "stage": {
-            "type": "string"
-          },
-          "revision": {
-            "type": "integer"
-          },
-          "query_id": {
-            "type": "string"
-          },
-          "search_query": {
-            "type": "string"
-          },
-          "surface": {
-            "type": "string"
-          },
-          "ranker": {
-            "type": "string"
-          },
-          "language": {
-            "type": "string"
-          },
-          "occurred_at": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "shown": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/Placement"
-            }
-          }
-        }
-      },
-      "Exposures": {
-        "type": "object",
-        "properties": {
-          "session": {
-            "type": "string"
-          },
-          "exposures": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ExposureInput"
-            }
-          }
-        }
-      },
       "ExternalID": {
         "type": "object",
         "properties": {
@@ -16293,6 +16361,165 @@
           "content_kind",
           "content_id"
         ]
+      },
+      "FeedbackAnswer": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "string",
+            "enum": [
+              "artist",
+              "artwork",
+              "bad_art",
+              "bad_story",
+              "misleading",
+              "not_into",
+              "other",
+              "series",
+              "story",
+              "tag"
+            ]
+          },
+          "entity_id": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "text": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "answered_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "required": [
+          "reason",
+          "entity_id",
+          "text",
+          "answered_at"
+        ]
+      },
+      "FeedbackEntity": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "slug": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "hideable": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "id",
+          "kind",
+          "slug",
+          "name",
+          "hideable"
+        ]
+      },
+      "FeedbackFollowUp": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "browse",
+              "follow"
+            ]
+          },
+          "entity": {
+            "$ref": "#/components/schemas/FeedbackEntity"
+          }
+        },
+        "required": [
+          "action",
+          "entity"
+        ]
+      },
+      "FeedbackInput": {
+        "type": "object",
+        "properties": {
+          "reason": {
+            "type": "string",
+            "enum": [
+              "artist",
+              "artwork",
+              "bad_art",
+              "bad_story",
+              "misleading",
+              "not_into",
+              "other",
+              "series",
+              "story",
+              "tag"
+            ]
+          },
+          "entity_id": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          },
+          "hide": {
+            "type": "boolean"
+          }
+        }
+      },
+      "FeedbackOffer": {
+        "type": "object",
+        "properties": {
+          "prompt": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ReactionFeedback"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "prompt"
+        ]
+      },
+      "FeedbackRequest": {
+        "type": "object",
+        "properties": {
+          "reaction": {
+            "type": "string",
+            "enum": [
+              "dislike",
+              "favorite",
+              "like"
+            ]
+          }
+        }
       },
       "FileDownload": {
         "type": "object",
@@ -16714,12 +16941,6 @@
           "sort": {
             "type": "string"
           },
-          "popularity": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/PopularityBucket"
-            }
-          },
           "locked": {
             "$ref": "#/components/schemas/Locked"
           },
@@ -16763,9 +16984,6 @@
           "user_id": {
             "type": "string"
           },
-          "anon_key": {
-            "type": "string"
-          },
           "first_read_at": {
             "type": "string",
             "format": "date-time"
@@ -16782,12 +17000,6 @@
           },
           "completed": {
             "type": "boolean"
-          },
-          "resume": {
-            "type": "string"
-          },
-          "revision": {
-            "type": "integer"
           }
         }
       },
@@ -17713,23 +17925,6 @@
           }
         }
       },
-      "PageEngagement": {
-        "type": "object",
-        "properties": {
-          "index": {
-            "type": "integer"
-          },
-          "ranges": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/CoverageRange"
-            }
-          },
-          "active_ms": {
-            "type": "integer"
-          }
-        }
-      },
       "PageNotice": {
         "type": "object",
         "properties": {
@@ -17853,23 +18048,6 @@
         "required": [
           "status"
         ]
-      },
-      "Placement": {
-        "type": "object",
-        "properties": {
-          "content_id": {
-            "type": "string"
-          },
-          "position": {
-            "type": "integer"
-          },
-          "version_id": {
-            "type": "string"
-          },
-          "activity_token": {
-            "type": "string"
-          }
-        }
       },
       "PlanPage": {
         "type": "object",
@@ -18315,78 +18493,17 @@
           }
         }
       },
-      "PopularityBucket": {
+      "PopularWindow": {
         "type": "object",
         "properties": {
-          "id": {
+          "window": {
             "type": "string"
-          },
-          "label": {
-            "type": "string"
-          },
-          "days": {
-            "type": "integer"
-          },
-          "from": {
-            "type": "string"
-          },
-          "until": {
-            "type": "string"
-          },
-          "all": {
-            "type": "boolean"
-          },
-          "scopes": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/PopularityScope"
-            }
-          },
-          "refresh_every": {
-            "type": "integer"
-          }
-        },
-        "required": [
-          "id"
-        ]
-      },
-      "PopularityScope": {
-        "type": "object",
-        "properties": {
-          "domain": {
-            "type": "string"
-          },
-          "language": {
-            "type": "string"
-          }
-        }
-      },
-      "PopularitySnapshot": {
-        "type": "object",
-        "properties": {
-          "bucket": {
-            "type": "string"
-          },
-          "ready": {
-            "type": "boolean"
-          },
-          "window_from": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "window_until": {
-            "type": "string",
-            "format": "date-time"
           },
           "from": {
             "type": "string",
             "format": "date-time"
           },
           "until": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "available_from": {
             "type": "string",
             "format": "date-time"
           },
@@ -18394,12 +18511,49 @@
             "type": "string",
             "format": "date-time"
           },
-          "provisional": {
+          "ready": {
+            "type": "boolean"
+          },
+          "stale": {
             "type": "boolean"
           }
         },
         "required": [
-          "bucket",
+          "window",
+          "from",
+          "until",
+          "ready"
+        ]
+      },
+      "PopularitySnapshot": {
+        "type": "object",
+        "properties": {
+          "window": {
+            "type": "string"
+          },
+          "from": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "until": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "computed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "ready": {
+            "type": "boolean"
+          },
+          "stale": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "window",
+          "from",
+          "until",
           "ready"
         ]
       },
@@ -18416,9 +18570,6 @@
             "type": "string"
           },
           "base": {
-            "type": "string"
-          },
-          "namespace": {
             "type": "string"
           },
           "root": {
@@ -18439,11 +18590,8 @@
           "min_width": {
             "type": "integer"
           },
-          "default": {
-            "type": "boolean"
-          },
-          "stable": {
-            "type": "boolean"
+          "default_image": {
+            "$ref": "#/components/schemas/PublicImage"
           }
         },
         "required": [
@@ -18451,10 +18599,9 @@
           "name",
           "from",
           "base",
-          "namespace",
+          "root",
           "to",
-          "widths",
-          "default"
+          "widths"
         ]
       },
       "PresetStatus": {
@@ -18700,6 +18847,123 @@
           "mine"
         ]
       },
+      "ReactionFeedback": {
+        "type": "object",
+        "properties": {
+          "content_id": {
+            "type": "string"
+          },
+          "reaction": {
+            "type": "string",
+            "enum": [
+              "dislike",
+              "favorite",
+              "like"
+            ]
+          },
+          "polarity": {
+            "type": "string",
+            "enum": [
+              "dislike",
+              "like"
+            ]
+          },
+          "reasons": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "artist",
+                "artwork",
+                "bad_art",
+                "bad_story",
+                "misleading",
+                "not_into",
+                "other",
+                "series",
+                "story",
+                "tag"
+              ]
+            }
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FeedbackEntity"
+            }
+          },
+          "artists": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FeedbackEntity"
+            }
+          },
+          "series": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/FeedbackEntity"
+            }
+          },
+          "hide": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/FeedbackEntity"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "hide_taken": {
+            "oneOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "offered_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "answer": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/FeedbackAnswer"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "follow_up": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/FeedbackFollowUp"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "content_id",
+          "reaction",
+          "polarity",
+          "reasons",
+          "tags",
+          "artists",
+          "series",
+          "hide",
+          "hide_taken",
+          "offered_at",
+          "answer",
+          "follow_up"
+        ]
+      },
       "ReactionRecord": {
         "type": "object",
         "properties": {
@@ -18771,9 +19035,6 @@
           "status": {
             "$ref": "#/components/schemas/MediaStatus"
           },
-          "full": {
-            "type": "boolean"
-          },
           "uploads": {
             "type": "array",
             "items": {
@@ -18794,6 +19055,21 @@
           "offset",
           "limit",
           "files"
+        ]
+      },
+      "ReadThrough": {
+        "type": "object",
+        "properties": {
+          "rate": {
+            "type": "number"
+          },
+          "readers": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "rate",
+          "readers"
         ]
       },
       "ReaderDefaults": {
@@ -19316,6 +19592,9 @@
             "items": {
               "$ref": "#/components/schemas/EntityCard"
             }
+          },
+          "request_id": {
+            "type": "string"
           }
         },
         "required": [
@@ -19394,83 +19673,6 @@
             "type": "array",
             "items": {
               "$ref": "#/components/schemas/SegmentInput"
-            }
-          }
-        }
-      },
-      "SignalInput": {
-        "type": "object",
-        "properties": {
-          "content_id": {
-            "type": "string"
-          },
-          "version_id": {
-            "type": "string"
-          },
-          "type": {
-            "type": "string"
-          },
-          "event_id": {
-            "type": "string"
-          },
-          "revision": {
-            "type": "integer"
-          },
-          "occurred_at": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "render_id": {
-            "type": "string"
-          },
-          "surface": {
-            "type": "string"
-          },
-          "position": {
-            "type": "integer"
-          },
-          "activity_token": {
-            "type": "string"
-          }
-        }
-      },
-      "SignalRecord": {
-        "type": "object",
-        "properties": {
-          "target": {
-            "$ref": "#/components/schemas/TargetRef"
-          },
-          "user_id": {
-            "type": "string"
-          },
-          "anon_key": {
-            "type": "string"
-          },
-          "type": {
-            "type": "string"
-          },
-          "event_id": {
-            "type": "string"
-          },
-          "revision": {
-            "type": "integer"
-          },
-          "occurred_at": {
-            "type": "string",
-            "format": "date-time"
-          }
-        }
-      },
-      "Signals": {
-        "type": "object",
-        "properties": {
-          "session": {
-            "type": "string"
-          },
-          "signals": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/SignalInput"
             }
           }
         }
@@ -19666,20 +19868,6 @@
           "entity",
           "external_id"
         ]
-      },
-      "UploadLimits": {
-        "type": "object",
-        "properties": {
-          "files_per_hour": {
-            "type": "integer"
-          },
-          "bytes_per_day": {
-            "type": "integer"
-          },
-          "quota_bytes": {
-            "type": "integer"
-          }
-        }
       },
       "UploadRule": {
         "type": "object",
@@ -20131,14 +20319,23 @@
           "completed": {
             "type": "boolean"
           },
+          "outcome": {
+            "type": "string"
+          },
           "progress": {
             "type": "integer"
           },
           "progress_max": {
             "type": "integer"
           },
-          "resume": {
-            "type": "string"
+          "percent": {
+            "type": "integer"
+          },
+          "position": {
+            "type": "integer"
+          },
+          "hidden": {
+            "type": "boolean"
           },
           "last_read_at": {
             "type": "string",
@@ -20150,7 +20347,8 @@
           "seen",
           "completed",
           "progress",
-          "progress_max"
+          "progress_max",
+          "percent"
         ]
       },
       "VisitorLocation": {
@@ -20194,17 +20392,6 @@
           "created_at": {
             "type": "string",
             "format": "date-time"
-          }
-        }
-      },
-      "WatchedRange": {
-        "type": "object",
-        "properties": {
-          "from_ms": {
-            "type": "integer"
-          },
-          "to_ms": {
-            "type": "integer"
           }
         }
       },
@@ -20258,7 +20445,6 @@
           "not_joinable",
           "not_ready",
           "not_uploaded",
-          "quota_exceeded",
           "rate_limited",
           "tenant_mismatch",
           "too_large",
@@ -20557,10 +20743,6 @@
     "not_uploaded": {
       "status": 409,
       "meaning": "A commit names an upload that has not landed; `blobs` lists the ones to upload again."
-    },
-    "quota_exceeded": {
-      "status": 413,
-      "meaning": "The uploader's storage quota is used up."
     },
     "rate_limited": {
       "status": 429,

@@ -6,17 +6,21 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/google/uuid"
+
 	"github.com/open-rails/contentkit/contentref"
 	discovery "github.com/open-rails/contentkit/discovery"
-	signalstore "github.com/open-rails/contentkit/internal/signalstore"
-	"github.com/open-rails/contentkit/signal"
 )
 
-// Recommender turns co-engagement candidates into tenant-scoped discovery lists.
+// Recommender turns candidates into tenant-scoped discovery lists for one
+// reader.
 type Recommender struct {
 	Candidates Engagement
-	Store      *signalstore.Store
 	Tenant     string
+	s          *Service
+	// reader is the reader's subject; known is false without one.
+	reader uuid.UUID
+	known  bool
 	// DefaultLimit applies when options leave Limit zero (default 20).
 	DefaultLimit int
 	// RRFK scales popularity-fill tail scores (default 60).
@@ -50,35 +54,25 @@ func (r Recommender) Similar(ctx context.Context, anchor contentref.ContentRef, 
 	}
 	limit := r.limit(opts.Limit)
 	kinds := trimAll(opts.ContentKinds)
-	q := query{ContentKinds: kinds, Limit: oversample(limit, opts.Admit), Window: opts.Window}
+	q := query{ContentKinds: kinds, Limit: oversample(limit, opts.Admit)}
 	cands, err := r.Candidates.Similar(ctx, anchor, q)
 	if err != nil {
 		return nil, err
 	}
 	f := r.newFilter(limit, kinds, opts.Admit)
 	f.exclude[anchor.Content().Key()] = struct{}{}
-	if opts.ExcludeSeenFor != nil {
-		present := make([]string, 0, len(cands))
-		for _, c := range cands {
-			present = append(present, c.Ref.ContentKind)
-		}
-		if err := f.loadSubject(ctx, r, *opts.ExcludeSeenFor, present, kinds, false); err != nil {
-			return nil, err
-		}
-	}
 	if err := f.pushAll(ctx, cands); err != nil {
 		return nil, err
 	}
 	return f.out, nil
 }
 
-// Recommend returns "for you" works for a subject: excluding already-seen
-// (unless IncludeSeen) and always disliked works, filled on cold start or
-// thin candidates from popularity of the last 30 days, then of all time, then
-// Backfill.
-func (r Recommender) Recommend(ctx context.Context, subject signal.Subject, opts discovery.RecommendOptions) ([]discovery.Hit, error) {
-	if err := subject.Validate(); err != nil {
-		return nil, err
+// Recommend returns "for you" works for the reader: excluding already-seen
+// (unless IncludeSeen) and always disliked or hidden works, filled on cold
+// start or thin candidates from popularity, then Backfill.
+func (r Recommender) Recommend(ctx context.Context, opts discovery.RecommendOptions) ([]discovery.Hit, error) {
+	if !r.known {
+		return nil, fmt.Errorf("discovery: recommendations need a reader")
 	}
 	kinds := trimAll(opts.ContentKinds)
 	if len(kinds) == 0 {
@@ -91,12 +85,12 @@ func (r Recommender) Recommend(ctx context.Context, subject signal.Subject, opts
 		SeedLimit:        opts.SeedLimit,
 		SeedContentKinds: trimAll(opts.SeedContentKinds),
 	}
-	cands, err := r.Candidates.ForSubject(ctx, subject, q)
+	cands, err := r.Candidates.ForSubject(ctx, r.reader, q)
 	if err != nil {
 		return nil, err
 	}
 	f := r.newFilter(limit, kinds, opts.Admit)
-	if err := f.loadSubject(ctx, r, subject, kinds, kinds, opts.IncludeSeen); err != nil {
+	if err := f.loadSubject(ctx, r, kinds, kinds, opts.IncludeSeen); err != nil {
 		return nil, err
 	}
 	if err := f.pushAll(ctx, cands); err != nil {
@@ -194,15 +188,15 @@ func (r Recommender) newFilter(limit int, kinds []string, admit discovery.Admit)
 	return f
 }
 
-// loadSubject excludes the subject's disliked works of negativeKinds and,
-// unless includeSeen, their seen works of seenKinds.
-func (f *filter) loadSubject(ctx context.Context, r Recommender, subject signal.Subject, seenKinds, negativeKinds []string, includeSeen bool) error {
+// loadSubject excludes the reader's disliked and hidden works of
+// negativeKinds and, unless includeSeen, their seen works of seenKinds.
+func (f *filter) loadSubject(ctx context.Context, r Recommender, seenKinds, negativeKinds []string, includeSeen bool) error {
 	if !includeSeen {
-		if err := f.loadSeen(ctx, r, subject, seenKinds); err != nil {
+		if err := f.loadSeen(ctx, r, seenKinds); err != nil {
 			return err
 		}
 	}
-	negative, err := r.Store.NegativeIDs(ctx, r.Tenant, subject, negativeKinds)
+	negative, err := r.s.negativeIDs(ctx, r.reader, negativeKinds)
 	if err != nil {
 		return err
 	}
@@ -212,12 +206,12 @@ func (f *filter) loadSubject(ctx context.Context, r Recommender, subject signal.
 	return nil
 }
 
-func (f *filter) loadSeen(ctx context.Context, r Recommender, subject signal.Subject, kinds []string) error {
+func (f *filter) loadSeen(ctx context.Context, r Recommender, kinds []string) error {
 	for _, kind := range kinds {
 		if _, ok := f.seen[kind]; ok {
 			continue
 		}
-		seen, err := r.Store.SeenIDs(ctx, r.Tenant, subject, kind)
+		seen, err := r.s.seenIDs(ctx, r.reader, kind)
 		if err != nil {
 			return err
 		}

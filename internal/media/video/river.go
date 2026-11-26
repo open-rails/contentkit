@@ -20,6 +20,7 @@ import (
 type WorkerConfig struct {
 	Encoder     *Encoder // its Manifests carry the host's registry
 	Pool        *pgxpool.Pool
+	Locks       *pglock.Locks // the item lock, on a direct session
 	Schema      string        // the host's worker schema (workqueue.ValidSchema)
 	ChunkTarget time.Duration // estimated CPU work per chunk; default 5 minutes
 	// Slice is how long after its attempt started a job keeps taking its own
@@ -46,9 +47,6 @@ func (c WorkerConfig) Run(ctx context.Context, job *river.Job[workqueue.Derivati
 	c = c.defaults()
 	start := time.Now()
 	defer c.clearProgress(ctx, job.ID)
-	if err := c.Encoder.ms.Recover(ctx, job.Args.Ref); err != nil {
-		return err
-	}
 	// The shared derivative worker owns retry exhaustion, outage snoozes, and
 	// crash recovery for both image and video work.
 	return c.convert(ctx, job, start)
@@ -59,7 +57,7 @@ func (c WorkerConfig) Run(ctx context.Context, job *river.Job[workqueue.Derivati
 // as many as its Slice allows, before yielding the same job.
 // The item lock prevents duplicate requests from encoding the same chunk.
 func (c WorkerConfig) convert(ctx context.Context, job *river.Job[workqueue.DerivativeArgs], start time.Time) error {
-	release, ok, err := pglock.Acquire(ctx, c.Pool, "contentkit:media:video:"+job.Args.Ref.String(), false)
+	release, ok, err := c.Locks.Acquire(ctx, "contentkit:media:video:"+job.Args.Ref.String(), false)
 	if err != nil {
 		return err
 	}

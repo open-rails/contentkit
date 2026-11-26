@@ -22,6 +22,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/open-rails/contentkit/internal/activitylog"
 	catalogstore "github.com/open-rails/contentkit/internal/catalogstore"
 	channelstore "github.com/open-rails/contentkit/internal/channelstore"
 	contentstore "github.com/open-rails/contentkit/internal/contentstore"
@@ -30,6 +32,9 @@ import (
 	entitystore "github.com/open-rails/contentkit/internal/entitystore"
 	importstore "github.com/open-rails/contentkit/internal/importstore"
 	mediastore "github.com/open-rails/contentkit/internal/mediastore"
+	"github.com/open-rails/contentkit/internal/pglock"
+	"github.com/open-rails/contentkit/internal/readingstore"
+	signalstore "github.com/open-rails/contentkit/internal/signalstore"
 	urlstore "github.com/open-rails/contentkit/internal/urlstore"
 	versionstore "github.com/open-rails/contentkit/internal/versionstore"
 
@@ -39,6 +44,7 @@ import (
 	"github.com/jackc/pgx/v5/stdlib"
 	riverhelpers "github.com/open-rails/helpers/river"
 	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/riverdriver/riverpgxv5"
 
 	"github.com/open-rails/authkit/auth"
 
@@ -54,10 +60,9 @@ import (
 	"github.com/open-rails/contentkit/internal/locationpolicy"
 	"github.com/open-rails/contentkit/internal/media/workqueue"
 	"github.com/open-rails/contentkit/internal/migrations"
-	"github.com/open-rails/contentkit/kinds"
+	"github.com/open-rails/contentkit/internal/rankings"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/token"
-	"github.com/open-rails/contentkit/signal"
 )
 
 // DefaultSchema is Config.Database.Schema's default.
@@ -73,6 +78,8 @@ type Engine struct {
 	schema          string
 	riverSchema     string
 	pool            *pgxpool.Pool
+	session         *pgxpool.Config // Deps.PostgresSession; nil when pool is direct
+	locks           *pglock.Locks
 	log             *slog.Logger
 	auth            auth.Authenticator
 	gate            *entitlement.Gate
@@ -80,6 +87,10 @@ type Engine struct {
 
 	hub      *hub.Hub
 	signals  *signalPlane // nil without ClickHouse
+	reading  *readingstore.Store
+	activity *signalstore.Writer // nil without ClickHouse
+	now      func() time.Time
+	alog     *activitylog.Log
 	chMu     sync.Mutex
 	ownCH    clickhouse.Conn // opened from Config.ClickHouse
 	content  *contentstore.Runtime
@@ -88,6 +99,7 @@ type Engine struct {
 	catalog  *catalogstore.Store
 	versions *versionstore.Service
 	discover *discoverystore.Service
+	rankings *rankings.Engine
 	importer *importstore.Service
 	media    *engineMedia
 	avatars  *engineAvatars
@@ -109,6 +121,7 @@ type engineMedia struct {
 	versions *versionstore.Service
 	reg      *mediastore.Registry
 	store    media.Store
+	cache    *mediastore.PGCache
 	jobs     *mediastore.Jobs
 	uploads  *mediastore.Uploads
 	reader   *mediastore.Reader
@@ -145,6 +158,7 @@ func newEngine(ctx context.Context, cfg Config, deps Deps, recovery bool) (_ *En
 	if now == nil {
 		now = time.Now
 	}
+	e.now = now
 	if err := e.validate(deps); err != nil {
 		return nil, err
 	}
@@ -169,8 +183,20 @@ func newEngine(ctx context.Context, cfg Config, deps Deps, recovery bool) (_ *En
 		SignalPlane: e.signals != nil}); err != nil {
 		return nil, err
 	}
+	// Similar lists need only Postgres; rankings fill from the signal plane.
+	if e.rankings, err = rankings.New(rankings.Options{Pool: e.pool, Schema: e.schema, Tenant: cfg.Scope.AppID.String(), Kinds: cfg.Content,
+		Source: e.hub, Redis: deps.Redis, Logger: e.log, Now: now}); err != nil {
+		return nil, err
+	}
 	if e.gate, err = entitlement.NewGate(entitlement.GateConfig{Tenant: cfg.Scope.AppID.String(), Kinds: cfg.Content, Billing: deps.Billing, Logger: e.log, Now: now}); err != nil {
 		return nil, err
+	}
+	e.reading = readingstore.New(e.pool, e.schema, uuid.UUID(cfg.Scope.AppID), now)
+	e.alog = &activitylog.Log{App: uuid.UUID(cfg.Scope.AppID), Kinds: cfg.Content, Gate: e.gate, Now: now}
+	if e.signals != nil && !recovery {
+		e.activity = signalstore.NewWriter(cfg.Scope.AppID.String(), e.hub.Signals, e.log)
+		e.alog.Write = e.activity.Add
+		e.activity.Start()
 	}
 	if err := e.newCatalog(ctx, deps, now); err != nil {
 		return nil, err
@@ -228,8 +254,11 @@ func (e *Engine) validate(deps Deps) error {
 	if err := clientaddr.CheckTrusted(cfg.TrustedProxies); err != nil {
 		return fmt.Errorf("contentkit: Config.TrustedProxies: %w", err)
 	}
-	if err := signal.ValidateActivityCohorts(cfg.ActivityCohorts); err != nil {
-		return fmt.Errorf("contentkit: Config.ActivityCohorts: %w", err)
+	if cfg.AnonymousRetention < 0 {
+		return errors.New("contentkit: Config.AnonymousRetention is negative")
+	}
+	if cfg.AnonymousRetention == 0 {
+		cfg.AnonymousRetention = DefaultAnonymousRetention
 	}
 	if err := cfg.Content.Validate(); err != nil {
 		return fmt.Errorf("contentkit: Config.Content: %w", err)
@@ -245,6 +274,20 @@ func (e *Engine) validate(deps Deps) error {
 	if deps.Postgres == nil {
 		return errors.New("contentkit: Deps.Postgres is required")
 	}
+	if s := deps.PostgresSession; s != nil {
+		if s.ConnConfig == nil {
+			return errors.New("contentkit: Deps.PostgresSession has no connection settings")
+		}
+		switch mode := deps.Postgres.Config().ConnConfig.DefaultQueryExecMode; mode {
+		case pgx.QueryExecModeCacheDescribe, pgx.QueryExecModeExec, pgx.QueryExecModeSimpleProtocol:
+		default:
+			// A transaction pooler may run a statement's prepare and execute
+			// on different server connections.
+			return fmt.Errorf("contentkit: Deps.Postgres goes through a transaction pooler (Deps.PostgresSession is set) and needs DefaultQueryExecMode cache_describe, exec or simple_protocol, not %s", mode)
+		}
+		e.session = s.Copy()
+	}
+	e.locks = pglock.New(e.sessionConfig())
 	e.auth, err = e.authorization(deps.Auth, deps.Authorization)
 	if err != nil {
 		return err
@@ -289,8 +332,27 @@ func (e *Engine) migrate(ctx context.Context) error {
 	return e.migratePostgres(ctx, MigrationOptions{})
 }
 
+// sessionConfig dials what needs a session of its own: Deps.PostgresSession,
+// else the pool's configuration.
+func (e *Engine) sessionConfig() *pgxpool.Config {
+	if e.session != nil {
+		return e.session
+	}
+	return e.pool.Config()
+}
+
 func (e *Engine) migratePostgres(ctx context.Context, options MigrationOptions) error {
-	db := stdlib.OpenDBFromPool(e.pool)
+	// The migrators hold session locks and pin connections: behind a pooler
+	// they run on a direct pool of their own.
+	direct := e.pool
+	if e.session != nil {
+		var err error
+		if direct, err = pgxpool.NewWithConfig(ctx, e.session.Copy()); err != nil {
+			return fmt.Errorf("contentkit: migration session: %w", err)
+		}
+		defer direct.Close()
+	}
+	db := stdlib.OpenDBFromPool(direct)
 	defer db.Close()
 	if err := migrations.ApplyPostgres(ctx, db, e.schema); err != nil {
 		return err
@@ -301,6 +363,9 @@ func (e *Engine) migratePostgres(ctx context.Context, options MigrationOptions) 
 	}
 	if err := e.bindScope(ctx); err != nil {
 		return err
+	}
+	if err := readingstore.SeedOutcomeValues(ctx, e.pool, e.schema, uuid.UUID(e.cfg.Scope.AppID)); err != nil {
+		return fmt.Errorf("contentkit: seed outcome values: %w", err)
 	}
 	if options.explicit {
 		// A retry after a lost provider reply must converge here, not enqueue
@@ -315,11 +380,11 @@ func (e *Engine) migratePostgres(ctx context.Context, options MigrationOptions) 
 	if options.SkipQueues {
 		return nil
 	}
-	if err := riverhelpers.ApplyMigrations(ctx, e.pool, riverhelpers.MigrationOptions{Schema: e.riverSchema, Logger: e.log}); err != nil {
+	if err := riverhelpers.ApplyMigrations(ctx, direct, riverhelpers.MigrationOptions{Schema: e.riverSchema, Logger: e.log}); err != nil {
 		return fmt.Errorf("contentkit: River migrations: %w", err)
 	}
 	if account, ok := e.accountMediaStorage(); ok {
-		if err := workqueue.Migrate(ctx, e.pool, account.WorkerSchema); err != nil {
+		if err := workqueue.Migrate(ctx, direct, account.WorkerSchema); err != nil {
 			return fmt.Errorf("contentkit: account media queue migrations: %w", err)
 		}
 	}
@@ -327,7 +392,7 @@ func (e *Engine) migratePostgres(ctx context.Context, options MigrationOptions) 
 		if m.WorkerSchema == "" {
 			m.WorkerSchema = e.schema + "_media_worker"
 		}
-		if err := workqueue.Migrate(ctx, e.pool, m.WorkerSchema); err != nil {
+		if err := workqueue.Migrate(ctx, direct, m.WorkerSchema); err != nil {
 			return fmt.Errorf("contentkit: media worker queue migrations: %w", err)
 		}
 	}
@@ -348,9 +413,15 @@ func (e *Engine) newCatalog(ctx context.Context, deps Deps, now func() time.Time
 		EntitiesChanged: func(ctx context.Context, q entitystore.Querier, changes []entities.Change) error {
 			return e.catalog.EntitiesChanged(ctx, q, changes)
 		},
-		Owned: ownedContent{e}}
+		Owned: ownedContent{e},
+		Hidden: func(ctx context.Context) ([]string, error) {
+			return e.catalog.HiddenEntities(ctx, gate.Actor(ctx), gate.Domain(ctx))
+		}}
 	if e.cfg.Media != nil {
 		opts.Covers, opts.Folders = entityCovers{e}, entityFolders{e}
+	}
+	if e.hub.SignalsConfigured() {
+		opts.Rankings = e.rankings
 	}
 	var err error
 	opts.Gate = e.gate
@@ -358,7 +429,7 @@ func (e *Engine) newCatalog(ctx context.Context, deps Deps, now func() time.Time
 		return err
 	}
 	e.channels = channelstore.FromStore(e.entities)
-	co := catalogstore.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Scope.AppID.String(), Kinds: c, Auth: e.auth, Gate: e.gate, Entities: e.entities, Channels: e.channels,
+	co := catalogstore.Options{Pool: e.pool, Locks: e.locks, Schema: e.schema, Tenant: e.cfg.Scope.AppID.String(), Kinds: c, Auth: e.auth, Gate: e.gate, Entities: e.entities, Channels: e.channels,
 		Body: deps.BodySanitizer, Now: now, Logger: e.log,
 		EventRetention: e.cfg.EventRetention, OnPurge: e.forgetPurgedTx, AfterPurge: e.purgeSignals,
 		DocumentsChanged: func(ctx context.Context, q catalogstore.Querier) error { return e.syncDocuments(ctx, q) }}
@@ -370,7 +441,7 @@ func (e *Engine) newCatalog(ctx context.Context, deps Deps, now func() time.Time
 
 // newVersions binds the one publication service before optional media storage.
 func (e *Engine) newVersions(deps Deps, now func() time.Time) error {
-	opts := versionstore.Options{Tenant: e.cfg.Scope.AppID.String(), Schema: e.schema, Pool: e.pool,
+	opts := versionstore.Options{Tenant: e.cfg.Scope.AppID.String(), Schema: e.schema, Pool: e.pool, Locks: e.locks,
 		Kinds: e.cfg.Content, Auth: e.auth, AccountExists: e.accountExists(deps),
 		Resolver: e.catalog.Resolver(), Gate: e.gate, Facets: e.catalog, Others: siteMedia{e},
 		Policy: deps.Downloads, Logger: e.log, Now: now, MediaConfigured: e.cfg.Media != nil}
@@ -407,33 +478,36 @@ func (e *Engine) newMedia(ctx context.Context, deps Deps, now func() time.Time) 
 	if m.queue, err = workqueue.NewWithAccounts(e.pool, m.reg, mc.WorkerSchema, accountQueue); err != nil {
 		return nil, err
 	}
-	journal, err := mediastore.NewPGJournal(e.pool, e.schema, m.queue)
+	// Every manifest write lands in the item cache, which wakes releases and
+	// garbage collection on the engine's River schema.
+	host, err := river.NewClient(riverpgxv5.New(e.pool), &river.Config{Schema: e.riverSchema})
 	if err != nil {
+		return nil, err
+	}
+	recorded, err := versionstore.Recorded(e.pool, e.locks, e.riverSchema, e.schema, m.reg)
+	if err != nil {
+		return nil, err
+	}
+	// Commits enqueue their own processing; the cache wakes releases and GC.
+	cacheOptions := mediastore.CacheOptions{Lock: recorded.Lock, Recorded: recorded.Recorded, GC: mediastore.RiverGC{Client: host}, Now: now}
+	if m.cache, err = mediastore.NewPGCache(e.pool, e.schema, m.reg, cacheOptions); err != nil {
 		return nil, err
 	}
 	if sharedAccounts {
-		accountJournal, err := mediastore.NewPGJournal(e.pool, accountStorage.Schema, m.queue)
+		account, err := mediastore.NewPGCache(e.pool, accountStorage.Schema, m.reg, cacheOptions)
 		if err != nil {
 			return nil, err
 		}
-		journal, err = mediastore.RouteJournal(journal, accountJournal, e.accountMediaPartition())
-		if err != nil {
+		if m.cache, err = mediastore.RouteCache(m.cache, account, e.accountMediaPartition()); err != nil {
 			return nil, err
 		}
 	}
-	limiter, err := e.entityLimiter()
+	m.reg.ReadAccountDefaults(m.cache)
+	manifests, err := mediastore.NewManifests(deps.Store, m.reg, mediastore.ManifestOptions{Written: m.cache.Record, Current: m.cache.ETag, Now: now})
 	if err != nil {
 		return nil, err
 	}
-	if sharedAccounts && limiter != nil {
-		accountLimiter, err := mediastore.NewPGLimiter(e.pool, accountStorage.Schema, mediastore.PGLimits{})
-		if err != nil {
-			return nil, err
-		}
-		limiter = mediastore.RouteLimiter(limiter, accountLimiter, e.accountMediaPartition())
-	}
-	if m.jobs, err = mediastore.NewJobs(mediastore.JobsConfig{Store: deps.Store, Registry: m.reg, Locker: mediastore.PGLocker(e.pool), Journal: journal,
-		Processes: m.queue, Logger: e.log, Now: now, Limiter: limiter}); err != nil {
+	if m.jobs, err = mediastore.NewJobs(mediastore.JobsConfig{Manifests: manifests, Processes: m.queue, Logger: e.log, Now: now}); err != nil {
 		return nil, err
 	}
 	d := mc.Delivery
@@ -456,8 +530,8 @@ func (e *Engine) newMedia(ctx context.Context, deps Deps, now func() time.Time) 
 	rate := func(r RateLimitConfig) mediastore.RateLimit {
 		return mediastore.RateLimit{PerSecond: r.PerSecond, Burst: r.Burst, Disabled: r.Disabled, Redis: deps.Redis}
 	}
-	if m.uploads, err = mediastore.NewUploads(mediastore.UploadOptions{Store: deps.Store, Manifests: m.jobs.Manifests(), Tickets: &ring,
-		ProcessOnUpload: mc.ProcessOnUpload, Commits: rate(mc.CommitLimit), Limiter: limiter}); err != nil {
+	if m.uploads, err = mediastore.NewUploads(mediastore.UploadOptions{Store: deps.Store, Manifests: m.jobs.Manifests(), Processes: m.queue, Tickets: &ring,
+		ProcessOnUpload: mc.ProcessOnUpload, Commits: rate(mc.CommitLimit)}); err != nil {
 		return nil, err
 	}
 	if m.progress, err = workqueue.NewProgressSourceWithAccounts(e.pool, m.reg, mc.WorkerSchema, accountQueue); err != nil {
@@ -474,35 +548,10 @@ func (e *Engine) newMedia(ctx context.Context, deps Deps, now func() time.Time) 
 		return nil, err
 	}
 	m.limit = rate(mc.ReadLimit)
-	if err := m.versions.Bind(versionstore.Media{Manifests: m.jobs.Manifests(), Uploads: m.uploads, Jobs: m.jobs, Reader: m.reader}); err != nil {
+	if err := m.versions.Bind(versionstore.Media{Manifests: m.jobs.Manifests(), Cache: m.cache, Uploads: m.uploads, Jobs: m.jobs, Reader: m.reader}); err != nil {
 		return nil, err
 	}
 	return m, nil
-}
-
-// groupLimiter limits uploads to user-owned entities by their kind's
-// kinds.UploadLimits, keyed by the entity (versions.EntityOwner); nil when no
-// kind sets any.
-func (e *Engine) entityLimiter() (*mediastore.PGLimiter, error) {
-	limits := map[string]kinds.UploadLimits{}
-	for name, gk := range e.cfg.Content.StorageModel().EntityKinds {
-		if gk.Uploads != (kinds.UploadLimits{}) {
-			limits[name] = gk.Uploads
-		}
-	}
-	if len(limits) == 0 {
-		return nil, nil
-	}
-	of := func(owner string) kinds.UploadLimits {
-		kind, _, _ := versionstore.ParseEntityOwner(owner)
-		return limits[kind]
-	}
-	return mediastore.NewPGLimiter(e.pool, e.schema, mediastore.PGLimits{
-		Quota: func(_ context.Context, _, owner string) (int64, error) { return of(owner).QuotaBytes, nil },
-		Rates: func(_ context.Context, _, owner string) (int, int64, error) {
-			l := of(owner)
-			return l.FilesPerHour, l.BytesPerDay, nil
-		}})
 }
 
 func (e *Engine) contentOptions(deps Deps) contentstore.Options {
@@ -522,16 +571,20 @@ func (e *Engine) contentOptions(deps Deps) contentstore.Options {
 		Accounts:              e,
 		Moderator:             deps.Moderator, ModeratorTimeout: in.ModeratorTimeout, ModeratorCooldown: in.ModeratorCooldown,
 		ProviderDataEraser: deps.ProviderDataEraser,
+		Activity:           e.alog,
+		Touch: func(ctx context.Context, tx pgx.Tx, s uuid.UUID) error {
+			return e.reading.Touch(ctx, tx, s)
+		},
 		Limits: contentstore.Limits{Disabled: l.Disabled, Redis: deps.Redis, Comment: rates(l.Comment), CommentReaction: rates(l.CommentReaction),
 			Reaction: rates(l.Reaction), Favorite: rates(l.Favorite), PollVote: rates(l.PollVote)},
 		Anonymous: in.Anonymous, CommentMaxLength: in.CommentMaxLength, DuplicateWindow: in.DuplicateWindow,
 		Logger: e.log,
 	}
 	if e.media != nil {
-		o.Media = &contentstore.Media{Namespace: e.media.reg.Namespace(), Images: e.media.jobs.Manifests(), Folders: e.media.jobs, Reader: e.media.reader}
+		o.Media = &contentstore.Media{Namespace: e.media.reg.Namespace(), Images: e.media.cache, Folders: e.media.jobs, Reader: e.media.reader}
 	}
-	if e.avatars != nil {
-		o.Avatars = e.avatars.urls
+	if e.avatars != nil && e.avatars.images != nil {
+		o.Avatars = e.avatars.images
 	}
 	return o
 }
@@ -580,11 +633,11 @@ func (e *Engine) mount(deps Deps) error {
 	if err := e.mountDiscovery(deps); err != nil {
 		return err
 	}
-	var avatars *media.PresetRule
+	avatars := func(context.Context) *media.PresetRule { return nil }
 	if e.avatars != nil {
 		avatars = e.avatars.rule
 	}
-	e.modules[httpapi.Kinds] = kindsHandler((&gate.Gate{Auth: e.auth, Log: e.log}).Guard, c, e.hub.SignalPlane, avatars)
+	e.modules[httpapi.Kinds] = kindsHandler((&gate.Gate{Auth: e.auth, Log: e.log}).Guard, c, e.hub.SignalsConfigured, avatars)
 	if e.importer, err = importstore.New(importstore.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Scope.AppID.String(), Catalog: e.catalog, Entities: e.entities, Channels: e.channels,
 		Content: e.content, Signals: e.discover, Rebuild: e.rebuild, Logger: e.log}); err != nil {
 		return err
@@ -609,14 +662,11 @@ func (e *Engine) mount(deps Deps) error {
 // mountDiscovery builds the public read routes over the catalog's rule.
 func (e *Engine) mountDiscovery(deps Deps) error {
 	o := discoverystore.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Scope.AppID.String(), Kinds: e.cfg.Content, Resolver: e.catalog.Resolver(), Gate: e.gate,
-		Entities: e.entities, Channels: e.channels, Hub: e.hub, Logger: e.log, Now: deps.Clock, Visibility: e.catalog, ActivitySigner: deps.ActivitySigner,
-		ActivityCohorts: e.cfg.ActivityCohorts}
+		Entities: e.entities, Channels: e.channels, Hub: e.hub, Logger: e.log, Now: deps.Clock, Visibility: e.catalog, Reading: e.reading, Activity: e.alog,
+		Feedback: e.cfg.Interactions.Feedback, Rankings: e.rankings}
 	o.Tenure, _ = deps.Billing.(access.TenureReader)
 	if e.media != nil {
 		o.Media = e.media.versions
-		if o.ActivitySigner == nil {
-			o.ActivitySigner = e.media.reader
-		}
 	}
 	var err error
 	if e.discover, err = discoverystore.New(o); err != nil {
@@ -650,7 +700,7 @@ func (e *Engine) start(ctx context.Context) error {
 	case e.started:
 		return errors.New("contentkit: Start called twice")
 	}
-	client, err := riverhelpers.New(ctx, e.pool, &river.Config{Schema: e.riverSchema, Queues: map[string]river.QueueConfig{}, Logger: e.log, ReindexerSchedule: river.NeverSchedule()},
+	client, err := riverhelpers.NewWithSession(ctx, e.pool, e.session, &river.Config{Schema: e.riverSchema, Queues: map[string]river.QueueConfig{}, Logger: e.log, ReindexerSchedule: river.NeverSchedule()},
 		e.jobs.contribution())
 	if err != nil {
 		return err
@@ -660,8 +710,8 @@ func (e *Engine) start(ctx context.Context) error {
 }
 
 // StartJobs works ContentKit's background jobs in this process: search
-// indexing, preference sync, popularity refresh, publication, retention and
-// media release work, and their schedules. A host calls it from the process
+// indexing, the analytics job, entity popularity, publication, retention
+// and media release work, and their schedules. A host calls it from the process
 // that runs jobs (its worker command); processes that only serve call Start.
 // It starts the engine first when Start has not run. Close stops the jobs.
 func (e *Engine) StartJobs(ctx context.Context) error {
@@ -711,6 +761,14 @@ func (e *Engine) Close(ctx context.Context) error {
 		return nil
 	}
 	e.closed = true
+	if e.activity != nil {
+		// Write what requests queued while ClickHouse can still take it.
+		flush, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		if err := e.activity.Close(flush); err != nil {
+			e.log.Warn("contentkit: activity not written at close", "err", err)
+		}
+		cancel()
+	}
 	if e.signals != nil {
 		e.signals.close()
 	}
@@ -817,7 +875,7 @@ func (e *Engine) eraseAvatars(ctx context.Context, users []string) error {
 		if err != nil {
 			return err
 		}
-		if err = e.media.jobs.Erase(ctx, media.Deletion{Ref: ref, Owner: u, OperationID: "account-erasure:" + u}); err != nil {
+		if err = e.media.jobs.Erase(ctx, ref); err != nil {
 			return err
 		}
 	}

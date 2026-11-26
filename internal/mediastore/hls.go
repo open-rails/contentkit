@@ -99,9 +99,10 @@ func (g *Grant) sidecars(from string, have []media.File) []media.File {
 }
 
 // MasterPlaylist is the multivariant playlist of the ladder under dir: one
-// variant per video track (rung and codec), with the audio and subtitle
-// groups; an audio-only ladder is one audio variant. Codecs are listed in
-// the ladder's order, so a player that decodes the first starts on it.
+// variant per video track (rung and codec) labelled with its VIDEO-RANGE,
+// with the audio and subtitle groups; an audio-only ladder is one audio
+// variant. Codecs are listed in the ladder's order, so a player that
+// decodes the first starts on it.
 func (g *Grant) MasterPlaylist(dir string, o MasterOptions) ([]byte, error) {
 	video, audio, subs, _ := g.ladder(dir)
 	if len(video) == 0 && len(audio) == 0 {
@@ -148,7 +149,7 @@ func (g *Grant) MasterPlaylist(dir string, o MasterOptions) ([]byte, error) {
 			if v.W > 0 && v.H > 0 {
 				fmt.Fprintf(&b, ",RESOLUTION=%dx%d", v.W, v.H)
 			}
-			fmt.Fprintf(&b, ",CODECS=%q", strings.Join(append([]string{v.Track.Codecs}, audioCodecs...), ","))
+			fmt.Fprintf(&b, ",CODECS=%q,VIDEO-RANGE=%s", strings.Join(append([]string{v.Track.Codecs}, audioCodecs...), ","), v.Range.HLS())
 			if len(audio) > 0 {
 				fmt.Fprintf(&b, ",AUDIO=%q", audioGroup)
 			}
@@ -290,42 +291,13 @@ func (g *Grant) trackIndex(ctx context.Context, blob string) (*media.TrackIndex,
 	return g.r.index(ctx, g.Item, blob)
 }
 
+// deliveredBlob is blob when a reader may fetch it: released into a
+// served area.
 func (g *Grant) deliveredBlob(blob string) (string, error) {
-	seen := map[string]bool{}
-	for {
-		if seen[blob] {
-			return "", ErrNotAllowed
-		}
-		seen[blob] = true
-		next := ""
-		for _, delivery := range slices.Backward(g.Manifest.Deliveries) {
-			if !delivery.Ready || delivery.Withdrawn {
-				continue
-			}
-			for _, file := range delivery.Files {
-				if file.Source == blob {
-					next = file.Blob
-					break
-				}
-			}
-			if next != "" {
-				break
-			}
-		}
-		if next == "" || next == blob {
-			area, _, valid := layout.SplitBlobRef(blob)
-			if !valid || area != layout.AreaPublic && area != layout.AreaPrivate {
-				return "", ErrNotAllowed
-			}
-			if g.Item.Kind().Versions && !slices.ContainsFunc(g.Manifest.Deliveries, func(delivery PublicationDelivery) bool {
-				return delivery.Ready && !delivery.Withdrawn && slices.ContainsFunc(delivery.Files, func(file DeliveryFile) bool { return file.Blob == blob })
-			}) {
-				return "", ErrNotAllowed
-			}
-			return blob, nil
-		}
-		blob = next
+	if !layout.Served(layout.BlobArea(blob)) {
+		return "", ErrNotAllowed
 	}
+	return blob, nil
 }
 
 // index reads a track index blob through an item-scoped cache. Two editions

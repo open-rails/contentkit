@@ -2,9 +2,9 @@ package layout
 
 import "strings"
 
-// Scope is the trusted owner of a media root. An empty AppID identifies tenant
-// account media; a nonempty AppID identifies one app's catalog media.
-// The zero value retains the legacy single-segment layout.
+// Scope is the trusted owner of media: an app, or with an empty AppID the
+// tenant's account media. It names refs and database partitions, never an
+// object key: the bucket is the boundary.
 type Scope struct {
 	TenantID string `json:"tenant_id"`
 	AppID    string `json:"app_id,omitempty"`
@@ -21,15 +21,6 @@ func (s Scope) Partition() string {
 		return "tenant_" + s.TenantID
 	}
 	return "tenant_" + s.TenantID + "_app_" + s.AppID
-}
-func (s Scope) Root() string {
-	if s.AppID == "" {
-		return "tenant/" + s.TenantID + "/account/"
-	}
-	return "tenant/" + s.TenantID + "/app/" + s.AppID + "/"
-}
-func (s Scope) Prefix(kind, id, version string) string {
-	return s.Root() + strings.TrimPrefix(Prefix("", kind, id, version), "/")
 }
 func ScopeFromPartition(p string) (Scope, bool) {
 	t, ok := strings.CutPrefix(p, "tenant_")

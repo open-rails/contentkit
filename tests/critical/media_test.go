@@ -14,8 +14,6 @@ import (
 	"testing"
 	"time"
 
-	mediastore "github.com/open-rails/contentkit/internal/mediastore"
-
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
@@ -24,12 +22,11 @@ import (
 	"github.com/jackc/pgx/v5"
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/internal/jobhook"
-	"github.com/open-rails/contentkit/internal/media/worker"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/gateway"
-	"github.com/open-rails/contentkit/media/layout"
 	medias3 "github.com/open-rails/contentkit/media/s3"
 	"github.com/open-rails/contentkit/media/token"
+	"github.com/open-rails/contentkit/media/worker"
 	"github.com/riverqueue/river"
 	_ "golang.org/x/image/webp"
 )
@@ -46,6 +43,7 @@ type mediaWorld struct {
 	management    *awss3.Client
 	gatewayConfig gateway.Config
 	scratch       string // the worker's own TempDir
+	workerConfig  worker.Config
 }
 
 func newMediaStorage(t *testing.T, scope ck.Scope) *mediaWorld {
@@ -75,7 +73,7 @@ func newMediaStorage(t *testing.T, scope ck.Scope) *mediaWorld {
 	ring, err := token.NewRing(m.key, nil)
 	must(t, err)
 	m.gatewayConfig = gateway.Config{Endpoint: endpoint, AccessKeyID: user, SecretAccessKey: password, Ring: ring,
-		Routes: []gateway.Route{{Host: "127.0.0.1", Scope: layout.Scope{TenantID: scope.TenantID.String(), AppID: scope.AppID.String()}, Bucket: m.bucket, Origins: []string{"https://critical.invalid"}}}}
+		Routes: []gateway.Route{{Host: "127.0.0.1", Bucket: m.bucket, Origins: []string{"https://critical.invalid"}}}}
 	handler, err := gateway.New(m.gatewayConfig)
 	must(t, err)
 	m.gateway = httptest.NewServer(handler)
@@ -110,6 +108,13 @@ func newMediaStorage(t *testing.T, scope ck.Scope) *mediaWorld {
 
 func attachMedia(t *testing.T, w *world, a *application, configure ...func(*ck.Config)) *mediaWorld {
 	t.Helper()
+	return attachMediaWith(t, w, a, nil, configure...)
+}
+
+// attachMediaWith is attachMedia with the engine's bucket wrapped (faults,
+// counters); the worker keeps the bucket itself.
+func attachMediaWith(t *testing.T, w *world, a *application, wrap func(media.Store) media.Store, configure ...func(*ck.Config)) *mediaWorld {
+	t.Helper()
 	m := newMediaStorage(t, *a.cfg.Scope)
 	var err error
 	a.server.Close()
@@ -125,13 +130,29 @@ func attachMedia(t *testing.T, w *world, a *application, configure ...func(*ck.C
 	}
 	accountStorage, accountPrimary, err := a.cfg.AccountMedia()
 	must(t, err)
-	if accountPrimary {
-		m.gatewayConfig.Routes = append(m.gatewayConfig.Routes, gateway.Route{Host: "127.0.0.1", Scope: layout.Scope{TenantID: a.cfg.Scope.TenantID.String()}, Bucket: m.bucket})
+	// The route's accounts is the bucket of the tenant's avatar primary,
+	// attached first; a secondary serves its files from there.
+	accounts := ""
+	switch {
+	case accountPrimary:
+		accounts = m.bucket
+		w.avatarBuckets.Store(a.cfg.Scope.TenantID, m.bucket)
+	case a.cfg.Accounts != nil && a.cfg.Accounts.Avatars != nil:
+		bucket, ok := w.avatarBuckets.Load(a.cfg.Scope.TenantID)
+		if !ok {
+			t.Fatal("attach the tenant's avatar primary first")
+		}
+		accounts = bucket.(string)
+	}
+	if accounts != "" {
+		m.gatewayConfig.Routes[0].Accounts = accounts
 		handler, err := gateway.New(m.gatewayConfig)
 		must(t, err)
 		m.gateway.Close()
 		m.gateway = httptest.NewServer(handler)
 		a.cfg.Media.BaseURL = m.gateway.URL
+	}
+	if accountPrimary {
 		t.Cleanup(func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()
@@ -140,6 +161,9 @@ func attachMedia(t *testing.T, w *world, a *application, configure ...func(*ck.C
 		})
 	}
 	a.deps.Store = m.store
+	if wrap != nil {
+		a.deps.Store = wrap(m.store)
+	}
 	must(t, ck.MigratePostgres(t.Context(), w.pool, a.cfg))
 	a.cfg.Database.SkipMigrations = true
 	a.engine, err = ck.New(t.Context(), a.cfg, a.deps)
@@ -153,13 +177,12 @@ func attachMedia(t *testing.T, w *world, a *application, configure ...func(*ck.C
 	a.server = httptest.NewServer(withSessionProofs(t, mux))
 	config, err := a.cfg.MediaKinds()
 	must(t, err)
-	registry, err := mediastore.NewRegistry(config, mediastore.Hooks{})
-	must(t, err)
 	m.scratch = t.TempDir()
-	workerConfig := worker.Config{Pool: w.pool, Schema: a.cfg.Media.WorkerSchema, ContentSchema: w.schema, HostSchema: w.schema + "_river", Store: m.store, Kinds: registry, Threads: 1, IngestWorkers: 1, ImageSources: 1, DerivativeWorkers: 1, ShutdownGrace: time.Second, TempDir: m.scratch}
+	workerConfig := worker.Config{Pool: w.pool, Schema: a.cfg.Media.WorkerSchema, ContentSchema: w.schema, HostSchema: w.schema + "_river", Store: m.store, Kinds: config, Threads: 1, IngestWorkers: 1, ImageSources: 1, DerivativeWorkers: 1, ShutdownGrace: time.Second, TempDir: m.scratch}
 	if accountPrimary {
 		workerConfig.AccountSchema, workerConfig.AccountWorkerSchema = accountStorage.Schema, accountStorage.WorkerSchema
 	}
+	m.workerConfig = workerConfig
 	m.worker, err = worker.New(t.Context(), workerConfig)
 	must(t, err)
 	run, cancel := context.WithCancel(context.Background())
@@ -185,6 +208,59 @@ func attachMedia(t *testing.T, w *world, a *application, configure ...func(*ck.C
 		}
 	})
 	return m
+}
+
+// restart rebuilds a's engine and the media worker over the same bucket and
+// database once change has changed their configuration (a deploy).
+func (m *mediaWorld) restart(t *testing.T, a *application, change func(*ck.Config, *worker.Config)) {
+	t.Helper()
+	a.server.Close()
+	must(t, a.engine.Close(t.Context()))
+	m.cancel()
+	select {
+	case err := <-m.workerDone:
+		must(t, err)
+	case <-time.After(15 * time.Second):
+		t.Fatal("media worker did not stop")
+	}
+	change(&a.cfg, &m.workerConfig)
+	var err error
+	a.engine, err = ck.New(t.Context(), a.cfg, a.deps)
+	must(t, err)
+	a.server = mountEngine(t, a.engine)
+	config, err := a.cfg.MediaKinds()
+	must(t, err)
+	m.workerConfig.Kinds = config
+	m.worker, err = worker.New(t.Context(), m.workerConfig)
+	must(t, err)
+	run, cancel := context.WithCancel(context.Background())
+	m.cancel, m.workerDone = cancel, make(chan error, 1)
+	go func() { m.workerDone <- m.worker.Run(run) }()
+	must(t, a.engine.StartJobs(run))
+}
+
+// handOff redeploys a's engine once change has changed its configuration
+// and stops the in-process worker, so a worker process takes the media jobs.
+func (m *mediaWorld) handOff(t *testing.T, a *application, change func(*ck.Config)) {
+	t.Helper()
+	a.server.Close()
+	must(t, a.engine.Close(t.Context()))
+	m.cancel()
+	select {
+	case err := <-m.workerDone:
+		must(t, err)
+	case <-time.After(15 * time.Second):
+		t.Fatal("media worker did not stop")
+	}
+	m.workerDone <- nil // stopped: the cleanup finds it so
+	change(&a.cfg)
+	var err error
+	a.engine, err = ck.New(t.Context(), a.cfg, a.deps)
+	must(t, err)
+	a.server = mountEngine(t, a.engine)
+	run, cancel := context.WithCancel(context.Background())
+	m.cancel = cancel
+	must(t, a.engine.StartJobs(run))
 }
 
 func imageBytes(t testing.TB) []byte {

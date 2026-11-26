@@ -16,6 +16,7 @@ import (
 	entitlement "github.com/open-rails/contentkit/internal/entitlement"
 	"github.com/open-rails/contentkit/internal/gate"
 	mediastore "github.com/open-rails/contentkit/internal/mediastore"
+	"github.com/open-rails/contentkit/internal/pglock"
 	"github.com/open-rails/contentkit/internal/resolve"
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
@@ -41,8 +42,10 @@ type Options struct {
 	Tenant string // the content tables' tenant
 	Schema string // ContentKit's schema
 	Pool   *pgxpool.Pool
-	Kinds  kinds.Config       // the site's content and entity kinds
-	Auth   auth.Authenticator // the host's: staff and group scope checks
+	// Locks takes the source locks; nil dials them with Pool's configuration.
+	Locks *pglock.Locks
+	Kinds kinds.Config       // the site's content and entity kinds
+	Auth  auth.Authenticator // the host's: staff and group scope checks
 	// MediaConfigured requires Bind before a release can run. A service without
 	// media still owns publication requests, completed access and deadlines.
 	MediaConfigured bool
@@ -68,6 +71,7 @@ type Options struct {
 // Media is the media runtime built over Service.Hooks.
 type Media struct {
 	Manifests *mediastore.Manifests
+	Cache     *mediastore.PGCache
 	Uploads   *mediastore.Uploads
 	Jobs      *mediastore.Jobs
 	Reader    *mediastore.Reader // signs file downloads; nil serves none
@@ -94,6 +98,9 @@ func New(o Options) (*Service, error) {
 	if o.Tenant == "" || o.Schema == "" || o.Pool == nil || o.Resolver == nil || o.Facets == nil {
 		return nil, errors.New("versions: Tenant, Schema, Pool, Resolver and Facets are required")
 	}
+	if o.Locks == nil {
+		o.Locks = pglock.New(o.Pool.Config())
+	}
 	if err := o.Kinds.Validate(); err != nil {
 		return nil, fmt.Errorf("versions: Kinds: %w", err)
 	}
@@ -118,13 +125,13 @@ func New(o Options) (*Service, error) {
 
 // Hooks are media's hooks over the content model, for media.NewRegistry.
 func (s *Service) Hooks() mediastore.Hooks {
-	return mediastore.Hooks{Resolver: resolver{s}, ReaderManifest: s.readerManifest, CanUpload: uploads{s}, ValidatePathsChanged: s.validatePathsChanged, PathsChanged: s.pathsChanged, ItemCommitted: s.itemCommitted, Failed: s.failed}
+	return mediastore.Hooks{Resolver: resolver{s}, CanUpload: uploads{s}, ValidatePathsChanged: s.validatePathsChanged, PathsChanged: s.pathsChanged, Failed: s.failed}
 }
 
 // Bind attaches the media runtime built over Hooks.
 func (s *Service) Bind(m Media) error {
-	if m.Manifests == nil || m.Uploads == nil || m.Jobs == nil {
-		return errors.New("versions: Bind needs Manifests, Uploads and Jobs")
+	if m.Manifests == nil || m.Cache == nil || m.Uploads == nil || m.Jobs == nil {
+		return errors.New("versions: Bind needs Manifests, Cache, Uploads and Jobs")
 	}
 	s.m, s.reg = m, m.Manifests.Registry()
 	return nil

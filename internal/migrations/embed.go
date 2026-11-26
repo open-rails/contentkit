@@ -37,7 +37,8 @@ func mustSubFS(dir string) fs.FS {
 }
 
 // ApplyPostgres applies ContentKit's migrations in its schema under its
-// ledger identity and migration lock (contentkit.New calls it).
+// ledger identity and migration lock (contentkit.New calls it). Released
+// migrations are immutable: a schema an earlier history built is refused.
 func ApplyPostgres(ctx context.Context, db *sql.DB, schema string) error {
 	if db == nil {
 		return fmt.Errorf("contentkit: DB is required")
@@ -50,10 +51,10 @@ func ApplyPostgres(ctx context.Context, db *sql.DB, schema string) error {
 	if err != nil {
 		return fmt.Errorf("contentkit: load PostgreSQL migrations: %w", err)
 	}
-	if err := requireCurrentHistory(ctx, db, "contentkit", schema, steps); err != nil {
+	if err := RequireCurrentHistory(ctx, db, "contentkit", schema, steps); err != nil {
 		return err
 	}
-	if err := migratekit.NewPostgres(db, "contentkit").WithSchema(schema).ApplyMigrations(ctx, steps); err != nil {
+	if err := migratekit.NewPostgres(db, "contentkit").WithSchema(schema).WithImmutableMigrations().ApplyMigrations(ctx, steps); err != nil {
 		return fmt.Errorf("contentkit: apply PostgreSQL migrations: %w", err)
 	}
 	return nil
@@ -71,10 +72,10 @@ func ApplyAccounts(ctx context.Context, db *sql.DB, schema string) error {
 	if err != nil {
 		return fmt.Errorf("contentkit: load account migrations: %w", err)
 	}
-	if err := requireCurrentHistory(ctx, db, "contentkit-accounts", schema, steps); err != nil {
+	if err := RequireCurrentHistory(ctx, db, "contentkit-accounts", schema, steps); err != nil {
 		return err
 	}
-	if err := migratekit.NewPostgres(db, "contentkit-accounts").WithSchema(schema).ApplyMigrations(ctx, steps); err != nil {
+	if err := migratekit.NewPostgres(db, "contentkit-accounts").WithSchema(schema).WithImmutableMigrations().ApplyMigrations(ctx, steps); err != nil {
 		return fmt.Errorf("contentkit: apply account migrations: %w", err)
 	}
 	return nil
@@ -90,7 +91,7 @@ func ValidatePostgres(ctx context.Context, db *sql.DB, schema string) error {
 	if err != nil {
 		return err
 	}
-	if err := requireCurrentHistory(ctx, db, "contentkit", schema, steps); err != nil {
+	if err := RequireCurrentHistory(ctx, db, "contentkit", schema, steps); err != nil {
 		return err
 	}
 	return migratekit.NewPostgres(db, "contentkit").WithSchema(schema).ValidateAllApplied(ctx, steps)
@@ -105,16 +106,21 @@ func ValidateAccounts(ctx context.Context, db *sql.DB, schema string) error {
 	if err != nil {
 		return err
 	}
-	if err := requireCurrentHistory(ctx, db, "contentkit-accounts", schema, steps); err != nil {
+	if err := RequireCurrentHistory(ctx, db, "contentkit-accounts", schema, steps); err != nil {
 		return err
 	}
 	return migratekit.NewPostgres(db, "contentkit-accounts").WithSchema(schema).ValidateAllApplied(ctx, steps)
 }
 
-// requireCurrentHistory refuses a ledger written by a migration history this
-// release no longer ships. migratekit only warns about it, and the database
-// would otherwise start on an old schema. Such a database is recreated.
-func requireCurrentHistory(ctx context.Context, db *sql.DB, app, schema string, steps []migratekit.Migration) error {
+// ErrEarlierHistory means a schema's migration ledger records a migration
+// this release does not ship byte for byte: the schema was built before
+// 0.141.0's baselines, or by an edited migration. It is rebuilt, never
+// converted or migrated forward.
+var ErrEarlierHistory = errors.New("contentkit: schema built by an earlier migration history")
+
+// RequireCurrentHistory refuses a schema whose ledger for app records any
+// migration other than the steps given, as given. A fresh database passes.
+func RequireCurrentHistory(ctx context.Context, db *sql.DB, app, schema string, steps []migratekit.Migration) error {
 	records, err := migratekit.NewPostgres(db, app).WithSchema(schema).AppliedRecords(ctx)
 	var pgerr *pgconn.PgError
 	if errors.As(err, &pgerr) && pgerr.Code == "42P01" {
@@ -132,11 +138,11 @@ func requireCurrentHistory(ctx context.Context, db *sql.DB, app, schema string, 
 		current[strconv.FormatInt(seq, 10)] = step
 	}
 	for key, record := range records {
-		step, ok := current[key]
-		if ok && (record.Digest == migratekit.ContentDigest(step.Content) || record.SemanticDigest != "" && record.SemanticDigest == migratekit.SemanticContentDigest(step.Content)) {
+		if step, ok := current[key]; ok && record.Digest == migratekit.ContentDigest(step.Content) {
 			continue
 		}
-		return fmt.Errorf("contentkit: schema %q was migrated by an earlier %s migration history (migration %s, %s); recreate this database", schema, app, key, record.Filename)
+		return fmt.Errorf("%w: schema %q records %s migration %s (%s), which this release does not ship; rebuild it: drop the schema, DELETE FROM public.migrations WHERE app = '%s' AND schema = '%s', and migrate (docs/migration.md)",
+			ErrEarlierHistory, schema, app, key, record.Filename, app, schema)
 	}
 	return nil
 }

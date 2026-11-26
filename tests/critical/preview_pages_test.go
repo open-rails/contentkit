@@ -41,9 +41,7 @@ func TestLockedPreviewPages(t *testing.T) {
 	must(t, err)
 	registry, err := mediastore.NewRegistry(config, mediastore.Hooks{})
 	must(t, err)
-	journal, err := mediastore.NewPGJournal(w.pool, w.schema, nil)
-	must(t, err)
-	manifests, err := mediastore.NewManifests(m.store, registry, mediastore.ManifestOptions{Locker: mediastore.PGLocker(w.pool), Journal: journal})
+	manifests, err := mediastore.NewManifests(m.store, registry, mediastore.ManifestOptions{})
 	must(t, err)
 	paid := func(pages int) *access.Rule {
 		rule := &access.Rule{Level: access.PPV}
@@ -105,11 +103,7 @@ func TestLockedPreviewPages(t *testing.T) {
 		must(t, err)
 		areas, public := map[string]string{}, []string{}
 		for _, f := range manifest.Files {
-			blobs := []string{f.Blob}
-			for _, pub := range f.Public {
-				blobs = append(blobs, pub.Blobs...)
-			}
-			for _, blob := range blobs {
+			for _, blob := range []string{f.Blob} {
 				if area, name, valid := layout.SplitBlobRef(blob); valid && area == layout.AreaPublic {
 					public = append(public, name)
 				}
@@ -188,7 +182,7 @@ func TestLockedPreviewPages(t *testing.T) {
 		must(t, err)
 		ring, err := token.NewRing(m.key, nil)
 		must(t, err)
-		signed := m.gateway.URL + layout.URLPrefix + key + "?t=" + url.QueryEscape(ring.Sign(token.PrivateFileScope(key), time.Now().Add(time.Minute)))
+		signed := m.gateway.URL + layout.URLPrefix + key + "?t=" + url.QueryEscape(ring.Sign(privateFileScope(m.bucket, key), time.Now().Add(time.Minute)))
 		if got := status(signed); got != http.StatusOK {
 			t.Fatalf("a page past the preview is not served with its exact-file token: %d", got)
 		}
@@ -247,6 +241,45 @@ func TestLockedPreviewPages(t *testing.T) {
 		awaitPreviews(ref, item, []int{})
 		if got := status(first.Previews[0].URL); got != http.StatusNotFound {
 			t.Fatalf("a rule without a preview still serves its first page: HTTP %d", got)
+		}
+	})
+
+	t.Run("CK-J09-S65_a_page_made_free_keeps_its_private_copy_readable_for_an_hour", func(t *testing.T) {
+		// The third page was never free: it moves from private/ to public/.
+		target, err := registry.VersionRef(ref.Kind, ref.ID, ref.Version)
+		must(t, err)
+		before, _, err := manifests.Get(t.Context(), target)
+		must(t, err)
+		page, ok := before.Get("reader/03.webp")
+		if area, _, _ := layout.SplitBlobRef(page.Blob); !ok || area != layout.AreaPrivate {
+			t.Fatalf("a page past the preview is not private: %+v", page)
+		}
+		key, err := item.Blob(page.Blob)
+		must(t, err)
+		ring, err := token.NewRing(m.key, nil)
+		must(t, err)
+		signed := m.gateway.URL + layout.URLPrefix + key + "?t=" + url.QueryEscape(ring.Sign(privateFileScope(m.bucket, key), time.Now().Add(time.Hour)))
+		_, err = admin.PatchContentVersion(t.Context(), ref.ID, ref.Version, catalog.VersionInput{Access: paid(3)})
+		must(t, err)
+		var after *mediastore.Manifest
+		waitForChapterPublication(t, func() bool {
+			wakeDuePublicationJobs(t, a)
+			cur, _, err := manifests.Get(t.Context(), target)
+			if err != nil {
+				return false
+			}
+			f, ok := cur.Get("reader/03.webp")
+			if area, _, _ := layout.SplitBlobRef(f.Blob); ok && area == layout.AreaPublic {
+				after = cur
+				return true
+			}
+			return false
+		})
+		if r, ok := after.Retiring(page.Blob); !ok || r.Due.Sub(r.At) < 59*time.Minute {
+			t.Fatalf("the private copy of a page made free is not kept for an hour: %+v", r)
+		}
+		if got := status(signed); got != http.StatusOK {
+			t.Fatalf("a reader's private URL of a page made free: HTTP %d mid-read", got)
 		}
 	})
 

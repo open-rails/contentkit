@@ -22,12 +22,11 @@ import (
 	"github.com/open-rails/contentkit/media"
 )
 
-// hlsRecipe and mp4Recipe identify the encodes: a preset's outputs carry
+// hlsRecipe identifies the encodes: a preset's outputs carry
 // their hash with the source and the preset's spec (media.SpecFP) and are
 // redone when it changes. The encoders (CPU or NVENC) are not part of them.
 const (
 	hlsRecipe = "codecs:%s|h264-high,hevc-main-hvc1-x265-closed,av1-svt-p%d|capped-crf:%s|k4-sc0|short-side:%s|native-below-%d|aspect:%g-%g|lanczos|max-4096-3840x2160|lvl51-52|max60fps|sar1|aac-128k-48k-2ch|sprite-10x10-short90-jpg|stage-per-rung|pt-top|v6"
-	mp4Recipe = "h264-high|capped-crf:%s|k4-sc0|lanczos|max-4096-3840x2160|lvl51-52|max60fps|sar1|aac-128k-48k-2ch-default|faststart|v1"
 )
 
 // hlsFP is the fingerprint of an HLS preset's renditions, audio tracks and
@@ -42,14 +41,15 @@ func (e *Encoder) hlsFP(src media.File, h *media.HLS) string {
 		codecs[i] = string(c)
 	}
 	lo, hi := h.Aspects()
-	return mediastore.SpecFP(src, h, fmt.Sprintf(hlsRecipe, strings.Join(codecs, ","), svtAV1Preset, rateTable(e.c.Codecs),
-		strings.Join(ladder, ","), nativeBelow, lo, hi))
+	recipe := fmt.Sprintf(hlsRecipe, strings.Join(codecs, ","), svtAV1Preset, rateTable(e.c.Codecs), strings.Join(ladder, ","), nativeBelow, lo, hi)
+	if src.Range != media.RangeSDR {
+		recipe += fmt.Sprintf(hdrRecipe, src.Range)
+	}
+	return mediastore.SpecFP(src, h, recipe)
 }
 
-// mp4FP is the fingerprint of an MP4 preset's file from upload src.
-func mp4FP(src media.File, m *media.MP4) string {
-	return mediastore.SpecFP(src, m, fmt.Sprintf(mp4Recipe, rateTable([]media.Codec{media.CodecH264})))
-}
+// hdrRecipe is an HDR source's: SDR sources keep their fingerprints.
+const hdrRecipe = "|hdr-%s:av1-10bit-hdr10-obu,sdr-zscale-hable-bt709|v1"
 
 // rateTable lists each codec's capped CRF per rung class.
 func rateTable(codecs []media.Codec) string {
@@ -106,76 +106,7 @@ func renditionName(n int, c media.Codec) string { return fmt.Sprintf("v%d-%s", n
 // feeds the sprite. Every audio track and subtitle is encoded alongside, for
 // the downloads' mux.
 func ladder(ctx context.Context, src, dir string, p plan, ps pass, fp *fileProgress) error {
-	var fc strings.Builder
-	fmt.Fprintf(&fc, "[0:%d]", p.video)
-	if p.limitFPS {
-		fmt.Fprintf(&fc, "fps=%s,", strconv.FormatFloat(p.fps, 'f', -1, 64))
-	}
-	var outs []string
-	for i := range ps.codecs {
-		outs = append(outs, fmt.Sprintf("[v%d]", i))
-	}
-	if ps.sprite {
-		outs = append(outs, "[sp]")
-	}
-	fmt.Fprintf(&fc, "scale=%d:%d:flags=lanczos,setsar=1", ps.rung.w, ps.rung.h)
-	if len(outs) > 1 {
-		fmt.Fprintf(&fc, ",split=%d", len(outs))
-	}
-	fc.WriteString(strings.Join(outs, ""))
-	if ps.sprite {
-		// Sprite frames leave the pass as PNGs and are tiled after: a tile filter
-		// emits only at the end, and ffmpeg reports no progress until every
-		// output has started.
-		fmt.Fprintf(&fc, ";[sp]fps=1/%.9f,scale=%d:%d:flags=lanczos,setsar=1[sprite]", p.duration/(spriteCols*spriteRows), p.tileW, p.tileH)
-	}
-
-	// Decoding and scaling gain little past 8 threads; each extra frame
-	// thread holds more decoded frames.
-	t := strconv.Itoa(min(ps.enc.threads, 8))
-	// -y: a CPU retry after NVENC failed overwrites the failed pass's outputs.
-	input := inputOptions(sourceDemuxers)
-	if strings.HasPrefix(src, "http://") || strings.HasPrefix(src, "https://") {
-		input = remoteInputOptions(sourceDemuxers)
-	}
-	args := append([]string{"-v", "error", "-nostdin", "-y", "-threads", t}, input...)
-	if ps.start > 0 {
-		args = append(args, "-ss", strconv.FormatFloat(ps.start, 'f', 3, 64))
-	}
-	if ps.duration > 0 {
-		args = append(args, "-t", strconv.FormatFloat(ps.duration, 'f', 3, 64))
-	}
-	args = append(args, "-i", src)
-	if len(outs) > 0 {
-		args = append(args, "-filter_complex_threads", t, "-filter_complex", fc.String())
-	}
-	// One muxer per rendition: a muxer shifts all its streams by the most
-	// negative DTS (x264's B-frame delay), which would move an AV1
-	// rendition sharing it and misalign it with its rungs from other passes.
-	for i, c := range ps.codecs {
-		v := filepath.Join(dir, renditionName(ps.rung.n, c))
-		args = append(args, "-map", fmt.Sprintf("[v%d]", i))
-		args = append(args, ps.enc.streamArgs(0, ps.rung, c)...)
-		args = append(args, "-pix_fmt", "yuv420p", "-force_key_frames", fmt.Sprintf("expr:gte(t,n_forced*%d)", segmentSeconds))
-		args = append(args, hlsArgs(v+".mp4", v+".m3u8")...)
-	}
-	for i, a := range p.audio {
-		if ps.noTracks {
-			break
-		}
-		args = append(args, "-map", fmt.Sprintf("0:%d", a.index), "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2")
-		args = append(args, hlsArgs(filepath.Join(dir, fmt.Sprintf("a%d.mp4", i)), filepath.Join(dir, fmt.Sprintf("a%d.m3u8", i)))...)
-	}
-	for i, s := range p.subs {
-		if ps.noTracks {
-			break
-		}
-		args = append(args, "-map", fmt.Sprintf("0:%d", s.index))
-		args = append(args, webvttArgs(filepath.Join(dir, fmt.Sprintf("s%d.vtt", i)))...)
-	}
-	if ps.sprite {
-		args = append(args, "-map", "[sprite]", "-frames:v", strconv.Itoa(spriteCols*spriteRows), "-f", "image2", filepath.Join(dir, spriteFrames))
-	}
+	args := ladderArgs(src, dir, p, ps)
 	started := time.Now()
 	cpu, err := ffmpegProgress(ctx, fp.encoded, args...)
 	if ps.observe != nil {
@@ -208,6 +139,102 @@ func ladder(ctx context.Context, src, dir string, p plan, ps pass, fp *fileProgr
 		return nil
 	}
 	return sprite(ctx, dir)
+}
+
+// ladderArgs is a pass's ffmpeg command line. An HDR source is scaled in
+// 10 bits and tagged once; each SDR output and the sprite tone-map it.
+func ladderArgs(src, dir string, p plan, ps pass) []string {
+	var fc strings.Builder
+	fmt.Fprintf(&fc, "[0:%d]", p.video)
+	if p.limitFPS {
+		fmt.Fprintf(&fc, "fps=%s,", strconv.FormatFloat(p.fps, 'f', -1, 64))
+	}
+	var outs []string
+	for i := range ps.codecs {
+		outs = append(outs, fmt.Sprintf("[v%d]", i))
+	}
+	if ps.sprite {
+		outs = append(outs, "[sp]")
+	}
+	fmt.Fprintf(&fc, "scale=%d:%d:flags=lanczos", ps.rung.w, ps.rung.h)
+	if p.color.hdr() {
+		fc.WriteString(",format=yuv420p10le")
+	}
+	fc.WriteString(",setsar=1")
+	if p.color.hdr() {
+		fc.WriteString("," + p.color.setParams())
+	}
+	if len(outs) > 1 {
+		fmt.Fprintf(&fc, ",split=%d", len(outs))
+	}
+	fc.WriteString(strings.Join(outs, ""))
+	streams := make([]string, len(ps.codecs))
+	for i, c := range ps.codecs {
+		streams[i] = fmt.Sprintf("[v%d]", i)
+		if _, tm := p.color.output(c); tm {
+			streams[i] = fmt.Sprintf("[t%d]", i)
+			fmt.Fprintf(&fc, ";[v%d]%s%s", i, toneMap, streams[i])
+		}
+	}
+	if ps.sprite {
+		// Sprite frames leave the pass as PNGs and are tiled after: a tile filter
+		// emits only at the end, and ffmpeg reports no progress until every
+		// output has started.
+		fmt.Fprintf(&fc, ";[sp]fps=1/%.9f,scale=%d:%d:flags=lanczos,setsar=1", p.duration/(spriteCols*spriteRows), p.tileW, p.tileH)
+		if p.color.hdr() {
+			fc.WriteString("," + toneMap)
+		}
+		fc.WriteString("[sprite]")
+	}
+
+	// Decoding and scaling gain little past 8 threads; each extra frame
+	// thread holds more decoded frames.
+	t := strconv.Itoa(min(ps.enc.threads, 8))
+	// -y: a CPU retry after NVENC failed overwrites the failed pass's outputs.
+	input := inputOptions(sourceDemuxers)
+	if strings.HasPrefix(src, "http://") || strings.HasPrefix(src, "https://") {
+		input = remoteInputOptions(sourceDemuxers)
+	}
+	args := append([]string{"-v", "error", "-nostdin", "-y", "-threads", t}, input...)
+	if ps.start > 0 {
+		args = append(args, "-ss", strconv.FormatFloat(ps.start, 'f', 3, 64))
+	}
+	if ps.duration > 0 {
+		args = append(args, "-t", strconv.FormatFloat(ps.duration, 'f', 3, 64))
+	}
+	args = append(args, "-i", src)
+	if len(outs) > 0 {
+		args = append(args, "-filter_complex_threads", t, "-filter_complex", fc.String())
+	}
+	// One muxer per rendition: a muxer shifts all its streams by the most
+	// negative DTS (x264's B-frame delay), which would move an AV1
+	// rendition sharing it and misalign it with its rungs from other passes.
+	for i, c := range ps.codecs {
+		v := filepath.Join(dir, renditionName(ps.rung.n, c))
+		out, _ := p.color.output(c)
+		args = append(args, "-map", streams[i])
+		args = append(args, ps.enc.streamArgs(0, ps.rung, c, out)...)
+		args = append(args, "-pix_fmt", out.pixFmt(ps.enc.encoders[c]), "-force_key_frames", fmt.Sprintf("expr:gte(t,n_forced*%d)", segmentSeconds))
+		args = append(args, hlsArgs(v+".mp4", v+".m3u8")...)
+	}
+	for i, a := range p.audio {
+		if ps.noTracks {
+			break
+		}
+		args = append(args, "-map", fmt.Sprintf("0:%d", a.index), "-c:a", "aac", "-b:a", "128k", "-ar", "48000", "-ac", "2")
+		args = append(args, hlsArgs(filepath.Join(dir, fmt.Sprintf("a%d.mp4", i)), filepath.Join(dir, fmt.Sprintf("a%d.m3u8", i)))...)
+	}
+	for i, s := range p.subs {
+		if ps.noTracks {
+			break
+		}
+		args = append(args, "-map", fmt.Sprintf("0:%d", s.index))
+		args = append(args, webvttArgs(filepath.Join(dir, fmt.Sprintf("s%d.vtt", i)))...)
+	}
+	if ps.sprite {
+		args = append(args, "-map", "[sprite]", "-frames:v", strconv.Itoa(spriteCols*spriteRows), "-f", "image2", filepath.Join(dir, spriteFrames))
+	}
+	return args
 }
 
 func sourceClass(width, height int) string {

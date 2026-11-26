@@ -17,7 +17,7 @@ const CoverPreset = "cover"
 const AvatarPreset = "avatar"
 
 // ForContent derives c from the site's one kinds list: a media kind named
-// after a content kind is that kind's, of Versions, in the app's namespace;
+// after a content kind is that kind's, of Versions, in the app's media;
 // every entity kind without one declared gets GroupKind's. No other kind has
 // versions.
 func ForContent(c Config, k kinds.Config) (Config, error) {
@@ -28,8 +28,8 @@ func ForContent(c Config, k kinds.Config) (Config, error) {
 		mk := &out.Kinds[i]
 		_, content := k.Kinds[mk.Name]
 		switch {
-		case content && mk.Namespace != "":
-			return Config{}, fmt.Errorf("media: content kind %q lives in the app's namespace", mk.Name)
+		case content && mk.Account:
+			return Config{}, fmt.Errorf("media: content kind %q is the app's, not account media", mk.Name)
 		case !content && mk.Versions:
 			return Config{}, fmt.Errorf("media: kind %q has Versions but is no content kind", mk.Name)
 		}
@@ -49,14 +49,12 @@ func ForContent(c Config, k kinds.Config) (Config, error) {
 }
 
 // download names what a content kind's download serves (Kind.Download): its
-// zip, its video's source, or its served MP4. A default (k sets no Serve)
-// the media cannot serve serves none; a configured one is an error.
+// pages as a ZIP, or its video's original. A default (k sets no Serve) the
+// media cannot serve serves none; a configured one is an error.
 func download(mk *Kind, k kinds.Kind) error {
-	var zip, original string
+	var pages, original string
 	if p := mk.Publish; p != nil {
-		if z := findPrivate(mk.Private, p.Download); z != nil && z.Zip != "" {
-			zip = z.Name
-		}
+		pages = p.Pages
 	}
 	for _, pr := range mk.Private {
 		if pr.HLS != nil && !strings.Contains(pr.From, nameVar) && findUpload(mk.Uploads, pr.From) >= 0 {
@@ -70,18 +68,15 @@ func download(mk *Kind, k kinds.Kind) error {
 	case "":
 		mk.Download = ""
 	case kinds.DownloadPages:
-		if mk.Download = zip; zip == "" && explicit {
-			return errors.New("download serves pages, but Publish names no Zip Download")
+		if mk.Download = pages; pages == "" && explicit {
+			return errors.New("download serves pages, but the media publishes none")
 		}
 	case kinds.DownloadOriginal:
 		if mk.Download = original; original == "" && explicit {
 			return errors.New("download serves the original: it needs KeepOriginals and an HLS preset from a literal upload")
 		}
 	default:
-		if pr := findPrivate(mk.Private, serve); pr == nil || pr.MP4 == nil {
-			return fmt.Errorf("download serves %q, which is no MP4 preset", serve)
-		}
-		mk.Download = serve
+		return fmt.Errorf("download serves %q: pages or original", serve)
 	}
 	return nil
 }

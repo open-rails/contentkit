@@ -17,9 +17,11 @@ import (
 	"time"
 
 	mediastore "github.com/open-rails/contentkit/internal/mediastore"
+	"github.com/open-rails/contentkit/internal/migrations"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5/stdlib"
 	riverhelpers "github.com/open-rails/helpers/river"
 	"github.com/open-rails/migratekit"
 	"github.com/riverqueue/river"
@@ -48,6 +50,9 @@ const (
 //go:embed migrations/*.sql
 var migrationFiles embed.FS
 
+// ledgerApp is the worker storage's migratekit identity.
+const ledgerApp = "contentkit-media-worker"
+
 var schemaName = regexp.MustCompile(`^[a-z_][a-z0-9_]{0,62}$`)
 
 // ValidSchema requires a lowercase Postgres identifier for the worker's schema.
@@ -75,12 +80,12 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool, schema string) error {
 	if err != nil {
 		return fmt.Errorf("media/workqueue: load migrations: %w", err)
 	}
-	migrator, err := migratekit.NewPostgresFromPGXPool(pool, "contentkit-media-worker")
-	if err != nil {
+	db := stdlib.OpenDBFromPool(pool)
+	defer db.Close()
+	if err := migrations.RequireCurrentHistory(ctx, db, ledgerApp, schema, baseline); err != nil {
 		return err
 	}
-	defer migrator.Close()
-	if err := migrator.WithSchema(schema).ApplyMigrations(ctx, baseline); err != nil {
+	if err := migratekit.NewPostgres(db, ledgerApp).WithSchema(schema).WithImmutableMigrations().ApplyMigrations(ctx, baseline); err != nil {
 		return fmt.Errorf("media/workqueue: migrate %s: %w", schema, err)
 	}
 	return nil
@@ -92,7 +97,6 @@ func jobs(schema string) string { return pgx.Identifier{schema, "river_job"}.San
 // IngestArgs places an item's staged uploads (media.Manifests.Place), then
 // enqueues its processing: media.ProcessJob's fields.
 type IngestArgs struct {
-	Commit string                `json:"commit,omitempty"`
 	Ref    contentref.ContentRef `json:"ref"`
 	Preset string                `json:"preset,omitempty"`
 	Force  bool                  `json:"force,omitempty"`
@@ -175,8 +179,8 @@ func FamiliesOf(k *mediastore.RegisteredKind, preset string) Families {
 		if preset != "" && p.Name != preset {
 			continue
 		}
-		f.Image = f.Image || p.Image != nil || p.Zip != ""
-		f.Video = f.Video || p.HLS != nil || p.MP4 != nil || p.Subtitles != nil
+		f.Image = f.Image || p.Image != nil
+		f.Video = f.Video || p.HLS != nil || p.Subtitles != nil
 	}
 	for _, p := range k.Public {
 		f.Image = f.Image || preset == "" || p.Name == preset
@@ -195,12 +199,12 @@ func (q *Queue) enqueue(ctx context.Context, insert mediastore.InsertFunc, job m
 	if err != nil {
 		return err
 	}
-	if job.Place || job.Commit != "" {
-		return mediastore.InsertOnce(ctx, insert, IngestArgs{Ref: job.Ref, Commit: job.Commit, Preset: job.Preset, Force: job.Force},
+	if job.Place {
+		return mediastore.InsertOnce(ctx, insert, IngestArgs{Ref: job.Ref, Preset: job.Preset, Force: job.Force},
 			river.InsertOpts{Queue: IngestQueue, MaxAttempts: riverMaxAttempts})
 	}
 	f := FamiliesOf(item.Kind(), job.Preset)
-	if !f.Image && !f.Video && !job.Editor {
+	if !f.Image && !f.Video && !job.Editor && item.Kind().Master.Identity() {
 		return nil
 	}
 	return mediastore.InsertOnce(ctx, insert, DerivativeArgs{Ref: job.Ref, Preset: job.Preset, Force: job.Force, Editor: job.Editor, Class: job.Class}, *DerivativeInsertOpts(job.Class))

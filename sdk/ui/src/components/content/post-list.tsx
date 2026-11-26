@@ -5,7 +5,7 @@ import { useMemo, useRef, type CSSProperties, type ReactNode, type Ref } from "r
 import type { ContentKitUiAppearance } from "../../appearance.js";
 import { ratio } from "../../client/aspect.js";
 import type { ContentKitClient } from "../../client/client.js";
-import type { ContentQuery, Period } from "../../client/discovery.js";
+import type { ContentQuery, FeaturedWindow } from "../../client/discovery.js";
 import type { Card } from "../../client/generated/wire.js";
 import { useMessages } from "../../i18n/context.js";
 import { useContents, useContentsPage } from "../../react/discovery.js";
@@ -38,8 +38,8 @@ export interface PostListProps {
   pageHref?: (page: number) => string;
   /** A CSS aspect ratio for covers; default the kind's cover preset, else 331 / 232. */
   aspectRatio?: CSSProperties["aspectRatio"];
-  /** Trending window for the sidebar, or false to leave it out; default 30d. Shown only when the kind declares it. */
-  trending?: Period | false;
+  /** Trending window for the sidebar, or false to leave it out; default the week. Shown while the site records signals. */
+  trending?: FeaturedWindow | false;
   /** Posts per sidebar section; default 5, 0 hides the sidebar. */
   sidebarSize?: number;
   /** Excerpt length in characters; default 220. */
@@ -115,7 +115,7 @@ function PagedPosts(p: PostListProps) {
   );
 }
 
-function PostListLayout({ kind, language, href, pageSize = 10, aspectRatio, trending = "30d", sidebarSize = 5, excerptLength = 220, unreadDays = 30, tiers, labels, empty, client, appearance, className, items, loading, listRef, header, children }: PostListProps & { items: Card[]; loading: boolean; listRef?: Ref<HTMLDivElement>; header?: ReactNode; children?: ReactNode }) {
+function PostListLayout({ kind, language, href, pageSize = 10, aspectRatio, trending = "week", sidebarSize = 5, excerptLength = 220, unreadDays = 30, tiers, labels, empty, client, appearance, className, items, loading, listRef, header, children }: PostListProps & { items: Card[]; loading: boolean; listRef?: Ref<HTMLDivElement>; header?: ReactNode; children?: ReactNode }) {
   const m = useMessages();
   const { t } = m;
   const reads = usePostReads(unreadDays);
@@ -123,8 +123,8 @@ function PostListLayout({ kind, language, href, pageSize = 10, aspectRatio, tren
   const url = (card: Card) => (href ? href(card) : card.path);
   const sidebar = sidebarSize > 0;
   const { kinds } = useKinds({ client });
-  // An undeclared window is refused, so the section waits for the kind to declare it.
-  const ranked = !!trending && !!kinds?.kinds[kind]?.popularity?.some((b) => b.id === trending && (!b.scopes?.length || b.scopes.some((s) => !s.language || s.language === (language ?? ""))));
+  // Popularity is ranked while the site records signals.
+  const ranked = !!trending && !!kinds?.signals;
   return (
     <ContentKitUiRoot appearance={appearance} className={cn("grid gap-6 text-sm", sidebar && "lg:grid-cols-[minmax(0,1fr)_18rem]", className)} data-ckui="post-list">
       <div ref={listRef} className="grid min-w-0 scroll-mt-20 content-start gap-3">
@@ -165,7 +165,7 @@ function PostListLayout({ kind, language, href, pageSize = 10, aspectRatio, tren
       {sidebar && (
         <aside className="grid content-start gap-6" data-ckui="post-list-sidebar">
           <SidebarSection title={t("postList.newest")} kind={kind} sort="newest" size={sidebarSize} language={language} url={url} aspect={aspect} client={client} />
-          {ranked && <SidebarSection title={t("postList.trending")} kind={kind} sort={`popular:${trending as Period}`} size={sidebarSize} language={language} url={url} aspect={aspect} client={client} />}
+          {ranked && <SidebarSection title={t("postList.trending")} kind={kind} sort="popular" window={trending as FeaturedWindow} size={sidebarSize} language={language} url={url} aspect={aspect} client={client} />}
         </aside>
       )}
     </ContentKitUiRoot>
@@ -213,8 +213,8 @@ function NoCover({ className }: { className: string }) {
   );
 }
 
-function SidebarSection({ title, kind, sort, size, language, url, aspect, client }: { title: string; kind: string; sort: "newest" | `popular:${Period}`; size: number; language?: string; url: (card: Card) => string; aspect: CSSProperties["aspectRatio"]; client?: ContentKitClient }) {
-  const list = useContents(useMemo(() => ({ kind, sort, limit: size, display_language: language }), [kind, sort, size, language]), { client });
+function SidebarSection({ title, kind, sort, window, size, language, url, aspect, client }: { title: string; kind: string; sort: "newest" | "popular"; window?: FeaturedWindow; size: number; language?: string; url: (card: Card) => string; aspect: CSSProperties["aspectRatio"]; client?: ContentKitClient }) {
+  const list = useContents(useMemo(() => ({ kind, sort, window, limit: size, display_language: language }), [kind, sort, window, size, language]), { client });
   if (!list.loading && list.items.length === 0) return null;
   return (
     <section className="grid content-start gap-3" aria-label={title}>

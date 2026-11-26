@@ -2,7 +2,7 @@ import { cn } from "cn";
 import { useSyncExternalStore, type ReactNode } from "react";
 import type { ContentKitUiAppearance } from "../../appearance.js";
 import type { ContentKitClient } from "../../client/client.js";
-import type { Card, Content, Version } from "../../client/generated/wire.js";
+import type { Card, Content } from "../../client/generated/wire.js";
 import { resolveInlineImageReferences } from "../../client/inline-images.js";
 import { useMessages } from "../../i18n/context.js";
 import { usePostReading } from "../../react/post-reads.js";
@@ -15,8 +15,6 @@ import { InAppLink } from "./in-app-link.js";
 export interface PostArticleProps {
   /** The post, as useContentDetail reads it. */
   content: Content;
-  /** The version shown; its reading marks the post read. */
-  version?: Version | null;
   /** The post list's link; omitted, no back link. */
   backHref?: string;
   backLabel?: ReactNode;
@@ -46,10 +44,10 @@ const serverSnapshot = () => false;
  * and comments, beside the kind's newest posts. Measured attention on the body
  * marks it read; an open alone does not.
  */
-export function PostArticle({ content, version, backHref, backLabel, publication, body, relatedSize = 6, relatedTitle, language, href, engagement = true, client, appearance, className }: PostArticleProps) {
+export function PostArticle({ content, backHref, backLabel, publication, body, relatedSize = 6, relatedTitle, language, href, engagement = true, client, appearance, className }: PostArticleProps) {
   const m = useMessages();
   const { t } = m;
-  const readRef = usePostReading(content.id, version?.id, { client, kind: content.kind });
+  const readRef = usePostReading(content.id, { client });
   const hydrated = useSyncExternalStore(subscribeToHydration, clientSnapshot, serverSnapshot);
   const cover = content.cover?.url;
   const day = (iso: string) => new Intl.DateTimeFormat(m.language, { dateStyle: "medium", timeZone: "UTC" }).format(new Date(iso));

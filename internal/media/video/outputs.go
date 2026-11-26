@@ -14,7 +14,6 @@ import (
 	mediastore "github.com/open-rails/contentkit/internal/mediastore"
 
 	"github.com/open-rails/contentkit/media"
-	"github.com/open-rails/contentkit/media/layout"
 )
 
 // HLS outputs under the preset's directory To:
@@ -33,8 +32,8 @@ func audioPath(to, id string) string { return to + "audio-" + id + ".mp4" }
 func subsPath(to, id string) string  { return to + "subs-" + id + ".vtt" }
 func spritePath(to string) string    { return to + "sprite.jpg" }
 
-// isEncode reports a preset of the encode runs (HLS or MP4).
-func isEncode(p *media.Private) bool { return p.HLS != nil || p.MP4 != nil }
+// isEncode reports a preset of the encode runs (HLS).
+func isEncode(p *media.Private) bool { return p.HLS != nil }
 
 // fp is the fingerprint of preset p's outputs from upload f (an HLS
 // preset's source text tracks have subsFP).
@@ -42,8 +41,6 @@ func (e *Encoder) fp(p *media.Private, f media.File) string {
 	switch {
 	case p.HLS != nil:
 		return e.hlsFP(f, p.HLS)
-	case p.MP4 != nil:
-		return mp4FP(f, p.MP4)
 	case p.Subtitles != nil:
 		return subtitleFP(f, p.Subtitles)
 	}
@@ -56,21 +53,12 @@ func subsFP(f media.File, h *media.HLS) string { return mediastore.SpecFP(f, h, 
 
 // codecs are the codecs a preset's runs encode.
 func (e *Encoder) codecs(p *media.Private) []media.Codec {
-	if p.MP4 != nil {
-		return []media.Codec{media.CodecH264}
-	}
 	return e.c.Codecs
 }
 
 // stages are an encode preset's runs for a probed source, smallest rung
-// first: the HLS ladder, or the MP4's rung (none above the source).
+// first: the HLS ladder.
 func stages(p *media.Private, pl plan) ([]rung, error) {
-	if p.MP4 != nil {
-		if r, ok := pl.rung(p.MP4); ok {
-			return []rung{r}, nil
-		}
-		return nil, nil
-	}
 	rs, err := pl.ladder(p.HLS)
 	slices.Reverse(rs)
 	return rs, err
@@ -105,8 +93,7 @@ func stagesDone(outs []media.File, to, fp string, stages []rung, codecs []media.
 }
 
 // todo reports whether preset p of upload f is to be produced: pending, or
-// an output missing or of another fingerprint. An MP4 above the measured
-// source has no output.
+// an output missing or of another fingerprint.
 func (e *Encoder) todo(m *mediastore.Manifest, f media.File, p *media.Private) bool {
 	if slices.Contains(f.Pending, p.Name) {
 		return true
@@ -114,8 +101,6 @@ func (e *Encoder) todo(m *mediastore.Manifest, f media.File, p *media.Private) b
 	outs := m.Outputs(f.Path, p.Name)
 	fp := e.fp(p, f)
 	switch {
-	case p.MP4 != nil && len(outs) == 0:
-		return f.W == 0 || p.MP4.Rung <= min(f.W, f.H)
 	case len(outs) == 0:
 		return true
 	case p.HLS != nil:
@@ -164,7 +149,7 @@ func (e *Encoder) stream(ctx context.Context, item mediastore.Item, dir, name, p
 	if err != nil {
 		return media.File{}, err
 	}
-	blob, size, err := e.put(ctx, item, layout.AreaPrivate, file, contentType, fp)
+	blob, size, err := e.put(ctx, item, outputArea(item), file, contentType, fp)
 	if err != nil {
 		return media.File{}, err
 	}
@@ -181,7 +166,7 @@ func (e *Encoder) stream(ctx context.Context, item mediastore.Item, dir, name, p
 		Track: &media.Track{Bandwidth: peak, Average: avg, Index: index}}, nil
 }
 
-// blobs lists the blobs outputs reference (for checkOutputs and DropIfDeleted).
+// blobs lists the blobs outputs reference.
 func blobs(outs ...media.File) []string {
 	var out []string
 	for _, o := range outs {
@@ -193,33 +178,27 @@ func blobs(outs ...media.File) []string {
 	return out
 }
 
-// publish records outputs with edit under the manifest lock, after checking
-// every blob exists (the lock fences the sweep). A deleted folder drops the
-// blobs written for it, and so does errGone (the outputs of an upload taken
-// down, or taken down and put again, do not come back); any other errStale
-// leaves them for the retry or the sweep.
+// publish records outputs with edit. The writer checks every newly named
+// blob exists. A deleted item, or errGone (the outputs of an upload taken
+// down, or replaced), leaves what was written to GC as orphans; any other
+// errStale leaves them for the retry.
 func (e *Encoder) publish(ctx context.Context, item mediastore.Item, outs []media.File, edit func(*mediastore.Manifest) error) error {
-	return e.publishCharged(ctx, item, outs, nil, edit)
-}
-
-// publishCharged is publish charging the edit's upload bytes to charge
-// (Manifests.EditCharged).
-func (e *Encoder) publishCharged(ctx context.Context, item mediastore.Item, outs []media.File, charge *media.SourceAdmission, edit func(*mediastore.Manifest) error) error {
 	if testBeforePublish != nil {
 		testBeforePublish()
 	}
 	var gone bool
-	_, err := e.ms.EditCharged(ctx, item.Ref(), charge, func(m *mediastore.Manifest) error {
+	_, err := e.ms.EditExisting(ctx, item.Ref(), func(m *mediastore.Manifest) error {
+		gone = false
 		if err := edit(m); errors.Is(err, errGone) {
 			gone = true
-			return e.ms.DeleteUnreferenced(ctx, item, m, blobs(outs...))
+			return mediastore.ErrUnchanged
 		} else if err != nil {
 			return err
 		}
-		return e.checkOutputs(ctx, item, blobs(outs...)...)
+		return nil
 	})
 	if errors.Is(err, mediastore.ErrNotFound) {
-		return e.ms.DropIfDeleted(ctx, item.Ref(), blobs(outs...))
+		return nil
 	}
 	if err == nil && gone {
 		return errGone

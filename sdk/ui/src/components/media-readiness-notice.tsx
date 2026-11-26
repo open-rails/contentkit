@@ -48,8 +48,7 @@ export function MediaReadinessNotice({ item, read: given, prefix, description, c
   const status = r.read?.status;
   const failures = status?.failures ?? uploads.filter((f) => f.failed).map((f) => ({ path: f.path, code: f.failed!.code, message: f.failed!.message }));
   const failureCount = status?.failure_count ?? failures.length;
-  const full = !!r.read?.full || status?.state === "full";
-  const failed = full || status?.state === "failed" || failureCount > 0;
+  const failed = status?.state === "failed" || failureCount > 0;
   const busy = processing(r.read);
   if (!r.read || (!failed && !busy)) return null;
   const names = failures.map((f) => f.path.split("/").pop()!);
@@ -63,9 +62,9 @@ export function MediaReadinessNotice({ item, read: given, prefix, description, c
     <ContentKitUiRoot appearance={appearance} className={cn("w-full", className)} data-ckui="readiness" data-state={failed ? "failed" : "processing"}>
       <Alert variant={failed ? "destructive" : "default"} role={failed ? "alert" : "status"}>
         <HugeiconsIcon icon={failed ? Alert02Icon : Loading03Icon} strokeWidth={2} className={failed ? undefined : "motion-safe:animate-spin"} />
-        <AlertTitle>{full ? t("readiness.full") : failed ? failureCount === 0 ? t("readiness.failedStatus") : failureCount === 1 ? t("readiness.failedOne", { name: names[0] ?? "" }) : t("readiness.failedMany", { count: failureCount, names: names.join(", ") }) : t("readiness.processing")}</AlertTitle>
+        <AlertTitle>{failed ? failureCount === 0 ? t("readiness.failedStatus") : failureCount === 1 ? t("readiness.failedOne", { name: names[0] ?? "" }) : t("readiness.failedMany", { count: failureCount, names: names.join(", ") }) : t("readiness.processing")}</AlertTitle>
         <AlertDescription className="grid gap-2">
-          {description ?? t(full ? "readiness.fullHint" : failed ? "readiness.failedHint" : "readiness.processingHint")}
+          {description ?? t(failed ? "readiness.failedHint" : "readiness.processingHint")}
           {failures.length > 0 && <ul>{failures.map((failure, index) => <li key={`${failure.path}:${failure.code}:${index}`}>{failure.path}: {failure.message}</li>)}</ul>}
           {stages.map((stage) => {
             const label = t("readiness.stageProgress", { name: stage.label, completed: stage.completed, total: stage.total });

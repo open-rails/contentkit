@@ -5,7 +5,7 @@ go 1.26.10
 toolchain go1.26.11
 
 require (
-	github.com/open-rails/contentkit v0.128.1
+	github.com/open-rails/contentkit v0.141.0
 	github.com/open-rails/openrails v0.284.0
 )
 
@@ -61,7 +61,7 @@ require (
 	github.com/mostynb/zstdpool-freelist v0.0.0-20201229113212-927304c0c3b1 // indirect
 	github.com/oasisprotocol/curve25519-voi v0.0.0-20251114093237-2ab5a27a1729 // indirect
 	github.com/open-rails/authkit v1.57.0 // indirect
-	github.com/open-rails/helpers v1.22.1 // indirect
+	github.com/open-rails/helpers v1.23.1 // indirect
 	github.com/open-rails/migratekit v1.13.0 // indirect
 	github.com/paulmach/orb v0.14.0 // indirect
 	github.com/pierrec/lz4/v4 v4.1.33 // indirect

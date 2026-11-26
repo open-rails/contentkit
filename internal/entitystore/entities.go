@@ -16,6 +16,7 @@ import (
 	"github.com/open-rails/contentkit/contentref"
 	entities "github.com/open-rails/contentkit/entities"
 	entitlement "github.com/open-rails/contentkit/internal/entitlement"
+	"github.com/open-rails/contentkit/internal/rankings"
 	"github.com/open-rails/contentkit/internal/search"
 	"github.com/open-rails/contentkit/kinds"
 )
@@ -89,6 +90,11 @@ type Options struct {
 	// Owned deletes the content a deleted user-owned entity owns
 	// (owner_entity) and restores it with the entity: the catalog. Optional.
 	Owned entities.OwnedContent
+	// Rankings rank the popular sort; nil (no signal plane) leaves it out.
+	Rankings *rankings.Engine
+	// Hidden are the entities a public request's content filters hide:
+	// public listings leave them out. Optional.
+	Hidden func(ctx context.Context) ([]string, error)
 	// Logger receives the HTTP API's failures. nil -> slog.Default().
 	Logger *slog.Logger
 }
@@ -112,6 +118,8 @@ type Store struct {
 	folders   Folders
 	keep      time.Duration
 	owned     entities.OwnedContent
+	rankings  *rankings.Engine
+	hidden    func(ctx context.Context) ([]string, error)
 	log       *slog.Logger
 	as        *writer
 }
@@ -145,7 +153,8 @@ func New(opts Options) (*Store, error) {
 		keep = entities.DefaultDeletedRetention
 	}
 	return &Store{pool: opts.Pool, qs: qs, schema: strings.TrimSpace(opts.Schema), tenant: tenant, cfg: opts.Kinds, changed: opts.ContentChanged, renamed: opts.NamesChanged, documents: opts.DocumentsChanged, recorded: opts.EntitiesChanged,
-		covers: opts.Covers, gate: opts.Gate, scopes: opts.Scopes, folders: opts.Folders, keep: keep, owned: opts.Owned, log: log}, nil
+		covers: opts.Covers, gate: opts.Gate, scopes: opts.Scopes, folders: opts.Folders, keep: keep, owned: opts.Owned,
+		rankings: opts.Rankings, hidden: opts.Hidden, log: log}, nil
 }
 
 // Tenant returns the tenant this store is scoped to.

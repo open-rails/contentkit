@@ -35,12 +35,12 @@ export {
   type CardQuery,
   type ContentFilterQuery,
   type ContentQuery,
+  type ContinueQuery,
   type HistoryQuery,
   type KnownCardsQuery,
   type ListSort,
-  type Period,
-  type PopularPeriod,
-  type PopularDateRange,
+  type FeaturedWindow,
+  type PopularWindow,
   type PopularQuery,
   type RailQuery,
   type ReaderQuery,
@@ -52,11 +52,13 @@ export {
 } from "./discovery.js";
 export { VersionsClient, isPending } from "./versions.js";
 export { emptyReaderMeta, matchAudio, readerMetaProblems, readerNames, type AudioMatch, type ReaderMetaProblem, type ReaderNames } from "./reader-meta.js";
-export { StatsClient, type ActivityQuery } from "./stats.js";
-export { Beacons, eventId, readerSession, type Attribution, type BeaconOptions } from "./beacons.js";
+export { StatsClient, type ActiveQuery } from "./stats.js";
+export { ActivityReporter, ProgressTracker, type ActivityReporterOptions, type OpenSource, type ProgressTrackerOptions } from "./activity.js";
+export { anonymousId, renewAnonymousId } from "./anonymous.js";
 export { LETTERS, attributeInput, entityDisplayName, fold, fromLocalInput, humanize, letterOf, parseAttribute, parseAttributes, slugify, toLocalInput } from "./entity-fields.js";
 export { CodesClient } from "./codes.js";
 export { ReaderPreferencesClient, type LanguagePreference, type ReaderPreferenceState } from "./reader-preferences.js";
+export { FeedbackClient, type FeedbackAnswerInput, type FeedbackReaction, type FeedbackReason, type FeedbackTarget } from "./feedback.js";
 export { BrowserReaderPreferences, type GuestReaderPreferences, type ReaderFilters, type ReaderFilterChoice } from "./browser-reader-preferences.js";
 export { call, routeURL, type CallOptions, type Method, type PageQuery, type PathParams, type RouteQuery, type RoutePath } from "./route.js";
 export { MediaApi, type ReadOptions } from "./media/api.js";
@@ -84,7 +86,6 @@ export {
   acceptOf,
   acceptsFile,
   defaultImage,
-  stableImage,
   filesFor,
   isPattern,
   ratioLabel,
@@ -127,6 +128,10 @@ export {
   capRung,
   classifyHlsError,
   classifyMediaError,
+  decodesHdr,
+  hdrDisplay,
+  isHdrLevel,
+  otherLevels,
   hlsConfig,
   initialEstimate,
   expiryDelay,
@@ -136,6 +141,8 @@ export {
   statusKind,
   type AbrPolicy,
   type ConnectionHint,
+  type DisplayEnv,
+  type PlayableLevel,
   type HlsErrorLike,
   type Rung,
   type PlaybackError,
@@ -156,8 +163,6 @@ export {
 } from "./player.js";
 export * from "./generated/wire.js";
 
-export { EngagementTracker, type EngagementTrackerOptions, type ReadingObservation, type VisiblePage } from "./engagement.js";
-export { GuestReadingHistory, guestStanding, type GuestReadingItem, type GuestReadingSnapshot } from "./guest-reading-history.js";
 export { entitiesForVersion } from "./content-entities.js";
 export { allowsEntityScope } from "./entity-scopes.js";
 

@@ -3,12 +3,12 @@ package critical_test
 import (
 	"bytes"
 	"crypto/sha256"
-	"fmt"
 	"io"
 	"mime"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -28,23 +28,28 @@ func TestGatewayCapabilities(t *testing.T) {
 	m := newMediaStorage(t, ck.Scope{TenantID: ck.NewTenantID(), AppID: ck.NewAppID()})
 	ring, err := token.NewRing(m.key, nil)
 	must(t, err)
-	scope := m.gatewayConfig.Routes[0].Scope
-	folder := scope.Prefix("gallery", uuid.NewString(), "")
+	folder := layout.Prefix("gallery", uuid.NewString())
 	data := []byte("exact private bytes: 0123456789")
-	sum := sha256.Sum256(data)
-	first := folder + "private/" + layout.BlobName(sum[:], uuid.NewString())
-	second := folder + "private/" + layout.BlobName(sum[:], uuid.NewString())
-	download := folder + "download/" + layout.BlobName(sum[:], uuid.NewString())
-	public := folder + "public/cover.webp"
+	// Every stored name is a hash; the gateway serves by area, not content.
+	name := func() string { sum := sha256.Sum256([]byte(uuid.NewString())); return layout.Hash(sum[:]) }
+	first := folder + "private/" + name()
+	second := folder + "private/" + name()
+	unreleased := folder + "internal/" + name()
+	public := folder + "public/" + name()
 	seed := func(t *testing.T, key string) {
 		t.Helper()
 		_, err := m.management.PutObject(t.Context(), &awss3.PutObjectInput{Bucket: &m.bucket, Key: &key, Body: bytes.NewReader(data), ContentType: aws.String("application/octet-stream")})
 		must(t, err)
 	}
-	for _, key := range []string{first, second, download, public, folder + layout.ManifestName, folder + "temp/u-" + uuid.NewString()} {
+	for _, key := range []string{first, second, unreleased, public, folder + layout.ManifestName, folder + "tmp/u-" + uuid.NewString()} {
 		seed(t, key)
 	}
-	grant := func(key string) string { return ring.Sign(token.PrivateFileScope(key), time.Now().Add(time.Minute)) }
+	grant := func(key string) string {
+		return ring.Sign(privateFileScope(m.bucket, key), time.Now().Add(time.Minute))
+	}
+	itemToken := func(folder string) string {
+		return ring.Sign(token.ItemScope(m.bucket, folder), time.Now().Add(time.Minute))
+	}
 	request := func(t *testing.T, base, method, key, tok, host string, headers map[string]string) (*http.Response, []byte) {
 		t.Helper()
 		address := base + "/v1/" + key
@@ -80,34 +85,28 @@ func TestGatewayCapabilities(t *testing.T) {
 			t.Fatalf("positive object control: status=%d body=%q", res.StatusCode, body)
 		}
 	}
-	t.Run("CK-J13-S01_exact_file_grant_does_not_open_sibling_or_another_item", func(t *testing.T) {
+	t.Run("CK-J13-S01_item_token_does_not_open_another_item", func(t *testing.T) {
+		// There are no per-file tokens: an item's token opens its private/
+		// files and nothing of another item.
 		control(t, first, grant(first))
-		control(t, second, grant(second))
-		deny(t, second, grant(first), "")
-		other := scope.Prefix("gallery", uuid.NewString(), "") + "private/" + layout.BlobName(sum[:], uuid.NewString())
+		control(t, second, grant(first))
+		other := layout.Prefix("gallery", uuid.NewString()) + "private/" + name()
 		seed(t, other)
 		control(t, other, grant(other))
 		deny(t, other, grant(first), "")
-		// A flat item token covers sibling files in this exact version only.
-		item := ring.Sign(strings.TrimSuffix(folder, "/"), time.Now().Add(time.Minute))
-		control(t, first, item)
-		control(t, second, item)
-		deny(t, other, item, "")
-		nested := scope.Prefix("gallery", uuid.NewString(), uuid.NewString()) + "private/" + layout.BlobName(sum[:], uuid.NewString())
+		nested := folder + "extra/private/" + name()
 		seed(t, nested)
-		deny(t, nested, grant(nested), "")
+		deny(t, nested, grant(first), "")
 	})
-	t.Run("CK-J13-S02_item_token_cannot_open_download_area", func(t *testing.T) {
-		item := ring.Sign(strings.TrimSuffix(folder, "/"), time.Now().Add(time.Minute))
+	t.Run("CK-J13-S02_item_token_cannot_open_internal_area", func(t *testing.T) {
+		item := itemToken(folder)
 		control(t, first, item)
-		control(t, second, item)
-		deny(t, download, ring.Sign(download, time.Now().Add(time.Minute)), "")
-		deny(t, download, item, "")
-		deny(t, download, grant(first), "")
+		deny(t, unreleased, item, "")
+		deny(t, unreleased, ring.Sign(m.bucket+"/"+unreleased, time.Now().Add(time.Minute)), "")
 	})
 	t.Run("CK-J13-S03_expiry_and_key_rotation", func(t *testing.T) {
 		control(t, first, grant(first))
-		deny(t, first, ring.Sign(token.PrivateFileScope(first), time.Now().Truncate(time.Second)), "")
+		deny(t, first, ring.Sign(privateFileScope(m.bucket, first), time.Now().Truncate(time.Second)), "")
 		newKey := token.Key{ID: "rotated", Secret: bytes.Repeat([]byte{41}, 32)}
 		for _, overlap := range []bool{true, false} {
 			t.Run(map[bool]string{true: "overlap", false: "removed"}[overlap], func(t *testing.T) {
@@ -137,20 +136,41 @@ func TestGatewayCapabilities(t *testing.T) {
 				if !overlap && (bytes.Contains(body, data) || res.Header.Get("Cache-Control") != "no-store") {
 					t.Fatal("removed rotation key leaked or cached private bytes")
 				}
-				res, body = request(t, server.URL, "GET", first, rotated.Sign(token.PrivateFileScope(first), time.Now().Add(time.Minute)), "", nil)
+				res, body = request(t, server.URL, "GET", first, rotated.Sign(privateFileScope(m.bucket, first), time.Now().Add(time.Minute)), "", nil)
 				if res.StatusCode != 200 || !bytes.Equal(body, data) {
 					t.Fatal("current rotation key failed")
 				}
 			})
 		}
 	})
-	t.Run("CK-J13-S04_host_scope_and_encoded_traversal_refuse_existing_objects", func(t *testing.T) {
+	t.Run("CK-J13-S04_host_bucket_and_encoded_traversal_refuse_existing_objects", func(t *testing.T) {
 		control(t, first, grant(first))
 		deny(t, first, grant(first), "other.invalid")
-		for _, foreign := range []layout.Scope{{TenantID: uuid.NewString(), AppID: scope.AppID}, {TenantID: scope.TenantID, AppID: uuid.NewString()}} {
-			key := strings.Replace(first, scope.Root(), foreign.Root(), 1)
-			seed(t, key)
-			deny(t, key, grant(key), "")
+		// The bucket is the boundary: the same item's token for another
+		// app's bucket, through a gateway holding one key, opens nothing.
+		deny(t, first, ring.Sign(token.ItemScope("another-app-media", folder), time.Now().Add(time.Minute)), "")
+		deny(t, first, ring.Sign(strings.TrimSuffix(folder, "/"), time.Now().Add(time.Minute)), "")
+		// A key under a tenant/app prefix is outside the layout.
+		prefixed := "tenant/" + uuid.NewString() + "/app/" + uuid.NewString() + "/" + first
+		seed(t, prefixed)
+		deny(t, prefixed, grant(first), "")
+		// Account media is served only from the bucket the Route names for it.
+		account := layout.AccountPrefix("user", uuid.NewString()) + "public/" + name()
+		seed(t, account)
+		deny(t, account, "", "")
+		cfg := m.gatewayConfig
+		cfg.Routes = slices.Clone(cfg.Routes)
+		cfg.Routes[0].Accounts = m.bucket
+		handler, err := gateway.New(cfg)
+		must(t, err)
+		accounts := httptest.NewServer(handler)
+		defer accounts.Close()
+		if res, body := request(t, accounts.URL, "GET", account, "", "", nil); res.StatusCode != 200 || !bytes.Equal(body, data) {
+			t.Fatalf("routed account media: %d", res.StatusCode)
+		}
+		if _, err := gateway.New(gateway.Config{Endpoint: cfg.Endpoint, AccessKeyID: "k", SecretAccessKey: "s", Ring: ring,
+			Routes: []gateway.Route{cfg.Routes[0], cfg.Routes[0]}}); err == nil {
+			t.Fatal("a host routed twice was accepted")
 		}
 		for _, key := range []string{strings.Replace(first, "private/", "private/%2e%2e/private/", 1), strings.Replace(first, "private/", "private%2f", 1), strings.Replace(first, "private/", "%70rivate/", 1)} {
 			deny(t, key, grant(first), "")
@@ -158,9 +178,9 @@ func TestGatewayCapabilities(t *testing.T) {
 	})
 	t.Run("CK-J13-S05_reserved_and_erasure_fenced_objects_refuse", func(t *testing.T) {
 		control(t, first, grant(first))
-		for _, key := range []string{folder + layout.ManifestName, folder + "temp/u-" + uuid.NewString(), folder + "tmp/u-" + uuid.NewString(), folder + "internal/" + layout.BlobName(sum[:], uuid.NewString()), folder + "originals/" + layout.BlobName(sum[:], uuid.NewString()), folder + "public/" + layout.FenceName} {
+		for _, key := range []string{folder + layout.ManifestName, folder + "tmp/u-" + uuid.NewString(), folder + "internal/" + name(), folder + "public/" + layout.FenceName} {
 			seed(t, key)
-			deny(t, key, ring.Sign(strings.TrimSuffix(folder, "/"), time.Now().Add(time.Minute)), "")
+			deny(t, key, itemToken(folder), "")
 		}
 		// The last seeded object is the durable erasure fence. Old signed
 		// URLs and public renditions must now fail even while bytes remain.
@@ -212,7 +232,7 @@ func TestGatewayCapabilities(t *testing.T) {
 		}
 		pngBytes := imageBytes(t)
 		pngSum := sha256.Sum256(pngBytes)
-		pngKey := folder + "private/" + layout.BlobName(pngSum[:], uuid.NewString())
+		pngKey := folder + "private/" + layout.Hash(pngSum[:])
 		_, err = m.management.PutObject(t.Context(), &awss3.PutObjectInput{Bucket: &m.bucket, Key: &pngKey, Body: bytes.NewReader(pngBytes), ContentType: aws.String("image/png")})
 		must(t, err)
 		address = m.gateway.URL + "/v1/" + pngKey + "?t=" + url.QueryEscape(grant(pngKey)) + "&dl=report.png"
@@ -241,36 +261,22 @@ func TestGatewayCapabilities(t *testing.T) {
 		const (
 			immutablePublic  = "public, max-age=31536000, immutable"
 			immutablePrivate = "private, max-age=31536000, immutable"
-			shortPublic      = "public, max-age=300, stale-while-revalidate=86400"
 		)
-		generated := folder + "public/cover-460-" + uuid.NewString() + ".webp"
-		seed(t, generated)
-		defaultName := fmt.Sprintf("sha256-%x.webp", sha256.Sum256([]byte("default image")))
-		seed(t, scope.Prefix("gallery", layout.DefaultID, "")+"public/"+defaultName)
-		withDefaults := m.gatewayConfig
-		withDefaults.Defaults = []layout.Default{{Namespace: scope.Partition(), Kind: "gallery", Files: map[string]string{"cover-460.webp": defaultName}}}
-		defaultsHandler, err := gateway.New(withDefaults)
-		must(t, err)
-		defaults := httptest.NewServer(defaultsHandler)
-		defer defaults.Close()
-		retired := folder + "public/cover-460-" + uuid.NewString() + ".webp"
 		for _, c := range []struct {
-			name, base, method, key, tok string
-			headers                      map[string]string
-			status                       int
-			want                         string
+			name, method, key, tok string
+			headers                map[string]string
+			status                 int
+			want                   string
 		}{
-			{"generation-named public", m.gateway.URL, "GET", generated, "", nil, 200, immutablePublic},
-			{"generation-named public HEAD", m.gateway.URL, "HEAD", generated, "", nil, 200, immutablePublic},
-			{"generation-named public range", m.gateway.URL, "GET", generated, "", map[string]string{"Range": "bytes=0-3"}, 206, immutablePublic},
-			{"logical public name", m.gateway.URL, "GET", public, "", nil, 200, shortPublic},
-			{"default for a retired generation", defaults.URL, "GET", retired, "", nil, 200, shortPublic},
-			{"private blob", m.gateway.URL, "GET", first, grant(first), nil, 200, immutablePrivate},
-			{"private blob range", m.gateway.URL, "GET", first, grant(first), map[string]string{"Range": "bytes=0-3"}, 206, immutablePrivate},
-			{"unsatisfiable range", m.gateway.URL, "GET", generated, "", map[string]string{"Range": "bytes=999999-"}, 416, "no-store"},
-			{"private denial", m.gateway.URL, "GET", first, "", nil, 404, "no-store"},
+			{"public", "GET", public, "", nil, 200, immutablePublic},
+			{"public HEAD", "HEAD", public, "", nil, 200, immutablePublic},
+			{"public range", "GET", public, "", map[string]string{"Range": "bytes=0-3"}, 206, immutablePublic},
+			{"private", "GET", first, grant(first), nil, 200, immutablePrivate},
+			{"private range", "GET", first, grant(first), map[string]string{"Range": "bytes=0-3"}, 206, immutablePrivate},
+			{"unsatisfiable range", "GET", public, "", map[string]string{"Range": "bytes=999999-"}, 416, "no-store"},
+			{"private denial", "GET", first, "", nil, 404, "no-store"},
 		} {
-			res, _ := request(t, c.base, c.method, c.key, c.tok, "", c.headers)
+			res, _ := request(t, m.gateway.URL, c.method, c.key, c.tok, "", c.headers)
 			if res.StatusCode != c.status || res.Header.Get("Cache-Control") != c.want {
 				t.Fatalf("%s: status=%d Cache-Control=%q, want %d %q", c.name, res.StatusCode, res.Header.Get("Cache-Control"), c.status, c.want)
 			}
@@ -283,8 +289,8 @@ func TestGatewayCapabilities(t *testing.T) {
 				t.Fatalf("%s: CDN-Cache-Control=%q Referrer-Policy=%q, want %q and no-referrer", c.name, res.Header.Get("CDN-Cache-Control"), res.Header.Get("Referrer-Policy"), cdn)
 			}
 		}
-		fresh, _ := request(t, m.gateway.URL, "GET", generated, "", "", nil)
-		notModified, _ := request(t, m.gateway.URL, "GET", generated, "", "", map[string]string{"If-None-Match": fresh.Header.Get("ETag")})
+		fresh, _ := request(t, m.gateway.URL, "GET", public, "", "", nil)
+		notModified, _ := request(t, m.gateway.URL, "GET", public, "", "", map[string]string{"If-None-Match": fresh.Header.Get("ETag")})
 		if notModified.StatusCode != 304 || notModified.Header.Get("Cache-Control") != immutablePublic {
 			t.Fatalf("revalidation: status=%d Cache-Control=%q", notModified.StatusCode, notModified.Header.Get("Cache-Control"))
 		}

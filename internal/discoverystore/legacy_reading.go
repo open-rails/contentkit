@@ -4,17 +4,20 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+
 	"github.com/open-rails/contentkit/contentref"
 	discovery "github.com/open-rails/contentkit/discovery"
-	"github.com/open-rails/contentkit/signal"
+	"github.com/open-rails/contentkit/internal/readingstore"
+	"github.com/open-rails/contentkit/internal/subject"
 )
 
-// ImportLegacyReading preserves migration bookmarks without fabricating actual
-// reading events. It is called only by the authorized bulk importer.
-func (s *Service) ImportLegacyReading(ctx context.Context, in []discovery.ImportLegacyReading) error {
-	if err := s.signals(); err != nil {
-		return err
-	}
+// ImportLegacyReading merges a legacy source's reading into accounts'
+// reading state in the import's transaction, as the analytics job merges a
+// day: by maximum and latest, so a re-sent batch converges. It is called
+// only by the authorized bulk importer.
+func (s *Service) ImportLegacyReading(ctx context.Context, tx pgx.Tx, in []discovery.ImportLegacyReading) error {
 	if len(in) == 0 {
 		return nil
 	}
@@ -25,32 +28,39 @@ func (s *Service) ImportLegacyReading(ctx context.Context, in []discovery.Import
 		}
 		ids[i] = row.ContentID
 	}
-	targets, err := s.targets(ctx, ids)
+	kinds, err := s.kindsOf(ctx, ids)
 	if err != nil {
 		return err
 	}
-	out := make([]signal.LegacyReading, 0, len(in))
+	var ups []readingstore.StateUpdate
+	var removedSubjects, removedContents []uuid.UUID
 	for _, row := range in {
-		target, ok := targets[row.ContentID]
-		if !ok {
+		if _, ok := kinds[row.ContentID]; !ok {
 			return ErrNotFound
 		}
-		if row.VersionID != "" {
-			if _, ok := target.versions[row.VersionID]; !ok {
-				return ErrNotFound
-			}
+		who, ok := subject.Account(row.AccountID)
+		if !ok {
+			return fmt.Errorf("%w: legacy reading belongs to an account id", ErrInvalid)
+		}
+		content := uuid.MustParse(row.ContentID)
+		if row.Removed {
+			removedSubjects, removedContents = append(removedSubjects, who), append(removedContents, content)
+			continue
 		}
 		first := row.LastReadAt
 		if row.FirstReadAt != nil {
 			first = *row.FirstReadAt
 		}
-		out = append(out, signal.LegacyReading{ContentRef: contentref.NewVersion(s.o.Tenant, target.kind, row.ContentID, row.VersionID), Subject: row.Subject,
-			FirstReadAt: first, LastReadAt: row.LastReadAt, Progress: row.Progress, ProgressMax: row.ProgressMax, Completed: row.Completed, Resume: row.Resume, Revision: row.Revision, Removed: row.Removed})
-	}
-	for start := 0; start < len(out); start += signal.MaxSignalsPerBatch {
-		if err := s.o.Hub.ImportLegacyReading(ctx, out[start:min(start+signal.MaxSignalsPerBatch, len(out))]); err != nil {
-			return err
+		outcome := readingstore.OutcomeNeutral
+		if row.Completed || row.ProgressMax > 0 && row.Progress >= row.ProgressMax {
+			outcome = readingstore.OutcomeComplete
 		}
+		position := row.Progress
+		ups = append(ups, readingstore.StateUpdate{Subject: who, ContentID: content, Day: first, LastSeen: row.LastReadAt,
+			Outcome: outcome, Furthest: row.Progress, Position: &position})
 	}
-	return nil
+	if err := s.o.Reading.MergeTx(ctx, tx, ups); err != nil {
+		return err
+	}
+	return s.o.Reading.ForgetPairsTx(ctx, tx, removedSubjects, removedContents)
 }

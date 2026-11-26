@@ -18,7 +18,7 @@ export interface ReaderPreferenceState {
   error?: ContentKitError;
 }
 
-/** Guest storage and explicit, retryable registration inheritance. */
+/** Guest storage, the carry-over of guest filters at sign-in, and retryable registration inheritance of the language. */
 export class ReaderPreferencesClient {
   readonly browser;
   private viewer?: string | null;
@@ -30,6 +30,8 @@ export class ReaderPreferencesClient {
   private generation = 0;
   private syncing?: Promise<void>;
   private syncingGeneration = -1;
+  private carrying?: Promise<void>;
+  private carryingGeneration = -1;
   private state: ReaderPreferenceState = Object.freeze({ loading: false, saving: false, pending: false });
   private readonly listeners = new Set<() => void>();
   private readonly identityListeners = new Set<() => void>();
@@ -101,7 +103,7 @@ export class ReaderPreferencesClient {
       await this.adapter.save(language, account);
       if (generation !== this.generation) throw new ContentKitError("aborted", "The account changed.");
       this.accountLanguage = language;
-      this.browser.complete(account, "language");
+      this.browser.complete(account);
     } catch (error) {
       if (generation === this.generation) this.failure = toContentKitError(error);
       throw error;
@@ -110,7 +112,7 @@ export class ReaderPreferencesClient {
     }
   }
 
-  /** Call only after a confirmed registration event, never on ordinary login. */
+  /** Saves the guest language to a new account: call only after a confirmed registration event, never on ordinary login. */
   async inheritAfterRegistration(account: string): Promise<void> {
     this.browser.register(account);
     this.refresh();
@@ -141,8 +143,38 @@ export class ReaderPreferencesClient {
     return this.syncing;
   }
 
+  /**
+   * Sends this browser's signed-out filter choices to the signed-in account
+   * once; the server fills what the account has not set, and a hide wins.
+   * The choices stay this browser's while signed out. Signing in runs it.
+   */
+  carryGuestFilters(): Promise<void> {
+    const account = this.viewer, filters = this.browser.uncarried();
+    if (!account || !filters) return Promise.resolve();
+    if (this.carrying && this.carryingGeneration === this.generation) return this.carrying;
+    const generation = this.generation;
+    const task = (async () => {
+      await call<"POST", "/me/content-filters/merge", ContentFilters>(this.http, "POST", "/me/content-filters/merge", {
+        body: { account_id: account, filters: [...filters] },
+      });
+      if (generation !== this.generation) return;
+      this.browser.carried(filters);
+      this.http.captureChanges()({ type: "contentFilters.changed" });
+    })().finally(() => {
+      if (this.carrying === task) this.carrying = undefined;
+    });
+    this.carrying = task;
+    this.carryingGeneration = generation;
+    return task;
+  }
+
   private async activate(generation: number): Promise<void> {
     try {
+      // A failed carry is retried by retry() or the next sign-in; it does not hold up the language.
+      await this.carryGuestFilters().catch((error) => {
+        if (generation === this.generation) this.failure = toContentKitError(error);
+      });
+      if (generation !== this.generation) return;
       await this.retryInheritance();
       if (generation !== this.generation) return;
       const language = this.viewer ? await this.adapter?.load(this.viewer) : undefined;
@@ -172,21 +204,9 @@ export class ReaderPreferencesClient {
           if (!changedLater && language !== pending.language && pending.language) await this.adapter.save(pending.language, account);
           if (generation !== this.generation) return;
           this.accountLanguage = changedLater ? language ?? undefined : pending.language;
-          this.browser.complete(account, "language");
+          this.browser.complete(account);
         }
       }
-      pending = this.browser.pending(account)!;
-      if (pending && !pending.filtersDone) {
-        if (generation !== this.generation) return;
-        // Registration initializes account-wide choices. Only the server knows
-        // which saved entities are toggleable on another domain or now stale.
-        await call<"POST", "/me/content-filters/initialize", ContentFilters>(this.http, "POST", "/me/content-filters/initialize", {
-          body: { account_id: account, filters: [...pending.filters] },
-        });
-        if (generation !== this.generation) return;
-        this.browser.complete(account, "filters");
-      }
-      if (generation === this.generation) this.http.captureChanges()({ type: "contentFilters.changed" });
     } catch (error) {
       if (generation === this.generation) this.failure = toContentKitError(error);
       throw error;

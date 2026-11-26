@@ -9,8 +9,8 @@ import (
 	"github.com/open-rails/contentkit/contentref"
 	discovery "github.com/open-rails/contentkit/discovery"
 	entitlement "github.com/open-rails/contentkit/internal/entitlement"
+	"github.com/open-rails/contentkit/internal/rankings"
 	"github.com/open-rails/contentkit/internal/resolve"
-	"github.com/open-rails/contentkit/signal"
 )
 
 // RecommendationOptions select a similar or "for you" list.
@@ -87,19 +87,19 @@ func recLimit(n int) int {
 }
 
 // Similar lists contents like the anchor content that the reader's listing
-// shows; of the anchor's kind unless the filter names one.
+// shows, of the anchor's kind unless the filter names one: those sharing its
+// most specific entities, rarer ones counting more, and its artist
+// (rankings.Engine.Similar).
 func (s *Service) Similar(ctx context.Context, anchorID string, o RecommendationOptions) (discovery.ContentPage, error) {
 	ctx = entitlement.WithMemo(ctx)
 	empty := discovery.ContentPage{Contents: []discovery.Card{}}
-	recs, err := s.recommender()
-	if err != nil {
-		return empty, err
-	}
+	who, known := s.reader(o.Reader)
+	recs := s.recommender(who, known)
 	if err := contentref.ValidateID(anchorID); err != nil {
 		return empty, fmt.Errorf("%w: content id: %w", ErrInvalid, err)
 	}
 	var kind string
-	err = s.o.Pool.QueryRow(ctx, `SELECT kind FROM `+s.t.items+` WHERE tenant_id = $1 AND id = $2`, s.o.Tenant, anchorID).Scan(&kind)
+	err := s.o.Pool.QueryRow(ctx, `SELECT kind FROM `+s.t.items+` WHERE tenant_id = $1 AND id = $2`, s.o.Tenant, anchorID).Scan(&kind)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return empty, ErrNotFound
 	}
@@ -138,13 +138,14 @@ func (s *Service) Similar(ctx context.Context, anchorID string, o Recommendation
 func (s *Service) Recommendations(ctx context.Context, o RecommendationOptions) (discovery.ContentPage, error) {
 	ctx = entitlement.WithMemo(ctx)
 	empty := discovery.ContentPage{Contents: []discovery.Card{}}
-	recs, err := s.recommender()
-	if err != nil {
-		return empty, err
-	}
 	if !o.Actor.Member() {
 		return empty, fmt.Errorf("%w: recommendations need a signed-in reader", ErrInvalid)
 	}
+	who, known := s.reader(o.Reader)
+	if !known {
+		return empty, nil
+	}
+	recs := s.recommender(who, known)
 	q, err := s.compile(ctx, o.Reader, o.Filter)
 	if err != nil {
 		return empty, err
@@ -153,14 +154,10 @@ func (s *Service) Recommendations(ctx context.Context, o RecommendationOptions) 
 	if o.Summary {
 		a.candidates = map[string]struct{}{}
 	}
-	hits, err := recs.Recommend(ctx, signal.Subject{UserID: o.Actor.AccountID()}, discovery.RecommendOptions{ContentKinds: s.searchKinds(o.Kind),
+	hits, err := recs.Recommend(ctx, discovery.RecommendOptions{ContentKinds: s.searchKinds(o.Kind),
 		Limit: recLimit(o.Limit), Backfill: s.newest(q), Admit: a.admit,
 		Popular: func(ctx context.Context, kind string, limit int) ([]string, error) {
-			key, ok := s.rankingFor(ctx, o.Reader, kind, "")
-			if !ok {
-				return nil, nil
-			}
-			return s.topRanked(ctx, key, limit)
+			return s.topPopular(ctx, o.Reader, kind, rankings.Days30, limit)
 		}})
 	if err != nil {
 		return empty, err

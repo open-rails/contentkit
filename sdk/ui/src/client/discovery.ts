@@ -1,31 +1,26 @@
 import type {
-  ActivityContexts,
-  ActivityContextsInput,
-  ActivityTarget,
+  Activity,
+  ActivityEvent,
   ContentFilters,
   ContentFiltersUpdate,
   ContentPage,
   DailyReleases,
-  EngagementBatch,
-  EngagementSnapshot,
-  ExposureInput,
-  Exposures,
   LibraryPage,
   RecentSearches,
   ReleaseDates,
   SearchPage,
-  SignalInput,
-  Signals,
   Typeahead,
 } from "./generated/wire.js";
 import type { Http } from "./http.js";
 import { call, routeURL } from "./route.js";
 import { browserSearchHistory, type BrowserSearchHistory } from "./browser-search-history.js";
 
-/** A popularity period. */
-export type Period = "7d" | "30d" | "90d" | "365d" | "all";
-/** A list's order; position orders by the first of `groups` (an ordered group). */
-export type ListSort = "newest" | "oldest" | "title" | "popular" | `popular:${string}` | "top_rated" | "most_favorited" | "position" | "random";
+/** A featured popularity window: rolling, today included so far. */
+export type FeaturedWindow = "week" | "30d" | "90d" | "year" | "all";
+/** A popularity window: featured, a calendar month (`month:2026-10`) or year (`year:2025`), or days `from..last` (YYYY-MM-DD, last included). */
+export type PopularWindow = FeaturedWindow | `month:${string}` | `year:${string}` | `${string}..${string}`;
+/** A list's order; position orders by the first of `groups` (an ordered group). Popular ranks by `window` and needs `kind`. */
+export type ListSort = "newest" | "oldest" | "title" | "popular" | "top_rated" | "most_favorited" | "position" | "random";
 /** How locked contents list: marked (lock, the default) or left out (hide). */
 export type AccessMode = "lock" | "hide";
 
@@ -52,7 +47,7 @@ export interface ContentFilterQuery {
   released_on?: string;
   /** IANA time zone of released_on and release dates; UTC by default. */
   tz?: string;
-  /** The signed-in reader's unseen, in-progress or completed contents. */
+  /** The reader's unseen (new to them: never opened or hidden), in-progress or completed contents; signed out, by the browser's anonymous id. */
   view_status?: "unseen" | "in_progress" | "completed";
 }
 
@@ -84,26 +79,20 @@ export type ContentQuery = ContentFilterQuery & ReaderQuery & CardQuery & PageQu
   /** Selection-wide metadata; requested only on the first page. */
   summary?: boolean;
   sort?: ListSort;
-  /** Inclusive UTC date (YYYY-MM-DD); requires activity_until, kind and sort=popular. */
-  activity_from?: string;
-  /** Exclusive UTC date (YYYY-MM-DD); requires activity_from, kind and sort=popular. */
-  activity_until?: string;
+  /** The popular sort's window; week by default. */
+  window?: PopularWindow;
 };
 
-/** A host-declared popularity bucket ID. */
-export type PopularPeriod = string;
-/** Explicit whole UTC dates, from inclusive and until exclusive. */
-export interface PopularDateRange {from:string;until:string}
-export type PopularQuery = Omit<ContentQuery,"sort"|"activity_from"|"activity_until">;
+export type PopularQuery = Omit<ContentQuery,"sort"|"window">;
 
-/** Read a prepared bucket; omitted ID selects the kind's first configured bucket. */
-export function popularQuery(bucket: string | PopularDateRange = "", filters: PopularQuery = {}): ContentQuery {
- return typeof bucket === "string" ? {...filters,sort: bucket ? `popular:${bucket}` : "popular"} : {...filters,sort:"popular",activity_from:bucket.from,activity_until:bucket.until};
+/** A popular list over a window; the week by default. */
+export function popularQuery(window?: PopularWindow, filters: PopularQuery = {}): ContentQuery {
+  return window ? { ...filters, sort: "popular", window } : { ...filters, sort: "popular" };
 }
 
-/** Rank a whole-day range using prepared counts, never raw processing. */
-export function popularBetween(from:string,until:string,filters:PopularQuery & {kind:string}):ContentQuery {
- return popularQuery({from,until},filters);
+/** A popular list over UTC days from through last, both included. */
+export function popularBetween(from: string, last: string, filters: PopularQuery & { kind: string }): ContentQuery {
+  return popularQuery(`${from}..${last}`, filters);
 }
 
 export type SearchQuery = ContentFilterQuery &
@@ -113,14 +102,12 @@ export type SearchQuery = ContentFilterQuery &
   NumberedPageQuery & {
     q: string;
     sort?: "relevance" | ListSort;
+    /** The popular sort's window. */
+    window?: PopularWindow;
     personalize?: boolean;
     summary?: boolean;
-    /** Explicit legacy server-side anonymous history. Omit for public search without server history. */
-    session?: string;
   };
 export interface RecentSearchesQuery {
-  /** Explicit legacy server-side anonymous history; no anonymous session is created by default. */
-  session?: string;
   /** 10 by default, at most 100. */
   limit?: number;
 }
@@ -136,6 +123,8 @@ export type DailyReleasesQuery = Omit<ContentFilterQuery, "released_on" | "tz"> 
 /** Explicit known IDs under current reader policy. */
 export type KnownCardsQuery = ReaderQuery & CardQuery & { ids: readonly string[]; kind?: string; summary?: boolean };
 export type HistoryQuery = ReaderQuery & CardQuery & PageQuery & { kind?: string; status?: "seen" | "in_progress" | "completed"; summary?: boolean };
+/** Continue reading and watching: started, not finished, newest first. */
+export type ContinueQuery = ReaderQuery & CardQuery & PageQuery & { kind?: string };
 export interface TypeaheadQuery extends ReaderQuery {
   q: string;
   /** Only contents of this kind. */
@@ -170,7 +159,8 @@ export function query(q: object): Record<string, string | number | boolean | rea
 
 /**
  * Discovery: lists, search, typeahead, similar and recommended contents,
- * release dates, the reader's content filters and history, signals and exposures.
+ * release dates, the reader's content filters, history, continue reading,
+ * hidden contents and activity reports.
  */
 export class DiscoveryClient {
   /** Local anonymous history, isolated from authenticated server history. */
@@ -200,12 +190,12 @@ export class DiscoveryClient {
     emit?.({ type: "searches.changed" });
     return out;
   }
-  /** The reader's recent searches, newest first, since they last cleared them. */
+  /** The reader's recent searches, newest first, since they last cleared them; signed out, the browser's anonymous id's. */
   recentSearches(q: RecentSearchesQuery = {}, signal?: AbortSignal): Promise<RecentSearches> {
     return call(this.http, "GET", "/me/searches", { query: q, signal });
   }
   /** Clears one recent search, or all of them. */
-  async clearSearches(o: { query?: string; session?: string } = {}): Promise<void> {
+  async clearSearches(o: { query?: string } = {}): Promise<void> {
     const emit = this.http.captureChanges();
     await call(this.http, "DELETE", "/me/searches", { query: o });
     emit({ type: "searches.changed" });
@@ -247,36 +237,35 @@ export class DiscoveryClient {
     emit({ type: "contentFilters.changed" });
     return out;
   }
-  /** What the reader engaged with, most recent first. */
+  /** What the reader opened, most recent first. */
   history(q: HistoryQuery = {}, signal?: AbortSignal): Promise<ContentPage> {
     return call(this.http, "GET", "/me/history", { query: query(q) as never, signal });
   }
-  /** Erases the reader's history: of one content item, one kind or everything. */
+  /** Continue reading and watching: contents started but not finished, newest first, each card with its position. */
+  continue(q: ContinueQuery = {}, signal?: AbortSignal): Promise<ContentPage> {
+    return call(this.http, "GET", "/me/continue", { query: query(q) as never, signal });
+  }
+  /** Erases the reader's history: of one content item, one kind or everything. Hidden contents stay hidden. */
   async forgetHistory(o: { kind?: string; content_id?: string } = {}): Promise<void> {
     const emit = this.http.captureChanges();
     await call(this.http, "DELETE", "/me/history", { query: o });
     emit({ type: "history.changed" });
   }
-  /** Capture server-owned access and eligibility at an observation's start. */
-  activityContexts(targets: readonly ActivityTarget[], session?: string, language = this.http.language()): Promise<ActivityContexts> {
-    const body: ActivityContextsInput = { targets: [...targets], session, language };
-    return call(this.http, "POST", "/activity-contexts", { body });
-  }
-  /** Cumulative measured attention. Successful checkpoints refresh history/progress caches. */
-  async engagement(snapshots: EngagementSnapshot[], o: { session?: string; keepalive?: boolean } = {}): Promise<void> {
+  /** Hides a content item from every list the reader is served ("not interested"). */
+  async hide(id: string): Promise<void> {
     const emit = this.http.captureChanges();
-    const body: EngagementBatch = { session: o.session, snapshots };
-    await call(this.http, "POST", "/engagement", { body, keepalive: o.keepalive });
-    emit({ type: "engagement.changed", ids: [...new Set(snapshots.map(s => s.content_id))] });
+    await call(this.http, "PUT", "/contents/{id}/hidden", { params: { id } });
+    emit({ type: "hidden.changed", ids: [id] });
   }
-  /** Clicks and explicit feedback; signed out, of the visitor named. */
-  signals(signals: SignalInput[], session?: string, o: { keepalive?: boolean } = {}): Promise<void> {
-    const body: Signals = { session, signals };
-    return call(this.http, "POST", "/signals", { body, keepalive: o.keepalive });
+  /** Shows a hidden content item again. */
+  async unhide(id: string): Promise<void> {
+    const emit = this.http.captureChanges();
+    await call(this.http, "DELETE", "/contents/{id}/hidden", { params: { id } });
+    emit({ type: "hidden.changed", ids: [id] });
   }
-  /** Result lists served, rendered or shown, for click attribution. */
-  exposures(exposures: ExposureInput[], session?: string, o: { keepalive?: boolean } = {}): Promise<void> {
-    const body: Exposures = { session, exposures };
-    return call(this.http, "POST", "/exposures", { body, keepalive: o.keepalive });
+  /** Opens and progress reports; ActivityReporter batches them. */
+  activity(events: ActivityEvent[], o: { keepalive?: boolean } = {}): Promise<void> {
+    const body: Activity = { events, language: this.http.language() };
+    return call(this.http, "POST", "/activity", { body, keepalive: o.keepalive });
   }
 }

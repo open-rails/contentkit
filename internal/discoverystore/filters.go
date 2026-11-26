@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/open-rails/authkit/auth"
 	"github.com/open-rails/contentkit/access"
 	discovery "github.com/open-rails/contentkit/discovery"
@@ -143,30 +145,81 @@ func (i filterInventory) allowed() map[string]bool {
 }
 
 func (s *Service) SetContentFilters(ctx context.Context, actor access.Actor, u discovery.ContentFiltersUpdate) error {
-	return s.setContentFilters(ctx, actor, u.Filters, false)
+	return s.setContentFilters(ctx, actor, u.Filters)
 }
 
-func (s *Service) InitializeContentFilters(ctx context.Context, actor access.Actor, u discovery.ContentFiltersInitialization) error {
+// MergeContentFilters carries a signed-out browser's choices into the
+// account at sign-in: a choice fills an entity the account has not set, and
+// a hide wins over the account's show. Resets and entities no domain offers
+// are ignored, so a repeat changes nothing.
+func (s *Service) MergeContentFilters(ctx context.Context, actor access.Actor, u discovery.ContentFiltersMerge) error {
 	if u.AccountID == "" {
 		return fmt.Errorf("%w: account_id is required", ErrInvalid)
 	}
 	if !actor.Member() || actor.AccountID() != u.AccountID {
 		return auth.ErrForbidden
 	}
-	return s.setContentFilters(ctx, actor, u.Filters, true)
+	inventory, err := s.filterEntitiesForDomains(ctx, s.o.Kinds.ContentFilters.Domains)
+	if err != nil {
+		return err
+	}
+	allowed := inventory.allowed()
+	choices, seen := map[string]bool{}, map[string]bool{}
+	for _, f := range u.Filters {
+		if _, err := guestFilterValue(f); err != nil {
+			return err
+		}
+		if seen[f.EntityID] {
+			return fmt.Errorf("%w: entity %q is set twice", ErrInvalid, f.EntityID)
+		}
+		seen[f.EntityID] = true
+		if f.Visible != nil && allowed[f.EntityID] {
+			choices[f.EntityID] = *f.Visible
+		}
+	}
+	if len(choices) == 0 {
+		return nil
+	}
+	return pgx.BeginFunc(ctx, s.o.Pool, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `INSERT INTO `+s.t.prefs+` (tenant_id,user_id,overrides,updated_at) VALUES ($1,$2,'{}',now()) ON CONFLICT (tenant_id,user_id) DO NOTHING`,
+			s.o.Tenant, actor.AccountID()); err != nil {
+			return err
+		}
+		var raw []byte
+		if err := tx.QueryRow(ctx, `SELECT overrides FROM `+s.t.prefs+` WHERE tenant_id=$1 AND user_id=$2 FOR UPDATE`, s.o.Tenant, actor.AccountID()).Scan(&raw); err != nil {
+			return err
+		}
+		values := map[string]string{}
+		if err := json.Unmarshal(raw, &values); err != nil {
+			return err
+		}
+		patch := map[string]string{}
+		for id, visible := range choices {
+			saved, set := readerprefs.Stored(values, id)
+			switch {
+			case !set && visible:
+				patch[readerprefs.Key(id)] = readerprefs.Show
+			case !visible && (!set || saved):
+				patch[readerprefs.Key(id)] = readerprefs.Hide
+			}
+		}
+		if len(patch) == 0 {
+			return nil
+		}
+		out, err := json.Marshal(patch)
+		if err != nil {
+			return err
+		}
+		_, err = tx.Exec(ctx, `UPDATE `+s.t.prefs+` SET overrides=overrides || $3, updated_at=now() WHERE tenant_id=$1 AND user_id=$2`, s.o.Tenant, actor.AccountID(), out)
+		return err
+	})
 }
 
-func (s *Service) setContentFilters(ctx context.Context, actor access.Actor, choices []discovery.GuestFilterSetting, initialize bool) error {
+func (s *Service) setContentFilters(ctx context.Context, actor access.Actor, choices []discovery.GuestFilterSetting) error {
 	if !actor.Member() {
 		return fmt.Errorf("%w: content filters belong to a signed-in reader", ErrInvalid)
 	}
-	var inventory filterInventory
-	var err error
-	if initialize {
-		inventory, err = s.filterEntitiesForDomains(ctx, s.o.Kinds.ContentFilters.Domains)
-	} else {
-		inventory, err = s.filterEntities(ctx)
-	}
+	inventory, err := s.filterEntities(ctx)
 	if err != nil {
 		return err
 	}
@@ -183,21 +236,37 @@ func (s *Service) setContentFilters(ctx context.Context, actor access.Actor, cho
 		}
 		seen[f.EntityID] = true
 		if !allowed[f.EntityID] {
-			if initialize {
-				continue
-			}
 			return fmt.Errorf("%w: entity %q is not a content filter on this domain", ErrInvalid, f.EntityID)
 		}
 		patch[readerprefs.Key(f.EntityID)] = value
 	}
+	return s.patchPrefs(ctx, s.o.Pool, actor.AccountID(), patch)
+}
+
+// patchPrefs merges patch into the account's saved choices atomically.
+func (s *Service) patchPrefs(ctx context.Context, q interface {
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+}, account string, patch map[string]string) error {
 	raw, err := json.Marshal(patch)
 	if err != nil {
 		return err
 	}
-	conflict := `DO UPDATE SET overrides=saved.overrides || EXCLUDED.overrides,updated_at=now()`
-	if initialize {
-		conflict = `DO NOTHING`
-	}
-	_, err = s.o.Pool.Exec(ctx, `INSERT INTO `+s.t.prefs+` AS saved(tenant_id,user_id,overrides,updated_at) VALUES($1,$2,$3,now()) ON CONFLICT(tenant_id,user_id) `+conflict, s.o.Tenant, actor.AccountID(), raw)
+	_, err = q.Exec(ctx, `INSERT INTO `+s.t.prefs+` AS saved(tenant_id,user_id,overrides,updated_at) VALUES($1,$2,$3,now())
+ ON CONFLICT(tenant_id,user_id) DO UPDATE SET overrides=saved.overrides || EXCLUDED.overrides,updated_at=now()`, s.o.Tenant, account, raw)
 	return err
+}
+
+// PolarizingTags are the entities whose galleries have an audience: for now
+// the site's declared toggleable content filters, on every domain.
+func (s *Service) PolarizingTags(ctx context.Context) ([]string, error) {
+	inventory, err := s.filterEntitiesForDomains(ctx, s.o.Kinds.ContentFilters.Domains)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(inventory))
+	for _, id := range inventory {
+		out = append(out, id)
+	}
+	slices.Sort(out)
+	return slices.Compact(out), nil
 }

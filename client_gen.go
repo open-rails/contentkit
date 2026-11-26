@@ -20,7 +20,7 @@ import (
 	"github.com/open-rails/contentkit/media/versions"
 )
 
-// GetKinds is GET /v1/kinds (open). The site's content model: languages, tiers, content kinds, entity kinds, whether signals are recorded now and people's avatar preset.
+// GetKinds is GET /v1/kinds (open). The site's content model: languages, tiers, content kinds, entity kinds, whether activity is logged and people's avatar preset.
 func (c *Client) GetKinds(ctx context.Context) (ContentModel, error) {
 	var out ContentModel
 	err := c.call(ctx, http.MethodGet, "/v1/kinds", nil, nil, &out)
@@ -1769,8 +1769,10 @@ type GetEntitiesQuery struct {
 	Language string
 	// count contents of this kind; every kind by default
 	ContentKind string
-	// name (the default), count, newest or popular (one kind with popularity; its hourly ranking, then count)
+	// popular (the default with kind: its popularity on this site over window, then the entities without activity by count), name (the default without kind), count or newest
 	Sort string
+	// the popular sort's window: week (the default), 30d, 90d, year, all, month:YYYY-MM, year:YYYY or YYYY-MM-DD..YYYY-MM-DD
+	Window string
 	// the previous page's next_cursor
 	Cursor string
 	// a numbered page from 1 instead of cursor, with the total; page × limit is at most 10,000
@@ -1804,6 +1806,9 @@ func (q GetEntitiesQuery) values() url.Values {
 	}
 	if q.Sort != "" {
 		v.Set("sort", q.Sort)
+	}
+	if q.Window != "" {
+		v.Set("window", q.Window)
 	}
 	if q.Cursor != "" {
 		v.Set("cursor", q.Cursor)
@@ -1867,8 +1872,10 @@ type GetManageEntitiesQuery struct {
 	Language string
 	// count contents of this kind
 	ContentKind string
-	// name, count, newest or popular
+	// name (the default), count, newest or popular
 	Sort string
+	// the popular sort's window, as for the public listing
+	Window string
 	// the previous page's next_cursor
 	Cursor string
 	// page size: at most 200
@@ -1909,6 +1916,9 @@ func (q GetManageEntitiesQuery) values() url.Values {
 	}
 	if q.Sort != "" {
 		v.Set("sort", q.Sort)
+	}
+	if q.Window != "" {
+		v.Set("window", q.Window)
 	}
 	if q.Cursor != "" {
 		v.Set("cursor", q.Cursor)
@@ -2427,7 +2437,7 @@ func (c *Client) PutContentVersionReader(ctx context.Context, id string, version
 	return c.call(ctx, http.MethodPut, expand("/v1/contents/{id}/versions/{version}/reader", "{id}", url.PathEscape(id), "{version}", url.PathEscape(version)), nil, body, nil)
 }
 
-// GetContentVersionDownload is GET /v1/contents/{id}/versions/{version}/download (public). Grants a version's download, what its kind's download serves (the original, a rendition, its pages as a zip), as the host's download policy allows and names, charged to the viewer's download quota: a FileDownload whose short-lived URL serves it as an attachment. The URL is the media host's for an already served file, or the existing archive transfer route's for a ZIP or internal original/rendition (relative to this one). Includes only the released, download-authorized pages in manifest order. 202 while it is prepared; 403 download_unavailable with the policy's reason and available_at; 409 no_download when the version has nothing to serve.
+// GetContentVersionDownload is GET /v1/contents/{id}/versions/{version}/download (public). Grants a version's download, what its kind's download serves (its pages' masters as a ZIP, or its downloadable upload's master, the original under the identity recipe), as the host's download policy allows and names, charged to the viewer's download quota: a FileDownload whose short-lived URL, the archive transfer route relative to this one, streams it as an attachment. Includes only the released, download-authorized pages in manifest order. 202 while it is prepared; 403 download_unavailable with the policy's reason and available_at; 409 no_download when the version has nothing to serve.
 func (c *Client) GetContentVersionDownload(ctx context.Context, id string, version string) (*Reply, error) {
 	return c.raw(ctx, http.MethodGet, expand("/v1/contents/{id}/versions/{version}/download", "{id}", url.PathEscape(id), "{version}", url.PathEscape(version)), nil, nil)
 }
@@ -2501,7 +2511,7 @@ func (q GetContentVersionArchiveQuery) values() url.Values {
 	return v
 }
 
-// GetContentVersionArchive is GET /v1/contents/{id}/versions/{version}/archive (public). Streams the ZIP or exact configured single file a download granted after repeating access, publication, chapter and policy checks. Internal originals and HostOnly renditions never gain a gateway URL. Ordinary ZIPs are generated on demand and cached privately; personalized ZIPs are never cached. Signed editor authority and token-tier claims delegate only this transfer until ticket expiry, like a private media URL. 404 for an expired, stale or foreign ticket.
+// GetContentVersionArchive is GET /v1/contents/{id}/versions/{version}/archive (public). Streams the ZIP or exact configured single file a download granted after repeating access, publication, chapter and policy checks, reading masters where they are stored: internal originals and HostOnly renditions never gain a gateway URL. An unwatermarked download is the same bytes for its revision (Content-Length, ETag, ranges) and cached privately; a watermarked ZIP is marked and zipped anew for each request and never cached (private, no-store). Signed editor authority and token-tier claims delegate only this transfer until ticket expiry, like a private media URL. 404 for an expired, stale or foreign ticket.
 func (c *Client) GetContentVersionArchive(ctx context.Context, id string, version string, q GetContentVersionArchiveQuery) (*Reply, error) {
 	return c.raw(ctx, http.MethodGet, expand("/v1/contents/{id}/versions/{version}/archive", "{id}", url.PathEscape(id), "{version}", url.PathEscape(version)), q.values(), nil)
 }
@@ -2578,16 +2588,24 @@ func (c *Client) GetMeLibrary(ctx context.Context, q GetMeLibraryQuery) (discove
 	return out, err
 }
 
-// PostEngagement is POST /v1/engagement (public). Records bounded, idempotent measured engagement snapshots: loaded visible page coverage, focused active time or actually played timeline ranges. No opening, preload or page-turn counters. Each segment reuses its original subject-bound access receipt and revision; positive short partials can accumulate across visits.
-func (c *Client) PostEngagement(ctx context.Context, body discovery.EngagementBatch) error {
-	return c.call(ctx, http.MethodPost, "/v1/engagement", nil, body, nil)
+// PostActivity is POST /v1/activity (public). Logs the reader's opens and reading progress: an open names the list it came from; progress is the active time since the last report and the furthest and current page or second. A signed-out reader sends its anonymous id in ContentKit-Anonymous-Id, and every request may send ContentKit-UTC-Offset. Unknown content is skipped.
+func (c *Client) PostActivity(ctx context.Context, body discovery.Activity) error {
+	return c.call(ctx, http.MethodPost, "/v1/activity", nil, body, nil)
 }
 
-// PostActivityContexts is POST /v1/activity-contexts (public). Captures signed, immutable event-time access and eligible audience context before displaying or consuming content. Batches up to 100 targets; clients reuse each receipt for all revisions of one view.
-func (c *Client) PostActivityContexts(ctx context.Context, body discovery.ActivityContextsInput) (discovery.ActivityContexts, error) {
-	var out discovery.ActivityContexts
-	err := c.call(ctx, http.MethodPost, "/v1/activity-contexts", nil, body, &out)
-	return out, err
+// PostMeAnonymousLink is POST /v1/me/anonymous-link (user). Sent once at sign-in: the browser's anonymous id is now this account, so its reading state, history, reactions and recent searches fold into the account's.
+func (c *Client) PostMeAnonymousLink(ctx context.Context, body discovery.AnonymousLink) error {
+	return c.call(ctx, http.MethodPost, "/v1/me/anonymous-link", nil, body, nil)
+}
+
+// PutContentHidden is PUT /v1/contents/{id}/hidden (public). Hides a content item from every list the reader is served ("not interested"), at once; a signed-out reader hides by its anonymous id.
+func (c *Client) PutContentHidden(ctx context.Context, id string) error {
+	return c.call(ctx, http.MethodPut, expand("/v1/contents/{id}/hidden", "{id}", url.PathEscape(id)), nil, nil, nil)
+}
+
+// DeleteContentHidden is DELETE /v1/contents/{id}/hidden (public). Shows a hidden content item again: the undo of hiding it.
+func (c *Client) DeleteContentHidden(ctx context.Context, id string) error {
+	return c.call(ctx, http.MethodDelete, expand("/v1/contents/{id}/hidden", "{id}", url.PathEscape(id)), nil, nil, nil)
 }
 
 // GetReleasesQuery is the query of GetReleases.
@@ -2610,7 +2628,7 @@ type GetReleasesQuery struct {
 	Traits []string
 	// name:value of one of the kind's filterable attributes; repeat for more
 	Attribute []string
-	// the signed-in reader's unseen, in_progress or completed contents
+	// the reader's unseen (new to them: never opened or hidden), in_progress or completed contents; a signed-out reader's by its anonymous id
 	ViewStatus string
 	// only content with a live version in this language
 	Language string
@@ -2766,7 +2784,7 @@ type GetContentsQuery struct {
 	ReleasedOn string
 	// the IANA time zone of released_on and release dates; UTC by default
 	Tz string
-	// the signed-in reader's unseen, in_progress or completed contents
+	// the reader's unseen (new to them: never opened or hidden), in_progress or completed contents; a signed-out reader's by its anonymous id
 	ViewStatus string
 	// only content with a live version in this language
 	Language string
@@ -2774,16 +2792,14 @@ type GetContentsQuery struct {
 	DisplayLanguage string
 	// lock (the default: everything listed, locked cards marked) or hide (only what the reader opens)
 	Mode string
-	// newest, oldest, title, popular[:bucket], top_rated, most_favorited, position or random; the kind's default, else newest
+	// newest, oldest, title, popular (needs kind; pages by cursor), top_rated, most_favorited, position or random; the kind's default, else newest
 	Sort string
 	// the group kinds cards name; every kind with a page by default
 	CardEntities []string
 	// selection-wide total, filtered and locked counts on the first page or every numbered page
 	Summary *bool
-	// inclusive UTC date; requires activity_until, kind and sort=popular; reads prepared daily activity only
-	ActivityFrom string
-	// exclusive UTC date; requires activity_from, kind and sort=popular
-	ActivityUntil string
+	// the popular sort's window of activity days: week (the default), 30d, 90d, year, all, month:YYYY-MM, year:YYYY or YYYY-MM-DD..YYYY-MM-DD (last day included)
+	Window string
 	// the previous page's next_cursor
 	Cursor string
 	// page size: 24 by default, at most 100
@@ -2848,11 +2864,8 @@ func (q GetContentsQuery) values() url.Values {
 	if q.Summary != nil {
 		v.Set("summary", fmt.Sprint(*q.Summary))
 	}
-	if q.ActivityFrom != "" {
-		v.Set("activity_from", q.ActivityFrom)
-	}
-	if q.ActivityUntil != "" {
-		v.Set("activity_until", q.ActivityUntil)
+	if q.Window != "" {
+		v.Set("window", q.Window)
 	}
 	if q.Cursor != "" {
 		v.Set("cursor", q.Cursor)
@@ -2899,7 +2912,7 @@ type GetSearchQuery struct {
 	ReleasedOn string
 	// the IANA time zone of released_on and release dates; UTC by default
 	Tz string
-	// the signed-in reader's unseen, in_progress or completed contents
+	// the reader's unseen (new to them: never opened or hidden), in_progress or completed contents; a signed-out reader's by its anonymous id
 	ViewStatus string
 	// only content with a live version in this language
 	Language string
@@ -2913,10 +2926,10 @@ type GetSearchQuery struct {
 	CardEntities []string
 	// selection-wide total, filtered and locked counts on the first page or every numbered page
 	Summary *bool
-	// false ranks a signed-in reader's results as anyone's
+	// false ranks the reader's results as anyone's
 	Personalize *bool
-	// a signed-out reader's session, which keeps its recent searches
-	Session string
+	// the popular sort's window of activity days: week (the default), 30d, 90d, year, all, month:YYYY-MM, year:YYYY or YYYY-MM-DD..YYYY-MM-DD (last day included)
+	Window string
 	// the previous page's next_cursor
 	Cursor string
 	// page size: 24 by default, at most 100
@@ -2987,8 +3000,8 @@ func (q GetSearchQuery) values() url.Values {
 	if q.Personalize != nil {
 		v.Set("personalize", fmt.Sprint(*q.Personalize))
 	}
-	if q.Session != "" {
-		v.Set("session", q.Session)
+	if q.Window != "" {
+		v.Set("window", q.Window)
 	}
 	if q.Cursor != "" {
 		v.Set("cursor", q.Cursor)
@@ -3002,7 +3015,7 @@ func (q GetSearchQuery) values() url.Values {
 	return v
 }
 
-// GetSearch is GET /v1/search (public). Keyword search over contents, grouped per content item, personalized for a signed-in reader unless sorted otherwise.
+// GetSearch is GET /v1/search (public). Keyword search over contents, grouped per content item, personalized for a reader with reading state unless sorted otherwise. A first page's request_id names the search in the activity log.
 func (c *Client) GetSearch(ctx context.Context, q GetSearchQuery) (discovery.SearchPage, error) {
 	var out discovery.SearchPage
 	err := c.call(ctx, http.MethodGet, "/v1/search", q.values(), nil, &out)
@@ -3084,7 +3097,7 @@ type GetContentSimilarQuery struct {
 	ReleasedOn string
 	// the IANA time zone of released_on and release dates; UTC by default
 	Tz string
-	// the signed-in reader's unseen, in_progress or completed contents
+	// the reader's unseen (new to them: never opened or hidden), in_progress or completed contents; a signed-out reader's by its anonymous id
 	ViewStatus string
 	// only content with a live version in this language
 	Language string
@@ -3190,7 +3203,7 @@ type GetRecommendationsQuery struct {
 	ReleasedOn string
 	// the IANA time zone of released_on and release dates; UTC by default
 	Tz string
-	// the signed-in reader's unseen, in_progress or completed contents
+	// the reader's unseen (new to them: never opened or hidden), in_progress or completed contents; a signed-out reader's by its anonymous id
 	ViewStatus string
 	// only content with a live version in this language
 	Language string
@@ -3298,7 +3311,7 @@ type GetReleaseDatesQuery struct {
 	ReleasedOn string
 	// the IANA time zone of released_on and release dates; UTC by default
 	Tz string
-	// the signed-in reader's unseen, in_progress or completed contents
+	// the reader's unseen (new to them: never opened or hidden), in_progress or completed contents; a signed-out reader's by its anonymous id
 	ViewStatus string
 	// only content with a live version in this language
 	Language string
@@ -3420,13 +3433,13 @@ func (c *Client) PatchMeContentFilters(ctx context.Context, body discovery.Conte
 	return out, err
 }
 
-// PostMeContentFiltersInitializeQuery is the query of PostMeContentFiltersInitialize.
-type PostMeContentFiltersInitializeQuery struct {
+// PostMeContentFiltersMergeQuery is the query of PostMeContentFiltersMerge.
+type PostMeContentFiltersMergeQuery struct {
 	// the language of labels and group names
 	Language string
 }
 
-func (q PostMeContentFiltersInitializeQuery) values() url.Values {
+func (q PostMeContentFiltersMergeQuery) values() url.Values {
 	v := url.Values{}
 	if q.Language != "" {
 		v.Set("language", q.Language)
@@ -3434,10 +3447,57 @@ func (q PostMeContentFiltersInitializeQuery) values() url.Values {
 	return v
 }
 
-// PostMeContentFiltersInitialize is POST /v1/me/content-filters/initialize (user). Initializes the account_id's content filter settings from its guest choices only if no settings exist; account_id must match the authenticated account and retries preserve all saved settings.
-func (c *Client) PostMeContentFiltersInitialize(ctx context.Context, body discovery.ContentFiltersInitialization, q PostMeContentFiltersInitializeQuery) (discovery.ContentFilters, error) {
+// PostMeContentFiltersMerge is POST /v1/me/content-filters/merge (user). Carries a signed-out browser's content filter choices into account_id's settings at sign-in: a choice fills an entity the account has not set, and a hide wins over the account's show. account_id must be the authenticated account; resets and entities no domain offers are ignored.
+func (c *Client) PostMeContentFiltersMerge(ctx context.Context, body discovery.ContentFiltersMerge, q PostMeContentFiltersMergeQuery) (discovery.ContentFilters, error) {
 	var out discovery.ContentFilters
-	err := c.call(ctx, http.MethodPost, "/v1/me/content-filters/initialize", q.values(), body, &out)
+	err := c.call(ctx, http.MethodPost, "/v1/me/content-filters/merge", q.values(), body, &out)
+	return out, err
+}
+
+// PostContentFeedbackQuery is the query of PostContentFeedback.
+type PostContentFeedbackQuery struct {
+	// the version the reaction is on
+	Version string
+	// the language of entity names
+	Language string
+}
+
+func (q PostContentFeedbackQuery) values() url.Values {
+	v := url.Values{}
+	if q.Version != "" {
+		v.Set("version", q.Version)
+	}
+	if q.Language != "" {
+		v.Set("language", q.Language)
+	}
+	return v
+}
+
+// PostContentFeedback is POST /v1/contents/{id}/feedback (public). Offers a feedback prompt after the reader's own like, favorite or dislike of the content: a share of each reaction is asked about, one person is offered about one prompt a day and never two for one item. The prompt is recorded as offered; prompt is null when there is none.
+func (c *Client) PostContentFeedback(ctx context.Context, id string, body discovery.FeedbackRequest, q PostContentFeedbackQuery) (discovery.FeedbackOffer, error) {
+	var out discovery.FeedbackOffer
+	err := c.call(ctx, http.MethodPost, expand("/v1/contents/{id}/feedback", "{id}", url.PathEscape(id)), q.values(), body, &out)
+	return out, err
+}
+
+// PatchContentFeedbackQuery is the query of PatchContentFeedback.
+type PatchContentFeedbackQuery struct {
+	// the language of entity names
+	Language string
+}
+
+func (q PatchContentFeedbackQuery) values() url.Values {
+	v := url.Values{}
+	if q.Language != "" {
+		v.Set("language", q.Language)
+	}
+	return v
+}
+
+// PatchContentFeedback is PATCH /v1/contents/{id}/feedback (public). Answers the reader's feedback prompt on the content, or takes or declines its hide suggestion. A taken suggestion hides the tag in an account's content filters; a signed-out browser keeps the choice itself. not_found when no prompt was offered.
+func (c *Client) PatchContentFeedback(ctx context.Context, id string, body discovery.FeedbackInput, q PatchContentFeedbackQuery) (discovery.ReactionFeedback, error) {
+	var out discovery.ReactionFeedback
+	err := c.call(ctx, http.MethodPatch, expand("/v1/contents/{id}/feedback", "{id}", url.PathEscape(id)), q.values(), body, &out)
 	return out, err
 }
 
@@ -3502,6 +3562,57 @@ func (c *Client) GetMeHistory(ctx context.Context, q GetMeHistoryQuery) (discove
 	return out, err
 }
 
+// GetMeContinueQuery is the query of GetMeContinue.
+type GetMeContinueQuery struct {
+	// only this content kind
+	Kind string
+	// the group kinds cards name; every kind with a page by default
+	CardEntities []string
+	// only content with a live version in this language
+	Language string
+	// the language of titles, group names and paths, and the preferred language of each card's version; language by default
+	DisplayLanguage string
+	// lock (the default: everything listed, locked cards marked) or hide (only what the reader opens)
+	Mode string
+	// the previous page's next_cursor
+	Cursor string
+	// page size: 24 by default, at most 100
+	Limit int
+}
+
+func (q GetMeContinueQuery) values() url.Values {
+	v := url.Values{}
+	if q.Kind != "" {
+		v.Set("kind", q.Kind)
+	}
+	if len(q.CardEntities) > 0 {
+		v.Set("card_entities", strings.Join(q.CardEntities, ","))
+	}
+	if q.Language != "" {
+		v.Set("language", q.Language)
+	}
+	if q.DisplayLanguage != "" {
+		v.Set("display_language", q.DisplayLanguage)
+	}
+	if q.Mode != "" {
+		v.Set("mode", q.Mode)
+	}
+	if q.Cursor != "" {
+		v.Set("cursor", q.Cursor)
+	}
+	if q.Limit != 0 {
+		v.Set("limit", fmt.Sprint(q.Limit))
+	}
+	return v
+}
+
+// GetMeContinue is GET /v1/me/continue (public). Continue reading and watching: the reader's contents started but not finished, most recent first, each card with its position; bounced, finished, hidden and disliked ones are left out. A signed-out reader's come from its anonymous id. Filters and access apply.
+func (c *Client) GetMeContinue(ctx context.Context, q GetMeContinueQuery) (discovery.ContentPage, error) {
+	var out discovery.ContentPage
+	err := c.call(ctx, http.MethodGet, "/v1/me/continue", q.values(), nil, &out)
+	return out, err
+}
+
 // DeleteMeHistoryQuery is the query of DeleteMeHistory.
 type DeleteMeHistoryQuery struct {
 	// only this content kind
@@ -3521,19 +3632,9 @@ func (q DeleteMeHistoryQuery) values() url.Values {
 	return v
 }
 
-// DeleteMeHistory is DELETE /v1/me/history (user). Erases the reader's history: of one content item, one kind or everything.
+// DeleteMeHistory is DELETE /v1/me/history (user). Erases the reader's history: of one content item, one kind or everything. Hidden contents stay hidden.
 func (c *Client) DeleteMeHistory(ctx context.Context, q DeleteMeHistoryQuery) error {
 	return c.call(ctx, http.MethodDelete, "/v1/me/history", q.values(), nil, nil)
-}
-
-// PostSignals is POST /v1/signals (public). Records explicit clicks of the signed-in reader or, signed out, the stable browser identity; actual reading and playback use POST /engagement.
-func (c *Client) PostSignals(ctx context.Context, body discovery.Signals) error {
-	return c.call(ctx, http.MethodPost, "/v1/signals", nil, body, nil)
-}
-
-// PostExposures is POST /v1/exposures (public). Records result lists a client served, rendered or showed, for click attribution.
-func (c *Client) PostExposures(ctx context.Context, body discovery.Exposures) error {
-	return c.call(ctx, http.MethodPost, "/v1/exposures", nil, body, nil)
 }
 
 // GetMeFavoritesQuery is the query of GetMeFavorites.
@@ -3599,24 +3700,19 @@ func (c *Client) GetMeFavorites(ctx context.Context, q GetMeFavoritesQuery) (dis
 
 // GetMeSearchesQuery is the query of GetMeSearches.
 type GetMeSearchesQuery struct {
-	// a signed-out reader's session, which keeps its recent searches
-	Session string
 	// 10 by default, at most 100
 	Limit int
 }
 
 func (q GetMeSearchesQuery) values() url.Values {
 	v := url.Values{}
-	if q.Session != "" {
-		v.Set("session", q.Session)
-	}
 	if q.Limit != 0 {
 		v.Set("limit", fmt.Sprint(q.Limit))
 	}
 	return v
 }
 
-// GetMeSearches is GET /v1/me/searches (public). The reader's recent searches, newest first, since they last cleared them; a signed-out reader names its session.
+// GetMeSearches is GET /v1/me/searches (public). The reader's recent searches, newest first, since they last cleared them; a signed-out reader's are its anonymous id's (ContentKit-Anonymous-Id).
 func (c *Client) GetMeSearches(ctx context.Context, q GetMeSearchesQuery) (discovery.RecentSearches, error) {
 	var out discovery.RecentSearches
 	err := c.call(ctx, http.MethodGet, "/v1/me/searches", q.values(), nil, &out)
@@ -3625,17 +3721,12 @@ func (c *Client) GetMeSearches(ctx context.Context, q GetMeSearchesQuery) (disco
 
 // DeleteMeSearchesQuery is the query of DeleteMeSearches.
 type DeleteMeSearchesQuery struct {
-	// a signed-out reader's session, which keeps its recent searches
-	Session string
 	// only this query
 	Query string
 }
 
 func (q DeleteMeSearchesQuery) values() url.Values {
 	v := url.Values{}
-	if q.Session != "" {
-		v.Set("session", q.Session)
-	}
 	if q.Query != "" {
 		v.Set("query", q.Query)
 	}
@@ -3709,29 +3800,24 @@ func (c *Client) GetSitemapEntities(ctx context.Context, q GetSitemapEntitiesQue
 	return out, err
 }
 
-// GetStatsActivityQuery is the query of GetStatsActivity.
-type GetStatsActivityQuery struct {
-	// the content kind; required
-	Kind string
+// GetStatsActiveQuery is the query of GetStatsActive.
+type GetStatsActiveQuery struct {
 	// the last days, today included: 10 by default, at most 90
 	Days int
 }
 
-func (q GetStatsActivityQuery) values() url.Values {
+func (q GetStatsActiveQuery) values() url.Values {
 	v := url.Values{}
-	if q.Kind != "" {
-		v.Set("kind", q.Kind)
-	}
 	if q.Days != 0 {
 		v.Set("days", fmt.Sprint(q.Days))
 	}
 	return v
 }
 
-// GetStatsActivity is GET /v1/stats/activity (staff). A content kind's measured readership for every UTC day of the period, newest first: distinct people who read or played it (a visit without reading never counts), split into application-defined cohorts, with their focused active time, from the signal plane.
-func (c *Client) GetStatsActivity(ctx context.Context, q GetStatsActivityQuery) (discovery.Activity, error) {
-	var out discovery.Activity
-	err := c.call(ctx, http.MethodGet, "/v1/stats/activity", q.values(), nil, &out)
+// GetStatsActive is GET /v1/stats/active (staff). Distinct people active on the site for every UTC day of the period, newest first, by access (anonymous, account or the tiers an account's token claimed), from the analytics job's daily rollups; today is as of its last hourly rebuild.
+func (c *Client) GetStatsActive(ctx context.Context, q GetStatsActiveQuery) (discovery.ActiveDays, error) {
+	var out discovery.ActiveDays
+	err := c.call(ctx, http.MethodGet, "/v1/stats/active", q.values(), nil, &out)
 	return out, err
 }
 

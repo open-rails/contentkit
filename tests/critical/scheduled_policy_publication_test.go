@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	mediastore "github.com/open-rails/contentkit/internal/mediastore"
 	versionstore "github.com/open-rails/contentkit/internal/versionstore"
 
 	"github.com/google/uuid"
@@ -22,7 +23,7 @@ func TestScheduledPolicyPublishesWithoutStorageAreaChange(t *testing.T) {
 	w := newWorld(t)
 	a := w.apps[0]
 	b := attachBilling(t, w, a)
-	attachMedia(t, w, a, func(cfg *ck.Config) {
+	storage := attachMedia(t, w, a, func(cfg *ck.Config) {
 		cfg.Media.Kinds[0].Publish = &media.Publish{Pages: "pages/{name}", Renditions: []string{"reader"}}
 	})
 	admin := a.engine.Client()
@@ -55,25 +56,34 @@ func TestScheduledPolicyPublishesWithoutStorageAreaChange(t *testing.T) {
 		must(t, err)
 	}
 	type snapshot struct {
-		id     string
-		access access.Rule
-		copies int
+		released bool
+		access   access.Rule
 	}
 	read := func(version string) snapshot {
 		t.Helper()
 		var out snapshot
 		var raw []byte
-		must(t, w.pool.QueryRow(t.Context(), `SELECT coalesce(v.release_id::text,''),v.released_access,
- coalesce(jsonb_array_length(nullif(r.result->'copies','null'::jsonb)),0)
- FROM `+w.schema+`.content_versions v LEFT JOIN `+w.schema+`.content_publication_requests r
- ON r.tenant_id=v.tenant_id AND r.id=v.release_id
- WHERE v.tenant_id=$1 AND v.id=$2`, a.cfg.Scope.AppID.String(), version).Scan(&out.id, &raw, &out.copies))
+		must(t, w.pool.QueryRow(t.Context(), `SELECT v.released,v.released_access FROM `+w.schema+`.content_versions v
+ WHERE v.tenant_id=$1 AND v.id=$2`, a.cfg.Scope.AppID.String(), version).Scan(&out.released, &raw))
 		if len(raw) > 0 {
 			must(t, json.Unmarshal(raw, &out.access))
 		}
 		return out
 	}
-	waitForChapterPublication(t, func() bool { return read(private.Versions[0].ID).id != "" && read(empty.Versions[0].ID).id != "" })
+	mediaConfig, err := a.cfg.MediaKinds()
+	must(t, err)
+	registry, err := mediastore.NewRegistry(mediaConfig, mediastore.Hooks{})
+	must(t, err)
+	manifests := mustManifests(t, storage.store, registry)
+	privateRef, err := registry.VersionRef(ref.Kind, ref.ID, ref.Version)
+	must(t, err)
+	revision := func() int64 {
+		t.Helper()
+		m, _, err := manifests.Get(t.Context(), privateRef)
+		must(t, err)
+		return m.Rev
+	}
+	waitForChapterPublication(t, func() bool { return read(private.Versions[0].ID).released && read(empty.Versions[0].ID).released })
 	// Drain immediate follow-ups before advancing the fixture clock: a worker
 	// already copying would legitimately observe a newly mature policy.
 	waitForChapterPublication(t, func() bool {
@@ -84,9 +94,10 @@ func TestScheduledPolicyPublishesWithoutStorageAreaChange(t *testing.T) {
 		return count == 0
 	})
 	initialPrivate, initialEmpty := read(private.Versions[0].ID), read(empty.Versions[0].ID)
-	if len(initialPrivate.access.Releases) != 0 || len(initialEmpty.access.Releases) != 0 || initialEmpty.copies != 0 {
-		t.Fatal("initial completed policy included a future audience or fabricated storage work")
+	if len(initialPrivate.access.Releases) != 0 || len(initialEmpty.access.Releases) != 0 {
+		t.Fatal("initial completed policy included a future audience")
 	}
+	before := revision()
 	goldReader, anonymous := a.client(credential), a.client("")
 	check := func(client *ck.Client, item catalog.Content, allowed bool) {
 		t.Helper()
@@ -105,13 +116,13 @@ func TestScheduledPolicyPublishesWithoutStorageAreaChange(t *testing.T) {
 	waitForChapterPublication(t, func() bool {
 		wakeDuePublicationJobs(t, a)
 		p, e := read(private.Versions[0].ID), read(empty.Versions[0].ID)
-		return p.id != initialPrivate.id && e.id != initialEmpty.id && len(p.access.Releases) == 1 && len(e.access.Releases) == 1
+		return len(p.access.Releases) == 1 && len(e.access.Releases) == 1
 	})
 	check(goldReader, private, true)
 	check(anonymous, private, false)
 	check(anonymous, empty, true)
-	if read(empty.Versions[0].ID).copies != 0 {
-		t.Fatal("media-bound empty edition needed no storage copies")
+	if revision() != before {
+		t.Fatal("a tier audience moved the private edition's files")
 	}
 	view, err := goldReader.GetMediaVersion(t.Context(), ref.Kind, ref.ID, ref.Version, ck.GetMediaVersionQuery{})
 	must(t, err)

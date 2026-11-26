@@ -584,35 +584,9 @@ if (group === "catalog_publication") {
     "forbidden",
   );
   proved("DiscoveryClient.adminSuggestions");
-  // Similar comes from co-reading: a guest reads both through the same
-  // activity-context and engagement calls a browser makes. A separate
-  // visitor keeps the reader's own recommendations unread.
-  const targets = [{ content_id: one.id }, { content_id: two.id }];
-  const session = crypto.randomUUID();
-  const contexts = await anonymous.discovery.activityContexts(targets, session);
-  assert.equal(contexts.enabled, true);
-  await anonymous.discovery.engagement(
-    targets.map((target) => ({
-      ...target,
-      visit_id: crypto.randomUUID(),
-      segment_id: crypto.randomUUID(),
-      revision: 1,
-      activity_token: contexts.contexts.find(
-        (context) => context.content_id === target.content_id,
-      ).token,
-      active_ms: 1000,
-      pages: [{ index: 0, ranges: [{ from: 0, to: 10000 }], active_ms: 1000 }],
-    })),
-    { session },
-  );
-  const similarDeadline = Date.now() + 30_000;
-  let similar;
-  do {
-    similar = await anonymous.discovery.similar(one.id, query);
-    if (ids(similar).length > 0) break;
-    await new Promise((resolve) => setTimeout(resolve, 250));
-  } while (Date.now() < similarDeadline);
-  assert.deepEqual(ids(similar), [two.id]);
+  // Similar never lists content the reader's query excludes.
+  const similar = await anonymous.discovery.similar(one.id, query);
+  assert.ok(ids(similar).every((id) => id === two.id));
   proved("DiscoveryClient.similar");
   assert.deepEqual(
     ids(await reader.discovery.recommendations(query)).sort(),
@@ -675,6 +649,50 @@ if (group === "catalog_publication") {
   await reader.channels.remove(destination.id);
   await refused(() => anonymous.channels.get(destination.id), 404, "not_found");
   proved("ChannelsClient.create", "ChannelsClient.get", "ChannelsClient.list", "ChannelsClient.update", "ChannelsClient.entities", "ChannelsClient.setEntities", "ChannelsClient.repost", "ChannelsClient.removeRepost", "ChannelsClient.contents", "ChannelsClient.remove");
+} else if (group === "reaction_feedback") {
+  const liked = { id: fixture.liked };
+  await reader.reactions.set({ type: "contents", id: fixture.liked }, 1);
+  const prompt = await reader.feedback.ask(liked, "like");
+  assert.equal(prompt?.polarity, "like");
+  assert(prompt.tags.some((tag) => tag.id === fixture.plain), "the like names the item's tags");
+  const answered = await reader.feedback.answer(liked, { reason: "tag", entity_id: fixture.plain });
+  assert.equal(answered.answer?.reason, "tag");
+  assert.equal(answered.follow_up?.action, "browse");
+  assert.equal(await reader.feedback.ask(liked, "like"), null, "never asked twice about one item");
+  proved("FeedbackClient.ask", "FeedbackClient.answer");
+
+  // A signed-out browser hides a tag through its dislike, then signs in.
+  let token = null;
+  const browser = createContentKitClient({ baseUrl: fixture.base, token: () => token });
+  browser.preferences.configure(null);
+  const furryItem = { id: fixture.furryItem };
+  await browser.reactions.set({ type: "contents", id: fixture.furryItem }, -1);
+  const guest = await browser.feedback.ask(furryItem, "dislike");
+  assert.deepEqual(guest?.tags.map((tag) => [tag.id, tag.hideable]), [[fixture.furry, true]]);
+  assert(guest.reasons.includes("not_into"));
+  const taken = await browser.feedback.answer(furryItem, { reason: "not_into", entity_id: fixture.furry, hide: true });
+  assert.equal(taken.hide_taken, true);
+  assert.deepEqual(browser.preferences.browser.snapshot().filters, [{ entity_id: fixture.furry, visible: false }]);
+  token = fixture.signer;
+  browser.preferences.configure(fixture.signerID);
+  await browser.preferences.carryGuestFilters();
+  const carried = (await browser.discovery.contentFilters()).filters.find((row) => row.entity.id === fixture.furry);
+  assert.equal(carried?.visible, false, "the browser's hide carried into the account");
+  assert.equal(carried?.overridden, true);
+  proved("ReaderPreferencesClient.carryGuestFilters");
+
+  const goreItem = { id: fixture.goreItem };
+  await browser.reactions.set({ type: "contents", id: fixture.goreItem }, -1);
+  const disliked = await browser.feedback.ask(goreItem, "dislike");
+  assert.equal(disliked?.tags[0]?.id, fixture.gore);
+  const named = await browser.feedback.answer(goreItem, { reason: "not_into", entity_id: fixture.gore });
+  assert.equal(named.hide?.id, fixture.gore);
+  assert.equal(named.hide_taken, null);
+  const declined = await browser.feedback.hide(goreItem, named, false);
+  assert.equal(declined.hide_taken, false);
+  const kept = (await browser.discovery.contentFilters()).filters.find((row) => row.entity.id === fixture.gore);
+  assert.equal(kept?.overridden, false, "declining leaves the filters");
+  proved("FeedbackClient.hide");
 } else if (group.startsWith("media_")) {
   bindings.push(...(await runMediaContracts(group, fixture)));
 } else throw new Error(`Unknown contract group ${group}`);

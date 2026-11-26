@@ -154,8 +154,6 @@ type Kind struct {
 	Channel *ChannelPolicy `json:"channel,omitempty" yaml:"channel"`
 	// Sort is the default list order.
 	Sort string `json:"sort,omitempty" yaml:"sort"`
-	// Popularity declares the prepared ranking choices, in display/default order.
-	Popularity []PopularityBucket `json:"popularity,omitempty" yaml:"popularity"`
 	// Locked is what a viewer who does not open its content sees of it;
 	// nil is DefaultLocked.
 	Locked *Locked `json:"locked,omitempty" yaml:"locked"`
@@ -179,15 +177,15 @@ func (k Kind) AllowsComments(mode string) bool {
 type Download struct {
 	// Off: the kind's versions have no download.
 	Off bool `json:"off,omitempty" yaml:"off"`
-	// Serve is DownloadPages, DownloadOriginal or a private MP4 preset of the
-	// kind's media ("mp4-1080"); empty is the presentation's default.
+	// Serve is DownloadPages or DownloadOriginal; empty is the
+	// presentation's default.
 	Serve string `json:"serve,omitempty" yaml:"serve"`
 }
 
 // What a download serves.
 const (
-	// DownloadPages is a zip of the version's pages (the media kind's
-	// Publish.Download), the default of readers.
+	// DownloadPages is a ZIP of the version's released pages, the default
+	// of readers.
 	DownloadPages = "pages"
 	// DownloadOriginal is the version's video as uploaded (the upload its HLS
 	// ladder encodes), the default of players.
@@ -215,8 +213,8 @@ func (d Download) validate() error {
 	if d.Off && d.Serve != "" {
 		return errors.New("download is off: it serves nothing")
 	}
-	if d.Serve != "" && d.Serve != DownloadPages && d.Serve != DownloadOriginal && !routeRE.MatchString(d.Serve) {
-		return fmt.Errorf("download serves %q: pages, original or a preset name", d.Serve)
+	if d.Serve != "" && d.Serve != DownloadPages && d.Serve != DownloadOriginal {
+		return fmt.Errorf("download serves %q: pages or original", d.Serve)
 	}
 	return nil
 }
@@ -342,9 +340,6 @@ type EntityKind struct {
 	// Avatar gives site-owned entities a square avatar beside their cover;
 	// user-owned kinds always have one.
 	Avatar bool `json:"avatar,omitempty" yaml:"avatar"`
-	// Uploads limit what editors other than staff upload to a user-owned
-	// entity's media.
-	Uploads UploadLimits `json:"-" yaml:"-"`
 	// Entitled entities expose membership backed by their stable entitlement key.
 	Entitled bool `json:"-" yaml:"-"`
 	// AuthScope entities name an AuthKit group whose permissions govern their
@@ -362,13 +357,10 @@ type EntityKind struct {
 	// Roles are membership roles (publisher on an artist entity).
 	Roles      []string             `json:"roles,omitempty" yaml:"roles"`
 	Attributes map[string]Attribute `json:"attributes,omitempty" yaml:"attributes"`
-	// Popular lets the kind's listings sort by popularity.
-	Popular *EntityPopularity `json:"popular,omitempty" yaml:"popular"`
-}
-
-// EntityPopularity ranks a kind's entities by recent account favourites.
-type EntityPopularity struct {
-	ContentKind string `json:"content_kind" yaml:"content_kind"`
+	// Artist kinds name who made the content (artists, circles): similar
+	// lists weigh a shared artist and popular listings show its read-through
+	// rate.
+	Artist bool `json:"artist,omitempty" yaml:"artist"`
 }
 
 // HasAvatar reports whether the kind's entities take an avatar.
@@ -384,15 +376,6 @@ func (k EntityKind) AllowsMembership(scope MembershipScope) bool {
 		return scope == VersionScope
 	}
 	return scope == ContentScope
-}
-
-// UploadLimits bound a user-owned entity's uploads; zero fields are off.
-type UploadLimits struct {
-	// FilesPerHour and BytesPerDay limit each uploader.
-	FilesPerHour int   `json:"files_per_hour,omitempty" yaml:"files_per_hour"`
-	BytesPerDay  int64 `json:"bytes_per_day,omitempty" yaml:"bytes_per_day"`
-	// QuotaBytes caps the entity's stored originals.
-	QuotaBytes int64 `json:"quota_bytes,omitempty" yaml:"quota_bytes"`
 }
 
 var (
@@ -441,7 +424,7 @@ func (c Config) Validate() error {
 		return nil
 	}
 	for name, gk := range c.EntityKinds {
-		if name != "channel" && (gk.Owner == "user" || gk.AuthScope || gk.Entitled || gk.MaxPerOwner != 0 || gk.Uploads != (UploadLimits{})) {
+		if name != "channel" && (gk.Owner == "user" || gk.AuthScope || gk.Entitled || gk.MaxPerOwner != 0) {
 			return fmt.Errorf("%w: authoring ownership, scopes and paid membership belong to channels, not metadata kind %s", ErrInvalid, name)
 		}
 		if name == "channel" && !c.channelStorage {
@@ -483,9 +466,6 @@ func (c Config) Validate() error {
 		if gk.MaxPerOwner < 0 || gk.MaxPerOwner > 0 && gk.Owner != "user" {
 			return fmt.Errorf("%w: group kind %s: max_per_owner is a non-negative cap of user-owned groups", ErrInvalid, name)
 		}
-		if u := gk.Uploads; u.FilesPerHour < 0 || u.BytesPerDay < 0 || u.QuotaBytes < 0 || u != (UploadLimits{}) && gk.Owner != "user" && name != "channel" {
-			return fmt.Errorf("%w: group kind %s: uploads are non-negative limits of user-owned groups", ErrInvalid, name)
-		}
 		for _, r := range gk.Roles {
 			if !identRE.MatchString(r) {
 				return fmt.Errorf("%w: group kind %s role %q", ErrInvalid, name, r)
@@ -493,12 +473,6 @@ func (c Config) Validate() error {
 		}
 		if err := validateAttributes("group kind "+name, gk.Attributes); err != nil {
 			return err
-		}
-		if p := gk.Popular; p != nil {
-			content, ok := c.Kinds[p.ContentKind]
-			if !ok || !slices.Contains(content.Entities, name) {
-				return fmt.Errorf("%w: group kind %s: popular names a content kind that groups it", ErrInvalid, name)
-			}
 		}
 	}
 	if ch := c.Channels; ch != nil {
@@ -513,9 +487,6 @@ func (c Config) Validate() error {
 		if ch.MaxPerOwner < 0 || ch.MaxPerOwner > 0 && ch.Creation != "users" {
 			return fmt.Errorf("%w: channels.max_per_owner requires users creation", ErrInvalid)
 		}
-		if u := ch.Uploads; u.FilesPerHour < 0 || u.BytesPerDay < 0 || u.QuotaBytes < 0 {
-			return fmt.Errorf("%w: channel upload limits must be nonnegative", ErrInvalid)
-		}
 		for _, name := range ch.Entities {
 			if _, ok := c.EntityKinds[name]; !ok || name == "channel" {
 				return fmt.Errorf("%w: unknown channel metadata kind %q", ErrInvalid, name)
@@ -525,9 +496,6 @@ func (c Config) Validate() error {
 	for name, k := range c.Kinds {
 		if name == "channel" {
 			return fmt.Errorf("%w: channel is reserved for authoring channels", ErrInvalid)
-		}
-		if err := c.validatePopularity(name, k.Popularity); err != nil {
-			return err
 		}
 		if k.AccessScope != "" && k.AccessScope != AccessContent && k.AccessScope != AccessVersion {
 			return fmt.Errorf("%w: kind %s has invalid access_scope %q", ErrInvalid, name, k.AccessScope)

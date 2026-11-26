@@ -19,7 +19,6 @@ import (
 	"github.com/open-rails/contentkit/internal/clientaddr"
 	"github.com/open-rails/contentkit/internal/codes"
 	contentstore "github.com/open-rails/contentkit/internal/contentstore"
-	"github.com/open-rails/contentkit/signal"
 )
 
 // typed adapts a store's batch write to a section's.
@@ -80,12 +79,8 @@ func (run *batchRun) sections() []section {
 		{name: importer.SectionVotes, n: len(b.Votes), prepare: run.vote, write: counted(s.o.Content.ImportVotes),
 			screen: screened(s.o.Content.ScreenVotes)},
 		{name: importer.SectionLegacyReading, n: len(b.LegacyReading), prepare: run.legacyReading,
-			write: typed(func(ctx context.Context, _ pgx.Tx, in []discovery.ImportLegacyReading) error {
-				return s.o.Signals.ImportLegacyReading(ctx, in)
-			})},
-		{name: importer.SectionSignals, n: len(b.Signals), prepare: run.signal,
-			write: typed(func(ctx context.Context, _ pgx.Tx, in []discovery.ImportSignal) error {
-				return s.o.Signals.ImportSignals(ctx, in)
+			write: typed(func(ctx context.Context, tx pgx.Tx, in []discovery.ImportLegacyReading) error {
+				return s.o.Signals.ImportLegacyReading(ctx, tx, in)
 			})},
 		{name: importer.SectionDeletes, n: len(b.Deletes), prepare: run.deletion, write: counted(s.deletes),
 			first: func(in any) bool {
@@ -93,10 +88,10 @@ func (run *batchRun) sections() []section {
 				return e == importer.RecordEntity || e == importer.RecordChannel
 			}},
 	}
-	if s.o.Signals == nil || !s.o.Signals.SignalPlane() {
+	if s.o.Signals == nil {
 		for i := range out {
-			if out[i].name == importer.SectionSignals || out[i].name == importer.SectionLegacyReading {
-				out[i].skip = "no signal plane, or it is down"
+			if out[i].name == importer.SectionLegacyReading {
+				out[i].skip = "no reading state"
 			}
 		}
 	}
@@ -326,23 +321,6 @@ func (run *batchRun) vote(r *resolver, i int) (any, string, error) {
 	return content.ImportVote{PollID: poll, OptionID: option, UserID: user, IP: ip, CreatedAt: v.CreatedAt}, "", nil
 }
 
-func (run *batchRun) signal(r *resolver, i int) (any, string, error) {
-	x := run.b.Signals[i]
-	t, err := r.target(x.Target, allowContent|allowVersion)
-	if err != nil {
-		return nil, x.EventID, err
-	}
-	user, err := account(x.UserID)
-	if err != nil {
-		return nil, x.EventID, err
-	}
-	if (user == "") == (x.AnonKey == "") {
-		return nil, x.EventID, fmt.Errorf("%w: a signal names a user_id or an anon_key", errInvalid)
-	}
-	return discovery.ImportSignal{ContentID: t.content, VersionID: t.version, Subject: signal.Subject{UserID: user, AnonKey: x.AnonKey}, Type: x.Type,
-		EventID: x.EventID, Revision: x.Revision, OccurredAt: x.OccurredAt}, x.EventID, nil
-}
-
 // deletion is one record to delete, resolved to its id.
 type deletion struct {
 	entity, id string
@@ -409,13 +387,12 @@ func (run *batchRun) legacyReading(r *resolver, i int) (any, string, error) {
 	if err != nil {
 		return nil, row.UserID, err
 	}
-	subject := signal.Subject{UserID: user, AnonKey: row.AnonKey}
-	if err := subject.Validate(); err != nil {
-		return nil, row.UserID, fmt.Errorf("%w: %v", errInvalid, err)
+	if user == "" {
+		return nil, row.UserID, fmt.Errorf("%w: legacy reading names a user_id", errInvalid)
 	}
-	key := subject.Kind() + ":" + subject.Key() + "/" + target.content + "/" + target.version
-	return discovery.ImportLegacyReading{ContentID: target.content, VersionID: target.version, Subject: subject, FirstReadAt: row.FirstReadAt,
-		LastReadAt: row.LastReadAt, Removed: row.Removed, Progress: row.Progress, ProgressMax: row.ProgressMax, Completed: row.Completed, Resume: row.Resume, Revision: row.Revision}, key, nil
+	key := user + "/" + target.content
+	return discovery.ImportLegacyReading{ContentID: target.content, AccountID: user, FirstReadAt: row.FirstReadAt,
+		LastReadAt: row.LastReadAt, Removed: row.Removed, Progress: row.Progress, ProgressMax: row.ProgressMax, Completed: row.Completed}, key, nil
 }
 
 // account is an imported account id as an authenticated subject carries it:
