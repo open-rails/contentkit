@@ -210,6 +210,41 @@ check("acceptsFile", () => {
   assert.equal(sdk.acceptsFile(undefined, { name: "any.bin", type: "" }), true);
   assert.equal(sdk.acceptsFile(" , ", { name: "any.bin", type: "" }), true);
 });
+check("otherLevels", async () => {
+  // An HDR source's ladder as hls.js sorts it: AV1 PQ and H.264 SDR rungs.
+  const av1 = (h, r) => ({ codecSet: "av01,mp4a", videoCodec: "av01.0.08M.10.0.110.09.16.09.0", videoRange: r, width: h * 16 / 9, height: h, bitrate: h * 3000 });
+  const avc = (h) => ({ codecSet: "avc1,mp4a", videoCodec: "avc1.640028", videoRange: "SDR", width: h * 16 / 9, height: h, bitrate: h * 5000 });
+  const levels = [avc(480), av1(480, "PQ"), avc(1080), av1(1080, "PQ")];
+  const asked = [];
+  const env = (display, decodes) => ({
+    matchMedia: (query) => ({ matches: query === "(dynamic-range: high)" && display }),
+    navigator: { mediaCapabilities: { decodingInfo: async (c) => { asked.push(c); return { supported: decodes(c) }; } } },
+  });
+  const sdrOnly = [2, 0], hdrOnly = [3, 1];
+  // An SDR screen plays SDR without asking the decoder.
+  assert.deepEqual(await sdk.otherLevels(levels, 1, env(false, () => true)), hdrOnly);
+  assert.deepEqual(asked, []);
+  // An HDR screen plays HDR only when MediaCapabilities confirms PQ in BT.2020.
+  assert.deepEqual(await sdk.otherLevels(levels, 1, env(true, () => true)), sdrOnly);
+  assert.equal(asked.length, 2);
+  assert.deepEqual(asked.map((c) => [c.type, c.video.transferFunction, c.video.colorGamut, c.video.contentType]),
+    [["media-source", "pq", "rec2020", `video/mp4; codecs="${av1(480).videoCodec}"`], ["media-source", "pq", "rec2020", `video/mp4; codecs="${av1(480).videoCodec}"`]]);
+  assert.deepEqual(await sdk.otherLevels(levels, 1, env(true, () => false)), hdrOnly);
+  // A top rung the decoder refuses is dropped; HDR plays below it.
+  assert.deepEqual(await sdk.otherLevels(levels, 1, env(true, (c) => c.video.height < 1080)), [3, 2, 0]);
+  assert.deepEqual(await sdk.otherLevels(levels, 1, { matchMedia: () => ({ matches: true }) }), hdrOnly);
+  // HLG asks for its own transfer; a ladder with no SDR keeps its HDR.
+  asked.length = 0;
+  const hlg = [av1(480, "HLG"), av1(1080, "HLG")];
+  assert.deepEqual(await sdk.otherLevels([avc(480), ...hlg], 1, env(true, () => true)), [0]);
+  assert.deepEqual(asked.map((c) => c.video.transferFunction), ["hlg", "hlg"]);
+  assert.deepEqual(await sdk.otherLevels(hlg, 0, env(false, () => false)), []);
+  // An SDR ladder keeps the first-listed codec set, as before.
+  const sdr = [avc(480), { ...av1(480, "SDR"), videoCodec: "av01.0.08M.08" }, avc(1080), { ...av1(1080, "SDR"), videoCodec: "av01.0.08M.08" }];
+  assert.deepEqual(await sdk.otherLevels(sdr, 1, env(true, () => true)), [2, 0]);
+  assert.deepEqual(await sdk.otherLevels(sdr, -1, env(false, () => true)), [3, 1]);
+  assert.equal(sdk.hdrDisplay(env(true, () => true)), true); assert.equal(sdk.hdrDisplay({}), false);
+});
 
 const results = [];
 for (const [name, run] of checks) {

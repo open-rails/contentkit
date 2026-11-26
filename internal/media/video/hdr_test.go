@@ -208,7 +208,8 @@ func TestHDRLadder(t *testing.T) {
 				t.Fatalf("AV1 codecs %q", codecs)
 			}
 			meta := bitstreamMetadata(t, av1)
-			if pq := tc.trc == "smpte2084"; pq != strings.Contains(meta, "max_content=1000|") || pq != strings.Contains(meta, "max_luminance=256000/256") {
+			if pq := tc.trc == "smpte2084"; pq != strings.Contains(meta, "max_content=1000|") || pq != strings.Contains(meta, "max_luminance=256000/256") ||
+				!pq && strings.Contains(meta, "side_data_type") {
 				t.Fatalf("AV1 bitstream HDR10 metadata: %s", meta)
 			}
 			// Tone mapped, the H.264 frame keeps the SDR picture's contrast:
