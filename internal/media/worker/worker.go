@@ -210,7 +210,7 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 	if err != nil {
 		return nil, err
 	}
-	prepare := versionstore.PrepareDerivatives(c.Pool, c.ContentSchema, manifests, uploads)
+	prepare := versionstore.PrepareDerivatives(c.Pool, c.locks, c.ContentSchema, manifests, uploads)
 	var observeEncode func(video.EncodeObservation)
 	if c.Metrics != nil {
 		observeEncode = c.Metrics.ObserveEncode
@@ -280,7 +280,7 @@ func (c Config) cache(queue mediastore.ProcessQueue) (*mediastore.PGCache, error
 	if err != nil {
 		return nil, err
 	}
-	recorded, err := versionstore.Recorded(c.Pool, c.HostSchema, c.ContentSchema, c.Kinds)
+	recorded, err := versionstore.Recorded(c.Pool, c.locks, c.HostSchema, c.ContentSchema, c.Kinds)
 	if err != nil {
 		return nil, err
 	}

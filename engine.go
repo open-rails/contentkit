@@ -471,7 +471,7 @@ func (e *Engine) newMedia(ctx context.Context, deps Deps, now func() time.Time) 
 	if err != nil {
 		return nil, err
 	}
-	recorded, err := versionstore.Recorded(e.pool, e.riverSchema, e.schema, m.reg)
+	recorded, err := versionstore.Recorded(e.pool, e.locks, e.riverSchema, e.schema, m.reg)
 	if err != nil {
 		return nil, err
 	}
