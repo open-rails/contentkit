@@ -1374,10 +1374,10 @@
     {
       "id": "CK-J12-S04",
       "journey": "CK-J12",
-      "behavior": "The stock worker binary publishes default renditions from the registry JSON without a database; hosts link no libvips",
+      "behavior": "The stock worker binary publishes app kinds' default renditions from the registry JSON without a database; hosts link no libvips",
       "status": "verified",
       "evidence": [
-        "The built cmd/media-worker publish-defaults renders ContentKit's avatar silhouette and a host default from MEDIA_DEFAULTS_DIR to create-only objects, prints MEDIA_GATEWAY_DEFAULTS naming exactly what it wrote, refuses a default no source holds, and writes nothing on repeat."
+        "The built cmd/media-worker publish-defaults renders ContentKit's avatar silhouette and a host default from MEDIA_DEFAULTS_DIR into each kind's _default item, prints the kinds it wrote, refuses a default no source holds, and writes nothing on repeat."
       ],
       "cases": [
         "TestWorkerPublishesDefaults"
@@ -1462,6 +1462,23 @@
       ],
       "cases": [
         "TestMediaHDRVideo/CK-J12-S10_the_shipped_player_plays_HDR_only_on_an_HDR_screen_whose_decoder_confirms_it"
+      ]
+    },
+    {
+      "id": "CK-J12-S11",
+      "journey": "CK-J12",
+      "behavior": "An account kind's defaults are account media: the avatar primary publishes them into the accounts area of its bucket and the tenant account cache, and a secondary site shows them for a person without an avatar at its own media host",
+      "status": "verified",
+      "evidence": [
+        "Two apps of one tenant, each with its own bucket: the built cmd/media-worker publish-defaults refuses the primary's account defaults without MEDIA_ACCOUNT_SCHEMA and writes nothing, then with it writes _accounts/user/_default/ into the primary's bucket only; the secondary's publication writes no account media, and a site declaring the account kind as its own media is refused.",
+        "The secondary's content model (GET /v1/kinds) carries the default avatar at its own media host, and a person without an avatar who comments there is listed with it; the secondary's gateway route (accounts naming the primary's bucket) serves each rendition as a WebP of its width.",
+        "The worker's rebuild records the account default again from the primary's bucket after its cache row is lost."
+      ],
+      "cases": [
+        "TestSecondaryDefaultAvatar/CK-J12-S11_account_defaults_need_the_account_cache",
+        "TestSecondaryDefaultAvatar/CK-J12-S11_only_the_primarys_bucket_holds_them",
+        "TestSecondaryDefaultAvatar/CK-J12-S11_a_secondary_shows_the_default_through_its_gateway",
+        "TestSecondaryDefaultAvatar/CK-J12-S11_rebuild_restores_them"
       ]
     },
     {
