@@ -3761,6 +3761,18 @@
       "cases": [
         "TestMediaMasters/CK-J09-S53_a_hosts_worker_binary_registers_its_hooks_and_one_without_them_never_starts"
       ]
+    },
+    {
+      "id": "CK-J09-S54",
+      "journey": "CK-J09",
+      "behavior": "A master (or video rendition) past the single-PUT limit is streamed from its file as a multipart upload, each part bound to its length and SHA-256, and stored byte for byte with its type; a file that fails part way is aborted, leaving no upload or object",
+      "status": "verified",
+      "evidence": [
+        "contentkit#304: real bucket (MinIO in CI) through the S3 store, with S3's smallest part size standing in for the production limit."
+      ],
+      "cases": [
+        "TestMediaMasters/CK-J09-S54_a_master_past_the_single_put_limit_goes_up_in_parts"
+      ]
     }
   ],
   "review_notes": {

@@ -195,7 +195,8 @@ func (r *Runner) make(ctx context.Context, item mediastore.Item, f media.File) (
 		return media.Master{}, err
 	}
 	defer body.Close()
-	if _, err := r.c.Manifests.Store().Put(ctx, dst, body, size, media.PutOptions{ContentType: typ, ChecksumSHA256: sum}); err != nil {
+	// In parts past mediastore.SinglePutMax: a video master is far larger.
+	if err := mediastore.PutFile(ctx, r.c.Manifests.Store(), dst, body, size, mediastore.FileOptions{PutOptions: media.PutOptions{ContentType: typ, ChecksumSHA256: sum}}); err != nil {
 		return media.Master{}, err
 	}
 	_, of, _ := layout.SplitBlobRef(f.Blob)

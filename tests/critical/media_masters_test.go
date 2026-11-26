@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,6 +26,7 @@ import (
 	"testing"
 	"time"
 
+	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -148,6 +150,19 @@ func workerEnv(t *testing.T, m *mediaWorld, kindsFile string) []string {
 		env = append(env, "MEDIA_ACCOUNT_SCHEMA="+c.AccountSchema, "MEDIA_ACCOUNT_WORKER_SCHEMA="+c.AccountWorkerSchema)
 	}
 	return env
+}
+
+// brokenReader fails every read past at, as a disk error would.
+type brokenReader struct {
+	data []byte
+	at   int64
+}
+
+func (r brokenReader) ReadAt(p []byte, off int64) (int, error) {
+	if off+int64(len(p)) > r.at {
+		return 0, errors.New("injected: the file could not be read")
+	}
+	return copy(p, r.data[off:]), nil
 }
 
 // failingHook is a master hook whose job always fails.
@@ -782,6 +797,43 @@ func TestMediaMasters(t *testing.T) {
 			}
 		case <-time.After(45 * time.Second):
 			t.Fatal("the host worker did not stop")
+		}
+	})
+
+	t.Run("CK-J09-S54_a_master_past_the_single_put_limit_goes_up_in_parts", func(t *testing.T) {
+		// The writer of hook-made masters and video renditions; parts of S3's
+		// smallest size stand in for the 1 GiB limit and 64 MiB parts.
+		m := newMediaStorage(t, ck.Scope{TenantID: ck.NewTenantID(), AppID: ck.NewAppID()})
+		const part = 5 << 20
+		body := make([]byte, 2*part+12345)
+		for i := range body {
+			body[i] = byte(i*7 + i>>13)
+		}
+		sum := sha256.Sum256(body)
+		opts := mediastore.FileOptions{PutOptions: media.PutOptions{ContentType: media.MasterMatroska, ChecksumSHA256: sum[:]}, SinglePutMax: part, PartSize: part}
+		key := "critical/masters/" + uuid.NewString()
+		must(t, mediastore.PutFile(t.Context(), m.store, key, bytes.NewReader(body), int64(len(body)), opts))
+		rc, obj, err := m.store.Get(t.Context(), key, media.GetOptions{})
+		must(t, err)
+		stored, err := io.ReadAll(rc)
+		rc.Close()
+		must(t, err)
+		if !bytes.Equal(stored, body) || obj.ContentType != media.MasterMatroska || !strings.HasSuffix(strings.Trim(obj.ETag, `"`), "-3") {
+			t.Fatalf("stored %d of %d bytes as %s, ETag %s: not three parts", len(stored), len(body), obj.ContentType, obj.ETag)
+		}
+		// A file that fails part way leaves no upload behind.
+		broken := "critical/masters/" + uuid.NewString()
+		err = mediastore.PutFile(t.Context(), m.store, broken, brokenReader{data: body, at: part + 10}, int64(len(body)), opts)
+		if err == nil || !strings.Contains(err.Error(), "injected") {
+			t.Fatalf("a failed read uploaded: %v", err)
+		}
+		uploads, err := m.management.ListMultipartUploads(t.Context(), &awss3.ListMultipartUploadsInput{Bucket: &m.bucket, Prefix: &broken})
+		must(t, err)
+		if len(uploads.Uploads) != 0 {
+			t.Fatalf("a failed upload was left incomplete: %d", len(uploads.Uploads))
+		}
+		if _, err := m.store.Head(t.Context(), broken); !errors.Is(err, mediastore.ErrNotFound) {
+			t.Fatalf("a failed upload stored an object: %v", err)
 		}
 	})
 

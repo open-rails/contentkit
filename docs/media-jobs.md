@@ -20,7 +20,7 @@ consumed once. Ingest and derivative concurrency are configured independently.
 
 ## Masters first
 
-A derivative attempt first makes the masters its kind's recipe (`media.Kind.Master`) has yet to make, with the worker's hooks, then derives from them. An image's renditions, and a video's HLS renditions, seek sprite and grabbed frames (whose own renditions follow), record the master's hash, so a new master re-derives each of them; a frame waits for its video's master. A worker refuses to start while a recipe names a hook it lacks or at another version: the stock image registers none, and a host with hooks runs its own binary over `media/worker.Main` ([Masters](../HOST_INTEGRATION.md#masters-mediakindmaster)). A failing hook leaves the upload's previous master and everything derived from it in place while the job retries.
+A derivative attempt first makes the masters its kind's recipe (`media.Kind.Master`) has yet to make, with the worker's hooks, then derives from them. An image's renditions, and a video's HLS renditions, seek sprite and grabbed frames (whose own renditions follow), record the master's hash, so a new master re-derives each of them; a frame waits for its video's master. A worker refuses to start while a recipe names a hook it lacks or at another version: the stock image registers none, and a host with hooks runs its own binary over `media/worker.Main` ([Masters](../HOST_INTEGRATION.md#masters-mediakindmaster)). A failing hook leaves the upload's previous master and everything derived from it in place while the job retries. A master or rendition past 1 GiB is streamed from its file in 64 MiB parts, each checked by its SHA-256 (S3 refuses a single PUT past 5 GiB).
 
 ## Processing and publication are separate
 
