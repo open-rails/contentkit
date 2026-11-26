@@ -1347,6 +1347,30 @@
       ]
     },
     {
+      "id": "CK-J11-S11",
+      "journey": "CK-J11",
+      "behavior": "An encoded and released video's folder holds none of its encode's chunk renditions",
+      "status": "verified",
+      "evidence": [
+        "A real clip encodes its two-rung ladder through the worker and releases; once every run completes, no chunk key the runs recorded and nothing under tmp/ remains in the item's folder."
+      ],
+      "cases": [
+        "TestMediaVideoScratch/CK-J11-S11_a_released_video_keeps_no_chunks"
+      ]
+    },
+    {
+      "id": "CK-J11-S12",
+      "journey": "CK-J11",
+      "behavior": "A worker killed mid-encode leaves only layout scratch in tmp/, tagged for the bucket's seven-day expiry",
+      "status": "verified",
+      "evidence": [
+        "A real worker process is SIGKILLed while its first rung's assembled rendition is held at the S3 wire; the folder holds chunk scratch under tmp/w-, every object parses in the layout, and every tmp/ object carries contentkit-temp=true."
+      ],
+      "cases": [
+        "TestMediaVideoScratch/CK-J11-S12_a_killed_encode_leaves_only_scratch_tagged_to_expire"
+      ]
+    },
+    {
       "id": "CK-J12-S01",
       "journey": "CK-J12",
       "behavior": "Real video produces playable configured AV1 and H264 renditions with its soundtrack",
@@ -2352,6 +2376,18 @@
       "cases": [
         "TestDeletedMediaFence/CK-J08-S11_purge_erases_and_its_fence_outlives_restore",
         "TestDeletedContentPurgeOwnsMedia/CK-J08-S06_restore_and_durable_purge_claim_have_one_winner"
+      ]
+    },
+    {
+      "id": "CK-J08-S12",
+      "journey": "CK-J08",
+      "behavior": "Purging an encoded video erases its whole folder, scratch and keys outside the layout included, leaving only its tombstone and fence",
+      "status": "verified",
+      "evidence": [
+        "A real encoded clip with a planted scratch chunk and an unparseable chunk key is deleted and purged past retention; the purge completes and the folder holds only manifest.json and the erasure fence."
+      ],
+      "cases": [
+        "TestMediaVideoScratch/CK-J08-S12_erasing_an_encoded_video_empties_its_folder"
       ]
     },
     {
