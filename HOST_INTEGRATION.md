@@ -433,6 +433,7 @@ media:
   cached (`Cache-Control: private, no-store`, `CDN-Cache-Control: no-store`,
   no length, validator or ranges). Files are named by the policy's `Name`,
   else the title, plus the file's extension.
+- Once the request is read, `archive` clears the connection's read and write deadlines, so a host server's `ReadTimeout` and `WriteTimeout` never cut a download; the progress stream bounds each write instead. Middleware that wraps the `http.ResponseWriter` must implement `Unwrap`, or the host server's timeouts still apply.
 - `202 Pending` while the file is placed or produced, `403` locked or
   `download_unavailable`, `404` no download for the kind, `409 no_download`
   when the version has nothing to serve, `429 rate_limited` with

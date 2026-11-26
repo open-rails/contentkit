@@ -314,6 +314,12 @@ func (h *Handler) relay(w http.ResponseWriter, r *http.Request, key string, resp
 		// credentialed CORS access to private files or changing denial headers.
 		hdr.Set("Cross-Origin-Resource-Policy", "cross-origin")
 	}
+	if body && r.Method != http.MethodHead {
+		// A file may outlast the server's ReadTimeout or WriteTimeout.
+		rc := http.NewResponseController(w)
+		_ = rc.SetReadDeadline(time.Time{})
+		_ = rc.SetWriteDeadline(time.Time{})
+	}
 	w.WriteHeader(resp.StatusCode)
 	if r.Method == http.MethodHead || !body {
 		return

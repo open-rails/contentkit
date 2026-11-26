@@ -8,10 +8,13 @@ import (
 	"encoding/json"
 	"io"
 	"mime"
+	"net"
 	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -273,4 +276,93 @@ func TestDeliveryRotationKeepsTickets(t *testing.T) {
 	if code := transfer(t, fresh); code != http.StatusOK {
 		t.Fatalf("current-key ticket transferred HTTP%d", code)
 	}
+}
+
+// sendBufferListener keeps each accepted connection's socket send buffer
+// small, so a slow reader holds the server's writes instead of the kernel.
+type sendBufferListener struct{ net.Listener }
+
+func (l sendBufferListener) Accept() (net.Conn, error) {
+	c, err := l.Listener.Accept()
+	if tcp, ok := c.(*net.TCPConn); ok {
+		_ = tcp.SetWriteBuffer(4096)
+	}
+	return c, err
+}
+
+func TestDownloadOutlivesHostWriteTimeout(t *testing.T) {
+	// Hosts run their API servers with a WriteTimeout. A download a slow
+	// client reads for longer than that still completes byte for byte.
+	const writeTimeout = 2 * time.Second
+	f := newTinyHLSConfiguredFixture(t, false, nil)
+	a := f.app
+	a.server.Close()
+	must(t, a.engine.Close(t.Context()))
+	a.deps.Downloads = &transferDownloadPolicy{}
+	var err error
+	a.engine, err = ck.New(t.Context(), a.cfg, a.deps)
+	must(t, err)
+	routes, err := a.engine.Routes(ck.Routes{Prefix: "/content", Groups: a.engine.RouteGroups()})
+	must(t, err)
+	mux := http.NewServeMux()
+	for _, route := range routes {
+		mux.Handle(route.Path, route.Handler)
+	}
+	host := httptest.NewUnstartedServer(withSessionProofs(t, mux))
+	host.Config.WriteTimeout = writeTimeout
+	host.Listener = sendBufferListener{host.Listener}
+	host.Start()
+	t.Cleanup(host.Close)
+	a.server = host
+	must(t, a.engine.StartJobs(t.Context()))
+	if len(f.Source) < 32<<10 {
+		t.Fatalf("a %d-byte source fits in the socket buffers; the download would never wait on the reader", len(f.Source))
+	}
+	t.Run("CK-J13-S11_a_slow_download_outlives_the_host_servers_WriteTimeout", func(t *testing.T) {
+		var grant versions.FileDownload
+		waitForWithin(t, 45*time.Second, func() bool {
+			reply, err := a.client("").GetContentVersionDownload(t.Context(), f.Ref.ID, f.Ref.Version)
+			must(t, err)
+			if reply.Status == http.StatusAccepted {
+				return false
+			}
+			must(t, reply.Decode(&grant))
+			return grant.URL != ""
+		})
+		// A small receive buffer, read a KiB at a time over about 2.5 write timeouts.
+		dialer := &net.Dialer{Control: func(_, _ string, c syscall.RawConn) error {
+			var set error
+			if err := c.Control(func(fd uintptr) { set = syscall.SetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_RCVBUF, 4096) }); err != nil {
+				return err
+			}
+			return set
+		}}
+		slow := &http.Client{Transport: &http.Transport{DialContext: dialer.DialContext, DisableCompression: true}}
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, host.URL+"/content/v1/contents/"+f.Ref.ID+"/versions/"+f.Ref.Version+"/"+grant.URL, nil)
+		must(t, err)
+		response, err := slow.Do(req)
+		must(t, err)
+		defer response.Body.Close()
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("download: HTTP%d", response.StatusCode)
+		}
+		pause := 5 * writeTimeout / 2 / time.Duration(len(f.Source)/1024+1)
+		start := time.Now()
+		var got bytes.Buffer
+		chunk := make([]byte, 1024)
+		for {
+			n, err := response.Body.Read(chunk)
+			got.Write(chunk[:n])
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				t.Fatalf("download cut after %d of %d bytes and %v: %v", got.Len(), len(f.Source), time.Since(start), err)
+			}
+			time.Sleep(pause)
+		}
+		if elapsed := time.Since(start); elapsed <= writeTimeout || !bytes.Equal(got.Bytes(), f.Source) {
+			t.Fatalf("download: %d of %d bytes in %v (write timeout %v)", got.Len(), len(f.Source), elapsed, writeTimeout)
+		}
+	})
 }
