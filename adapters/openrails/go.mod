@@ -5,7 +5,7 @@ go 1.26.10
 toolchain go1.26.11
 
 require (
-	github.com/open-rails/contentkit v0.128.1
+	github.com/open-rails/contentkit v0.141.0
 	github.com/open-rails/openrails v0.284.0
 )
 
