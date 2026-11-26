@@ -34,7 +34,7 @@ func SegmentOf(presentation string) string {
 }
 
 // Outcomes. A person-day's outcome is the day's last reaction, keyed with its
-// reason when one was given ("dislike:not_for_me"), else its read class.
+// reason when one was given ("dislike:not_into"), else its read class.
 const (
 	// Base is the segment's rate with no information; its q is 0.
 	Base     = "base"
@@ -48,10 +48,14 @@ const (
 	Dislike  = "dislike"
 )
 
-// Dislike reasons.
+// Dislike reasons. NotInto names a tag and puts the reader outside the
+// gallery's audience for it; the others count for everyone.
 const (
-	NotForMe   = "not_for_me"
-	LowQuality = "low_quality"
+	BadArt     = "bad_art"
+	BadStory   = "bad_story"
+	NotInto    = "not_into"
+	Misleading = "misleading"
+	Other      = "other"
 )
 
 // Keyed is a reaction's outcome key with its reason.
@@ -69,7 +73,8 @@ const BaseRate = 0.25
 var guesses = map[string]float64{
 	Base: BaseRate, Bounce: 0.05, Neutral: 0.15, Good: 0.40, Complete: 0.60,
 	Like: 0.70, Favorite: 0.90, Hidden: 0, Dislike: 0.05,
-	Keyed(Dislike, NotForMe): 0, Keyed(Dislike, LowQuality): 0.05,
+	Keyed(Dislike, BadArt): 0.05, Keyed(Dislike, BadStory): 0.05, Keyed(Dislike, Misleading): 0.05,
+	Keyed(Dislike, NotInto): 0, Keyed(Dislike, Other): 0.05,
 }
 
 // Q places p around the base rate b: (p-b)/(1-b) at or above it, (p-b)/b
@@ -103,7 +108,11 @@ func Seed() []Row {
 }
 
 func outcomes() []string {
-	return []string{Base, Bounce, Neutral, Good, Complete, Like, Favorite, Hidden, Dislike, Keyed(Dislike, NotForMe), Keyed(Dislike, LowQuality)}
+	out := []string{Base, Bounce, Neutral, Good, Complete, Like, Favorite, Hidden, Dislike}
+	for _, reason := range []string{BadArt, BadStory, NotInto, Misleading, Other} {
+		out = append(out, Keyed(Dislike, reason))
+	}
+	return out
 }
 
 // Table is q by segment and outcome.
