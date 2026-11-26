@@ -176,8 +176,11 @@ func (h handler) archive(w http.ResponseWriter, r *http.Request) {
 	hdr := w.Header()
 	hdr.Set("Content-Type", a.Type)
 	hdr.Set("Content-Disposition", layout.Attachment(a.Name))
-	// The request is read: a server's ReadTimeout must not cut the download.
-	_ = http.NewResponseController(w).SetReadDeadline(time.Time{})
+	// The request is read and the body may outlast a host server's
+	// ReadTimeout or WriteTimeout: neither may cut the download.
+	rc := http.NewResponseController(w)
+	_ = rc.SetReadDeadline(time.Time{})
+	_ = rc.SetWriteDeadline(time.Time{})
 	if a.Marked() {
 		// Watermarked: marked and zipped anew for this request, with no
 		// length, validator or ranges; no cache, shared or private, keeps it.
