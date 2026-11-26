@@ -1,6 +1,6 @@
 # Open release candidate
 
-None.
+`rc/0.141.0` is the next release: the media model (bucket-authoritative manifests, masters), HDR video, preference sync and video completion.
 
 Feature pull requests target the open release candidate, never `master`. A release candidate's first commit names its
 `rc/<version>` branch and purpose here; its last commit before it merges into `master` resets this file. So on `master`, and
