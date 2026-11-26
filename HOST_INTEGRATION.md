@@ -25,6 +25,8 @@ for _, r := range routes {
 }
 ```
 
+Behind PgBouncer in transaction mode, `Deps.Postgres` is the PgBouncer pool and `Deps.PostgresSession` the direct configuration ([docs/pgbouncer.md](docs/pgbouncer.md)).
+
 ### Jobs
 
 ContentKit runs its background work (search indexing, the analytics job,

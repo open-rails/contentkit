@@ -14,6 +14,7 @@
 package worker
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -39,12 +40,18 @@ import (
 	"github.com/open-rails/contentkit/internal/media/master"
 	"github.com/open-rails/contentkit/internal/media/video"
 	"github.com/open-rails/contentkit/internal/media/workqueue"
+	"github.com/open-rails/contentkit/internal/pglock"
 	"github.com/open-rails/contentkit/media"
 )
 
 // Config configures the worker.
 type Config struct {
 	Pool *pgxpool.Pool // the host database: Schema, manifest locks, progress
+	// Session is a direct configuration of Pool's database for its session
+	// locks and River's LISTEN when Pool is a transaction pooler; nil dials
+	// with Pool's.
+	Session *pgxpool.Config
+	locks   *pglock.Locks
 	// Schema is the host's worker River schema, the one its workqueue.Queue
 	// inserts into; required, and never shared with another host.
 	Schema string
@@ -108,6 +115,9 @@ type Config struct {
 func (c *Config) defaults() error {
 	if c.Pool == nil || c.Store == nil || c.Kinds == nil {
 		return errors.New("media/worker: Config needs a Pool, a Store and the host's Kinds")
+	}
+	if c.locks == nil {
+		c.locks = pglock.New(cmp.Or(c.Session, c.Pool.Config()))
 	}
 	if err := workqueue.ValidSchema(c.Schema); err != nil {
 		return err
@@ -239,9 +249,9 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 		if err := river.AddWorkerSafely(cfg.Workers, &ingestWorker{c: c, manifests: manifests, queue: queue}); err != nil {
 			return err
 		}
-		return river.AddWorkerSafely(cfg.Workers, &derivativeWorker{c: c, masters: masters, images: images, manifests: manifests, prepare: prepare, video: video.WorkerConfig{Encoder: enc, Pool: c.Pool, Schema: c.Schema, Slice: c.VideoSlice, Stopping: stopping, Logger: c.Logger}})
+		return river.AddWorkerSafely(cfg.Workers, &derivativeWorker{c: c, masters: masters, images: images, manifests: manifests, prepare: prepare, video: video.WorkerConfig{Encoder: enc, Pool: c.Pool, Locks: c.locks, Schema: c.Schema, Slice: c.VideoSlice, Stopping: stopping, Logger: c.Logger}})
 	}, nil, nil)
-	client, err := riverhelpers.New(ctx, c.Pool, &river.Config{Schema: c.Schema, ReindexerSchedule: river.NeverSchedule(),
+	client, err := riverhelpers.NewWithSession(ctx, c.Pool, c.Session, &river.Config{Schema: c.Schema, ReindexerSchedule: river.NeverSchedule(),
 		JobTimeout: time.Hour, RescueStuckJobsAfter: 2 * time.Hour,
 		Logger: c.Logger, Hooks: hooks, Middleware: middleware}, processing)
 	if err != nil {

@@ -111,7 +111,7 @@ require (
 	github.com/nyaruka/phonenumbers v1.8.1 // indirect
 	github.com/open-rails/contentkit/adapters/openrails v0.11.0
 	github.com/open-rails/contentkit/server v0.11.0
-	github.com/open-rails/helpers v1.22.1
+	github.com/open-rails/helpers v1.23.0
 	github.com/open-rails/migratekit v1.13.0 // indirect
 	github.com/open-rails/openrails v0.284.0
 	github.com/paulmach/orb v0.14.0 // indirect
