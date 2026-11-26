@@ -5,7 +5,9 @@ package content
 type Anonymous struct {
 	// Comments: comment and reply under a name (anon_name).
 	Comments bool `json:"comments"`
-	// Reactions: like and dislike works, posts and comments, keyed by IP.
+	// Reactions: like and dislike works, posts and comments, one reaction per
+	// browser (its ContentKit-Anonymous-Id), which signing in moves to the
+	// account. Limits.AnonymousReaction bounds the browsers per address.
 	Reactions bool `json:"reactions"`
 	// Votes: signed-out votes in multiple-choice polls are keyed by IP (an
 	// IPv6 address by its /64) and deduplicated separately from signed-in

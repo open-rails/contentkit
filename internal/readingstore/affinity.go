@@ -56,7 +56,7 @@ func (s *Store) Affine(ctx context.Context, people []uuid.UUID, tags []string, s
 	rows, err := s.pool.Query(ctx, `SELECT r.subject, m.entity_id, c.kind, r.best_outcome, r.hidden,
  EXISTS (SELECT 1 FROM `+s.t.favorites+` f WHERE f.app_id = $2 AND f.user_id = r.subject AND f.content_id = r.content_id AND f.value = 1),
  coalesce((SELECT x.value FROM `+s.t.reactions+` x WHERE x.tenant_id = $1 AND x.content_id = r.content_id::text AND x.value <> 0
-   AND (x.user_id = r.subject::text OR x.user_id IS NULL AND x.anonymous_subject = r.subject) ORDER BY x.updated_at DESC LIMIT 1), 0)
+   AND (x.user_id = r.subject::text OR x.anonymous_subject = r.subject) ORDER BY x.updated_at DESC LIMIT 1), 0)
 FROM `+s.t.state+` r
 JOIN `+s.t.items+` c ON c.tenant_id = $1 AND c.id = r.content_id::text
 JOIN `+s.t.memberships+` m ON m.tenant_id = $1 AND m.content_id = c.id AND m.state = 'active' AND m.entity_id = ANY($5)

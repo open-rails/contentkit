@@ -576,7 +576,7 @@ func (e *Engine) contentOptions(deps Deps) contentstore.Options {
 			return e.reading.Touch(ctx, tx, s)
 		},
 		Limits: contentstore.Limits{Disabled: l.Disabled, Redis: deps.Redis, Comment: rates(l.Comment), CommentReaction: rates(l.CommentReaction),
-			Reaction: rates(l.Reaction), Favorite: rates(l.Favorite), PollVote: rates(l.PollVote)},
+			Reaction: rates(l.Reaction), Favorite: rates(l.Favorite), PollVote: rates(l.PollVote), AnonymousReaction: rates(l.AnonymousReaction)},
 		Anonymous: in.Anonymous, CommentMaxLength: in.CommentMaxLength, DuplicateWindow: in.DuplicateWindow,
 		Logger: e.log,
 	}

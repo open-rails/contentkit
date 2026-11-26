@@ -175,7 +175,7 @@ is 503, and any other panic while serving is 500 `internal_error`. ContentKit na
 host declares them in its auth's roles from those constants. They are
 root-wide; per-item rights (creators, primary-channel editors) are the catalog's. Behind a
 proxy, list it in `Config.TrustedProxies`, or set `Request.RemoteAddr` to the client's address before the routes:
-location rules and anonymous reactions, votes and limits are keyed by it ([client address](HOST_INTEGRATION.md#client-address)). No content kind may
+location rules, anonymous votes and limits are keyed by it ([client address](HOST_INTEGRATION.md#client-address)). No content kind may
 be named `media`, `codes`, `entities`, `contents`, `kinds`, `catalog` or `notifications`.
 
 Every route is declared once, in its module's route table

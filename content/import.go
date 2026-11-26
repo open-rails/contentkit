@@ -22,15 +22,16 @@ type ImportComment struct {
 	UpdatedAt *time.Time
 }
 
-// ImportReaction is a person's (or an IP's) reaction: -1, 0 or 1.
+// ImportReaction is a person's reaction: -1, 0 or 1. A signed-out one is its
+// source's AnonymousKey, stored only as a hash.
 type ImportReaction struct {
-	Source    string
-	Ref       contentref.ContentRef
-	UserID    string
-	IP        string
-	Value     int16
-	CreatedAt *time.Time
-	UpdatedAt *time.Time
+	Source       string
+	Ref          contentref.ContentRef
+	UserID       string
+	AnonymousKey string
+	Value        int16
+	CreatedAt    *time.Time
+	UpdatedAt    *time.Time
 }
 
 // ImportFavorite is a person's bookmark.

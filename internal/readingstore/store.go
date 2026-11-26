@@ -319,10 +319,10 @@ func (s *Store) Erase(ctx context.Context, account uuid.UUID, anonymous []uuid.U
 			{`DELETE FROM ` + s.t.history + ` WHERE app_id = $1 AND subject = ANY($2)`, []any{s.app, subjects}},
 			{`DELETE FROM ` + s.t.links + ` WHERE app_id = $1 AND (account_id = $2 OR anonymous_id = ANY($3))`, []any{s.app, account, subjects}},
 			{`DELETE FROM ` + s.t.active + ` WHERE app_id = $1 AND subject = ANY($2)`, []any{s.app, subjects}},
-			{`UPDATE ` + s.t.reactions + ` SET anonymous_subject = NULL WHERE tenant_id = $1 AND anonymous_subject = ANY($2)`, []any{s.tenant, subjects}},
+			{s.unlinkReactions("ANY($2)"), []any{s.tenant, subjects}},
 			{`DELETE FROM ` + s.t.searches + ` WHERE tenant_id = $1 AND subject = ANY($2)`, []any{s.tenant, texts}},
 			// Feedback of the anonymous ids folded in; the account's own goes with its interactions.
-			{`DELETE FROM ` + s.t.feedback + ` WHERE app_id = $1 AND anonymous_actor_id = ANY($2)`, []any{s.app, anonymous}},
+			{`DELETE FROM ` + s.t.feedback + ` WHERE app_id = $1 AND anonymous_subject = ANY($2)`, []any{s.app, anonymous}},
 		} {
 			if _, err := tx.Exec(ctx, q.sql, q.args...); err != nil {
 				return fmt.Errorf("readingstore: erase: %w", err)
@@ -373,6 +373,13 @@ ON CONFLICT (app_id) DO UPDATE SET ingested_through = EXCLUDED.ingested_through,
  closed_at = EXCLUDED.closed_at, erased_at = EXCLUDED.erased_at, erasures_through = EXCLUDED.erasures_through`,
 		s.app, p.IngestedThrough, p.RolledUpAt, p.ClosedAt, p.ErasedAt, p.ErasuresThrough)
 	return err
+}
+
+// unlinkReactions is the statement that detaches signed-out subjects'
+// reactions (subjects, a SQL expression over $2, in tenant $1) from them:
+// each keeps counting as a reaction of someone no longer known.
+func (s *Store) unlinkReactions(subjects string) string {
+	return `UPDATE ` + s.t.reactions + ` SET anonymous_subject = NULL, anonymous_actor_id = gen_random_uuid() WHERE tenant_id = $1 AND anonymous_subject = ` + subjects
 }
 
 func clampInt32(v uint32) int32 { return int32(min(v, 1<<31-1)) }

@@ -34,7 +34,7 @@ func (x *analyticsWorld) personal(t *testing.T, who uuid.UUID) [5]int {
  (SELECT count(*) FROM `+x.schema+`.interaction_history WHERE app_id = $1 AND subject = $2),
  (SELECT count(*) FROM `+x.schema+`.content_searches WHERE tenant_id = $3 AND subject = $4),
  (SELECT count(*) FROM `+x.schema+`.content_reactions WHERE tenant_id = $3 AND anonymous_subject = $2),
- (SELECT count(*) FROM `+x.schema+`.content_reaction_feedback WHERE app_id = $1 AND anonymous_actor_id = $2)`,
+ (SELECT count(*) FROM `+x.schema+`.content_reaction_feedback WHERE app_id = $1 AND anonymous_subject = $2)`,
 		x.app(), who, x.tenant(), who.String()).Scan(&n[0], &n[1], &n[2], &n[3], &n[4]))
 	return n
 }
@@ -143,7 +143,6 @@ func TestAnalyticsAnonymousExpiryWithoutClickHouse(t *testing.T) {
 			_, err := browser.GetSearch(t.Context(), ck.GetSearchQuery{Q: "Unlogged", Kind: "article"})
 			must(t, err)
 		}
-		// One signed-out reaction per client address and item: the rig's visitors share one.
 		_, err := x.reader(t, "", idleID).PostContentLike(t.Context(), liked.ID, ck.PostContentLikeQuery{})
 		must(t, err)
 		x.answers(t, idleID, liked.ID, discovery.FeedbackLike)

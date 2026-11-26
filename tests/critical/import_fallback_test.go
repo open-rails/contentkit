@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/importer"
@@ -46,8 +47,8 @@ CREATE TRIGGER critical_recount BEFORE UPDATE ON %[1]s.content_interaction_count
 	comment := func(external, body string, replyTo *importer.Ref) importer.CommentRecord {
 		return importer.CommentRecord{ExternalID: external, Target: on, ReplyTo: replyTo, AnonName: "Legacy guest", Body: body}
 	}
-	like := func(ip string, value int16) importer.ReactionRecord {
-		return importer.ReactionRecord{Target: on, IP: ip, Value: value}
+	like := func(key string, value int16) importer.ReactionRecord {
+		return importer.ReactionRecord{Target: on, AnonymousKey: key, Value: value}
 	}
 	vote := func(poll, option, ip string) importer.VoteRecord {
 		return importer.VoteRecord{Poll: importer.Ref{ExternalID: poll}, Option: importer.Ref{ExternalID: option}, IP: ip}
@@ -59,8 +60,8 @@ CREATE TRIGGER critical_recount BEFORE UPDATE ON %[1]s.content_interaction_count
 	batch := importer.Batch{Source: "fallback-recount",
 		Comments: []importer.CommentRecord{comment("parent", "Parent", nil), comment("two", "Two", nil), comment("reply-one", "Reply one", parent),
 			comment("blank", "   ", nil), comment("three", "Three", nil), comment("reply-two", "Reply two", parent), comment("four", "Four", nil)},
-		Reactions: []importer.ReactionRecord{like("203.0.113.1", 1), like("203.0.113.2", 1), like("203.0.113.3", 5), like("203.0.113.4", 1),
-			{Target: importer.TargetRef{Comment: parent}, IP: "203.0.113.5", Value: 1}},
+		Reactions: []importer.ReactionRecord{like("guest-1", 1), like("guest-2", 1), like("guest-3", 5), like("guest-4", 1),
+			{Target: importer.TargetRef{Comment: parent}, AnonymousKey: "guest-5", Value: 1}},
 		Favorites: []importer.FavoriteRecord{{Target: on, UserID: legacyAccount(1)}, {Target: on}, {Target: on, UserID: legacyAccount(2)}},
 		Polls:     []importer.PollRecord{poll("a"), poll("b")},
 		Votes: []importer.VoteRecord{vote("a", "a-1", "203.0.113.1"), vote("a", "a-1", "203.0.113.2"), vote("a", "b-1", "203.0.113.3"),
@@ -150,7 +151,7 @@ CREATE TRIGGER critical_recount_fault BEFORE UPDATE ON %[1]s.content_interaction
 
 // An import locks a comment before writing a like on it, as a live like
 // does. Paused right after writing an anonymous like, it holds the comment,
-// so a live like from the same address waits for it instead of deadlocking.
+// so a live signed-out like waits for it instead of deadlocking.
 func TestImportedCommentLikeLockOrder(t *testing.T) {
 	w := newWorld(t, func(cfg *ck.Config) {
 		cfg.Interactions.Limits.Disabled = true
@@ -195,8 +196,8 @@ CREATE TRIGGER critical_refused_like BEFORE INSERT ON %[1]s.content_reactions FO
 	}
 	// The like the write refuses sends the chunk to its writes in halves.
 	batch := importer.Batch{Source: "imported-like-lock-order", Reactions: []importer.ReactionRecord{
-		{Target: importer.TargetRef{Comment: &importer.Ref{ID: liked.ID}}, IP: "127.0.0.1", Value: 1},
-		{Target: importer.TargetRef{Content: &importer.Ref{ID: item.ID}}, IP: "127.0.0.1", Value: 1}}}
+		{Target: importer.TargetRef{Comment: &importer.Ref{ID: liked.ID}}, AnonymousKey: "legacy-guest", Value: 1},
+		{Target: importer.TargetRef{Content: &importer.Ref{ID: item.ID}}, AnonymousKey: "legacy-guest", Value: 1}}}
 	imported := make(chan importer.Result, 1)
 	importErr, live := make(chan error, 1), make(chan error, 1)
 	go func() {
@@ -206,7 +207,7 @@ CREATE TRIGGER critical_refused_like BEFORE INSERT ON %[1]s.content_reactions FO
 	}()
 	importPID := blockedBy(holder.Conn().PgConn().PID())
 	go func() {
-		_, err := a.client("").PostCommentLike(ctx, liked.ID)
+		_, err := browserAt(a, uuid.NewString(), "").PostCommentLike(ctx, liked.ID)
 		live <- err
 	}()
 	blockedBy(importPID)
@@ -219,7 +220,8 @@ CREATE TRIGGER critical_refused_like BEFORE INSERT ON %[1]s.content_reactions FO
 	if len(result.Failed) != 1 || result.Failed[0].Index != 1 || result.Written[importer.SectionReactions] != 1 {
 		t.Fatalf("import wrote %v and failed %+v; want the like written and the refused one failed", result.Written, result.Failed)
 	}
-	if got := readComment(t, a, item.ID, liked.ID); got.Likes != 1 {
-		t.Fatalf("one address liked twice; comment likes %d, want 1", got.Likes)
+	// The imported guest and the live browser are two people.
+	if got := readComment(t, a, item.ID, liked.ID); got.Likes != 2 {
+		t.Fatalf("comment likes %d, want the imported and the live like", got.Likes)
 	}
 }

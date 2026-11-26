@@ -40,12 +40,20 @@ type feedbackSubject struct {
 
 func (f feedbackSubject) id() string { return cmp.Or(f.user, f.anon) }
 
-// pred selects the subject's rows; $n binds id().
+// pred selects the subject's feedback rows; $n binds id().
 func (f feedbackSubject) pred(n int) string {
 	if f.user != "" {
 		return "user_id = $" + strconv.Itoa(n) + "::text::uuid"
 	}
-	return "anonymous_actor_id = $" + strconv.Itoa(n) + "::text::uuid"
+	return "anonymous_subject = $" + strconv.Itoa(n) + "::text::uuid"
+}
+
+// reactionPred is pred over content_reactions, whose user_id is text.
+func (f feedbackSubject) reactionPred(n int) string {
+	if f.user != "" {
+		return "user_id = $" + strconv.Itoa(n)
+	}
+	return "anonymous_subject = $" + strconv.Itoa(n) + "::text::uuid"
 }
 
 // feedbackSubject is the actor's subject; ok is false for one never asked:
@@ -249,7 +257,7 @@ func (s *Service) OfferFeedback(ctx context.Context, actor access.Actor, anonymo
 		if asked || recent >= s.o.Feedback.Budget() {
 			return nil
 		}
-		if _, err := tx.Exec(ctx, `INSERT INTO `+s.t.feedback+` (app_id, user_id, anonymous_actor_id, content_id, reaction, offered_at)
+		if _, err := tx.Exec(ctx, `INSERT INTO `+s.t.feedback+` (app_id, user_id, anonymous_subject, content_id, reaction, offered_at)
  VALUES ($1::text::uuid, $2::text::uuid, $3::text::uuid, $4::text::uuid, $5, $6)`, s.o.Tenant, nullable(who.user), nullable(who.anon), id, string(in.Reaction), row.offeredAt); err != nil {
 			return err
 		}
@@ -487,8 +495,7 @@ func (s *Service) feedbackTx(ctx context.Context, who feedbackSubject, fn func(p
 }
 
 // reacted reports whether the subject holds the reaction on ref now: a
-// favorite (accounts only), or a like or dislike, which a signed-out
-// visitor's row records as its anonymous subject.
+// favorite (accounts only), or a like or dislike.
 func (s *Service) reacted(ctx context.Context, who feedbackSubject, ref contentref.ContentRef, reaction discovery.FeedbackReaction) (bool, error) {
 	var ok bool
 	if reaction == discovery.FeedbackFavorite {
@@ -504,12 +511,8 @@ func (s *Service) reacted(ctx context.Context, who feedbackSubject, ref contentr
 	if reaction == discovery.FeedbackDislike {
 		value = -1
 	}
-	actor := "user_id = $5"
-	if who.user == "" {
-		actor = "user_id IS NULL AND anonymous_subject = $5::text::uuid"
-	}
 	err := s.o.Pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM `+s.t.reactions+` WHERE tenant_id = $1 AND content_kind = $2 AND content_id = $3
- AND content_version_id IS NOT DISTINCT FROM $4::text AND `+actor+` AND value = $6)`,
+ AND content_version_id IS NOT DISTINCT FROM $4::text AND `+who.reactionPred(5)+` AND value = $6)`,
 		s.o.Tenant, ref.ContentKind, ref.ContentID, nullable(ref.Version()), who.id(), value).Scan(&ok)
 	return ok, err
 }
@@ -585,11 +588,7 @@ func (s *Service) culprits(ctx context.Context, actor access.Actor, who feedback
 // content: the tags of what they dislike, and those their not_into answers
 // name.
 func (s *Service) dislikedEntities(ctx context.Context, who feedbackSubject, current string, ids []string) (map[string]bool, error) {
-	source := `SELECT content_id FROM ` + s.t.reactions + ` WHERE tenant_id = $1 AND user_id IS NULL AND anonymous_subject = $2::text::uuid AND value = -1`
-	if who.user != "" {
-		source = `SELECT content_id FROM ` + s.t.reactions + ` WHERE tenant_id = $1 AND user_id = $2 AND value = -1`
-	}
-	rows, err := s.o.Pool.Query(ctx, `SELECT m.entity_id FROM (`+source+`) AS d(id)
+	rows, err := s.o.Pool.Query(ctx, `SELECT m.entity_id FROM (SELECT content_id FROM `+s.t.reactions+` WHERE tenant_id = $1 AND `+who.reactionPred(2)+` AND value = -1) AS d(id)
  JOIN `+s.t.memberships+` m ON m.tenant_id = $1 AND m.content_id = d.id
  WHERE d.id <> $3 AND m.state = 'active' AND m.entity_id = ANY($4)
  UNION SELECT entity_id FROM `+s.t.feedback+` WHERE app_id = $1::text::uuid AND `+who.pred(2)+`

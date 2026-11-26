@@ -29,7 +29,7 @@ type Actor struct {
 	Invoker auth.Invoker
 	// IP is the client's address: the request's RemoteAddr, or the client a
 	// trusted proxy forwarded (Config.TrustedProxies). It keys an anonymous
-	// actor's reactions, votes and limits, an IPv6 address by its /64.
+	// actor's votes and limits, an IPv6 address by its /64.
 	IP        string
 	Anonymous bool
 	// Verified is the request's verified credential, kept for that request

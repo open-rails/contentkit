@@ -2,6 +2,7 @@ package contentstore
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	content "github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contentref"
@@ -204,8 +206,8 @@ func (rt *Runtime) checkReaction(r content.ImportReaction) (keyRow, error) {
 	if r.Value < -1 || r.Value > 1 {
 		return k, invalidImport("reaction value %d is -1, 0 or 1", r.Value)
 	}
-	if strings.TrimSpace(r.UserID) == "" && strings.TrimSpace(r.IP) == "" {
-		return k, invalidImport("a reaction needs a user_id or an ip")
+	if strings.TrimSpace(r.UserID) == "" && strings.TrimSpace(r.AnonymousKey) == "" {
+		return k, invalidImport("a reaction needs a user_id or an anonymous_key")
 	}
 	return k, nil
 }
@@ -483,16 +485,16 @@ func (rt *Runtime) ImportReactions(ctx context.Context, tx pgx.Tx, in []content.
 	}
 	type row struct {
 		keyRow
-		UserID    *string   `json:"user_id"`
-		IP        *string   `json:"ip"`
-		Value     int16     `json:"value"`
-		Source    string    `json:"source"`
-		CreatedAt time.Time `json:"created_at"`
-		UpdatedAt time.Time `json:"updated_at"`
+		UserID    *string    `json:"user_id"`
+		Actor     *uuid.UUID `json:"anonymous_actor_id"`
+		Value     int16      `json:"value"`
+		Source    string     `json:"source"`
+		CreatedAt time.Time  `json:"created_at"`
+		UpdatedAt time.Time  `json:"updated_at"`
 	}
 	now := time.Now()
 	index := map[string]int{}
-	var byUser, byIP []row
+	var byUser, byKey []row
 	var users []string
 	keys := map[keyRow]bool{}
 	for _, r := range in {
@@ -502,18 +504,19 @@ func (rt *Runtime) ImportReactions(ctx context.Context, tx pgx.Tx, in []content.
 		}
 		x := row{keyRow: k, Value: r.Value, Source: r.Source, CreatedAt: stamp(r.CreatedAt, now)}
 		x.UpdatedAt = stamp(r.UpdatedAt, x.CreatedAt)
-		user, ip := strings.TrimSpace(r.UserID), strings.TrimSpace(r.IP)
+		user := strings.TrimSpace(r.UserID)
 		var id string
 		if user != "" {
 			x.UserID, id = &user, "u\x00"+user
 			users = append(users, user)
 		} else {
-			x.IP, id = &ip, "i\x00"+ip
+			actor := importedReactor(rt.app, strings.TrimSpace(r.AnonymousKey))
+			x.Actor, id = &actor, "a\x00"+actor.String()
 		}
 		keys[k] = true
 		// The last of a repeated reaction wins.
 		id += "\x00" + k.Kind + "\x00" + k.ID + "\x00" + k.Version
-		list := &byIP
+		list := &byKey
 		if x.UserID != nil {
 			list = &byUser
 		}
@@ -537,7 +540,7 @@ func (rt *Runtime) ImportReactions(ctx context.Context, tx pgx.Tx, in []content.
 		rows   []row
 		target string
 	}{{byUser, `(tenant_id, content_kind, content_id, content_version_id, user_id) WHERE user_id IS NOT NULL`},
-		{byIP, `(tenant_id, content_kind, content_id, content_version_id, ip) WHERE user_id IS NULL AND ip IS NOT NULL`}} {
+		{byKey, `(tenant_id, content_kind, content_id, content_version_id, anonymous_actor_id) WHERE anonymous_actor_id IS NOT NULL`}} {
 		if len(part.rows) == 0 {
 			continue
 		}
@@ -545,11 +548,11 @@ func (rt *Runtime) ImportReactions(ctx context.Context, tx pgx.Tx, in []content.
 		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `INSERT INTO `+s.t.reactions+` AS x (tenant_id, content_kind, content_id, content_version_id, user_id, ip, value,
+		if _, err := tx.Exec(ctx, `INSERT INTO `+s.t.reactions+` AS x (tenant_id, content_kind, content_id, content_version_id, user_id, anonymous_actor_id, value,
  created_at, updated_at, author_hidden, import_source)
- SELECT $1, r.kind, r.id, r.version, r.user_id, r.ip, r.value, r.created_at, r.updated_at,
+ SELECT $1, r.kind, r.id, r.version, r.user_id, r.anonymous_actor_id, r.value, r.created_at, r.updated_at,
  EXISTS (SELECT 1 FROM `+rt.hiddenAuthorsTable()+` h WHERE h.tenant_id=$1 AND h.actor_id=r.user_id), NULLIF(r.source, '')
- FROM jsonb_to_recordset($2::jsonb) AS r(kind text, id text, version text, user_id text, ip text, value smallint, created_at timestamptz, updated_at timestamptz, source text)
+ FROM jsonb_to_recordset($2::jsonb) AS r(kind text, id text, version text, user_id text, anonymous_actor_id uuid, value smallint, created_at timestamptz, updated_at timestamptz, source text)
  ON CONFLICT `+part.target+` DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at, import_source = EXCLUDED.import_source
  WHERE (x.import_source = EXCLUDED.import_source OR
   (x.import_source IS NULL AND EXCLUDED.import_source IS NOT NULL AND EXCLUDED.user_id IS NOT NULL AND EXCLUDED.value = 0))
@@ -558,6 +561,13 @@ func (rt *Runtime) ImportReactions(ctx context.Context, tx pgx.Tx, in []content.
 		}
 	}
 	return rt.settle(ctx, tx, later, Recounts{keys: keys})
+}
+
+// importedReactor is the anonymous_actor_id of the signed-out reactor a
+// source names by key: a UUIDv8 of its hash in app, so a re-sent record finds
+// its row and the key itself is never stored.
+func importedReactor(app uuid.UUID, key string) uuid.UUID {
+	return uuid.NewHash(sha256.New(), app, []byte("contentkit imported reactor\x00"+key), 8)
 }
 
 // ImportFavorites writes bookmarks in tx. Counts follow, or later recounts

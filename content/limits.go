@@ -29,6 +29,12 @@ const (
 	ActionPollVote Action = "poll_vote" // multiple-choice votes
 )
 
+const (
+	// ActionAnonymousReaction counts signed-out browsers reacting to one
+	// target from one client address; changing one's own reaction is free.
+	ActionAnonymousReaction Action = "anonymous_reaction"
+)
+
 // Rate allows at most Count interactions in any Per (a sliding window).
 type Rate struct {
 	Count int

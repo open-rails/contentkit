@@ -216,7 +216,7 @@ is no ordinary parent-content DELETE route or Go method.
 
 ### Client address
 
-The client's address is what location rules match and what anonymous reactions, votes and limits are keyed by. It is the request's peer, `Request.RemoteAddr`, unless the peer is one of `Config.TrustedProxies` (`trusted_proxies`, CIDR prefixes such as an ingress's `10.0.0.0/8`). From a trusted peer, ContentKit reads `Forwarded` or `X-Forwarded-For` right to left, skips every hop in a trusted prefix and takes the first other address; if every hop is trusted, the left-most. What a client sends ahead of the proxy's own entry is never read, so it cannot choose its address. A trusted proxy must write exactly one of the two headers: a request carrying both, or a hop that is not an address where one is read (`unknown`, an obfuscated `Forwarded` node), is 400 `invalid_request`. Write IPv4 proxies as IPv4 prefixes; an IPv4-mapped prefix is refused at `New`.
+The client's address is what location rules match and what anonymous votes and limits are keyed by. It is the request's peer, `Request.RemoteAddr`, unless the peer is one of `Config.TrustedProxies` (`trusted_proxies`, CIDR prefixes such as an ingress's `10.0.0.0/8`). From a trusted peer, ContentKit reads `Forwarded` or `X-Forwarded-For` right to left, skips every hop in a trusted prefix and takes the first other address; if every hop is trusted, the left-most. What a client sends ahead of the proxy's own entry is never read, so it cannot choose its address. A trusted proxy must write exactly one of the two headers: a request carrying both, or a hop that is not an address where one is read (`unknown`, an obfuscated `Forwarded` node), is 400 `invalid_request`. Write IPv4 proxies as IPv4 prefixes; an IPv4-mapped prefix is refused at `New`.
 
 Leave `TrustedProxies` empty when the host rewrites `RemoteAddr` itself, as `net/http` hosts behind their own trusted-proxy step do: the peer is then the client. Behind a proxy with neither, every visitor is the proxy: location rules match nobody and all anonymous visitors share one key. `ck.VisitorClient(ip, host)` takes the client's address directly; pass the resolved one, never an unverified header. Give the host's AuthKit the same posture (its `HTTPConfig.TrustedProxies`, or `DirectPeerIP` when there are none), so both name the same client.
 
@@ -610,7 +610,10 @@ breaker. The engine's `contentkit_moderator` probe fails while it is tripped.
 
 Signed-out visitors only read unless `content.Options.Anonymous` says
 otherwise: `Comments` (under an `anon_name`), `Reactions` (likes and
-dislikes of content and comments, keyed by IP) and `Votes`
+dislikes of content and comments, one per browser: keyed by the anonymous id
+the SDK sends as `ContentKit-Anonymous-Id`, without which a signed-out
+reaction is `400 invalid_request`; no address is stored, and signing in moves
+them to the account) and `Votes`
 (multiple-choice polls, keyed by IP and counted separately from signed-in
 votes, so one person can vote once each way and a changing address votes
 again). Favorites always need a signed-in actor. A refused anonymous attempt is `401 unauthorized`.
@@ -640,9 +643,10 @@ in any `Per`"; an action with two must pass both.
 | `reaction` | `POST /{contents\|entities}/{id}/like\|dislike`, `DELETE …/reaction` | 30 per minute |
 | `favorite` | `POST` and `DELETE /{contents\|channels}/{id}/favorite` | 20 per minute |
 | `poll_vote` | `POST /polls/{id}/vote` | 30 per minute |
+| `anonymous_reaction` | the reaction routes, signed out | 10 per day |
 
-Override any of them in `content.Options.Limits` (`Comment`, `CommentReaction`,
-`Reaction`, `Favorite`, `PollVote`, each `[]content.Rate{{Count, Per}}`).
+`anonymous_reaction` counts the signed-out browsers that react to one target from one address (an IPv6 /64), the bound on ballot stuffing now that each browser has its own reaction: a browser changing its own reaction spends nothing more, and accounts are not counted. Override any of them in `content.Options.Limits` (`Comment`, `CommentReaction`,
+`Reaction`, `Favorite`, `PollVote`, `AnonymousReaction`, each `[]content.Rate{{Count, Per}}`).
 `Limits.Redis` (a Redis or Garnet client) shares the counts across replicas
 under `Limits.KeyPrefix` (default `contentkit:content:rl:`) plus the tenant;
 without it each process counts alone (logged at start). A Redis error falls

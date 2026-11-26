@@ -266,11 +266,17 @@ func (run *batchRun) reaction(r *resolver, i int) (any, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	user, ip, err := subject(x.UserID, x.IP)
+	user, err := account(x.UserID)
 	if err != nil {
 		return nil, "", err
 	}
-	return content.ImportReaction{Source: run.b.Source, Ref: t.ref, UserID: user, IP: ip, Value: x.Value, CreatedAt: x.CreatedAt, UpdatedAt: x.UpdatedAt}, "", nil
+	key := ""
+	if user == "" {
+		if key = strings.TrimSpace(x.AnonymousKey); len(key) > 256 {
+			return nil, "", fmt.Errorf("%w: an anonymous_key is at most 256 bytes", errInvalid)
+		}
+	}
+	return content.ImportReaction{Source: run.b.Source, Ref: t.ref, UserID: user, AnonymousKey: key, Value: x.Value, CreatedAt: x.CreatedAt, UpdatedAt: x.UpdatedAt}, "", nil
 }
 
 func (run *batchRun) favorite(r *resolver, i int) (any, string, error) {

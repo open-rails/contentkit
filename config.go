@@ -126,6 +126,9 @@ type LimitsConfig struct {
 	Reaction        []Rate `yaml:"reaction" json:"reaction"`
 	Favorite        []Rate `yaml:"favorite" json:"favorite"`
 	PollVote        []Rate `yaml:"poll_vote" json:"poll_vote"`
+	// AnonymousReaction counts the signed-out browsers reacting to one
+	// target from one client address (default 10 per day).
+	AnonymousReaction []Rate `yaml:"anonymous_reaction" json:"anonymous_reaction"`
 }
 
 // Rate is Count actions per Per.
