@@ -412,14 +412,18 @@ func TestMediaMasters(t *testing.T) {
 		settleDerivatives(t, g)
 		objects := itemObjects(t, g)
 		reader := g.app.client("")
-		read, err := reader.GetMediaVersion(t.Context(), g.ref.Kind, g.ref.ID, g.ref.Version, ck.GetMediaVersionQuery{})
-		must(t, err)
+		var read media.ReadResult
+		waitForWithin(t, 45*time.Second, func() bool {
+			var err error
+			read, err = reader.GetMediaVersion(t.Context(), g.ref.Kind, g.ref.ID, g.ref.Version, ck.GetMediaVersionQuery{})
+			return err == nil && len(read.Files) > 0 && g.released(t)
+		})
 		hook := &failingHook{}
 		g.storage.restart(t, g.app, func(c *ck.Config, wc *worker.Config) {
 			c.Media.Kinds[0].Master = &media.Recipe{Steps: []media.RecipeStep{{Hook: "broken", Version: "1"}}}
 			wc.Masters = map[string]media.MasterHook{"broken": hook}
 		})
-		_, err = g.app.engine.RegenerateMedia(t.Context(), media.Regeneration{Kind: "gallery"})
+		_, err := g.app.engine.RegenerateMedia(t.Context(), media.Regeneration{Kind: "gallery"})
 		must(t, err)
 		jobs, err := river.NewClient(riverpgxv5.New(g.world.pool), &river.Config{Schema: g.app.cfg.Media.WorkerSchema})
 		must(t, err)
@@ -447,7 +451,7 @@ func TestMediaMasters(t *testing.T) {
 		if !g.released(t) {
 			t.Fatal("a failed hook withdrew the release")
 		}
-		now, err := reader.GetMediaVersion(t.Context(), g.ref.Kind, g.ref.ID, g.ref.Version, ck.GetMediaVersionQuery{})
+		now, err := g.app.client("").GetMediaVersion(t.Context(), g.ref.Kind, g.ref.ID, g.ref.Version, ck.GetMediaVersionQuery{})
 		must(t, err)
 		if len(now.Files) != len(read.Files) || len(now.Files) == 0 || now.Files[0].Path != read.Files[0].Path {
 			t.Fatalf("a failed hook changed what readers get: %d -> %d files", len(read.Files), len(now.Files))

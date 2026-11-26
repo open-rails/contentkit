@@ -117,9 +117,10 @@ func TestRequiredMixedDerivativesBeforeRelease(t *testing.T) {
 	if derivatives == 0 {
 		t.Fatal("no unified derivative work was performed")
 	}
-	// Replacing one input retains the old release until that output finishes.
+	// Replacing one input retains the old release until that output finishes
+	// (a released output's replacement is written where it is served).
 	hold = m.wire.pause(t, func(r *http.Request) bool {
-		return r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/internal/") && strings.HasPrefix(r.Header.Get("Content-Type"), "image/webp")
+		return r.Method == http.MethodPut && strings.HasPrefix(r.Header.Get("Content-Type"), "image/webp")
 	})
 	before, err := m.app.client("").GetMediaVersion(t.Context(), ref.Kind, ref.ID, ref.Version, ck.GetMediaVersionQuery{})
 	must(t, err)
