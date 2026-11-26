@@ -61,11 +61,6 @@ func (st *Store) PurgeContentKinds(ctx context.Context, tenant string, contentKi
 			return err
 		}
 	}
-	for _, table := range []string{"popularity_daily", "popularity_daily_staging", "popularity_daily_prepared"} {
-		if err := st.mutate(ctx, table, "tenant = ? AND content_kind IN ?", tenant, kinds); err != nil {
-			return err
-		}
-	}
 	return nil
 }
 

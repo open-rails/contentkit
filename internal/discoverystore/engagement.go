@@ -5,10 +5,8 @@ import (
 	"errors"
 
 	"github.com/open-rails/contentkit/contentref"
-	"github.com/open-rails/contentkit/internal/search"
 	signalstore "github.com/open-rails/contentkit/internal/signalstore"
 	"github.com/open-rails/contentkit/signal"
-	"golang.org/x/sync/errgroup"
 )
 
 // seedConcurrency bounds how many seed queries are in flight at once, so one
@@ -47,82 +45,21 @@ type Engagement struct {
 	RRFK int
 }
 
-func (e Engagement) Similar(ctx context.Context, anchor contentref.ContentRef, q query) ([]candidate, error) {
+// Similar has no co-engaged candidates: co-engagement read ClickHouse's
+// dropped engagement tables.
+func (e Engagement) Similar(context.Context, contentref.ContentRef, query) ([]candidate, error) {
 	if e.Store == nil {
 		return nil, errNoStore
 	}
-	co, err := e.Store.CoEngaged(ctx, e.Tenant, anchor, signal.CoEngagedOptions{
-		ContentKinds: q.ContentKinds,
-		Window:       q.Window,
-		Limit:        clampInt(q.Limit*2, q.Limit, 200),
-	})
-	if err != nil {
-		return nil, err
-	}
-	out := make([]candidate, 0, len(co))
-	for _, c := range co {
-		out = append(out, candidate{Ref: c.ContentRef, Score: float64(c.Strength)})
-	}
-	return out, nil
+	return nil, nil
 }
 
-// ForSubject never returns its seeds.
-func (e Engagement) ForSubject(ctx context.Context, subject signal.Subject, q query) ([]candidate, error) {
+// ForSubject has no co-engaged candidates for the same reason.
+func (e Engagement) ForSubject(context.Context, signal.Subject, query) ([]candidate, error) {
 	if e.Store == nil {
 		return nil, errNoStore
 	}
-	seedLimit := q.SeedLimit
-	if seedLimit <= 0 {
-		seedLimit = 5
-	}
-	seeds, err := e.Store.TopStates(ctx, e.Tenant, subject, signal.TopStatesOptions{
-		ContentKinds:    q.SeedContentKinds,
-		ExcludeNegative: true,
-		Limit:           seedLimit,
-	})
-	if err != nil {
-		return nil, err
-	}
-	if len(seeds) == 0 {
-		return nil, nil
-	}
-	perSeed := clampInt(q.Limit, 20, 100)
-	isSeed := make(map[contentref.ContentKey]struct{}, len(seeds))
-	for _, seed := range seeds {
-		isSeed[seed.Key()] = struct{}{}
-	}
-
-	// Per-seed slots keep the fused order deterministic (RRF is positional).
-	lists := make([][]search.RRFKey, len(seeds))
-	entity, entityCtx := errgroup.WithContext(ctx)
-	entity.SetLimit(seedConcurrency)
-	for i, seed := range seeds {
-		entity.Go(func() error {
-			co, err := e.Store.CoEngaged(entityCtx, e.Tenant, seed.ContentRef, signal.CoEngagedOptions{ContentKinds: q.ContentKinds, Window: q.Window, Limit: perSeed})
-			if err != nil {
-				return err
-			}
-			keys := make([]search.RRFKey, 0, len(co))
-			for _, c := range co {
-				keys = append(keys, search.RRFKey{ContentKey: c.Key()})
-			}
-			lists[i] = keys
-			return nil
-		})
-	}
-	if err := entity.Wait(); err != nil {
-		return nil, err
-	}
-	fused := search.FuseRRF(lists, search.RRFOptions{K: e.RRFK})
-	out := make([]candidate, 0, len(fused))
-	for _, f := range fused {
-		ref := f.Ref()
-		if _, ok := isSeed[ref.Key()]; ok {
-			continue
-		}
-		out = append(out, candidate{Ref: ref, Score: float64(f.Score)})
-	}
-	return out, nil
+	return nil, nil
 }
 
 func clampInt(v, lo, hi int) int {

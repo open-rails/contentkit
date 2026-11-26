@@ -80,7 +80,6 @@ type Service struct {
 	o         Options
 	t         tables
 	summaries summaryCache
-	ranges    chan struct{}
 }
 
 type tables struct {
@@ -114,8 +113,7 @@ func New(o Options) (*Service, error) {
 		searches: q("content_searches"), erased: q("content_erased_subjects"), creators: q("content_creators"),
 		comments:    q("content_comments"),
 		entityNames: q("content_entity_names"), normalize: q("contentkit_keyword_normalize"), rankings: q("content_popular_rankings"),
-		entityRankings: q("content_entity_popular_rankings"), reposts: q("content_channel_reposts")},
-		ranges: make(chan struct{}, rangeSlots)}
+		entityRankings: q("content_entity_popular_rankings"), reposts: q("content_channel_reposts")}}
 	return s, nil
 }
 

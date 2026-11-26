@@ -7,7 +7,6 @@ import (
 	"log/slog"
 	"sort"
 	"sync/atomic"
-	"time"
 
 	signalstore "github.com/open-rails/contentkit/internal/signalstore"
 
@@ -314,42 +313,6 @@ func (h *Hub) RecordSignals(ctx context.Context, signals []signal.Signal) error 
 		return err
 	}
 	return store.RecordSignals(ctx, h.tenant, signals)
-}
-
-// PopulationCoverage is the earliest trusted eligible-audience observation in
-// this app/kind/domain/language and requested activity window.
-func (h *Hub) PopulationCoverage(ctx context.Context, kind string, scope signal.ActivityScope, window signal.Window) (time.Time, bool, error) {
-	store, err := h.requireStore()
-	if err != nil {
-		return time.Time{}, false, err
-	}
-	return store.PopulationCoverage(ctx, h.tenant, kind, scope, window)
-}
-
-// PrepareDailyPopularity is explicit worker/admin preparation, not a request
-// cache or background loop. Closed daily aggregates are reused unless rebuilt.
-func (h *Hub) PrepareDailyPopularity(ctx context.Context, kind string, availability signal.Availability, scope signal.ActivityScope, rebuild bool) (signal.DailyPopularityPreparation, error) {
-	store, err := h.requireStore()
-	if err != nil {
-		return signal.DailyPopularityPreparation{}, err
-	}
-	return store.PrepareDailyPopularity(ctx, h.tenant, kind, availability, scope, rebuild)
-}
-
-func (h *Hub) DailyPopularityCoverage(ctx context.Context, kind string, scope signal.ActivityScope) (signal.Window, bool, error) {
-	store, err := h.requireStore()
-	if err != nil {
-		return signal.Window{}, false, err
-	}
-	return store.DailyPopularityCoverage(ctx, h.tenant, kind, scope)
-}
-
-func (h *Hub) DailyPopular(ctx context.Context, kind string, window signal.Window, scope signal.ActivityScope, limit int) ([]signal.PopularHit, error) {
-	store, err := h.requireStore()
-	if err != nil {
-		return nil, err
-	}
-	return store.DailyPopular(ctx, h.tenant, kind, window, scope, limit)
 }
 
 // --- Discovery plane ---

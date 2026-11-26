@@ -3,16 +3,11 @@ package discoverystore
 import (
 	"context"
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	discovery "github.com/open-rails/contentkit/discovery"
 	"github.com/open-rails/contentkit/internal/gate"
-	"github.com/open-rails/contentkit/internal/popularity"
-	signalstore "github.com/open-rails/contentkit/internal/signalstore"
-	"github.com/open-rails/contentkit/kinds"
-	"github.com/open-rails/contentkit/signal"
 )
 
 type popularRanking struct{ kind, period, domain, language string }
@@ -63,7 +58,7 @@ func (s *Service) rankingJoin(key popularRanking) (string, pgx.NamedArgs) {
  CROSS JOIN LATERAL unnest(p.content_ids) WITH ORDINALITY AS r(content_id,ord)
  WHERE p.tenant_id=@d_rank_tenant AND p.kind=@d_rank_kind AND p.period=@d_rank_period AND p.domain=@d_rank_domain AND p.language=@d_rank_language) activity
  ON activity.content_id=f.content_id `, pgx.NamedArgs{"d_rank_tenant": s.o.Tenant, "d_rank_kind": key.kind, "d_rank_period": key.period,
-		"d_rank_domain": key.domain, "d_rank_language": key.language}
+			"d_rank_domain": key.domain, "d_rank_language": key.language}
 }
 
 // topRanked returns up to limit ids of the stored ranking, best first.
@@ -98,91 +93,4 @@ func (s *Service) rankedScores(ctx context.Context, key popularRanking, ids []st
 	}
 	rows.Close()
 	return out, rows.Err()
-}
-
-// RefreshPopularRankings prepares the host's declared choices, including on an
-// empty installation with no public traffic. A reader never creates work.
-func (s *Service) RefreshPopularRankings(ctx context.Context) error {
-	if err := s.signals(); err != nil {
-		return err
-	}
-	now := s.now()
-	type scopeKey struct {
-		kind  string
-		scope kinds.PopularityScope
-	}
-	type pending struct {
-		key    popularRanking
-		window signal.Window
-	}
-	groups := map[scopeKey][]pending{}
-	for kind, config := range s.o.Kinds.Kinds {
-		for _, bucket := range config.Popularity {
-			from, until := bucket.Window(now)
-			window := signalstore.Between(from, until)
-			for _, scope := range bucket.ActivityScopes() {
-				group := scopeKey{kind, scope}
-				key := popularRanking{kind, bucket.ID, scope.Domain, scope.Language}
-				snapshot, err := s.rankingSnapshot(ctx, key)
-				if err != nil {
-					return err
-				}
-				if snapshot.ComputedAt != nil && snapshot.ComputedAt.Add(bucket.Every()).After(now) && sameBound(snapshot.WindowFrom, from) && sameBound(snapshot.WindowUntil, until) {
-					continue
-				}
-				groups[group] = append(groups[group], pending{key, window})
-			}
-		}
-	}
-	var failures []error
-	for group, due := range groups {
-		scope := signal.ActivityScope{Domain: group.scope.Domain, Language: group.scope.Language}
-		coverage, err := popularity.Prepare(ctx, s.o.Hub, s, group.kind, now, scope)
-		if err != nil {
-			failures = append(failures, fmt.Errorf("discovery: prepare popularity %s: %w", group.kind, err))
-			continue
-		}
-		for _, p := range due {
-			if err := s.buildRanking(ctx, p.key, p.window, coverage, now); err != nil {
-				failures = append(failures, err)
-			}
-		}
-	}
-	return errors.Join(failures...)
-}
-
-func sameBound(stored *time.Time, actual time.Time) bool {
-	return stored == nil && actual.IsZero() || stored != nil && stored.Equal(actual)
-}
-
-func optionalBound(value time.Time) *time.Time {
-	if value.IsZero() {
-		return nil
-	}
-	return &value
-}
-
-func (s *Service) buildRanking(ctx context.Context, key popularRanking, window, coverage signal.Window, computed time.Time) error {
-	ids, err := popularity.Rank(ctx, s.o.Hub, s, key.kind, window, signal.ActivityScope{Domain: key.domain, Language: key.language}, discovery.PopularityDepth)
-	if err != nil {
-		return fmt.Errorf("discovery: rank %s %s: %w", key.kind, key.period, err)
-	}
-	if ids == nil {
-		ids = []string{}
-	}
-	covered := coverage
-	if window.From.After(covered.From) {
-		covered.From = window.From
-	}
-	if !window.To.IsZero() && (covered.To.IsZero() || window.To.Before(covered.To)) {
-		covered.To = window.To
-	}
-	if coverage.From.IsZero() || !covered.From.Before(covered.To) {
-		covered = signal.Window{}
-	}
-	_, err = s.o.Pool.Exec(ctx, `INSERT INTO `+s.t.rankings+` (tenant_id,kind,period,domain,language,window_from,window_until,computed_at,content_ids,covered_from,covered_until,available_from)
- VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
- ON CONFLICT (tenant_id,kind,period,domain,language) DO UPDATE SET window_from=excluded.window_from,window_until=excluded.window_until,computed_at=excluded.computed_at,content_ids=excluded.content_ids,covered_from=excluded.covered_from,covered_until=excluded.covered_until,available_from=excluded.available_from`,
-		s.o.Tenant, key.kind, key.period, key.domain, key.language, optionalBound(window.From), optionalBound(window.To), computed, ids, optionalBound(covered.From), optionalBound(covered.To), optionalBound(coverage.From))
-	return err
 }

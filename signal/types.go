@@ -359,34 +359,6 @@ func utcDay(t time.Time) time.Time {
 	return time.Date(u.Year(), u.Month(), u.Day(), 0, 0, 0, 0, time.UTC)
 }
 
-// PopularHit is one ranked work from prepared daily participation. Only works
-// with at least one qualified reader in the window rank; editions never rank.
-type PopularHit struct {
-	ContentRef
-	Score float64
-}
-
-// CoEngagedOptions controls co-engagement queries ("subjects who engaged with
-// X also engaged with Y"). Co-engagement is work-level.
-type CoEngagedOptions struct {
-	// ContentKinds limits result kinds. Empty = all.
-	ContentKinds []string
-	// Window bounds the event scan. Zero = all time.
-	Window Window
-	// MaxSubjects caps the anchor's qualified readers (defaults to 10000).
-	// Readers are selected by a stable identity hash, with identity tie-breakers.
-	MaxSubjects int
-	Limit       int // default 50
-}
-
-// CoEngagedHit is one co-engaged work. Strength is the NET co-engaged subject
-// count: subjects with non-negative engagement count for, subjects with
-// negative explicit feedback count against.
-type CoEngagedHit struct {
-	ContentRef
-	Strength int64
-}
-
 // TopStatesOptions controls TopStates (recommendation seeds).
 type TopStatesOptions struct {
 	ContentKinds []string
