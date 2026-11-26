@@ -26,7 +26,7 @@ import (
 // Config configures a Runner.
 type Config struct {
 	Manifests *mediastore.Manifests
-	// Hooks are the registered hooks by the name recipes give them.
+	// Hooks are the worker's hooks by Name.
 	Hooks   map[string]media.MasterHook
 	TempDir string // scratch for originals and results; default os.TempDir()
 	// WebP re-encodes an 8-bit image as lossless WebP (the image
@@ -42,27 +42,36 @@ type Runner struct {
 }
 
 // New refuses a registry whose recipes name a hook that is not registered,
-// or at another version.
+// or at another version (Check).
 func New(c Config) (*Runner, error) {
 	if c.Manifests == nil {
 		return nil, errors.New("media/master: Config needs Manifests")
 	}
 	reg := c.Manifests.Registry()
+	if err := Check(reg, c.Hooks); err != nil {
+		return nil, err
+	}
+	return &Runner{c: c, reg: reg}, nil
+}
+
+// Check refuses a recipe of reg naming a hook hooks lacks, or at another
+// version.
+func Check(reg *mediastore.Registry, hooks map[string]media.MasterHook) error {
 	for _, k := range reg.Config().Kinds {
 		if k.Master == nil {
 			continue
 		}
 		for _, s := range k.Master.Steps {
-			h, ok := c.Hooks[s.Hook]
+			h, ok := hooks[s.Hook]
 			switch {
 			case !ok:
-				return nil, fmt.Errorf("media/master: kind %q: master hook %q is not registered", k.Name, s.Hook)
+				return fmt.Errorf("media/master: kind %q: master hook %q is not registered", k.Name, s.Hook)
 			case h.Version() != s.Version:
-				return nil, fmt.Errorf("media/master: kind %q: master hook %q is version %q, its recipe names %q", k.Name, s.Hook, h.Version(), s.Version)
+				return fmt.Errorf("media/master: kind %q: master hook %q is version %q, its recipe names %q", k.Name, s.Hook, h.Version(), s.Version)
 			}
 		}
 	}
-	return &Runner{c: c, reg: reg}, nil
+	return nil
 }
 
 // Process makes ref's pending masters. A hook's failure keeps that upload's

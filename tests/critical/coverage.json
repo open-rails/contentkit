@@ -3371,7 +3371,7 @@
       "behavior": "A master recipe change makes each upload's master with the hook (a lossless WebP of its own, recording the hooks, versions, parameters and fingerprint), released to private/; renditions re-derive from it, downloads serve it, and a repeat regeneration writes nothing",
       "status": "verified",
       "evidence": [
-        "contentkit#304: real bucket (MinIO in CI), real PostgreSQL, engine and stock worker."
+        "contentkit#304: real bucket (MinIO in CI), real PostgreSQL, engine and a worker built by media/worker.New with the hook in Config.Hooks."
       ],
       "cases": [
         "TestMediaMasters/CK-J09-S49_a_recipe_change_rederives_masters_then_renditions"
@@ -3736,6 +3736,18 @@
       "evidence": [
         "At like 1/2 and dislike 0, 60 signed-out browsers each reacting are asked between 12 and 48 times and never about the dislike; each passed-over browser reacting and asking three more times is never asked; rows match.",
         "contentkit#300: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
+      "id": "CK-J09-S53",
+      "journey": "CK-J09",
+      "behavior": "A host's own worker binary, media/worker.Main with its master hook, makes the recipe's masters; media/worker.New refuses a recipe's missing hook, another version and two hooks of one name, and the stock worker binary exits at start, taking no job, while a recipe names a hook it lacks",
+      "status": "verified",
+      "evidence": [
+        "contentkit#304: real bucket (MinIO in CI), real PostgreSQL, the stock and a host-built worker binary as processes."
+      ],
+      "cases": [
+        "TestMediaMasters/CK-J09-S53_a_hosts_worker_binary_registers_its_hooks_and_one_without_them_never_starts"
       ]
     }
   ],

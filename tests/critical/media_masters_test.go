@@ -14,31 +14,37 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverpgxv5"
 	"github.com/riverqueue/river/rivertype"
 
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/access"
-	"github.com/open-rails/contentkit/internal/media/worker"
 	"github.com/open-rails/contentkit/internal/media/workqueue"
 	mediastore "github.com/open-rails/contentkit/internal/mediastore"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/layout"
 	"github.com/open-rails/contentkit/media/versions"
+	"github.com/open-rails/contentkit/media/worker"
 )
 
 // invertHook is a master hook that changes every pixel of a PNG.
 type invertHook struct{ calls atomic.Int64 }
 
+func (*invertHook) Name() string    { return "invert" }
 func (*invertHook) Version() string { return "1" }
 
 func (h *invertHook) Process(_ context.Context, in media.MasterInput) (media.MasterOutput, error) {
@@ -71,9 +77,48 @@ func (h *invertHook) Process(_ context.Context, in media.MasterInput) (media.Mas
 	return media.MasterOutput{Type: media.MasterPNG}, w.Close()
 }
 
+// negative is img with every pixel negated.
+func negative(img image.Image) image.Image {
+	b := img.Bounds()
+	out := image.NewNRGBA(b)
+	for y := b.Min.Y; y < b.Max.Y; y++ {
+		for x := b.Min.X; x < b.Max.X; x++ {
+			c := color.NRGBAModel.Convert(img.At(x, y)).(color.NRGBA)
+			out.SetNRGBA(x, y, color.NRGBA{R: 255 - c.R, G: 255 - c.G, B: 255 - c.B, A: c.A})
+		}
+	}
+	return out
+}
+
+// workerBinary is the worker command .bin holds, built before the suite.
+func workerBinary(t *testing.T, name string) string {
+	t.Helper()
+	path, err := filepath.Abs(filepath.Join(".bin", name))
+	must(t, err)
+	if info, err := os.Stat(path); err != nil || info.Mode()&0o111 == 0 {
+		t.Fatalf("build %s before this selected test (.github/scripts/build-and-vet.sh)", path)
+	}
+	return path
+}
+
+// workerEnv is a worker process's environment for m's database and bucket.
+func workerEnv(t *testing.T, m *mediaWorld, kindsFile string) []string {
+	c := m.workerConfig
+	env := []string{"PATH=" + os.Getenv("PATH"), "DATABASE_URL=" + os.Getenv("CONTENTKIT_CRITICAL_PG"), "MEDIA_KINDS_FILE=" + kindsFile,
+		"MEDIA_METRICS_ADDR=127.0.0.1:0", "MEDIA_WORKER_SCHEMA=" + c.Schema, "MEDIA_CONTENT_SCHEMA=" + c.ContentSchema,
+		"MEDIA_HOST_RIVER_SCHEMA=" + c.HostSchema, "MEDIA_WORKER_TMP=" + t.TempDir(), "MEDIA_WORKER_THREADS=1", "MEDIA_WORKER_SHUTDOWN_GRACE=1s",
+		"MEDIA_S3_BUCKET=" + m.bucket, "MEDIA_S3_ENDPOINT=" + os.Getenv("CONTENTKIT_CRITICAL_S3_ENDPOINT"),
+		"MEDIA_S3_ACCESS_KEY_ID=" + os.Getenv("CONTENTKIT_CRITICAL_S3_USER"), "MEDIA_S3_SECRET_ACCESS_KEY=" + os.Getenv("CONTENTKIT_CRITICAL_S3_PASSWORD")}
+	if c.AccountSchema != "" {
+		env = append(env, "MEDIA_ACCOUNT_SCHEMA="+c.AccountSchema, "MEDIA_ACCOUNT_WORKER_SCHEMA="+c.AccountWorkerSchema)
+	}
+	return env
+}
+
 // failingHook is a master hook whose job always fails.
 type failingHook struct{ calls atomic.Int64 }
 
+func (*failingHook) Name() string    { return "broken" }
 func (*failingHook) Version() string { return "1" }
 
 func (h *failingHook) Process(context.Context, media.MasterInput) (media.MasterOutput, error) {
@@ -115,7 +160,14 @@ func itemObjects(t *testing.T, g *releasedGallery) map[string]bool {
 // settleDerivatives waits until no media derivative job is queued or running.
 func settleDerivatives(t *testing.T, g *releasedGallery) {
 	t.Helper()
-	jobs, err := river.NewClient(riverpgxv5.New(g.world.pool), &river.Config{Schema: g.app.cfg.Media.WorkerSchema})
+	settleMedia(t, g.world.pool, g.app.cfg.Media.WorkerSchema)
+}
+
+// settleMedia waits until no media job of the worker schema is queued or
+// running.
+func settleMedia(t *testing.T, pool *pgxpool.Pool, schema string) {
+	t.Helper()
+	jobs, err := river.NewClient(riverpgxv5.New(pool), &river.Config{Schema: schema})
 	must(t, err)
 	waitForWithin(t, 60*time.Second, func() bool {
 		pending, err := jobs.JobList(t.Context(), river.NewJobListParams().Kinds((workqueue.IngestArgs{}).Kind(), (workqueue.DerivativeArgs{}).Kind()).States(
@@ -317,7 +369,7 @@ func TestMediaMasters(t *testing.T) {
 		recipe := &media.Recipe{Steps: []media.RecipeStep{{Hook: "invert", Version: "1", Params: map[string]any{"mode": "rgb"}}}}
 		g.storage.restart(t, g.app, func(c *ck.Config, wc *worker.Config) {
 			c.Media.Kinds[0].Master = recipe
-			wc.Masters = map[string]media.MasterHook{"invert": hook}
+			wc.Hooks = []media.MasterHook{hook}
 		})
 		_, err := g.app.engine.RegenerateMedia(t.Context(), media.Regeneration{Kind: "gallery"})
 		must(t, err)
@@ -421,7 +473,7 @@ func TestMediaMasters(t *testing.T) {
 		hook := &failingHook{}
 		g.storage.restart(t, g.app, func(c *ck.Config, wc *worker.Config) {
 			c.Media.Kinds[0].Master = &media.Recipe{Steps: []media.RecipeStep{{Hook: "broken", Version: "1"}}}
-			wc.Masters = map[string]media.MasterHook{"broken": hook}
+			wc.Hooks = []media.MasterHook{hook}
 		})
 		_, err := g.app.engine.RegenerateMedia(t.Context(), media.Regeneration{Kind: "gallery"})
 		must(t, err)
@@ -455,6 +507,122 @@ func TestMediaMasters(t *testing.T) {
 		must(t, err)
 		if len(now.Files) != len(read.Files) || len(now.Files) == 0 || now.Files[0].Path != read.Files[0].Path {
 			t.Fatalf("a failed hook changed what readers get: %d -> %d files", len(read.Files), len(now.Files))
+		}
+	})
+
+	t.Run("CK-J09-S53_a_hosts_worker_binary_registers_its_hooks_and_one_without_them_never_starts", func(t *testing.T) {
+		stock, host := workerBinary(t, "media-worker"), workerBinary(t, "host-media-worker")
+		page := chapterImage(t, 101)
+		g := newReleasedGallery(t, nil, page)
+		g.publish(t)
+		g.awaitReleased(t)
+		settleDerivatives(t, g)
+		g.storage.handOff(t, g.app, func(c *ck.Config) {
+			c.Media.Kinds[0].Master = &media.Recipe{Steps: []media.RecipeStep{{Hook: "invert", Version: "1"}}}
+		})
+		kinds, err := g.app.cfg.MediaKinds()
+		must(t, err)
+		// The public entry point refuses a recipe's missing or other hook
+		// version, and two hooks of one name, before it touches a job.
+		config := g.storage.workerConfig
+		config.Kinds = kinds
+		other := kinds
+		other.Kinds = slices.Clone(kinds.Kinds)
+		for i := range other.Kinds {
+			if other.Kinds[i].Master != nil {
+				other.Kinds[i].Master = &media.Recipe{Steps: []media.RecipeStep{{Hook: "invert", Version: "2"}}}
+			}
+		}
+		for _, c := range []struct {
+			kinds media.Config
+			hooks []media.MasterHook
+			want  string
+		}{
+			{kinds, nil, `master hook "invert" is not registered`},
+			{other, []media.MasterHook{&invertHook{}}, `master hook "invert" is version "1", its recipe names "2"`},
+			{kinds, []media.MasterHook{&invertHook{}, &invertHook{}}, `two master hooks are named "invert"`},
+		} {
+			config.Kinds, config.Hooks = c.kinds, c.hooks
+			if _, err := worker.New(t.Context(), config); err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("worker.New: %v, want %q", err, c.want)
+			}
+		}
+		_, err = g.app.engine.RegenerateMedia(t.Context(), media.Regeneration{Kind: "gallery"})
+		must(t, err)
+		registry, err := g.app.cfg.MediaRegistry()
+		must(t, err)
+		kindsFile := filepath.Join(t.TempDir(), "kinds.json")
+		must(t, os.WriteFile(kindsFile, registry, 0o600))
+		env := workerEnv(t, g.storage, kindsFile)
+		before, _, err := g.manifests.Get(t.Context(), g.cref)
+		must(t, err)
+		// The stock image has no hooks: it exits at start and takes no job.
+		refused := exec.CommandContext(t.Context(), stock)
+		refused.Env = env
+		var logs bytes.Buffer
+		refused.Stdout, refused.Stderr = &logs, &logs
+		if err := refused.Run(); err == nil || !strings.Contains(logs.String(), `master hook \"invert\" is not registered`) {
+			t.Fatalf("the stock worker started without the recipe's hook: %v\n%s", err, logs.String())
+		}
+		if cur, _, err := g.manifests.Get(t.Context(), g.cref); err != nil || cur.Rev != before.Rev {
+			t.Fatalf("a refused worker wrote the manifest: %v", err)
+		}
+		// The host's own binary, worker.Main with its hook, makes the masters.
+		run := exec.Command(host)
+		run.Env = env
+		var hostLogs bytes.Buffer
+		run.Stdout, run.Stderr = &hostLogs, &hostLogs
+		must(t, run.Start())
+		var exitErr error
+		exited := make(chan struct{})
+		go func() { exitErr = run.Wait(); close(exited) }()
+		t.Cleanup(func() {
+			_ = run.Process.Kill()
+			<-exited
+		})
+		var after *mediastore.Manifest
+		waitForWithin(t, 90*time.Second, func() bool {
+			select {
+			case <-exited:
+				t.Fatalf("the host worker exited: %v\n%s", exitErr, hostLogs.String())
+			default:
+			}
+			cur, _, err := g.manifests.Get(t.Context(), g.cref)
+			must(t, err)
+			f, _ := cur.Get("pages/001.png")
+			outs := cur.Outputs(f.Path, "reader")
+			if f.Master == nil || f.Master.Of == "" || layout.BlobArea(f.Master.Blob) != layout.AreaPrivate || len(outs) != 1 || outs[0].Input != blobHashOf(f.Master.Blob) {
+				return false
+			}
+			after = cur
+			return true
+		})
+		f, _ := after.Get("pages/001.png")
+		if len(f.Master.Steps) != 1 || f.Master.Steps[0].Hook != "invert" || f.Master.Type != media.MasterWebP {
+			t.Fatalf("host master: %+v", f.Master)
+		}
+		item, err := g.reg.Item(g.cref)
+		must(t, err)
+		key, err := item.Blob(f.Master.Blob)
+		must(t, err)
+		rc, _, err := g.storage.store.Get(t.Context(), key, media.GetOptions{})
+		must(t, err)
+		made, _, err := image.Decode(rc)
+		rc.Close()
+		must(t, err)
+		original, err := png.Decode(bytes.NewReader(page))
+		must(t, err)
+		if d := frameDistance(made, negative(original)); d > 0.5 {
+			t.Fatalf("the master is not the host hook's lossless result: distance %.2f", d)
+		}
+		must(t, run.Process.Signal(syscall.SIGTERM))
+		select {
+		case <-exited:
+			if exitErr != nil {
+				t.Fatalf("the host worker did not drain: %v\n%s", exitErr, hostLogs.String())
+			}
+		case <-time.After(45 * time.Second):
+			t.Fatal("the host worker did not stop")
 		}
 	})
 

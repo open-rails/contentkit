@@ -14,8 +14,6 @@ import (
 	"testing"
 	"time"
 
-	mediastore "github.com/open-rails/contentkit/internal/mediastore"
-
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
@@ -24,11 +22,11 @@ import (
 	"github.com/jackc/pgx/v5"
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/internal/jobhook"
-	"github.com/open-rails/contentkit/internal/media/worker"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/gateway"
 	medias3 "github.com/open-rails/contentkit/media/s3"
 	"github.com/open-rails/contentkit/media/token"
+	"github.com/open-rails/contentkit/media/worker"
 	"github.com/riverqueue/river"
 	_ "golang.org/x/image/webp"
 )
@@ -163,10 +161,8 @@ func attachMediaWith(t *testing.T, w *world, a *application, wrap func(media.Sto
 	a.server = httptest.NewServer(withSessionProofs(t, mux))
 	config, err := a.cfg.MediaKinds()
 	must(t, err)
-	registry, err := mediastore.NewRegistry(config, mediastore.Hooks{})
-	must(t, err)
 	m.scratch = t.TempDir()
-	workerConfig := worker.Config{Pool: w.pool, Schema: a.cfg.Media.WorkerSchema, ContentSchema: w.schema, HostSchema: w.schema + "_river", Store: m.store, Kinds: registry, Threads: 1, IngestWorkers: 1, ImageSources: 1, DerivativeWorkers: 1, ShutdownGrace: time.Second, TempDir: m.scratch}
+	workerConfig := worker.Config{Pool: w.pool, Schema: a.cfg.Media.WorkerSchema, ContentSchema: w.schema, HostSchema: w.schema + "_river", Store: m.store, Kinds: config, Threads: 1, IngestWorkers: 1, ImageSources: 1, DerivativeWorkers: 1, ShutdownGrace: time.Second, TempDir: m.scratch}
 	if accountPrimary {
 		workerConfig.AccountSchema, workerConfig.AccountWorkerSchema = accountStorage.Schema, accountStorage.WorkerSchema
 	}
@@ -218,13 +214,36 @@ func (m *mediaWorld) restart(t *testing.T, a *application, change func(*ck.Confi
 	a.server = mountEngine(t, a.engine)
 	config, err := a.cfg.MediaKinds()
 	must(t, err)
-	m.workerConfig.Kinds, err = mediastore.NewRegistry(config, mediastore.Hooks{})
-	must(t, err)
+	m.workerConfig.Kinds = config
 	m.worker, err = worker.New(t.Context(), m.workerConfig)
 	must(t, err)
 	run, cancel := context.WithCancel(context.Background())
 	m.cancel, m.workerDone = cancel, make(chan error, 1)
 	go func() { m.workerDone <- m.worker.Run(run) }()
+	must(t, a.engine.StartJobs(run))
+}
+
+// handOff redeploys a's engine once change has changed its configuration
+// and stops the in-process worker, so a worker process takes the media jobs.
+func (m *mediaWorld) handOff(t *testing.T, a *application, change func(*ck.Config)) {
+	t.Helper()
+	a.server.Close()
+	must(t, a.engine.Close(t.Context()))
+	m.cancel()
+	select {
+	case err := <-m.workerDone:
+		must(t, err)
+	case <-time.After(15 * time.Second):
+		t.Fatal("media worker did not stop")
+	}
+	m.workerDone <- nil // stopped: the cleanup finds it so
+	change(&a.cfg)
+	var err error
+	a.engine, err = ck.New(t.Context(), a.cfg, a.deps)
+	must(t, err)
+	a.server = mountEngine(t, a.engine)
+	run, cancel := context.WithCancel(context.Background())
+	m.cancel = cancel
 	must(t, a.engine.StartJobs(run))
 }
 

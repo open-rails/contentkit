@@ -186,7 +186,8 @@ func TestRequiredUploadHoldsRelease(t *testing.T) {
 	m.app.server = mountEngine(t, m.app.engine)
 	config, err := m.app.cfg.MediaKinds()
 	must(t, err)
-	m.config.Kinds, err = mediastore.NewRegistry(config, mediastore.Hooks{})
+	m.config.Kinds = config
+	m.registry, err = mediastore.NewRegistry(config, mediastore.Hooks{})
 	must(t, err)
 	admin = m.app.engine.Client()
 	reconciled, err := m.app.engine.Reconcile(t.Context())

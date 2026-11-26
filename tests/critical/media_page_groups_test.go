@@ -423,9 +423,9 @@ func TestMediaIngestContentFailure(t *testing.T) {
 			var wantMessage string
 			if fault == "unavailable-object" {
 				wantMessage = media.ErrUnavailable.Error()
-				target, err := m.config.Kinds.VersionRef(ref.Kind, ref.ID, ref.Version)
+				target, err := m.registry.VersionRef(ref.Kind, ref.ID, ref.Version)
 				must(t, err)
-				item, err := m.config.Kinds.Item(target)
+				item, err := m.registry.Item(target)
 				must(t, err)
 				key, err := item.Staged(op.Blob)
 				must(t, err)
@@ -524,14 +524,14 @@ func newPageGroups(t *testing.T, m *resilientMedia, title string, pages []pageSo
 	g := &pageGroups{m: m, client: m.app.engine.Client(), store: &pageStore{Store: m.storage.store}, jobs: m.queue(t)}
 	g.ref = galleryRef(t, g.client, title)
 	var err error
-	g.target, err = m.config.Kinds.VersionRef(g.ref.Kind, g.ref.ID, g.ref.Version)
+	g.target, err = m.registry.VersionRef(g.ref.Kind, g.ref.ID, g.ref.Version)
 	must(t, err)
-	g.item, err = m.config.Kinds.Item(g.target)
+	g.item, err = m.registry.Item(g.target)
 	must(t, err)
 	// Every write is recorded in the item cache, which reports processing.
-	cache, err := mediastore.NewPGCache(m.pool, m.schema, m.config.Kinds, mediastore.CacheOptions{})
+	cache, err := mediastore.NewPGCache(m.pool, m.schema, m.registry, mediastore.CacheOptions{})
 	must(t, err)
-	g.manifests, err = mediastore.NewManifests(g.store, m.config.Kinds, mediastore.ManifestOptions{Written: cache.Record})
+	g.manifests, err = mediastore.NewManifests(g.store, m.registry, mediastore.ManifestOptions{Written: cache.Record})
 	must(t, err)
 	ops := make([]media.Op, len(pages))
 	for i, page := range pages {

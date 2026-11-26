@@ -15,18 +15,22 @@ import (
 	mediaS3 "github.com/open-rails/contentkit/media/s3"
 )
 
-// FromEnv builds a Config's database and bucket (StoreFromEnv) from the
-// environment, with TuningFromEnv; the host then sets Kinds. Neither is
+// fromEnv builds a Config from the environment: the registry (kindsFromEnv),
+// the database and bucket (storeFromEnv), and tuningFromEnv. Neither is
 // dialed. Close the Pool when done.
 //
 //	DATABASE_URL                 host Postgres (holds MEDIA_WORKER_SCHEMA); may be a transaction-pooling PgBouncer with DATABASE_SESSION_URL
 //	DATABASE_SESSION_URL         the same database without the pooler, for session locks and River's LISTEN (optional)
-func FromEnv(ctx context.Context) (Config, error) {
+func fromEnv(ctx context.Context) (Config, error) {
 	var c Config
-	if err := c.TuningFromEnv(); err != nil {
+	var err error
+	if c.Kinds, err = kindsFromEnv(); err != nil {
 		return c, err
 	}
-	store, err := StoreFromEnv()
+	if err := c.tuningFromEnv(); err != nil {
+		return c, err
+	}
+	store, err := storeFromEnv()
 	if err != nil {
 		return c, err
 	}
@@ -49,12 +53,30 @@ func FromEnv(ctx context.Context) (Config, error) {
 	return c, nil
 }
 
-// StoreFromEnv is the media bucket, not dialed:
+// kindsFromEnv reads the registry JSON (Config.MediaRegistry, which
+// `contentkit media-config` prints) from MEDIA_KINDS_FILE.
+func kindsFromEnv() (media.Config, error) {
+	path := os.Getenv("MEDIA_KINDS_FILE")
+	if path == "" {
+		return media.Config{}, fmt.Errorf("MEDIA_KINDS_FILE is required")
+	}
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return media.Config{}, fmt.Errorf("MEDIA_KINDS_FILE: %w", err)
+	}
+	cfg, err := media.ParseConfig(b)
+	if err != nil {
+		return media.Config{}, fmt.Errorf("MEDIA_KINDS_FILE: %w", err)
+	}
+	return cfg, nil
+}
+
+// storeFromEnv is the media bucket, not dialed:
 //
 //	MEDIA_S3_ENDPOINT            e.g. http://rook-ceph-rgw-external.svc
 //	MEDIA_S3_BUCKET, MEDIA_S3_REGION (default us-east-1), MEDIA_S3_PATH_STYLE (default true)
 //	MEDIA_S3_ACCESS_KEY_ID, MEDIA_S3_SECRET_ACCESS_KEY   read/write key
-func StoreFromEnv() (*mediaS3.Store, error) {
+func storeFromEnv() (*mediaS3.Store, error) {
 	pathStyle, err := strconv.ParseBool(envOr("MEDIA_S3_PATH_STYLE", "true"))
 	if err != nil {
 		return nil, fmt.Errorf("MEDIA_S3_PATH_STYLE: %w", err)
@@ -69,7 +91,7 @@ func StoreFromEnv() (*mediaS3.Store, error) {
 	})
 }
 
-// TuningFromEnv sets the host queue and tuning fields present in the
+// tuningFromEnv sets the host queue and tuning fields present in the
 // environment, leaving the others as they are:
 //
 //	MEDIA_WORKER_SCHEMA          the host's worker River schema (required, one per host, e.g. doujins_media_worker)
@@ -87,7 +109,7 @@ func StoreFromEnv() (*mediaS3.Store, error) {
 //	MEDIA_WORKER_MAX_PIXELS      decoded pixels per image source, all frames together (default 100000000)
 //	MEDIA_WORKER_SHUTDOWN_GRACE  time running jobs get on SIGTERM before cancel (default 30s)
 //	MEDIA_WORKER_VIDEO_SLICE     time a derivative job keeps encoding its own video before yielding, e.g. 20m; ends when its video becomes playable (default 0: after every chunk; at most half the job timeout)
-func (c *Config) TuningFromEnv() error {
+func (c *Config) tuningFromEnv() error {
 	for k, p := range map[string]*string{"MEDIA_ACCOUNT_SCHEMA": &c.AccountSchema, "MEDIA_ACCOUNT_WORKER_SCHEMA": &c.AccountWorkerSchema, "MEDIA_WORKER_SCHEMA": &c.Schema, "MEDIA_CONTENT_SCHEMA": &c.ContentSchema, "MEDIA_HOST_RIVER_SCHEMA": &c.HostSchema, "MEDIA_WORKER_TMP": &c.TempDir,
 		"MEDIA_WORKER_PRESET": &c.Preset, "MEDIA_WORKER_TOP_PRESET": &c.TopPreset, "MEDIA_WORKER_ENCODER": &c.VideoEncoder} {
 		if v := os.Getenv(k); v != "" {

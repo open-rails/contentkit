@@ -29,7 +29,7 @@ type Recipe struct {
 	Steps []RecipeStep `json:"steps,omitempty"`
 }
 
-// RecipeStep names a registered MasterHook, the version of it the step
+// RecipeStep names a MasterHook, the version of it the step
 // expects (a worker whose hook reports another refuses to start, so a hook's
 // new behaviour is a deliberate version bump that re-derives its masters)
 // and its parameters.
@@ -104,13 +104,19 @@ const (
 )
 
 // MasterHook is one step of a master recipe: straightening a scan,
-// adjusting contrast and brightness, upscaling with a model. A host
-// registers its hooks with its media worker under their RecipeStep.Hook
-// name; the hook may run in the worker or hand the file to an external job
-// (a GPU upscaler) and wait for it. A hook is retried with its job; while it
+// adjusting contrast and brightness, upscaling with a model. A host passes
+// its hooks to its own media worker binary (media/worker.Main), which
+// refuses to start while a recipe names a hook it lacks or at another
+// version. A hook may run in the worker or hand the file to an external job
+// (a GPU upscaler) and wait for it. It is retried with its job; while it
 // fails, the upload keeps its previous master and renditions, so a release
 // never changes because of a failing hook.
+//
+// A video hook writes the whole file, its audio and subtitle tracks
+// included: the renditions, sprite and grabbed frames all derive from it.
 type MasterHook interface {
+	// Name is the name recipes give the hook (RecipeStep.Hook).
+	Name() string
 	// Version is the hook's behaviour version, which recipes name.
 	Version() string
 	// Process reads in.Path and writes its result to in.Out, or returns

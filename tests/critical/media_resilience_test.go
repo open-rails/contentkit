@@ -30,10 +30,10 @@ import (
 	"github.com/open-rails/authkit/authtest"
 	"github.com/open-rails/authkit/iam"
 	ck "github.com/open-rails/contentkit"
-	"github.com/open-rails/contentkit/internal/media/worker"
 	"github.com/open-rails/contentkit/internal/media/workqueue"
 	"github.com/open-rails/contentkit/media"
 	medias3 "github.com/open-rails/contentkit/media/s3"
+	"github.com/open-rails/contentkit/media/worker"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverpgxv5"
 	"github.com/riverqueue/river/rivertype"
@@ -177,12 +177,12 @@ func TestMediaFailureRecovery(t *testing.T) {
 				op := stageFile(t, client, ref, "pages/one.png", imageBytes(t))
 				_, err := client.PostMediaUploadCommit(t.Context(), media.CommitBody{Ref: ref, OperationID: uuid.NewString(), Ops: []media.Op{op}})
 				must(t, err)
-				logical, err := m.config.Kinds.VersionRef(ref.Kind, ref.ID, ref.Version)
+				logical, err := m.registry.VersionRef(ref.Kind, ref.ID, ref.Version)
 				must(t, err)
-				manifests, err := mediastore.NewManifests(m.storage.store, m.config.Kinds, mediastore.ManifestOptions{})
+				manifests, err := mediastore.NewManifests(m.storage.store, m.registry, mediastore.ManifestOptions{})
 				must(t, err)
 				if missing {
-					item, err := m.config.Kinds.Item(logical)
+					item, err := m.registry.Item(logical)
 					must(t, err)
 					key, err := item.Staged(op.Blob)
 					must(t, err)
@@ -370,6 +370,8 @@ type resilientMedia struct {
 	storage *mediaWorld
 	wire    *mediaWire
 	config  worker.Config
+	// registry is config.Kinds as the engine resolves it.
+	registry *mediastore.Registry
 }
 
 func newResilientMedia(t *testing.T, configure ...func(*ck.Config)) *resilientMedia {
@@ -410,7 +412,7 @@ func newResilientMedia(t *testing.T, configure ...func(*ck.Config)) *resilientMe
 			t.Errorf("stop media host before storage cleanup: %v", err)
 		}
 	})
-	return &resilientMedia{world: w, app: a, storage: m, wire: wire, config: worker.Config{Pool: w.pool, Schema: a.cfg.Media.WorkerSchema, ContentSchema: w.schema, HostSchema: w.schema + "_river", Store: store, Kinds: registry, Threads: 1, IngestWorkers: 1, ImageSources: 1, DerivativeWorkers: 1, ShutdownGrace: time.Second}}
+	return &resilientMedia{world: w, app: a, storage: m, wire: wire, registry: registry, config: worker.Config{Pool: w.pool, Schema: a.cfg.Media.WorkerSchema, ContentSchema: w.schema, HostSchema: w.schema + "_river", Store: store, Kinds: config, Threads: 1, IngestWorkers: 1, ImageSources: 1, DerivativeWorkers: 1, ShutdownGrace: time.Second}}
 }
 
 func TestMediaClientResumption(t *testing.T) {
@@ -677,9 +679,7 @@ func TestMediaWorkerProcess(t *testing.T) {
 	defer pool.Close()
 	store, err := medias3.New(medias3.Config{Bucket: c.Bucket, Endpoint: c.Endpoint, AccessKeyID: os.Getenv("CONTENTKIT_CRITICAL_S3_USER"), SecretAccessKey: os.Getenv("CONTENTKIT_CRITICAL_S3_PASSWORD"), UsePathStyle: true})
 	must(t, err)
-	registry, err := mediastore.NewRegistry(c.Kinds, mediastore.Hooks{})
-	must(t, err)
-	config := worker.Config{Pool: pool, Schema: c.Schema, ContentSchema: c.ContentSchema, HostSchema: c.HostSchema, Store: store, Kinds: registry, Threads: 1, IngestWorkers: 1, ImageSources: 1, DerivativeWorkers: 1, ShutdownGrace: time.Second, MaxPixels: c.MaxPixels}
+	config := worker.Config{Pool: pool, Schema: c.Schema, ContentSchema: c.ContentSchema, HostSchema: c.HostSchema, Store: store, Kinds: c.Kinds, Threads: 1, IngestWorkers: 1, ImageSources: 1, DerivativeWorkers: 1, ShutdownGrace: time.Second, MaxPixels: c.MaxPixels}
 	if c.AfterImage != "" {
 		config.RiverHooks = []rivertype.Hook{&mediaAfterImage{path: c.AfterImage}}
 	}
@@ -698,7 +698,7 @@ type mediaChild struct {
 func (m *resilientMedia) start(t *testing.T, configure ...func(*mediaChildConfig)) *mediaChild {
 	t.Helper()
 	dir := t.TempDir()
-	c := mediaChildConfig{Kinds: m.config.Kinds.Config(), Schema: m.config.Schema, ContentSchema: m.config.ContentSchema, HostSchema: m.config.HostSchema, Endpoint: m.wire.server.URL, Bucket: m.storage.bucket, Ready: filepath.Join(dir, "ready")}
+	c := mediaChildConfig{Kinds: m.config.Kinds, Schema: m.config.Schema, ContentSchema: m.config.ContentSchema, HostSchema: m.config.HostSchema, Endpoint: m.wire.server.URL, Bucket: m.storage.bucket, Ready: filepath.Join(dir, "ready")}
 	for _, change := range configure {
 		change(&c)
 	}
@@ -800,11 +800,11 @@ func settledPreparedOutputs(t *testing.T, m *resilientMedia, client *ck.Client, 
 	}
 	// Observe the persisted worker checkpoint directly. Editor reads would
 	// request extra render work, while an ordinary reader must not expose drafts.
-	logical, err := m.config.Kinds.VersionRef(ref.Kind, ref.ID, ref.Version)
+	logical, err := m.registry.VersionRef(ref.Kind, ref.ID, ref.Version)
 	must(t, err)
-	item, err := m.config.Kinds.Item(logical)
+	item, err := m.registry.Item(logical)
 	must(t, err)
-	manifests, err := mediastore.NewManifests(m.storage.store, m.config.Kinds, mediastore.ManifestOptions{})
+	manifests, err := mediastore.NewManifests(m.storage.store, m.registry, mediastore.ManifestOptions{})
 	must(t, err)
 	snapshot, _, err := manifests.Get(t.Context(), logical)
 	must(t, err)

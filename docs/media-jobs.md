@@ -18,6 +18,10 @@ separate River job types. Completed work survives retries; source/incarnation
 checks prevent stale work from replacing newer uploads. A force request is
 consumed once. Ingest and derivative concurrency are configured independently.
 
+## Masters first
+
+A derivative attempt first makes the masters its kind's recipe (`media.Kind.Master`) has yet to make, with the worker's hooks, then derives from them. An image's renditions, and a video's HLS renditions, seek sprite and grabbed frames (whose own renditions follow), record the master's hash, so a new master re-derives each of them; a frame waits for its video's master. A worker refuses to start while a recipe names a hook it lacks or at another version: the stock image registers none, and a host with hooks runs its own binary over `media/worker.Main` ([Masters](../HOST_INTEGRATION.md#masters-mediakindmaster)). A failing hook leaves the upload's previous master and everything derived from it in place while the job retries.
+
 ## Processing and publication are separate
 
 Ingest validates the archive before attaching its files. The derivative attempt
@@ -87,7 +91,7 @@ Jobs write scratch files under `TempDir` (stock workers: `MEDIA_WORKER_TMP`, def
 
 ## Adoption
 
-Use matching host libraries, media-worker images and KEDA triggers. Configure
+Use matching host libraries, media-worker images (or a host's own worker binary, built from the same release) and KEDA triggers. Configure
 `IngestWorkers`, `DerivativeWorkers` and `JobTimeout`; stock workers use
 `MEDIA_WORKER_INGEST_CONCURRENCY` and `MEDIA_WORKER_CONCURRENCY`. Moving a
 bucket of the earlier model is in [migration](migration.md#media-model).

@@ -20,9 +20,9 @@ import (
 	"github.com/riverqueue/river/rivertype"
 
 	ck "github.com/open-rails/contentkit"
-	"github.com/open-rails/contentkit/internal/media/worker"
 	"github.com/open-rails/contentkit/internal/media/workqueue"
 	"github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/media/worker"
 )
 
 var (
@@ -80,7 +80,7 @@ func TestImageShapePresets(t *testing.T) {
 		})
 		// The registry as `contentkit media-config` prints it and
 		// cmd/media-worker loads it from MEDIA_KINDS_FILE.
-		printed, err := json.MarshalIndent(m.config.Kinds, "", "  ")
+		printed, err := m.app.cfg.MediaRegistry()
 		must(t, err)
 		var compact bytes.Buffer
 		must(t, json.Compact(&compact, printed))
@@ -97,7 +97,7 @@ func TestImageShapePresets(t *testing.T) {
 			t.Fatalf("registry JSON changed the shapes: %+v", gallery.Private[0].Shapes)
 		}
 		config := m.config
-		config.Kinds = registry
+		config.Kinds = parsed
 		w, err := worker.New(t.Context(), config)
 		must(t, err)
 		run, cancel := context.WithCancel(context.Background())

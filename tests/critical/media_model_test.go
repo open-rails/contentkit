@@ -25,13 +25,13 @@ import (
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/contentref"
-	"github.com/open-rails/contentkit/internal/media/worker"
 	"github.com/open-rails/contentkit/internal/media/workqueue"
 	mediastore "github.com/open-rails/contentkit/internal/mediastore"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/layout"
 	"github.com/open-rails/contentkit/media/token"
 	"github.com/open-rails/contentkit/media/versions"
+	"github.com/open-rails/contentkit/media/worker"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverpgxv5"
 	"github.com/riverqueue/river/rivertype"
@@ -758,10 +758,8 @@ func TestMediaCacheRebuild(t *testing.T) {
 		must(t, err)
 		config, err := g.app.cfg.MediaKinds()
 		must(t, err)
-		registry, err := mediastore.NewRegistry(config, mediastore.Hooks{})
-		must(t, err)
 		n, err := worker.Rebuild(t.Context(), worker.Config{Pool: g.world.pool, Schema: g.app.cfg.Media.WorkerSchema, ContentSchema: g.world.schema,
-			HostSchema: g.world.schema + "_river", Store: g.storage.store, Kinds: registry})
+			HostSchema: g.world.schema + "_river", Store: g.storage.store, Kinds: config})
 		must(t, err)
 		if n == 0 {
 			t.Fatal("rebuild recorded no item")

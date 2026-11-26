@@ -14,6 +14,7 @@ import (
 
 	"github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/internal/httpapi"
+	"github.com/open-rails/contentkit/media/worker"
 )
 
 const module = "github.com/open-rails/contentkit"
@@ -24,8 +25,9 @@ var typePackages = []string{"access", "catalog", "channels", "content", "content
 	"entities", "importer", "kinds", "media", "media/versions", "signal"}
 
 // public is every package a host, server/ or adapters/* may import. The
-// gateway's Config takes token and layout values.
-var public = append([]string{"", "media/s3", "media/avatar", "media/gateway", "media/token", "media/layout"}, typePackages...)
+// gateway's Config takes token and layout values. Only worker binaries
+// import media/worker (it links the codecs).
+var public = append([]string{"", "media/s3", "media/avatar", "media/gateway", "media/token", "media/layout", "media/worker"}, typePackages...)
 
 // leafHelpers are the internal packages a type package may import: pure
 // value helpers with no storage.
@@ -69,9 +71,24 @@ func TestPublicAPIReachesNoInternalType(t *testing.T) {
 	}
 }
 
+// TestWorkerAPIReachesNoInternalType: a host builds its own media worker,
+// with its master hooks, from media/worker alone. The worker is a River
+// process, so River's types may appear.
+func TestWorkerAPIReachesNoInternalType(t *testing.T) {
+	w := walker{seen: map[reflect.Type]bool{}, jobs: true}
+	for _, v := range []any{worker.Config{}, (*worker.Worker)(nil), worker.New, worker.Rebuild, worker.Main} {
+		w.walk(reflect.TypeOf(v), "media/worker")
+	}
+	slices.Sort(w.bad)
+	for _, b := range slices.Compact(w.bad) {
+		t.Error(b)
+	}
+}
+
 type walker struct {
 	seen map[reflect.Type]bool
 	bad  []string
+	jobs bool // River types are allowed
 }
 
 // hostless are foreign types the API never takes or returns: a shared
@@ -96,7 +113,7 @@ func (w *walker) walk(t reflect.Type, via string) {
 	w.seen[t] = true
 	if p := t.PkgPath(); p != "" {
 		if p != module && !strings.HasPrefix(p, module+"/") {
-			if hostless(p, t.Name()) {
+			if hostless(p, t.Name()) && !(w.jobs && strings.HasPrefix(p, "github.com/riverqueue/river")) {
 				w.bad = append(w.bad, via+" reaches "+p+"."+t.Name())
 			}
 			return
@@ -186,15 +203,16 @@ func TestTypePackagesHoldNoStores(t *testing.T) {
 	}
 }
 
-// TestServerAndAdaptersUsePublicSurface: the standalone server and the
-// adapters build on what hosts may import, nothing more.
+// TestServerAndAdaptersUsePublicSurface: the standalone server, the adapters
+// and the critical suite's host worker build on what hosts may import,
+// nothing more.
 func TestServerAndAdaptersUsePublicSurface(t *testing.T) {
 	dir := root(t)
 	allowed := map[string]bool{}
 	for _, p := range public {
 		allowed[strings.TrimSuffix(module+"/"+p, "/")] = true
 	}
-	for _, tree := range []string{"server", "adapters"} {
+	for _, tree := range []string{"server", "adapters", "tests/critical/testdata/hostworker"} {
 		err := filepath.WalkDir(filepath.Join(dir, tree), func(path string, d os.DirEntry, err error) error {
 			if err != nil || !d.IsDir() {
 				return err

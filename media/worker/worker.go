@@ -1,16 +1,13 @@
 // Package worker is the media worker: the one process that places uploads
 // and runs every producer, from the host's worker River schema
 // (Config.Schema) in its database: staged uploads hashed and placed at their
-// blobs (media.Manifests.Place), images, zips, public presets and editor
-// views (media/image, libvips), and HLS, MP4, subtitles and frames
-// (media/video, ffmpeg).
-// The host presigns, commits and reads. Each processing attempt records its
-// retained progress/completion fact and wakes version metadata work in one
-// transaction. Stock workers need no host callbacks.
+// blobs, the kinds' master recipes (media.Kind.Master, with the host's
+// Config.Hooks), images, public presets and editor views (libvips), and HLS,
+// subtitles and frames (ffmpeg). The host presigns, commits and reads.
 //
-// The registry is the host's (media.Config, built by the same code or read
-// from its JSON); cmd/media-worker is the stock build for hosts whose kinds
-// are plain data.
+// Main is the whole command: the stock image (cmd/media-worker) is Main()
+// with no hooks, and a host with master hooks builds its own binary from
+// Main(hook, ...). New and Run run the worker in a process of the host's own.
 package worker
 
 import (
@@ -30,6 +27,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/open-rails/helpers/deps"
 	riverhelpers "github.com/open-rails/helpers/river"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverpgxv5"
 	"github.com/riverqueue/river/rivertype"
@@ -51,23 +49,24 @@ type Config struct {
 	// locks and River's LISTEN when Pool is a transaction pooler; nil dials
 	// with Pool's.
 	Session *pgxpool.Config
-	locks   *pglock.Locks
-	// Schema is the host's worker River schema, the one its workqueue.Queue
-	// inserts into; required, and never shared with another host.
+	// Schema is the host's worker River schema (contentkit's
+	// Config.Media.WorkerSchema); required, and never shared with another
+	// host.
 	Schema string
-	// ContentSchema holds ContentKit's media journal and quota tables. Every
-	// writer for this host must use the same schema; migration is host-owned.
+	// ContentSchema is the host's ContentKit schema, holding the media item
+	// cache and event log; the host migrates it.
 	ContentSchema string
 	// AccountSchema and AccountWorkerSchema are the shared tenant avatar state
 	// and queue from contentkit.Config.AccountMedia. Empty retains legacy mode.
 	AccountSchema, AccountWorkerSchema string
 	Store                              media.Store
-	// Kinds is the host's registry. Failed and the catalog retirement barrier
-	// and optional completion callbacks run here.
-	Kinds *mediastore.Registry
-	// Masters are the hooks the kinds' master recipes name (media.Kind.Master),
-	// by name; New refuses a recipe naming one missing or at another version.
-	Masters map[string]media.MasterHook
+	// Kinds is the host's media registry: contentkit.Config.MediaKinds, or
+	// the JSON Config.MediaRegistry writes (media.ParseConfig).
+	Kinds media.Config
+	// Hooks are the master hooks the kinds' recipes name (media.Kind.Master),
+	// each under its Name. New refuses a recipe naming one missing or at
+	// another version, and two hooks of one name.
+	Hooks []media.MasterHook
 	// HostSchema is the host's River schema ("" is the connection's search
 	// path): the releases and garbage collection a manifest write wakes run
 	// there.
@@ -75,8 +74,9 @@ type Config struct {
 
 	TempDir string // scratch for video sources and outputs; default os.TempDir()
 	Threads int    // ffmpeg threads; default GOMAXPROCS
-	// Preset, TopPreset, VideoEncoder (Encoder) and VideoCodecs (Codecs) are
-	// video.Config's.
+	// Preset, TopPreset, VideoEncoder and VideoCodecs are the video
+	// encoder's: x264 presets up to 1080 and above it, auto, cpu or nvenc,
+	// and the ladder's codecs, preferred first.
 	Preset, TopPreset, VideoEncoder string
 	VideoCodecs                     []media.Codec
 	// IngestWorkers and DerivativeWorkers bound concurrent item jobs (defaults
@@ -85,11 +85,11 @@ type Config struct {
 	DerivativeWorkers int
 	// ImageSources bounds sources decoded at once within one derivative job.
 	ImageSources int
-	// PageGroup is image.Config's GroupSize: rendered images recorded and
-	// reported per manifest edit (default 1, each on its own).
+	// PageGroup is how many rendered images are recorded and reported per
+	// manifest edit (default 1, each on its own).
 	PageGroup int
 	// MaxPixels, MaxFrames and MaxAnimationSeconds bound decoded images
-	// (image.Config's defaults when zero).
+	// (the image processor's defaults when zero).
 	MaxPixels           int
 	MaxFrames           int
 	MaxAnimationSeconds float64
@@ -107,18 +107,30 @@ type Config struct {
 	Logger        *slog.Logger
 	// RiverHooks are added to the worker's River client (observability).
 	RiverHooks []rivertype.Hook
-	// Metrics records work and encodes; the first worker built with it also
-	// exports its Schema's queue backlog while it leads that schema.
-	Metrics *Metrics
+	// Metrics, when set, takes the worker's metrics: work attempts, encode
+	// passes and, while this worker leads its Schema, the queue backlog.
+	Metrics prometheus.Registerer
+
+	reg     *mediastore.Registry
+	metrics *metrics
+	locks   *pglock.Locks
 }
 
 func (c *Config) defaults() error {
-	if c.Pool == nil || c.Store == nil || c.Kinds == nil {
-		return errors.New("media/worker: Config needs a Pool, a Store and the host's Kinds")
+	if c.Pool == nil || c.Store == nil {
+		return errors.New("media/worker: Config needs a Pool and a Store")
 	}
 	if c.locks == nil {
 		c.locks = pglock.New(cmp.Or(c.Session, c.Pool.Config()))
 	}
+	reg, err := mediastore.NewRegistry(c.Kinds, mediastore.Hooks{})
+	if err != nil {
+		return fmt.Errorf("media/worker: Kinds: %w", err)
+	}
+	if len(reg.Kinds()) == 0 {
+		return errors.New("media/worker: Config.Kinds declares no kind")
+	}
+	c.reg = reg
 	if err := workqueue.ValidSchema(c.Schema); err != nil {
 		return err
 	}
@@ -153,12 +165,34 @@ type Worker struct {
 }
 
 // New builds the River client with the image and video workers. It needs no
-// DDL rights: the host applies workqueue.Migrate(Schema) in its migration
-// step, so the worker can run as the host's unprivileged app role. Missing
-// encode tables are reported before the worker is built.
+// DDL rights: the host's contentkit.MigratePostgres migrates Schema, so the
+// worker can run as the host's unprivileged app role. Missing tables, a
+// recipe naming a hook Hooks lacks or has at another version, and two hooks
+// of one name are refused here, before any job runs.
 func New(ctx context.Context, c Config) (*Worker, error) {
 	if err := c.defaults(); err != nil {
 		return nil, err
+	}
+	masterHooks := make(map[string]media.MasterHook, len(c.Hooks))
+	for _, h := range c.Hooks {
+		name := h.Name()
+		switch _, dup := masterHooks[name]; {
+		case name == "":
+			return nil, errors.New("media/worker: a master hook has no name")
+		case dup:
+			return nil, fmt.Errorf("media/worker: two master hooks are named %q", name)
+		}
+		masterHooks[name] = h
+	}
+	if err := master.Check(c.reg, masterHooks); err != nil {
+		return nil, err
+	}
+	if c.Metrics != nil && c.metrics == nil {
+		m, err := newMetrics(c.Metrics)
+		if err != nil {
+			return nil, err
+		}
+		c.metrics = m
 	}
 	for _, table := range []string{"encode_run", "encode_chunk"} {
 		var exists bool
@@ -167,7 +201,7 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 			return nil, fmt.Errorf("media/worker: check %s.%s: %w", c.Schema, table, err)
 		}
 		if !exists {
-			return nil, fmt.Errorf("media/worker: missing %s.%s; the host must run workqueue.Migrate",
+			return nil, fmt.Errorf("media/worker: missing %s.%s; the host must run contentkit.MigratePostgres",
 				c.Schema, table)
 		}
 	}
@@ -184,17 +218,14 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 	if err := video.SweepTemp(c.TempDir); err != nil {
 		return nil, fmt.Errorf("media/worker: sweep scratch: %w", err)
 	}
-	queue, err := workqueue.NewWithAccounts(c.Pool, c.Kinds, c.Schema, c.AccountWorkerSchema)
+	queue, err := workqueue.NewWithAccounts(c.Pool, c.reg, c.Schema, c.AccountWorkerSchema)
 	if err != nil {
 		return nil, err
 	}
-	mediaHooks := c.Kinds.Hooks()
-	mediaHooks.CanUpload = preparationUploads{}
 	wake := func(ctx context.Context, tx pgx.Tx, ref contentref.ContentRef) error { return nil }
-	paths := versionstore.ChapterPathHooks(c.Pool, c.ContentSchema, c.Kinds, wake)
-	mediaHooks.ValidatePathsChanged = paths.ValidatePathsChanged
-	mediaHooks.PathsChanged = paths.PathsChanged
-	c.Kinds, err = mediastore.NewRegistry(c.Kinds.Config(), mediaHooks)
+	paths := versionstore.ChapterPathHooks(c.Pool, c.ContentSchema, c.reg, wake)
+	c.reg, err = mediastore.NewRegistry(c.Kinds, mediastore.Hooks{CanUpload: preparationUploads{},
+		ValidatePathsChanged: paths.ValidatePathsChanged, PathsChanged: paths.PathsChanged})
 	if err != nil {
 		return nil, err
 	}
@@ -202,7 +233,7 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 	if err != nil {
 		return nil, err
 	}
-	manifests, err := mediastore.NewManifests(c.Store, c.Kinds, mediastore.ManifestOptions{Written: cache.Record})
+	manifests, err := mediastore.NewManifests(c.Store, c.reg, mediastore.ManifestOptions{Written: cache.Record})
 	if err != nil {
 		return nil, err
 	}
@@ -212,8 +243,8 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 	}
 	prepare := versionstore.PrepareDerivatives(c.Pool, c.locks, c.ContentSchema, manifests, uploads)
 	var observeEncode func(video.EncodeObservation)
-	if c.Metrics != nil {
-		observeEncode = c.Metrics.ObserveEncode
+	if c.metrics != nil {
+		observeEncode = c.metrics.observeEncode
 	}
 	enc, err := video.New(ctx, video.Config{Manifests: manifests, Queue: queue, TempDir: c.TempDir,
 		Threads: c.Threads, Preset: c.Preset, TopPreset: c.TopPreset, Encoder: c.VideoEncoder, Codecs: c.VideoCodecs, Logger: c.Logger,
@@ -223,13 +254,13 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 	}
 	hooks := append(c.RiverHooks[:len(c.RiverHooks):len(c.RiverHooks)], &completionHook{manifests: manifests})
 	var middleware []rivertype.Middleware
-	if c.Metrics != nil {
-		middleware = []rivertype.Middleware{c.Metrics}
-		if leader := c.Metrics.queue.watch(c.Pool, c.Schema); leader != nil {
+	if c.metrics != nil {
+		middleware = []rivertype.Middleware{c.metrics}
+		if leader := c.metrics.queue.watch(c.Pool, c.Schema); leader != nil {
 			hooks = append(hooks, leader)
 		}
 	}
-	masters, err := master.New(master.Config{Manifests: manifests, Hooks: c.Masters, TempDir: c.TempDir, WebP: image.Lossless})
+	masters, err := master.New(master.Config{Manifests: manifests, Hooks: masterHooks, TempDir: c.TempDir, WebP: image.Lossless})
 	if err != nil {
 		return nil, err
 	}
@@ -280,12 +311,12 @@ func (c Config) cache(queue mediastore.ProcessQueue) (*mediastore.PGCache, error
 	if err != nil {
 		return nil, err
 	}
-	recorded, err := versionstore.Recorded(c.Pool, c.locks, c.HostSchema, c.ContentSchema, c.Kinds)
+	recorded, err := versionstore.Recorded(c.Pool, c.locks, c.HostSchema, c.ContentSchema, c.reg)
 	if err != nil {
 		return nil, err
 	}
 	o := mediastore.CacheOptions{Lock: recorded.Lock, Recorded: recorded.Recorded, Processes: queue, GC: mediastore.RiverGC{Client: host}}
-	cache, err := mediastore.NewPGCache(c.Pool, c.ContentSchema, c.Kinds, o)
+	cache, err := mediastore.NewPGCache(c.Pool, c.ContentSchema, c.reg, o)
 	if err != nil {
 		return nil, err
 	}
@@ -295,8 +326,8 @@ func (c Config) cache(queue mediastore.ProcessQueue) (*mediastore.PGCache, error
 	if c.AccountWorkerSchema == "" {
 		return nil, errors.New("media/worker: account storage requires its queue")
 	}
-	scope := c.Kinds.Scope()
-	account, err := mediastore.NewPGCache(c.Pool, c.AccountSchema, c.Kinds, o)
+	scope := c.reg.Scope()
+	account, err := mediastore.NewPGCache(c.Pool, c.AccountSchema, c.reg, o)
 	if err != nil {
 		return nil, err
 	}
@@ -312,7 +343,7 @@ func Rebuild(ctx context.Context, c Config) (int, error) {
 	if err := c.defaults(); err != nil {
 		return 0, err
 	}
-	queue, err := workqueue.NewWithAccounts(c.Pool, c.Kinds, c.Schema, c.AccountWorkerSchema)
+	queue, err := workqueue.NewWithAccounts(c.Pool, c.reg, c.Schema, c.AccountWorkerSchema)
 	if err != nil {
 		return 0, err
 	}
@@ -320,7 +351,7 @@ func Rebuild(ctx context.Context, c Config) (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	manifests, err := mediastore.NewManifests(c.Store, c.Kinds, mediastore.ManifestOptions{Written: cache.Record})
+	manifests, err := mediastore.NewManifests(c.Store, c.reg, mediastore.ManifestOptions{Written: cache.Record})
 	if err != nil {
 		return 0, err
 	}
@@ -329,7 +360,7 @@ func Rebuild(ctx context.Context, c Config) (int, error) {
 		return 0, err
 	}
 	var kinds []string
-	for _, k := range c.Kinds.Kinds() {
+	for _, k := range c.reg.Kinds() {
 		kinds = append(kinds, k.Name)
 	}
 	return jobs.Rebuild(ctx, cache, kinds...)
@@ -432,7 +463,7 @@ func (w *ingestWorker) Work(ctx context.Context, job *river.Job[workqueue.Ingest
 		return err
 	}
 	a := job.Args
-	item, err := w.c.Kinds.Item(a.Ref)
+	item, err := w.c.reg.Item(a.Ref)
 	if err != nil {
 		return river.JobCancel(err)
 	}
@@ -496,7 +527,7 @@ func (w *derivativeWorker) Work(ctx context.Context, job *river.Job[workqueue.De
 	a := job.Args
 	// A rescued attempt (process death) keeps its number but leaves an error.
 	pj := mediastore.ProcessJob{Ref: a.Ref, Preset: a.Preset, Force: a.Force, Editor: a.Editor, Retry: len(job.Errors) > 0}
-	if _, err := w.c.Kinds.Item(pj.Ref); err != nil {
+	if _, err := w.c.reg.Item(pj.Ref); err != nil {
 		return river.JobCancel(err)
 	}
 	if err := mediastore.WaitFor(ctx, river.ClientFromContext[pgx.Tx](ctx), job.Args.After); err != nil {

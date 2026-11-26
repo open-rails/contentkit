@@ -27,6 +27,8 @@ for module in "${!module_pids[@]}"; do
 done
 [[ $status -eq 0 ]] || exit 1
 CGO_ENABLED=1 go build -p 1 -o tests/critical/.bin/media-worker ./cmd/media-worker
+# A host's own worker binary: media/worker.Main with a master hook.
+(cd tests/critical && CGO_ENABLED=1 go build -p 1 -o .bin/host-media-worker ./testdata/hostworker)
 # Hosts, server/ and adapters/* reach only the public surface; the image
 # encoder's geometry, bounds and metadata stripping run against libvips.
 go test -count=1 -p 1 ./internal/boundaries ./internal/media/image
