@@ -53,7 +53,7 @@ await client.media.put(avatar(), { ref, path: "avatar", wait: true, timeout: 600
 const read = await client.media.read(ref);
 assert.equal(kindsReads(requests), 1, `account kind lookups: ${requests}`);
 const rendition = read.public?.find((p) => p.preset === "avatar")?.renditions[0];
-assert.ok(rendition?.url.includes(`/account/user/${ref.id}/public/`), JSON.stringify(read.public));
+assert.ok(rendition?.url.includes(`/v1/_accounts/user/${ref.id}/public/`), JSON.stringify(read.public));
 const served = await fetch(rendition.url);
 assert.equal(served.status, 200);
 assert.equal(served.headers.get("content-type"), "image/webp");

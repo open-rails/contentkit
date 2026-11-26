@@ -182,9 +182,9 @@ check("refreshable", () => {
   assert.equal(sdk.refreshable({ kind: "rate_limited", status: 429 }), false); assert.equal(sdk.refreshable({ kind: "network", status: 0 }), false);
 });
 check("publicURL", () => {
-  assert.equal(sdk.publicURL("https://media.invalid/", "app", "gallery", "parent", "cover.webp", "edition"), "https://media.invalid/v1/app/gallery/edition/public/cover.webp");
-  assert.equal(sdk.publicURL("https://media.invalid", "accounts", "avatar", "owner", "small.webp"), "https://media.invalid/v1/accounts/avatar/owner/public/small.webp");
-  assert.equal(sdk.publicURL("https://media.invalid", "ignored", "gallery", "parent", "cover.webp", "edition", "tenant/business/app/product/"), "https://media.invalid/v1/tenant/business/app/product/gallery/edition/public/cover.webp");
+  assert.equal(sdk.publicURL("https://media.invalid/", "gallery", "parent", "cover.webp", "edition"), "https://media.invalid/v1/gallery/edition/public/cover.webp");
+  assert.equal(sdk.publicURL("https://media.invalid", "gallery", "parent", "cover.webp"), "https://media.invalid/v1/gallery/parent/public/cover.webp");
+  assert.equal(sdk.publicURL("https://media.invalid", "user", "owner", "small.webp", undefined, "_accounts/"), "https://media.invalid/v1/_accounts/user/owner/public/small.webp");
 });
 check("publicRenditions", () => {
   const renditions = [{ url: "wide-original-name.webp", w: 800 }, { url: "small-original-name.webp", w: 200 }];
