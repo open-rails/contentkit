@@ -457,24 +457,26 @@ func TestPopularity(t *testing.T) {
 
 	run("CK-J07-S58_artists_show_their_read_through_rate", func(t *testing.T) {
 		artist := p.tag("ranked-artist", "artist")
-		first := p.article("P1 first work", day(100), nil, artist)
-		next := p.article("P2 next work", day(40), nil, artist)
+		first := p.article("P1 a work", day(100), nil, artist)
+		earlier := p.article("P2 an older work", day(130), nil, artist)
 		state := p.table("reading_state")
-		readers := []uuid.UUID{uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()}
-		for i, s := range readers {
-			lastSeen := day(35)
-			if i == 4 {
-				lastSeen = day(95) // never seen after the next work's release
-			}
-			_, err := w.pool.Exec(t.Context(), `INSERT INTO `+state+` (app_id,subject,content_id,first_day,last_seen_at,best_outcome) VALUES ($1,$2,$3,$4,$5,3)`,
-				p.tenant(), s, first, day(90), lastSeen)
+		read := func(subject uuid.UUID, content string, on time.Time, outcome int) {
+			_, err := w.pool.Exec(t.Context(), `INSERT INTO `+state+` (app_id,subject,content_id,first_day,last_seen_at,best_outcome) VALUES ($1,$2,$3,$4::timestamptz::date,$4::timestamptz,$5)`,
+				p.tenant(), subject, content, on, outcome)
 			must(t, err)
-			if i < 2 {
-				_, err = w.pool.Exec(t.Context(), `INSERT INTO `+state+` (app_id,subject,content_id,first_day,last_seen_at,best_outcome) VALUES ($1,$2,$3,$4,$4,2)`,
-					p.tenant(), s, next, day(38))
-				must(t, err)
-			}
 		}
+		// Four readers of P1 whose 30 days have passed: one read the older P2
+		// 20 days later, one the same day; one opened P2 only before P1, one
+		// 40 days after. A recent reader does not count yet.
+		readers := []uuid.UUID{uuid.New(), uuid.New(), uuid.New(), uuid.New(), uuid.New()}
+		for _, s := range readers[:4] {
+			read(s, first, day(90), 3)
+		}
+		read(readers[0], earlier, day(70), 2)
+		read(readers[1], earlier, day(90), 1)
+		read(readers[2], earlier, day(120), 1)
+		read(readers[3], earlier, day(50), 3)
+		read(readers[4], first, day(10), 4)
 		listing := p.entities(main, ck.GetEntitiesQuery{Kind: "artist"})
 		for _, g := range listing.Entities {
 			if g.ID == artist {

@@ -11,7 +11,7 @@ A content's popularity over a window is the sum of q over its person-days on the
 - **Trending.** The week ranks per live day: the sum divided by the days the content was live in the window, today counting as the part elapsed.
 - **Entities.** An entity's popularity is the sum of its contents', through the catalog's content → entity mapping (held in memory, reloaded when the catalog changes). Its polarization, 0 to 1, is how split its readers are between strong positives and strong negatives (|q| ≥ 0.5): 2·min(P, N) / (P + N + 20).
 - **Audience.** A list of one entity's contents (`groups`) ranks by its audience's popularity: readers outside a content's audience (a "not into" answer for its tag) don't count there.
-- **Read-through.** An artist kind's (`artist: true`) cards show its read-through rate: of the people whose read of one of its works was good or complete before the next was released, and who were active after that release, the share who read the next within 30 days. Computed from `reading_state`, cached for 12 hours.
+- **Read-through.** An artist kind's (`artist: true`) cards show its read-through rate: of the people whose read of one of its works was good or complete, the share who went on to read another of its works (one that already existed or a later one) within 30 days, the same day included. A reader counts from their first such read once its 30 days have passed. Computed from `reading_state`, cached for 12 hours.
 
 ## Windows
 

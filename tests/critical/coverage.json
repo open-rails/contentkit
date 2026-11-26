@@ -3905,10 +3905,10 @@
     {
       "id": "CK-J07-S58",
       "journey": "CK-J07",
-      "behavior": "Artists show their read-through rate from reading_state",
+      "behavior": "Artists show their read-through rate from reading_state: readers who went on to read another of the artist's works within 30 days",
       "status": "verified",
       "evidence": [
-        "Of four readers of an artist's first work active after the next one's release, two read it within 30 days: the artist card shows 0.5 over 4 readers; a reader not seen since is not counted.",
+        "Of four readers of a work whose 30 days have passed, one read the artist's older work 20 days later and one the same day; one opened it only before and one 40 days after; a recent reader is not counted yet: the artist card shows 0.5 over 4 readers.",
         "contentkit#300: written against real PostgreSQL and ClickHouse with the engine's own precompute job; not executed locally, CI runs it."
       ],
       "cases": [

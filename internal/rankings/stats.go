@@ -33,10 +33,10 @@ func (e *Engine) Exploration(ctx context.Context, ids []string) (map[string]Expl
 }
 
 // ReadThrough is an artist's read-through rate: of the people whose read of
-// one of the artist's galleries was good or complete before the next one was
-// released, and who were active after that release, the share who read the
-// next one within readThroughDays of it. Only pairs whose window has closed
-// count.
+// one of the artist's galleries was good or complete, the share who went on
+// to read another of them, one that already existed or a later one, within
+// readThroughDays of that read (the same day counts). A reader counts from
+// their first such read, once its window has closed.
 type ReadThrough struct {
 	Rate    float64
 	Readers int
@@ -48,7 +48,7 @@ const readThroughDays = 30
 const readThroughTTL = 12 * time.Hour
 
 // ReadThrough is each artist's rate, from reading_state; absent for an
-// artist without a closed pair read.
+// artist without a reader whose window has closed.
 func (e *Engine) ReadThrough(ctx context.Context, artists []string) (map[string]ReadThrough, error) {
 	out := map[string]ReadThrough{}
 	var missing []string
@@ -70,24 +70,19 @@ func (e *Engine) ReadThrough(ctx context.Context, artists []string) (map[string]
 	}
 	state := e.table("reading_state")
 	rows, err := e.o.Pool.Query(ctx, `WITH galleries AS (
- SELECT a.id AS artist, f.content_id::uuid AS content_id, min(f.live_from) AS released
+ SELECT DISTINCT a.id AS artist, f.content_id::uuid AS content_id
  FROM unnest($2::text[]) a(id) JOIN `+e.table("content_facets")+` f ON f.tenant_id = $1 AND (f.entity_ids @> ARRAY[a.id] OR f.owner_entity_id = a.id)
  WHERE NOT f.deleted AND f.live_from IS NOT NULL
- GROUP BY a.id, f.content_id
-), pairs AS (
- SELECT artist, content_id, next, next_released FROM (
-  SELECT artist, content_id, lead(content_id) OVER w AS next, lead(released) OVER w AS next_released
-  FROM galleries WINDOW w AS (PARTITION BY artist ORDER BY released, content_id)) p
- WHERE next IS NOT NULL AND next_released + make_interval(days => $4) <= $5
-), readers AS (
- SELECT p.artist, p.next, p.next_released, r.subject FROM pairs p
- JOIN `+state+` r ON r.app_id = $3::uuid AND r.content_id = p.content_id
- WHERE r.best_outcome >= 3 AND r.first_day < (p.next_released AT TIME ZONE 'UTC')::date
- AND EXISTS (SELECT 1 FROM `+state+` a WHERE a.app_id = $3::uuid AND a.subject = r.subject AND a.last_seen_at >= p.next_released)
-) SELECT artist, count(*)::int, count(*) FILTER (WHERE EXISTS (SELECT 1 FROM `+state+` n WHERE n.app_id = $3::uuid
-  AND n.subject = readers.subject AND n.content_id = readers.next
-  AND n.first_day <= ((readers.next_released + make_interval(days => $4)) AT TIME ZONE 'UTC')::date))::int
- FROM readers GROUP BY artist`, e.o.Tenant, missing, e.o.Tenant, readThroughDays, e.now())
+), firsts AS (
+ SELECT DISTINCT ON (g.artist, r.subject) g.artist, r.subject, r.content_id, r.first_day
+ FROM galleries g JOIN `+state+` r ON r.app_id = $3::uuid AND r.content_id = g.content_id
+ WHERE r.best_outcome >= 3 AND r.first_day IS NOT NULL
+ ORDER BY g.artist, r.subject, r.first_day, r.content_id
+) SELECT artist, count(*)::int, count(*) FILTER (WHERE EXISTS (SELECT 1 FROM galleries other
+  JOIN `+state+` n ON n.app_id = $3::uuid AND n.content_id = other.content_id
+  WHERE other.artist = firsts.artist AND n.subject = firsts.subject AND n.content_id <> firsts.content_id
+  AND n.first_day >= firsts.first_day AND n.first_day <= firsts.first_day + $4::int))::int
+ FROM firsts WHERE firsts.first_day + $4::int <= $5::date GROUP BY artist`, e.o.Tenant, missing, e.o.Tenant, readThroughDays, e.now().Format(time.DateOnly))
 	if err != nil {
 		return nil, err
 	}

@@ -76,8 +76,8 @@ type EntityPopularity struct {
 	ReadThrough *ReadThrough `json:"read_through,omitempty"`
 }
 
-// ReadThrough is the share of an artist's readers who read its next work
-// within 30 days of that work's release.
+// ReadThrough is the share of an artist's readers who went on to read
+// another of its works within 30 days of their read.
 type ReadThrough struct {
 	Rate    float64 `json:"rate"`
 	Readers int     `json:"readers"`
