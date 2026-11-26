@@ -66,7 +66,6 @@ type pageMetadata struct {
 	Included       *bool               `json:"included,omitempty"`
 	SelectionGuard *bool               `json:"selection_guard,omitempty"`
 	Decision       *pageDecision       `json:"decision,omitempty"`
-	OverrideActor  string              `json:"override_actor,omitempty"`
 	OverrideAt     string              `json:"override_at,omitempty"`
 	Analysis       *media.PageAnalysis `json:"analysis,omitempty"`
 }
@@ -91,7 +90,7 @@ func writePageMeta(f *media.File, value pageMetadata) {
 	b, _ := json.Marshal(value)
 	var next map[string]any
 	_ = json.Unmarshal(b, &next)
-	for _, key := range []string{"mode", "override_actor", "override_at", "selection_guard"} {
+	for _, key := range []string{"mode", "override_at", "selection_guard"} {
 		delete(fields, key)
 	}
 	maps.Copy(fields, next)
@@ -472,7 +471,8 @@ func (s *Service) DismissPageNotice(ctx context.Context, actor access.Actor, t v
 }
 
 // RestorePageNotice puts a removed notice's pages back where they were (an
-// excluded source keeps its place) and clears the notice.
+// excluded source keeps its place) and clears the notice. The manifest
+// records when, not who: media stores no account id for erasure to find.
 func (s *Service) RestorePageNotice(ctx context.Context, actor access.Actor, t versions.Target, id string) (versions.PageNotices, error) {
 	k, current, ref, err := s.pageEditorAccess(ctx, actor, t)
 	if err != nil {
@@ -514,7 +514,6 @@ func (s *Service) RestorePageNotice(ctx context.Context, actor access.Actor, t v
 			return versions.PageNotices{}, fmt.Errorf("%w: edit the chapters before restoring pages", ErrInvalid)
 		}
 		meta.Mode = "include"
-		meta.OverrideActor = actor.ID
 		meta.OverrideAt = s.o.Now().UTC().Format(time.RFC3339Nano)
 		writePageMeta(&m.Files[i], meta)
 	}

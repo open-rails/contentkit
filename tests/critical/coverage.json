@@ -3148,7 +3148,7 @@
         "TestPurgeLeavesNoAccountID/CK-J24-S08_purge_leaves_the_id_only_in_its_fence"
       ],
       "evidence": [
-        "An account that owned a channel, authored and was credited, commented, favorited, liked, uploaded quota-charged media and created and edited a location rule is purged; a sweep of every text, array, json and uuid column of the catalog schema finds its id only in content_erased_subjects and content_account_lifecycle.",
+        "An account that owned a channel, authored and was credited, commented, favorited, liked, uploaded media, restored a removed page and created and edited a location rule is purged; a sweep of every text, array, json and uuid column of the catalog schema, for the id and its base64 encodings, finds it only in content_erased_subjects and content_account_lifecycle.",
         "contentkit#287: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
       ]
     },
@@ -3177,6 +3177,32 @@
       ],
       "evidence": [
         "Engine.AccountErasure and GET /v1/accounts/{id}/erasure agree: active before, purged with requested and completed times after, purging without completion while pending; a member is refused.",
+        "contentkit#287: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
+      "id": "CK-J24-S11",
+      "journey": "CK-J24",
+      "behavior": "A real purge after the account restored a removed page leaves its id in no bucket object",
+      "status": "verified",
+      "cases": [
+        "TestPurgeLeavesNoAccountID/CK-J24-S11_purge_leaves_no_id_in_the_bucket"
+      ],
+      "evidence": [
+        "The account restores a duplicate page removed automatically (the manifest records the include override), then is purged; every object in the bucket, manifests gunzipped and the restored item's manifest among them, holds neither the id nor its base64 encodings.",
+        "contentkit#287: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
+      "id": "CK-J24-S12",
+      "journey": "CK-J24",
+      "behavior": "An upload authorized before its account's erasure and written after it stores the id nowhere",
+      "status": "verified",
+      "cases": [
+        "TestUploadRacingErasureStoresNoAccountID/CK-J24-S12_an_upload_racing_the_purge_stores_no_id"
+      ],
+      "evidence": [
+        "The account's commit passes its upload grant and is held at its manifest write while the account is anonymized; released, it lands (or is refused on a retry), and neither the catalog schema sweep nor the bucket sweep finds the id outside the fence and lifecycle rows.",
         "contentkit#287: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
       ]
     },
