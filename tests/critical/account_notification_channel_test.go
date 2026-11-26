@@ -534,7 +534,7 @@ func hiddenCommentAuthorReactions(t *testing.T, n *accountNoticeWorld) {
 	a := n.a
 	owner, ownerToken := n.w.person(t, 0)
 	writer, writerToken := n.w.person(t, 0)
-	ownerClient, writerClient, public := a.client(ownerToken), a.client(writerToken), a.client("")
+	ownerClient, writerClient, public := a.client(ownerToken), a.client(writerToken), browserAt(a, uuid.NewString(), "")
 	item := publishedArticle(t, a, "Hidden reactions")
 	second := publishedArticle(t, a, "Reactions made while hidden")
 	postComment(t, writerClient, item.ID, "Author and reactor on the same content")
