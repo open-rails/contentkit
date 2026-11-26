@@ -585,13 +585,15 @@ const (
 	failureEntryBytes = 768 // a Failure: its key, a message of maxFailureBytes, code and details
 )
 
-// Unwritten estimates the JSON m gains as the worker processes it. Per
-// upload it is the larger of a failure record and what success writes: an
-// entry for every output its presets have yet to write (an HLS ladder's
-// tracks one by one: a rendition per rung and codec, the sprite, and as many
-// audio and subtitle tracks as a source may carry), its measured fields,
-// and a staged upload's or frame's blob.
-// Then the zips and the public presets' pending names.
+// Unwritten estimates the JSON m gains as the worker processes it and its
+// files move. Per upload it is the larger of a failure record and what
+// success writes: an entry for every output its presets have yet to write
+// (an HLS ladder's tracks one by one: a rendition per rung and codec, the
+// sprite, and as many audio and subtitle tracks as a source may carry), its
+// measured fields, and a staged upload's or frame's blob. Then the zips and
+// the public presets' pending names. Every derived object, written or to
+// come, may leave a retired entry and its stamp (a release's move, a
+// regeneration), as does every retired entry its stamp.
 // Commits bound the manifest with it; an item whose outputs still overrun
 // it is marked Full by the worker.
 func (k *RegisteredKind) Unwritten(m *Manifest) int64 {
@@ -602,8 +604,29 @@ func (k *RegisteredKind) Unwritten(m *Manifest) int64 {
 		}
 	}
 	var n int64
+	for _, r := range m.Retired {
+		if r.Deleting == nil {
+			n += int64(stampBytes)
+		}
+	}
 	for _, f := range m.Files {
-		if !f.IsUpload() || f.Gone || f.Fail() != nil {
+		if f.Gone {
+			continue
+		}
+		moved := int64(retiredBytes + jsonLen(f.Path))
+		if !f.IsUpload() && f.Blob != "" {
+			n += moved
+		}
+		if f.Editor != nil {
+			n += moved
+		}
+		if f.Master != nil && !f.Master.IsOriginal() {
+			n += moved
+		}
+		if f.Track != nil && f.Track.Index != "" {
+			n += moved
+		}
+		if !f.IsUpload() || f.Fail() != nil {
 			continue
 		}
 		var out int64
@@ -611,7 +634,7 @@ func (k *RegisteredKind) Unwritten(m *Manifest) int64 {
 			out += blobFieldsBytes
 		}
 		if isImageType(f.Type) && f.Editor == nil {
-			out += 256 // an owned editor image and its source/spec fingerprint
+			out += 256 + int64(retiredBytes) // an owned editor image and its source/spec fingerprint
 		}
 		from := jsonLen(f.Path)
 		public := k.PublicFor(f.Path)
@@ -622,7 +645,7 @@ func (k *RegisteredKind) Unwritten(m *Manifest) int64 {
 			if len(m.Outputs(f.Path, p.Name)) == 0 {
 				// One output entry per width: its name, hash and dimensions.
 				for _, name := range k.PublicNames(p, f.Path) {
-					out += int64(jsonLen(name) + outputEntryBytes)
+					out += int64(2*jsonLen(name) + outputEntryBytes + retiredBytes)
 				}
 			}
 		}
@@ -637,7 +660,7 @@ func (k *RegisteredKind) Unwritten(m *Manifest) int64 {
 				size += maxNameBytes + 16
 			}
 			if left := entries - written[[2]string{f.Path, p.Name}]; left > 0 {
-				out += left * (size + int64(jsonLen(k.OutputPath(p, f.Path))+from+len(p.Name)))
+				out += left * (size + retiredBytes + int64(2*jsonLen(k.OutputPath(p, f.Path))+from+len(p.Name)))
 			}
 		}
 		if out > 0 || len(f.Pending) > 0 { // work is left: it may measure the upload, or fail

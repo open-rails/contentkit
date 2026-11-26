@@ -95,7 +95,7 @@ func (w *releaseWorker) Work(ctx context.Context, job *river.Job[releaseArgs]) e
 	err := w.s.SyncFences(ctx, []versions.Target{t})
 	var next time.Time
 	if err == nil || errors.Is(err, ErrNotFound) {
-		next, err = w.s.release(ctx, t)
+		next, err = w.s.release(ctx, t, job.Attempt > 1)
 	}
 	switch {
 	case errors.Is(err, ErrNotFound):
@@ -443,8 +443,9 @@ func zipUpload(f media.File) bool {
 func uploadStem(p string) string { return strings.TrimSuffix(p, path.Ext(p)) }
 
 // release moves t's files where planRelease wants them and records the
-// outcome in the catalog. It returns the next deadline.
-func (s *Service) release(ctx context.Context, t versions.Target) (time.Time, error) {
+// outcome in the catalog. It returns the next deadline. A retry may follow
+// an attempt that copied files and never named them.
+func (s *Service) release(ctx context.Context, t versions.Target, retry bool) (time.Time, error) {
 	st, err := s.releaseStateOf(ctx, s.o.Pool, t)
 	if err != nil {
 		return time.Time{}, err
@@ -489,6 +490,11 @@ func (s *Service) release(ctx context.Context, t versions.Target) (time.Time, er
 				if _, ok := servedPage(k, m, f.Path); ok {
 					plan.Before++
 				}
+			}
+		}
+		if retry {
+			if err := s.collectOrphans(ctx, ref); err != nil {
+				return time.Time{}, err
 			}
 		}
 		var settling time.Time
@@ -569,18 +575,24 @@ func (s *Service) move(ctx context.Context, ref contentref.ContentRef, m *medias
 		})
 	}
 	if err := g.Wait(); err != nil {
-		return "", time.Time{}, err
+		return "", time.Time{}, errors.Join(err, s.collectOrphans(ctx, ref))
 	}
-	// A withdrawn copy stays readable until deleted: it is due at once. A
-	// released file's internal copy waits an hour.
-	grace := releaseLeftovers
+	// A copy withdrawn to internal/, or leaving public/, would stay readable
+	// until deleted: it is due at once. Any other copy a move replaces stays
+	// an hour, for readers mid-read.
+	immediate := map[string]bool{}
 	for c := range copies {
-		if layout.Served(layout.BlobArea(c.from)) {
-			grace = -1
+		if layout.BlobArea(c.to) == layout.AreaInternal || layout.BlobArea(c.from) == layout.AreaPublic && layout.BlobArea(c.to) != layout.AreaPublic {
+			immediate[c.from] = true
 		}
 	}
 	op := uuidv7.NewString()
-	_, err = s.m.Manifests.EditWith(ctx, ref, mediastore.EditOptions{Existing: true, Op: op, Grace: grace}, func(cur *mediastore.Manifest) error {
+	out, err := s.m.Manifests.EditWith(ctx, ref, mediastore.EditOptions{Existing: true, Op: op, Grace: releaseLeftovers, GraceOf: func(blob string) time.Duration {
+		if immediate[blob] {
+			return -1
+		}
+		return 0
+	}}, func(cur *mediastore.Manifest) error {
 		changed := false
 		apply := func(key string, blob *string) {
 			if c, ok := changes[key]; ok && *blob == c.from {
@@ -614,7 +626,30 @@ func (s *Service) move(ctx context.Context, ref contentref.ContentRef, m *medias
 		}
 		return nil
 	})
+	// Copies the manifest does not name (a failed write, a plan changed
+	// meanwhile) are orphans: a collection once they are a day old.
+	named := map[string]bool{}
+	if err == nil {
+		for _, blob := range out.Blobs() {
+			named[blob] = true
+		}
+	}
+	for c := range copies {
+		if !named[c.to] {
+			return op, settling, errors.Join(err, s.collectOrphans(ctx, ref))
+		}
+	}
 	return op, settling, err
+}
+
+// collectOrphans schedules ref's collection for when copies a release may
+// have left unnamed are old enough to be collected.
+func (s *Service) collectOrphans(ctx context.Context, ref contentref.ContentRef) error {
+	client, err := s.bound()
+	if err != nil {
+		return err
+	}
+	return mediastore.RiverGC{Client: client}.ScheduleGC(ctx, ref, s.o.Now().Add(mediastore.OrphanAge+time.Hour))
 }
 
 // completeRelease records a release's outcome in the catalog: availability,

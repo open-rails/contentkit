@@ -274,7 +274,7 @@ func (m *Manifests) ingestArchive(ctx context.Context, item Item, source media.F
 				return err
 			}
 		}
-		_, err = m.EditWith(ctx, item.Ref(), EditOptions{Existing: true, Op: uuidv7.Child(operation, strconv.Itoa(batchStart)).String()}, func(cur *Manifest) error {
+		_, err = m.EditWith(ctx, item.Ref(), EditOptions{Existing: true, Op: uuidv7.Child(operation, strconv.Itoa(batchStart)).String(), Reserve: k.Unwritten}, func(cur *Manifest) error {
 			i := cur.Find(source.Path)
 			if i < 0 || cur.Files[i].Source() != source.Source() {
 				return errArchiveChanged

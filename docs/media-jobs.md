@@ -55,7 +55,7 @@ the version's release; no readiness relay or additional preparation job is neces
 Rendered images are recorded and reported one at a time. `PageGroup` (stock
 workers: `MEDIA_WORKER_PAGE_GROUP`) above 1 records up to that many in one
 manifest edit, or those finished within 5 s of the group's first, which bulk
-imports use to cut manifest edits. An attempt after one that failed, timed out
+imports use to cut manifest edits. Bulk imports should set 50–100: every edit rewrites the whole manifest, and edits of one manifest queue behind each other within a process. An attempt after one that failed, timed out
 or died records one at a time again, so a page that kills the worker cannot keep
 the rest of its group unrecorded.
 
@@ -73,7 +73,7 @@ retry behavior. Jobs cancelled by an older worker are not scanned automatically;
 regenerate affected items to retry their remaining outputs. Storage mutation and
 source identity rules remain authoritative.
 GC deletes only files an item's manifest retired, once due; there is no
-bucket-wide scanner.
+bucket-wide scanner. Each run lists the item's folder and retires objects no manifest names once they are a day old; one that finds younger ones runs again when they are. Due entries are stamped deleting in batches of conditional writes, and a run deletes only what it stamped, during the first half of the 15-minute settle period, while the stamp keeps the hash from being referenced again; after it, a HEAD decides whether the entry is dropped or stamped again. A manifest is at most 16 MiB; GC's stamps may pass that by 512 KiB. A commit is refused (`too_large`) when the item, processed and released, would not fit: each derived file is budgeted a retired entry for its move.
 
 A video attempt encodes one chunk, assembling the rung that chunk completes,
 then yields its job behind the other queued videos. Every queued video so

@@ -304,7 +304,7 @@ func nextCollection(m *Manifest, settle time.Duration, now time.Time) time.Time 
 			earlier(r.Deleting.Add(settle))
 		}
 	}
-	if orphanPass := m.WrittenAt.Add(orphanAge + time.Hour); orphanPass.After(now) {
+	if orphanPass := m.WrittenAt.Add(OrphanAge + time.Hour); orphanPass.After(now) {
 		earlier(orphanPass)
 	}
 	return next

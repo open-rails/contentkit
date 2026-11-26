@@ -9,6 +9,8 @@ import (
 	"iter"
 	"log/slog"
 	"slices"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/open-rails/contentkit/contentref"
@@ -63,13 +65,17 @@ var ErrErasurePending = errors.New("media: erasure cleanup remains pending")
 
 // SetDeleted soft-deletes ref (deleted) or restores it: the manifest records
 // the deletion and the gateway fence closes the item at once; files are
-// kept. An erased item stays erased: a stale sync changes nothing.
+// kept. An erased item stays erased: a stale sync changes nothing. The fence
+// then follows the manifest as written (syncFence), so of a deletion and a
+// restore racing, the fence is the one the later manifest write says.
 func (j *Jobs) SetDeleted(ctx context.Context, ref contentref.ContentRef, deleted bool) error {
 	item, err := j.reg.Item(ref)
 	if err != nil {
 		return err
 	}
+	none := ""
 	if deleted {
+		none = layout.FenceDeleted
 		if err := j.fenceDeleted(ctx, item); err != nil {
 			return err
 		}
@@ -93,10 +99,7 @@ func (j *Jobs) SetDeleted(ctx context.Context, ref contentref.ContentRef, delete
 	if err != nil {
 		return err
 	}
-	if !deleted {
-		return j.unfence(ctx, item)
-	}
-	return nil
+	return j.syncFence(ctx, item, none)
 }
 
 // Erased reports whether ref's media was erased: its tombstone or its
@@ -141,7 +144,10 @@ func (j *Jobs) Tombstone(ctx context.Context, ref contentref.ContentRef) error {
 		}
 		return nil
 	})
-	return err
+	if err != nil {
+		return err
+	}
+	return j.syncFence(ctx, item, layout.FenceErased)
 }
 
 // Erase tombstones ref and deletes every object under its folder but the
@@ -171,23 +177,35 @@ func (j *Jobs) Erase(ctx context.Context, ref contentref.ContentRef) error {
 	return nil
 }
 
-// orphanAge protects objects a writer may still be about to reference. The
-// orphan pass is due an hour after that past an item's last write, and runs
-// in every collection for a further day, so a late job still makes it.
+// OrphanAge protects objects a writer may still be about to reference: an
+// object no manifest names is collected once it is this old. Every
+// collection lists the item's folder; one that finds younger unknown
+// objects is due again once they are old enough, and a write is followed by
+// a collection a day later.
+const OrphanAge = 24 * time.Hour
+
 const (
-	orphanAge    = 24 * time.Hour
-	orphanWindow = orphanAge + 25*time.Hour
+	// gcBatch bounds the entries one conditional write stamps deleting.
+	gcBatch = 1000
+	// gcParallel bounds GC's requests in flight.
+	gcParallel = 8
+	// stampBytes is what a deleting stamp adds to a retired entry's JSON.
+	stampBytes = len(`,"deleting":"2006-01-02T15:04:05.000Z"`)
+	// retiredBytes is a retired entry's JSON without its path, stamp
+	// included.
+	retiredBytes = 200
 )
 
 // Collect runs ref's garbage collection once and returns when it is next
-// due (zero: nothing left). Retired entries past their due time are marked
-// deleting in the manifest (the fence against re-reference), deleted, and
-// dropped once their DELETE has settled. After a write within the last day
-// it also lists the folder for orphans: objects the manifest does not know,
-// older than a day, which a crashed writer left. An erased item's unknown
-// objects are all orphans, and the rest of its folder (tmp/, keys outside
-// the layout) is deleted outright. Nothing is deleted without the manifest's
-// say.
+// due (zero: nothing left). It lists the item's folder and retires orphans:
+// objects the manifest does not know, a day old (an erased item's at once,
+// and the rest of its folder, tmp/ and keys outside the layout, outright).
+// Due retired entries are stamped deleting in batches, each in its own
+// conditional write, and a run deletes only what its own writes stamped,
+// while their fence holds (the first half of the settle period). A stamp
+// past its settle period is checked with a HEAD: a gone object's entry is
+// dropped, a present one stamped again. Nothing is deleted without the
+// manifest's say.
 func (j *Jobs) Collect(ctx context.Context, ref contentref.ContentRef) (time.Time, error) {
 	item, err := j.reg.Item(ref)
 	if err != nil {
@@ -199,41 +217,28 @@ func (j *Jobs) Collect(ctx context.Context, ref contentref.ContentRef) (time.Tim
 	} else if err != nil {
 		return time.Time{}, err
 	}
-	now := j.cfg.Now().UTC()
 	erased := cur.Deleted != nil && cur.Deleted.Erased
-	var loose []string
-	if erased || now.Sub(cur.WrittenAt) < orphanWindow {
-		orphans, rest, err := j.orphans(ctx, item, cur, now, erased)
-		if err != nil {
-			return time.Time{}, err
-		}
-		loose = rest
-		if len(orphans) > 0 {
-			if cur, err = j.manifests.EditWith(ctx, ref, EditOptions{Lifecycle: true}, func(m *Manifest) error {
-				live := m.referenced()
-				changed := false
-				for _, blob := range orphans {
-					if _, retired := m.Retiring(blob); !live[blob] && !retired {
-						m.Retired = append(m.Retired, Retired{Blob: blob, At: now, Due: now})
-						changed = true
-					}
-				}
-				if !changed {
-					return ErrUnchanged
-				}
-				return nil
-			}); err != nil {
-				return time.Time{}, err
-			}
-		}
+	orphans, loose, young, err := j.orphans(ctx, item, cur, erased)
+	if err != nil {
+		return time.Time{}, err
 	}
-	if slices.ContainsFunc(cur.Retired, func(r Retired) bool { return r.Deleting == nil && !r.Due.After(now) }) {
+	if len(orphans) > 0 {
 		if cur, err = j.manifests.EditWith(ctx, ref, EditOptions{Lifecycle: true}, func(m *Manifest) error {
+			now := j.cfg.Now().UTC()
+			known := m.referenced()
+			for _, r := range m.Retired {
+				known[r.Blob] = true
+			}
+			room := (maxStoredBytes - m.size) / int64(retiredBytes+64)
 			changed := false
-			for i := range m.Retired {
-				if r := &m.Retired[i]; r.Deleting == nil && !r.Due.After(now) {
-					r.Deleting = &now
+			for _, blob := range orphans {
+				if room <= 0 {
+					break // the rest next run, once these have gone
+				}
+				if !known[blob] {
+					m.Retired = append(m.Retired, Retired{Blob: blob, At: now, Due: now})
 					changed = true
+					room--
 				}
 			}
 			if !changed {
@@ -244,42 +249,163 @@ func (j *Jobs) Collect(ctx context.Context, ref contentref.ContentRef) (time.Tim
 			return time.Time{}, err
 		}
 	}
-	deleted := map[string]bool{}
-	var errs []error
-	for _, r := range cur.Retired {
-		if r.Deleting == nil {
-			continue
-		}
-		if err := j.delete(ctx, keyOf(item, r.Blob)); err != nil {
-			errs = append(errs, err)
-			continue
-		}
-		deleted[r.Blob] = true
-	}
-	for _, key := range loose {
-		if err := j.delete(ctx, key); err != nil {
-			errs = append(errs, err)
-		}
-	}
-	settled := func(r Retired) bool {
-		return r.Deleting != nil && deleted[r.Blob] && !r.Deleting.Add(j.manifests.settle).After(now)
-	}
-	if slices.ContainsFunc(cur.Retired, settled) {
-		if cur, err = j.manifests.EditWith(ctx, ref, EditOptions{Lifecycle: true}, func(m *Manifest) error {
-			n := len(m.Retired)
-			m.Retired = slices.DeleteFunc(m.Retired, settled)
-			if len(m.Retired) == n {
-				return ErrUnchanged
-			}
-			return nil
-		}); err != nil {
-			return time.Time{}, err
-		}
+	errs := j.deleteAll(ctx, loose, time.Time{})
+	cur, err = j.drain(ctx, item, cur)
+	if err != nil {
+		return time.Time{}, errors.Join(append(errs, err)...)
 	}
 	if err := errors.Join(errs...); err != nil {
 		return time.Time{}, err
 	}
-	return nextCollection(cur, j.manifests.settle, now), nil
+	next := nextCollection(cur, j.manifests.settle, j.cfg.Now().UTC())
+	if !young.IsZero() {
+		if at := young.Add(OrphanAge + time.Minute); next.IsZero() || at.Before(next) {
+			next = at
+		}
+	}
+	return next, nil
+}
+
+// drain stamps, deletes and drops cur's retired entries until nothing is
+// due. It returns the manifest as last read or written.
+func (j *Jobs) drain(ctx context.Context, item Item, cur *Manifest) (*Manifest, error) {
+	settle := j.manifests.settle
+	unsent := map[string]time.Time{} // this run's stamps it never sent
+	var errs []error
+	var last time.Time
+	for round := 0; round < 256 && ctx.Err() == nil; round++ {
+		now := j.cfg.Now().UTC()
+		var settled []Retired
+		for _, r := range cur.Retired {
+			if r.Deleting != nil && !r.Deleting.Add(settle).After(now) {
+				settled = append(settled, r)
+			}
+		}
+		gone, present, err := j.heads(ctx, item, settled)
+		if err != nil {
+			errs = append(errs, err)
+		}
+		due := slices.ContainsFunc(cur.Retired, func(r Retired) bool {
+			return r.Deleting == nil && !r.Due.After(now) || r.Deleting != nil && unsent[r.Blob].Equal(*r.Deleting)
+		})
+		if len(gone) == 0 && len(present) == 0 && !due {
+			break
+		}
+		stamp := now.Truncate(time.Millisecond)
+		if !stamp.After(last) {
+			stamp = last.Add(time.Millisecond) // each round's stamp is its own
+		}
+		last = stamp
+		matches := func(set map[string]time.Time, r Retired) bool {
+			at, ok := set[r.Blob]
+			return ok && r.Deleting != nil && r.Deleting.Equal(at)
+		}
+		out, err := j.manifests.EditItem(ctx, item, EditOptions{Lifecycle: true}, func(m *Manifest) error {
+			n := len(m.Retired)
+			m.Retired = slices.DeleteFunc(m.Retired, func(r Retired) bool { return matches(gone, r) })
+			changed := len(m.Retired) != n
+			room := min(gcBatch, (maxStoredBytes-m.size)/int64(stampBytes))
+			for i := range m.Retired {
+				r := &m.Retired[i]
+				if room <= 0 {
+					break
+				}
+				if r.Deleting == nil && !r.Due.After(stamp) || matches(present, *r) || matches(unsent, *r) {
+					r.Deleting = &stamp
+					changed = true
+					room--
+				}
+			}
+			if !changed {
+				return ErrUnchanged
+			}
+			return nil
+		})
+		if err != nil {
+			return cur, errors.Join(append(errs, err)...)
+		}
+		cur = out
+		var ours []string
+		for _, r := range cur.Retired {
+			if r.Deleting != nil && r.Deleting.Equal(stamp) {
+				ours = append(ours, r.Blob)
+			}
+		}
+		keys := make([]string, len(ours))
+		for i, blob := range ours {
+			keys[i] = keyOf(item, blob)
+		}
+		sent, delErrs := j.send(ctx, keys, stamp.Add(settle/2))
+		errs = append(errs, delErrs...)
+		clear(unsent)
+		for i, blob := range ours {
+			if !sent[i] {
+				unsent[blob] = stamp
+			}
+		}
+		if len(gone) == 0 && len(unsent) == len(ours) {
+			break // no progress: the fence ran out before a DELETE was sent
+		}
+	}
+	return cur, errors.Join(errs...)
+}
+
+// heads checks the objects of entries past their settle period: gone ones
+// may be dropped, present ones need deleting again. Each maps a blob to the
+// stamp it was checked under.
+func (j *Jobs) heads(ctx context.Context, item Item, entries []Retired) (gone, present map[string]time.Time, err error) {
+	gone, present = map[string]time.Time{}, map[string]time.Time{}
+	found := make([]error, len(entries))
+	var wg sync.WaitGroup
+	for w := 0; w < min(gcParallel, len(entries)); w++ {
+		wg.Go(func() {
+			for i := w; i < len(entries); i += gcParallel {
+				_, found[i] = j.store.Head(ctx, keyOf(item, entries[i].Blob))
+			}
+		})
+	}
+	wg.Wait()
+	var errs []error
+	for i, r := range entries {
+		switch err := found[i]; {
+		case errors.Is(err, ErrNotFound):
+			gone[r.Blob] = *r.Deleting
+		case err == nil:
+			present[r.Blob] = *r.Deleting
+		default:
+			errs = append(errs, err)
+		}
+	}
+	return gone, present, errors.Join(errs...)
+}
+
+// send DELETEs keys, gcParallel at a time, none at or after lastSend (zero:
+// no bound). It reports which it sent.
+func (j *Jobs) send(ctx context.Context, keys []string, lastSend time.Time) ([]bool, []error) {
+	sent := make([]bool, len(keys))
+	errs := make([]error, len(keys))
+	var next atomic.Int64
+	var wg sync.WaitGroup
+	for range min(gcParallel, len(keys)) {
+		wg.Go(func() {
+			for {
+				i := int(next.Add(1) - 1)
+				if i >= len(keys) || ctx.Err() != nil || !lastSend.IsZero() && !j.cfg.Now().Before(lastSend) {
+					return
+				}
+				sent[i] = true
+				errs[i] = j.delete(ctx, keys[i])
+			}
+		})
+	}
+	wg.Wait()
+	return sent, slices.DeleteFunc(errs, func(err error) bool { return err == nil })
+}
+
+// deleteAll DELETEs keys no manifest fences (an erased item's loose keys).
+func (j *Jobs) deleteAll(ctx context.Context, keys []string, lastSend time.Time) []error {
+	_, errs := j.send(ctx, keys, lastSend)
+	return errs
 }
 
 // NextCollection is when m next needs Collect.
@@ -287,17 +413,20 @@ func (j *Jobs) NextCollection(m *Manifest) time.Time {
 	return nextCollection(m, j.manifests.settle, j.cfg.Now().UTC())
 }
 
-// orphans lists item's folder for blobs m does not know and, for an erased
-// item, every other key but the manifest and the fence: tmp/ and anything
-// outside the layout. A live item's tmp/ expires by the bucket's lifecycle.
-func (j *Jobs) orphans(ctx context.Context, item Item, m *Manifest, now time.Time, erased bool) (blobs, loose []string, err error) {
+// orphans lists item's folder for blobs m does not know, a day old, and for
+// an erased item every unknown blob and every other key but the manifest
+// and the fence: tmp/ and anything outside the layout. A live item's tmp/
+// expires by the bucket's lifecycle. young is the oldest unknown blob too
+// young to collect.
+func (j *Jobs) orphans(ctx context.Context, item Item, m *Manifest, erased bool) (blobs, loose []string, young time.Time, err error) {
 	known := m.referenced()
 	for _, r := range m.Retired {
 		known[r.Blob] = true
 	}
+	now := j.cfg.Now().UTC()
 	for obj, err := range j.store.List(ctx, item.Prefix()) {
 		if err != nil {
-			return nil, nil, err
+			return nil, nil, time.Time{}, err
 		}
 		k, ok := layout.Parse(obj.Key)
 		switch {
@@ -307,15 +436,17 @@ func (j *Jobs) orphans(ctx context.Context, item Item, m *Manifest, now time.Tim
 			}
 		case k.Area == layout.AreaInternal || k.Area == layout.AreaPrivate || k.Area == layout.AreaPublic:
 			blob := k.Area + "/" + k.Name
-			if !layout.ValidBlobRef(blob) {
-				continue // the gateway fence
-			}
-			if !known[blob] && (erased || now.Sub(obj.LastModified) > orphanAge) {
+			switch {
+			case !layout.ValidBlobRef(blob), known[blob]:
+				// the gateway fence, or named
+			case erased || now.Sub(obj.LastModified) > OrphanAge:
 				blobs = append(blobs, blob)
+			case young.IsZero() || obj.LastModified.Before(young):
+				young = obj.LastModified
 			}
 		}
 	}
-	return blobs, loose, nil
+	return blobs, loose, young, nil
 }
 
 // delete sends one DELETE; an absent object is deleted.
@@ -371,24 +502,44 @@ func (j *Jobs) fenceDeleted(ctx context.Context, item Item) error {
 	return nil
 }
 
-// unfence removes a deletion fence, never an erasure's: an erasure that
-// replaced the fence between the check and the DELETE is fenced again.
-func (j *Jobs) unfence(ctx context.Context, item Item) error {
-	_, kind, err := j.fence(ctx, item)
-	if err != nil || kind != layout.FenceDeleted {
-		return err
+// syncFence makes item's fence what its manifest says: permanent once
+// erased, the deletion fence while deleted, none otherwise (none is the
+// fence of an item without a manifest). An erasure's fence is never
+// removed. Each round re-reads the manifest after acting, so racing syncs
+// settle on the fence of the last manifest write.
+func (j *Jobs) syncFence(ctx context.Context, item Item, none string) error {
+	for range 8 {
+		want := none
+		m, _, err := j.manifests.GetAny(ctx, item.Ref())
+		switch {
+		case errors.Is(err, ErrNotFound):
+		case err != nil:
+			return err
+		case m.Deleted == nil:
+			want = ""
+		case m.Deleted.Erased:
+			want = layout.FenceErased
+		default:
+			want = layout.FenceDeleted
+		}
+		_, kind, err := j.fence(ctx, item)
+		switch {
+		case err != nil:
+			return err
+		case kind == want || kind == layout.FenceErased:
+			return nil
+		case want == layout.FenceErased:
+			err = j.fenceErasure(ctx, item)
+		case want == layout.FenceDeleted:
+			err = j.putFence(ctx, item, layout.FenceDeleted, "")
+		default:
+			err = j.store.Delete(ctx, item.PublicPrefix()+layout.FenceName)
+		}
+		if err != nil && !errors.Is(err, ErrPreconditionFailed) && !errors.Is(err, ErrNotFound) {
+			return err
+		}
 	}
-	if err := j.store.Delete(ctx, item.PublicPrefix()+layout.FenceName); err != nil && !errors.Is(err, ErrNotFound) {
-		return err
-	}
-	cur, _, err := j.manifests.GetAny(ctx, item.Ref())
-	if err == nil && cur.Deleted != nil && cur.Deleted.Erased {
-		return j.fenceErasure(ctx, item)
-	}
-	if errors.Is(err, ErrNotFound) {
-		return nil
-	}
-	return err
+	return errFenceConflict
 }
 
 // fenceErasure makes item's fence permanent, replacing a deletion fence.
