@@ -17,9 +17,9 @@ import (
 
 // RefreshFacets rewrites the content_facets rows of every version of the
 // content items, and queues their search documents, in q's transaction.
-// live_from is when a version opens to readers: the later of its completed
-// release and its scheduled publication, so a re-schedule hides it at once
-// while the earlier release's withdrawal is still queued. It is kept through
+// live_from is when a version opens to readers: the later of its first
+// completed release and its scheduled publication, so a re-schedule hides it
+// at once while the earlier release's withdrawal is still queued. It is kept through
 // deletion so holders of a deleted item still read what was live; deleted
 // marks either deletion. Availability comes only from a completed publication.
 // Every

@@ -18,9 +18,11 @@ type catalog struct {
 
 type catalogContent struct {
 	kind string
-	// liveFrom is when its first version went live; published orders ties.
-	liveFrom, published time.Time
-	entities            []string
+	// liveFrom is when its first version went live, which a re-publication
+	// never moves; opens is when its earliest open version opens now;
+	// published orders ties.
+	liveFrom, opens, published time.Time
+	entities                   []string
 }
 
 // loadCatalog returns the mapping, reloaded when a content or entity row
@@ -38,7 +40,7 @@ func (e *Engine) loadCatalog(ctx context.Context) (*catalog, error) {
 		return e.catalog, nil
 	}
 	c := &catalog{fingerprint: fingerprint, contents: map[string]catalogContent{}, entityKind: map[string]string{}}
-	rows, err := e.o.Pool.Query(ctx, `SELECT f.content_id, f.kind, min(f.live_from), max(f.published_at),
+	rows, err := e.o.Pool.Query(ctx, `SELECT f.content_id, f.kind, min(f.published_at), min(f.live_from), max(f.published_at),
  coalesce(array_agg(DISTINCT m.entity_id) FILTER (WHERE m.entity_id IS NOT NULL), '{}')
  FROM `+e.table("content_facets")+` f LEFT JOIN LATERAL unnest(array_append(f.entity_ids, f.owner_entity_id)) m(entity_id) ON true
  WHERE f.tenant_id = $1 AND NOT f.deleted AND f.live_from IS NOT NULL
@@ -48,11 +50,11 @@ func (e *Engine) loadCatalog(ctx context.Context) (*catalog, error) {
 	}
 	interned := map[string]string{}
 	var id, kind string
-	var liveFrom time.Time
+	var liveFrom, opens time.Time
 	var published *time.Time
 	var members []string
-	_, err = pgx.ForEachRow(rows, []any{&id, &kind, &liveFrom, &published, &members}, func() error {
-		x := catalogContent{kind: kind, liveFrom: liveFrom.UTC(), entities: make([]string, len(members))}
+	_, err = pgx.ForEachRow(rows, []any{&id, &kind, &liveFrom, &opens, &published, &members}, func() error {
+		x := catalogContent{kind: kind, liveFrom: liveFrom.UTC(), opens: opens.UTC(), entities: make([]string, len(members))}
 		if published != nil {
 			x.published = published.UTC()
 		}

@@ -148,6 +148,7 @@ func TestRescheduledPublication(t *testing.T) {
 		if len(receipts) != 1 {
 			t.Fatalf("public release facts %+v; want one", receipts)
 		}
+		release(t) // nothing left queued for the cases at earlier clocks
 	})
 	t.Run("CK-J09-S68_a_first_scheduled_publication_opens_once_released_at_its_date", func(t *testing.T) {
 		w.clock.set(base)
