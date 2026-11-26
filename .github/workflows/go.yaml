@@ -104,20 +104,16 @@ jobs:
       run: |
         pnpm install --frozen-lockfile --ignore-scripts
         pnpm contract:check
-        pnpm typecheck && pnpm lint && pnpm test:read-refresh && pnpm build
+        pnpm typecheck && pnpm lint && pnpm test:read-refresh && pnpm test:activity && pnpm build
         pnpm pack --pack-destination "$RUNNER_TEMP"
         python3 ../../.github/scripts/check-npm-package.py "$RUNNER_TEMP/openrails-contentkit-ui-0.0.0.tgz" 0.0.0
-        # These four are independent (three configs write to three different
-        # outDirs, the Playwright install touches neither) -- were running
-        # one after another for no reason.
+        # These three are independent (two configs write to two different
+        # outDirs, the Playwright install touches neither).
         declare -A browser_pids
         mkdir -p "$RUNNER_TEMP/browser-build-logs"
         ( pnpm exec vite build --config ../../tests/critical/browser/vite.config.mjs ) \
           > "$RUNNER_TEMP/browser-build-logs/vite.log" 2>&1 &
         browser_pids[vite]=$!
-        ( RAYON_NUM_THREADS=1 pnpm exec vite build --config ../../tests/critical/browser/search-attribution.config.mjs ) \
-          > "$RUNNER_TEMP/browser-build-logs/search-attribution.log" 2>&1 &
-        browser_pids[search-attribution]=$!
         ( RAYON_NUM_THREADS=1 pnpm exec vite build --config ../../tests/critical/browser/media-sse-upload.config.mjs ) \
           > "$RUNNER_TEMP/browser-build-logs/media-sse-upload.log" 2>&1 &
         browser_pids[media-sse-upload]=$!

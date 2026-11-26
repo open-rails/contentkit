@@ -21,6 +21,7 @@ import (
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/discovery"
+	"github.com/open-rails/contentkit/internal/subject"
 	"github.com/open-rails/contentkit/server"
 )
 
@@ -104,29 +105,27 @@ func TestConfiguredStandaloneParity(t *testing.T) {
 		must(t, err)
 		_, err = ck.NewClient(base+"/configured", &http.Client{Transport: bearerTransport{token: foreign.Secret, base: http.DefaultTransport}}).GetMediaVersion(t.Context(), ref.Kind, ref.ID, ref.Version, ck.GetMediaVersionQuery{Editor: true})
 		requireError(t, err, 403, "forbidden")
-		eventID := uuid.NewString()
-		must(t, client.PostSignals(t.Context(), discovery.Signals{Session: uuid.NewString(), Signals: []discovery.SignalInput{{ContentID: ref.ID, Type: "click", EventID: eventID, OccurredAt: time.Now()}}}))
-		rows, err := a.deps.ClickHouse.Query(t.Context(), "SELECT count() FROM "+a.cfg.ClickHouse.Database+".signals FINAL WHERE tenant=? AND event_id=?", a.cfg.Scope.AppID.String(), eventID)
-		must(t, err)
-		var count uint64
-		if !rows.Next() {
-			t.Fatal("standalone signal query had no count")
-		}
-		must(t, rows.Scan(&count))
-		must(t, rows.Close())
-		if count != 1 {
-			t.Fatalf("configured standalone lost/duplicated actual ClickHouse write: %d", count)
+		visitor := uuid.NewString()
+		browser := ck.NewClient(base+"/configured", &http.Client{Transport: readerTransport{test: t, w: w, anonymous: visitor}})
+		must(t, browser.PostActivity(t.Context(), discovery.Activity{Events: []discovery.ActivityEvent{{Type: discovery.ActivityOpen, ContentID: ref.ID}}}))
+		who, _ := subject.Anonymous(uuid.UUID(a.cfg.Scope.AppID), visitor)
+		waitForWithin(t, 30*time.Second, func() bool {
+			return logged(t, a.deps.ClickHouse, a.cfg.ClickHouse.Database, a.cfg.Scope.AppID.String(), who) > 0
+		})
+		if n := logged(t, a.deps.ClickHouse, a.cfg.ClickHouse.Database, a.cfg.Scope.AppID.String(), who); n != 1 {
+			t.Fatalf("configured standalone lost/duplicated actual ClickHouse write: %d", n)
 		}
 		must(t, w.pool.Ping(t.Context()))
 		must(t, a.deps.ClickHouse.Exec(t.Context(), "SELECT 1"))
 		assertImage(t, local.Files[0].URL, 48, 32)
 	})
 	t.Run("CK-J01-S13_signal_reads_serving_a_request_carry_a_deadline_and_memory_ceiling", func(t *testing.T) {
-		_, err := client.GetContentSimilar(t.Context(), ref.ID, ck.GetContentSimilarQuery{})
+		staff := ck.NewClient(base+"/configured", &http.Client{Transport: bearerTransport{token: staffKey(t, w, a), base: http.DefaultTransport}})
+		_, err := staff.GetStatsActive(t.Context(), ck.GetStatsActiveQuery{Days: 7})
 		must(t, err)
 		must(t, a.deps.ClickHouse.Exec(t.Context(), "SYSTEM FLUSH LOGS"))
 		rows, err := a.deps.ClickHouse.Query(t.Context(), `SELECT Settings['max_memory_usage'], toUInt64OrZero(Settings['max_execution_time']) FROM system.query_log
- WHERE type = 'QueryFinish' AND event_time > now() - 600 AND has(databases, ?) AND position(query, 'ORDER BY cityHash64(subject_kind,subject)') > 0`, a.cfg.ClickHouse.Database)
+ WHERE type = 'QueryFinish' AND event_time > now() - 600 AND has(databases, ?) AND position(query, 'audience_daily') > 0 AND query_kind = 'Select'`, a.cfg.ClickHouse.Database)
 		must(t, err)
 		reads := 0
 		for rows.Next() {
@@ -134,13 +133,13 @@ func TestConfiguredStandaloneParity(t *testing.T) {
 			var seconds uint64
 			must(t, rows.Scan(&memory, &seconds))
 			if memory != "1073741824" || seconds == 0 || seconds > 20 {
-				t.Errorf("an unbounded co-engagement read: max_memory_usage=%q max_execution_time=%d", memory, seconds)
+				t.Errorf("an unbounded request read: max_memory_usage=%q max_execution_time=%d", memory, seconds)
 			}
 			reads++
 		}
 		must(t, rows.Close())
 		if reads == 0 {
-			t.Fatal("the similar read issued no co-engagement query")
+			t.Fatal("the active-days read issued no ClickHouse query")
 		}
 	})
 	t.Run("CK-J01-S10_the_server_bounds_bodies_and_headers_keeps_streams_open_and_marks_nosniff", func(t *testing.T) {
@@ -157,7 +156,7 @@ func TestConfiguredStandaloneParity(t *testing.T) {
 		must(t, err)
 		defer conn.Close()
 		start := time.Now()
-		_, err = fmt.Fprintf(conn, "POST /configured/v1/signals HTTP/1.1\r\nHost: %s\r\nContent-Type: application/json\r\nContent-Length: 100\r\n\r\n{", listener.Addr())
+		_, err = fmt.Fprintf(conn, "POST /configured/v1/activity HTTP/1.1\r\nHost: %s\r\nContent-Type: application/json\r\nContent-Length: 100\r\n\r\n{", listener.Addr())
 		must(t, err)
 		must(t, conn.SetReadDeadline(time.Now().Add(15*time.Second)))
 		stalled, err := http.ReadResponse(bufio.NewReader(conn), nil)

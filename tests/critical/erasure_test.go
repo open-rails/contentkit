@@ -7,14 +7,9 @@ import (
 	"testing"
 	"time"
 
-	signalstore "github.com/open-rails/contentkit/internal/signalstore"
-
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/google/uuid"
 	ck "github.com/open-rails/contentkit"
-	"github.com/open-rails/contentkit/contentref"
-	"github.com/open-rails/contentkit/discovery"
-	"github.com/open-rails/contentkit/signal"
 )
 
 func TestErasureRecoveryMode(t *testing.T) {
@@ -71,8 +66,6 @@ func TestClickHouseErasureRetry(t *testing.T) {
 		}
 		must(t, direct.Close())
 	})
-	store, err := signalstore.NewStore(direct, database)
-	must(t, err)
 	wire := newTCPCut(t, addr)
 	borrowed, err := clickhouse.Open(&clickhouse.Options{Addr: []string{wire.listener.Addr().String()}, Auth: clickhouse.Auth{Database: database, Username: user, Password: password}, DialTimeout: time.Second, ReadTimeout: 2 * time.Second})
 	must(t, err)
@@ -88,27 +81,13 @@ func TestClickHouseErasureRetry(t *testing.T) {
 	bob, bobToken := w.person(t, 0)
 	item := publishedArticle(t, a, "durable signal erasure")
 	partition := a.cfg.Scope.AppID.String()
-	ref := contentref.New(partition, "article", item.ID)
-	click := func(t *testing.T, client *ck.Client) {
-		t.Helper()
-		must(t, client.PostSignals(t.Context(), discovery.Signals{Signals: []discovery.SignalInput{{ContentID: item.ID, Type: "click", EventID: uuid.NewString(), OccurredAt: time.Now()}}}))
-	}
 	for _, token := range []string{aliceToken, bobToken} {
-		click(t, a.client(token))
+		opened(t, a.client(token), item.ID)
 		_, err = a.client(token).PostContentFavorite(t.Context(), item.ID, ck.PostContentFavoriteQuery{})
 		must(t, err)
 	}
-	assertSignal := func(t *testing.T, id string, want bool) {
-		t.Helper()
-		state, err := store.States(t.Context(), partition, signal.Subject{UserID: id}, []signal.ContentRef{ref})
-		must(t, err)
-		_, found := state[ref.Key()]
-		if found != want {
-			t.Fatalf("subject %s signal presence=%v want %v: %+v", id, found, want, state)
-		}
-	}
-	assertSignal(t, alice.ID, true)
-	assertSignal(t, bob.ID, true)
+	present := func(id string) bool { return logged(t, direct, database, partition, uuid.MustParse(id)) > 0 }
+	waitForWithin(t, 30*time.Second, func() bool { return present(alice.ID) && present(bob.ID) })
 	t.Run("CK-J23-S03_signal_outage_cannot_report_completed_erasure", func(t *testing.T) {
 		wire.cut()
 		ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
@@ -123,9 +102,11 @@ func TestClickHouseErasureRetry(t *testing.T) {
 		if !current.Favorited {
 			t.Fatal("failed erasure spilled into sibling account")
 		}
-		// Signal data really existed at outage; a fake empty-plane success
-		// would not establish a retry obligation.
-		assertSignal(t, alice.ID, true)
+		// The activity really existed at the outage; a fake empty-plane
+		// success would not establish a retry obligation.
+		if !present(alice.ID) {
+			t.Fatal("alice's activity vanished without a completed erasure")
+		}
 	})
 	must(t, a.engine.Close(t.Context()))
 	a.deps.ClickHouse = nil
@@ -137,8 +118,9 @@ func TestClickHouseErasureRetry(t *testing.T) {
 		if !report.Complete() {
 			t.Fatalf("healthy retry incomplete: %+v", report)
 		}
-		assertSignal(t, alice.ID, false)
-		assertSignal(t, bob.ID, true)
+		if present(alice.ID) || !present(bob.ID) {
+			t.Fatalf("after replay alice readable=%v, bob readable=%v", present(alice.ID), present(bob.ID))
+		}
 		report, err = recovery.ReplayErasureFences(t.Context())
 		must(t, err)
 		if !report.Complete() {
@@ -150,54 +132,23 @@ func TestClickHouseErasureRetry(t *testing.T) {
 	must(t, err)
 	a.server.Close()
 	a.server = mountEngine(t, a.engine)
-	t.Run("CK-J23-S07_late_signal_cannot_rebuild_erased_subject", func(t *testing.T) {
-		// Public ingestion may acknowledge a dropped erased event. Its public
-		// storage read must remain absent; the live sibling is the control.
-		err := a.client(aliceToken).PostSignals(t.Context(), discovery.Signals{Signals: []discovery.SignalInput{{ContentID: item.ID, Type: "click", EventID: uuid.NewString(), OccurredAt: time.Now()}}})
-		if err != nil {
-			requireError(t, err, 403, "forbidden")
+	x := &analyticsWorld{world: w, a: a}
+	t.Run("CK-J23-S07_late_activity_cannot_rebuild_an_erased_subject", func(t *testing.T) {
+		// Ingestion may accept an erased subject's late row; reads drop it and
+		// the job never folds it. The live sibling is the control.
+		opened(t, a.client(aliceToken), item.ID)
+		opened(t, a.client(bobToken), item.ID)
+		waitForWithin(t, 30*time.Second, func() bool { return logged(t, direct, database, partition, uuid.MustParse(bob.ID)) >= 2 })
+		if present(alice.ID) {
+			t.Fatal("an erased subject's late row is readable")
 		}
-		assertSignal(t, alice.ID, false)
-		click(t, a.client(bobToken))
-		assertSignal(t, bob.ID, true)
-	})
-	t.Run("CK-J23-S07_projection_rebuild_remains_erased", func(t *testing.T) {
-		target, _ := w.person(t, 0)
-		live, _ := w.person(t, 0)
-		item := publishedArticle(t, a, "Projection source")
-		ref := contentref.NewVersion(a.cfg.Scope.AppID.String(), "article", item.ID, item.Versions[0].ID)
-		measurement, err := signalstore.MeasurePages([]signal.PageEngagement{{Index: 0, Ranges: []signal.CoverageRange{{From: 0, To: 10_000}}, ActiveMS: 1_000}}, 1, 1_000)
-		must(t, err)
-		measurement.VersionID = item.Versions[0].ID
-		measurement.VisitID, measurement.SegmentID = uuid.NewString(), uuid.NewString()
-		at := time.Now().UTC().Truncate(time.Microsecond)
-		event := signal.Signal{ContentRef: ref, Subject: signal.Subject{UserID: target.ID}, Type: signal.TypeEngagement, EventID: uuid.NewString(), Revision: 1, OccurredAt: at, Measurement: &measurement, Access: &signal.AccessContext{ObservedAt: at, ContentAccess: "public", ViewerAccess: "full", PolicyRevision: "critical-v1", Audience: "public", EligibilityKnown: true}}
-		other := event
-		other.Subject = signal.Subject{UserID: live.ID}
-		other.EventID = uuid.NewString()
-		must(t, store.RecordSignals(t.Context(), a.cfg.Scope.AppID.String(), []signal.Signal{event, other}))
-		assertState := func(t *testing.T, user string, present bool) {
-			t.Helper()
-			state, err := store.States(t.Context(), a.cfg.Scope.AppID.String(), signal.Subject{UserID: user}, []signal.ContentRef{ref})
-			must(t, err)
-			value, exists := state[ref.Key()]
-			if exists != present || present && value.ActiveMS != 1_000 {
-				t.Fatalf("measured projection presence=%v active=%d for%s, expected presence=%v", exists, value.ActiveMS, user, present)
-			}
+		startPublicationRuntime(t, a)
+		x.runJob(t)
+		if _, ok := x.state(t, uuid.MustParse(alice.ID), item.ID); ok {
+			t.Fatal("the job folded an erased subject's late row")
 		}
-		assertState(t, target.ID, true)
-		assertState(t, live.ID, true)
-		for range 2 {
-			must(t, a.engine.AnonymizeAccount(t.Context(), target.ID))
+		if _, ok := x.state(t, uuid.MustParse(bob.ID), item.ID); !ok {
+			t.Fatal("the live control has no reading state")
 		}
-		event.Revision = 2
-		must(t, store.RecordSignals(t.Context(), a.cfg.Scope.AppID.String(), []signal.Signal{event}))
-		repaired, err := store.RepairProjections(t.Context(), a.cfg.Scope.AppID.String(), signal.RepairOptions{Rebuild: true})
-		must(t, err)
-		if repaired.Examined == 0 || repaired.Repaired == 0 {
-			t.Fatal("repair did not rebuild the live positive-control projection")
-		}
-		assertState(t, target.ID, false)
-		assertState(t, live.ID, true)
 	})
 }

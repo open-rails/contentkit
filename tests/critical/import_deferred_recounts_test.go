@@ -7,13 +7,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/content"
-	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/importer"
-	"github.com/open-rails/contentkit/internal/signalstore"
-	"github.com/open-rails/contentkit/signal"
+	"github.com/open-rails/contentkit/internal/readingstore"
 )
 
 // A bulk import defers its recounts: its chunks leave the counts alone and
@@ -386,12 +385,12 @@ func TestImportEngagementRemovals(t *testing.T) {
 		}
 	}
 	for _, table := range []string{"content_favorites", "content_reactions"} {
-		var before, after int64
-		must(t, w.pool.QueryRow(t.Context(), `SELECT max(revision) FROM `+w.schema+`.`+table+` WHERE `+appColumn(table)+`=$1`, a.cfg.Scope.AppID.String()).Scan(&before))
+		var before, after time.Time
+		must(t, w.pool.QueryRow(t.Context(), `SELECT max(updated_at) FROM `+w.schema+`.`+table+` WHERE `+appColumn(table)+`=$1`, a.cfg.Scope.AppID.String()).Scan(&before))
 		write("legacy-a", users, true, false)
-		must(t, w.pool.QueryRow(t.Context(), `SELECT max(revision) FROM `+w.schema+`.`+table+` WHERE `+appColumn(table)+`=$1`, a.cfg.Scope.AppID.String()).Scan(&after))
-		if before != after {
-			t.Fatalf("%s tombstone replay changed revisions: %d -> %d", table, before, after)
+		must(t, w.pool.QueryRow(t.Context(), `SELECT max(updated_at) FROM `+w.schema+`.`+table+` WHERE `+appColumn(table)+`=$1`, a.cfg.Scope.AppID.String()).Scan(&after))
+		if !before.Equal(after) {
+			t.Fatalf("%s tombstone replay rewrote rows: %s -> %s", table, before, after)
 		}
 	}
 	checkCounts(4)
@@ -401,66 +400,42 @@ func TestImportEngagementRemovals(t *testing.T) {
 }
 
 func TestImportLegacyReadingRemoval(t *testing.T) {
-	w := newWorld(t)
-	a := w.apps[0]
-	a.server.Close()
-	must(t, a.engine.Close(t.Context()))
-	configureDiscoverySignals(t, w, a)
-	var err error
-	a.engine, err = ck.New(t.Context(), a.cfg, a.deps)
-	must(t, err)
-	a.server = mountEngine(t, a.engine)
-	item := publishedArticle(t, a, "Legacy reading removal")
-	store, err := signalstore.NewStore(a.deps.ClickHouse, a.cfg.ClickHouse.Database)
-	must(t, err)
-	at := time.Now().UTC().Truncate(time.Second).Add(-time.Minute)
-	ref := contentref.NewVersion(a.cfg.Scope.AppID.String(), "article", item.ID, item.Versions[0].ID)
-	subject, legacyOnly := signal.Subject{UserID: "measured-reader"}, signal.Subject{UserID: "legacy-only-reader"}
-	measured := measuredReceipt(t, ref, subject, at, 0, 1000)
-	must(t, store.RecordSignals(t.Context(), ref.TenantID, []signal.Signal{measured}))
-	row := importer.LegacyReadingRecord{Target: importer.TargetRef{Version: &importer.Ref{ID: ref.Version()}}, LastReadAt: at.Add(time.Second), Progress: 8, ProgressMax: 10, Completed: true, Resume: "legacy"}
+	x := newAnalyticsWorld(t)
+	item := x.article(t, "Legacy reading removal", 10)
+	at := x.clock.now().Add(-time.Minute)
+	reader, legacyOnly := uuid.New(), uuid.New()
+	row := importer.LegacyReadingRecord{Target: importer.TargetRef{Version: &importer.Ref{ID: item.Versions[0].ID}}, LastReadAt: at.Add(time.Second), Progress: 8, ProgressMax: 10, Completed: true}
 	write := func(row importer.LegacyReadingRecord) {
 		t.Helper()
 		batch := importer.Batch{Source: "legacy-reading"}
-		for _, user := range []string{subject.UserID, legacyOnly.UserID} {
-			row.UserID = user
+		for _, user := range []uuid.UUID{reader, legacyOnly} {
+			row.UserID = user.String()
 			batch.LegacyReading = append(batch.LegacyReading, row)
 		}
-		result, err := a.engine.Client().PostImport(t.Context(), batch)
+		result, err := x.a.engine.Client().PostImport(t.Context(), batch)
 		must(t, err)
 		if len(result.Failed) != 0 || result.Written[importer.SectionLegacyReading] != 2 {
 			t.Fatalf("legacy import: %+v", result)
 		}
 	}
-	state := func(user signal.Subject) map[signal.ContentKey]signal.State {
-		t.Helper()
-		states, err := store.States(t.Context(), ref.TenantID, user, []signal.ContentRef{ref, ref.Content()})
-		must(t, err)
-		return states
-	}
 	write(row)
-	if got := state(subject)[ref.Key()]; got.MaxProgress != 8 || got.Resume != "legacy" {
+	if got, ok := x.state(t, reader, item.ID); !ok || got.furthest != 8 || got.outcome != readingstore.OutcomeComplete || got.position == nil || *got.position != 8 {
 		t.Fatalf("legacy positive control: %+v", got)
 	}
 	tombstone := row
 	tombstone.Removed, tombstone.LastReadAt = true, at.Add(2*time.Second)
-	tombstone.Progress, tombstone.ProgressMax, tombstone.Completed, tombstone.Resume = 0, 0, false, ""
+	tombstone.Progress, tombstone.ProgressMax, tombstone.Completed = 0, 0, false
 	for range 2 {
 		write(tombstone)
 	}
-	write(row)
-	for _, key := range []signal.ContentKey{ref.Key(), ref.Content().Key()} {
-		got := state(subject)[key]
-		if got.ActiveMS != 1000 || got.MaxProgress != 1 || got.ProgressMax != 2 || got.Completed || got.Resume != measured.Resume {
-			t.Fatalf("clear damaged native measured state: %+v", got)
+	for _, who := range []uuid.UUID{reader, legacyOnly} {
+		if got, ok := x.state(t, who, item.ID); ok {
+			t.Fatalf("removed legacy reading remains: %+v", got)
 		}
-	}
-	if got := state(legacyOnly); len(got) != 0 {
-		t.Fatalf("removed legacy-only state remains: %+v", got)
 	}
 	row.LastReadAt = at.Add(3 * time.Second)
 	write(row)
-	if got := state(legacyOnly)[ref.Key()]; got.MaxProgress != 8 {
+	if got, ok := x.state(t, legacyOnly, item.ID); !ok || got.furthest != 8 {
 		t.Fatalf("new legacy fact did not restore progress: %+v", got)
 	}
 }

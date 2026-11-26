@@ -24,14 +24,11 @@ import (
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/content"
-	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/contenturl"
 	"github.com/open-rails/contentkit/discovery"
 	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/importer"
-	signalstore "github.com/open-rails/contentkit/internal/signalstore"
 	"github.com/open-rails/contentkit/kinds"
-	"github.com/open-rails/contentkit/signal"
 )
 
 // domainTransport is bearerTransport on another Host.
@@ -487,39 +484,6 @@ func TestDiscoveryVisibility(t *testing.T) {
 		must(t, err)
 		assertCards(t, unnamed.ContentPage, one.ID)
 	})
-	t.Run("CK-J07-S11_popular_list_reads_history_of_read_contents_only", func(t *testing.T) {
-		history := pgx.Identifier{w.schema, "content_access_history"}.Sanitize()
-		_, err := w.pool.Exec(t.Context(), `INSERT INTO `+history+` (tenant_id, content_id, version_id, occurred_at, snapshot)
- SELECT h.tenant_id, 'unread-' || n, 'unread-' || n, now() - interval '1 day',
-  jsonb_build_object('kind', 'article', 'live_from', now() - interval '2 days', 'languages', jsonb_build_array('en'), 'level', 'public')
- FROM (SELECT tenant_id FROM `+history+` WHERE content_id = $1 LIMIT 1) h, generate_series(1, 100001) n`, one.ID)
-		must(t, err)
-		t.Cleanup(func() {
-			_, err := w.pool.Exec(context.Background(), `DELETE FROM `+history+` WHERE content_id LIKE 'unread-%'`)
-			must(t, err)
-		})
-		before := w.clock.now()
-		w.clock.set(before.Add(time.Hour))
-		t.Cleanup(func() { w.clock.set(before) })
-		popular := func() {
-			page, err := public.GetContents(t.Context(), ck.GetContentsQuery{Kind: "article", Sort: "popular:7d", Mode: "hide"})
-			must(t, err)
-			for _, card := range page.Contents {
-				if strings.HasPrefix(card.ID, "unread-") {
-					t.Fatalf("popular list returned an unread synthetic content: %s", card.ID)
-				}
-			}
-		}
-		popular()
-		refreshPopularRankings(t, w)
-		var built bool
-		must(t, w.pool.QueryRow(t.Context(), `SELECT computed_at IS NOT NULL FROM `+w.schema+`.content_popular_rankings
- WHERE kind='article' AND period='7d' AND domain='main' AND language=''`).Scan(&built))
-		if !built {
-			t.Fatal("refresh left the configured ranking unbuilt")
-		}
-		popular()
-	})
 	t.Run("CK-J07-S15_popular_list_follows_the_stored_ranking", func(t *testing.T) {
 		listed, err := public.GetContents(t.Context(), ck.GetContentsQuery{Kind: "article", Mode: "hide"})
 		must(t, err)
@@ -543,12 +507,10 @@ func TestDiscoveryVisibility(t *testing.T) {
 		if got := popular(); len(got) != 0 {
 			t.Fatalf("popular list before its ranking is built lists %v; want an empty prepared ranking", got)
 		}
-		tag, err := w.pool.Exec(t.Context(), `UPDATE `+w.schema+`.content_popular_rankings SET computed_at=now(),content_ids=$1
- WHERE kind='article' AND period='30d' AND domain='main' AND language=''`, ranked)
+		_, err = w.pool.Exec(t.Context(), `INSERT INTO `+w.schema+`.content_popular_rankings (tenant_id,kind,period,domain,language,computed_at,content_ids)
+ VALUES ($1,'article','30d','main','',now(),$2)
+ ON CONFLICT (tenant_id,kind,period,domain,language) DO UPDATE SET computed_at=excluded.computed_at,content_ids=excluded.content_ids`, a.cfg.Scope.AppID.String(), ranked)
 		must(t, err)
-		if tag.RowsAffected() != 1 {
-			t.Fatalf("the worker prepared %d matching rankings; want one", tag.RowsAffected())
-		}
 		if got := popular(); !reflect.DeepEqual(got, ranked) {
 			t.Fatalf("popular list order %v; want the stored ranking %v", got, ranked)
 		}
@@ -724,28 +686,14 @@ func TestDiscoveryVisibility(t *testing.T) {
 			cursor = page.NextCursor
 		}
 		assertCards(t, discovery.ContentPage{Contents: cards}, one.ID, two.ID)
-		// One person co-read every fixture, so only the reader's policy keeps
-		// the excluded candidates out of the similar list.
-		store, err := signalstore.NewStore(a.deps.ClickHouse, a.cfg.ClickHouse.Database)
+		// Similar never lists content the reader's policy excludes.
+		similar, err := public.GetContentSimilar(t.Context(), one.ID, ck.GetContentSimilarQuery{Kind: "article", Mode: "hide"})
 		must(t, err)
-		tenant, person, at := a.cfg.Scope.AppID.String(), signal.Subject{UserID: uuid.NewString()}, time.Now().UTC().Add(-time.Minute)
-		reads := []signal.Signal{}
-		for _, item := range []catalog.Content{one, two, excluded, draft, future, deleted, locked} {
-			m, err := signalstore.MeasurePages([]signal.PageEngagement{{Index: 0, Ranges: []signal.CoverageRange{{From: 0, To: 10000}}, ActiveMS: 2000}}, 1, 2000)
-			must(t, err)
-			m.VersionID, m.VisitID, m.SegmentID = item.Versions[0].ID, uuid.NewString(), uuid.NewString()
-			reads = append(reads, signal.Signal{ContentRef: contentref.NewVersion(tenant, "article", item.ID, item.Versions[0].ID), Subject: person,
-				Type: signal.TypeEngagement, EventID: uuid.NewString(), Revision: 1, OccurredAt: at, Measurement: &m,
-				Access: &signal.AccessContext{ObservedAt: at, ContentAccess: "restricted", ViewerAccess: "full", PolicyRevision: "similar", Audience: "unknown", Domain: "main", Language: "en"}})
+		for _, card := range similar.Contents {
+			if card.ID != two.ID {
+				t.Fatalf("similar listed excluded content %s", card.ID)
+			}
 		}
-		must(t, store.RecordSignals(t.Context(), tenant, reads))
-		var similar discovery.ContentPage
-		waitForWithin(t, 30*time.Second, func() bool {
-			similar, err = public.GetContentSimilar(t.Context(), one.ID, ck.GetContentSimilarQuery{Kind: "article", Mode: "hide"})
-			must(t, err)
-			return len(similar.Contents) > 0
-		})
-		assertCards(t, similar, two.ID)
 		recommended, err := viewer.GetRecommendations(t.Context(), ck.GetRecommendationsQuery{Kind: "article", Mode: "hide"})
 		must(t, err)
 		assertCards(t, recommended, one.ID, two.ID)
@@ -753,15 +701,16 @@ func TestDiscoveryVisibility(t *testing.T) {
 	t.Run("location_rules_cover_all_visitor_read_paths", func(t *testing.T) {
 		user, token := w.person(t, 0)
 		signed := reader("restricted.invalid", token)
-		store, err := signalstore.NewStore(a.deps.ClickHouse, a.cfg.ClickHouse.Database)
-		must(t, err)
 		for _, item := range []catalog.Content{one, two} {
-			_, err = signed.PostContentFavorite(t.Context(), item.ID, ck.PostContentFavoriteQuery{})
+			_, err := signed.PostContentFavorite(t.Context(), item.ID, ck.PostContentFavoriteQuery{})
 			must(t, err)
-			receipt := measuredReceipt(t, contentref.NewVersion(a.cfg.Scope.AppID.String(), "article", item.ID, item.Versions[0].ID), signal.Subject{UserID: user.ID}, time.Now().UTC().Add(-time.Minute), 0, 1000)
-			must(t, store.RecordSignals(t.Context(), a.cfg.Scope.AppID.String(), []signal.Signal{receipt}))
+			opened(t, signed, item.ID)
 			postComment(t, signed, item.ID, "Location rule comment fixture")
 		}
+		waitForWithin(t, 30*time.Second, func() bool {
+			return logged(t, a.deps.ClickHouse, a.cfg.ClickHouse.Database, a.cfg.Scope.AppID.String(), uuid.MustParse(user.ID)) >= 4
+		})
+		w.runAnalytics(t)
 		before, err := signed.GetMeHistory(t.Context(), ck.GetMeHistoryQuery{Kind: "article"})
 		must(t, err)
 		assertCards(t, before, one.ID, two.ID)

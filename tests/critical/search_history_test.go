@@ -1,10 +1,12 @@
 package critical_test
 
 import (
+	"net/http"
 	"reflect"
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	ck "github.com/open-rails/contentkit"
 )
@@ -15,16 +17,27 @@ func TestRecentSearchHistory(t *testing.T) {
 	searches := pgx.Identifier{w.schema, "content_searches"}.Sanitize()
 	user, token := w.person(t, 0)
 	reader, anonymous := a.client(token), a.client("")
+	// A signed-out browser names itself by its anonymous id.
+	browsers := map[string]string{}
+	as := func(c *ck.Client, session string) *ck.Client {
+		if session == "" {
+			return c
+		}
+		if browsers[session] == "" {
+			browsers[session] = uuid.NewString()
+		}
+		return ck.NewClient(a.server.URL+"/content", &http.Client{Transport: readerTransport{test: t, w: w, anonymous: browsers[session]}})
+	}
 	search := func(c *ck.Client, session string, queries ...string) {
 		t.Helper()
 		for _, q := range queries {
-			_, err := c.GetSearch(t.Context(), ck.GetSearchQuery{Q: q, Kind: "article", Session: session})
+			_, err := as(c, session).GetSearch(t.Context(), ck.GetSearchQuery{Q: q, Kind: "article"})
 			must(t, err)
 		}
 	}
 	recent := func(c *ck.Client, session string) []string {
 		t.Helper()
-		got, err := c.GetMeSearches(t.Context(), ck.GetMeSearchesQuery{Session: session, Limit: 100})
+		got, err := as(c, session).GetMeSearches(t.Context(), ck.GetMeSearchesQuery{Limit: 100})
 		must(t, err)
 		out := []string{}
 		for _, s := range got.Searches {
@@ -69,7 +82,7 @@ func TestRecentSearchHistory(t *testing.T) {
 		search(reader, "", "Fourth needle")
 		expect(recent(reader, ""), "Fourth needle")
 
-		must(t, anonymous.DeleteMeSearches(t.Context(), ck.DeleteMeSearchesQuery{Session: "browser-a"}))
+		must(t, as(anonymous, "browser-a").DeleteMeSearches(t.Context(), ck.DeleteMeSearchesQuery{}))
 		expect(recent(anonymous, "browser-a"))
 		expect(recent(reader, ""), "Fourth needle")
 	})

@@ -112,7 +112,7 @@ require (
 	github.com/open-rails/contentkit/adapters/openrails v0.11.0
 	github.com/open-rails/contentkit/server v0.11.0
 	github.com/open-rails/helpers v1.22.1
-	github.com/open-rails/migratekit v1.13.0
+	github.com/open-rails/migratekit v1.13.0 // indirect
 	github.com/open-rails/openrails v0.284.0
 	github.com/paulmach/orb v0.14.0 // indirect
 	github.com/philhofer/fwd v1.2.0 // indirect
@@ -138,7 +138,7 @@ require (
 	go.opentelemetry.io/otel/metric v1.47.0 // indirect
 	go.opentelemetry.io/otel/trace v1.47.0 // indirect
 	go.uber.org/atomic v1.12.0 // indirect
-	go.yaml.in/yaml/v3 v3.0.5
+	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/crypto v0.59.0 // indirect
 	golang.org/x/oauth2 v0.37.0 // indirect
 	golang.org/x/sync v0.25.0 // indirect
