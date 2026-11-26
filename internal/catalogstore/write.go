@@ -579,8 +579,11 @@ func (s *Store) Publish(ctx context.Context, actor access.Actor, in []catalog.Pu
 			if p.At != nil && p.At.After(now) {
 				at = *p.At
 			}
-			if _, err := tx.Exec(ctx, `UPDATE `+s.t.items+` SET state = 'published', publish_at = $3::timestamptz
- WHERE tenant_id = $1 AND id = $2`, s.tenant, p.ContentID, at); err != nil {
+			// Re-accepting an open publication keeps its date, and so its
+			// live_from.
+			if _, err := tx.Exec(ctx, `UPDATE `+s.t.items+` SET state = 'published',
+ publish_at = CASE WHEN $4 AND state = 'published' AND publish_at <= $3 THEN publish_at ELSE $3::timestamptz END
+ WHERE tenant_id = $1 AND id = $2`, s.tenant, p.ContentID, at, !at.After(now)); err != nil {
 				return fx, err
 			}
 			fx.events = append(fx.events, catalog.Event{Type: catalog.EventContentScheduled, Kind: o.kind, ContentID: p.ContentID})
