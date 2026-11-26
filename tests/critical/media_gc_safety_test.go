@@ -422,6 +422,8 @@ func TestMediaGCSafety(t *testing.T) {
 		must(t, err)
 		ref, item := n.item(t)
 		shared := n.put(t, item, layout.AreaPrivate, []byte("shared"))
+		kind, err := n.reg.Kind("note")
+		must(t, err)
 		// A gallery just under the limit whose last regeneration retired
 		// 3,000 files: stamping them all at once would pass the limit.
 		const retired = 3000
@@ -439,11 +441,12 @@ func TestMediaGCSafety(t *testing.T) {
 				f.Meta = map[string]any{"pad": pad}
 				return f
 			}
-			base := jsonSize(t, m)
+			size := func() int64 { kind.Normalize(m); return jsonSize(t, m) }
+			base := size()
 			for i := range 64 {
 				m.Files = append(m.Files, file(i))
 			}
-			per := (jsonSize(t, m) - base) / 64
+			per := (size() - base) / 64
 			m.Files = m.Files[:0]
 			for i := range int((target - base) / per) {
 				m.Files = append(m.Files, file(i))
@@ -451,6 +454,9 @@ func TestMediaGCSafety(t *testing.T) {
 			return nil
 		})
 		must(t, err)
+		if before, _, err := manifests.GetAny(t.Context(), ref); err != nil || len(before.Retired) != retired {
+			t.Fatalf("the gallery under its limit was not stored with its retired files: %v", err)
+		}
 		clk.advance(2 * time.Hour)
 		collectAsScheduled(t, jobs, clk, ref, clk.now())
 		cur, _, err := manifests.GetAny(t.Context(), ref)

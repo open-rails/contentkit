@@ -224,7 +224,7 @@ func (j *Jobs) Collect(ctx context.Context, ref contentref.ContentRef) (time.Tim
 	}
 	if len(orphans) > 0 {
 		if cur, err = j.manifests.EditWith(ctx, ref, EditOptions{Lifecycle: true}, func(m *Manifest) error {
-			now := j.cfg.Now().UTC()
+			now := j.cfg.Now().UTC().Truncate(time.Millisecond)
 			known := m.referenced()
 			for _, r := range m.Retired {
 				known[r.Blob] = true
@@ -271,6 +271,7 @@ func (j *Jobs) Collect(ctx context.Context, ref contentref.ContentRef) (time.Tim
 func (j *Jobs) drain(ctx context.Context, item Item, cur *Manifest) (*Manifest, error) {
 	settle := j.manifests.settle
 	unsent := map[string]time.Time{} // this run's stamps it never sent
+	sent := map[string]bool{}        // an erased item's entries this run deleted
 	var errs []error
 	var last time.Time
 	for round := 0; round < 256 && ctx.Err() == nil; round++ {
@@ -285,8 +286,9 @@ func (j *Jobs) drain(ctx context.Context, item Item, cur *Manifest) (*Manifest, 
 		if err != nil {
 			errs = append(errs, err)
 		}
+		wasErased := cur.Deleted != nil && cur.Deleted.Erased
 		due := slices.ContainsFunc(cur.Retired, func(r Retired) bool {
-			return r.Deleting == nil && !r.Due.After(now) || r.Deleting != nil && unsent[r.Blob].Equal(*r.Deleting)
+			return r.Deleting == nil && !r.Due.After(now) || r.Deleting != nil && (unsent[r.Blob].Equal(*r.Deleting) || wasErased && !sent[r.Blob])
 		})
 		if len(gone) == 0 && len(present) == 0 && !due {
 			break
@@ -310,7 +312,7 @@ func (j *Jobs) drain(ctx context.Context, item Item, cur *Manifest) (*Manifest, 
 				if room <= 0 {
 					break
 				}
-				if r.Deleting == nil && !r.Due.After(stamp) || matches(present, *r) || matches(unsent, *r) {
+				if r.Deleting == nil && !r.Due.After(now) || matches(present, *r) || matches(unsent, *r) {
 					r.Deleting = &stamp
 					changed = true
 					room--
@@ -325,9 +327,16 @@ func (j *Jobs) drain(ctx context.Context, item Item, cur *Manifest) (*Manifest, 
 			return cur, errors.Join(append(errs, err)...)
 		}
 		cur = out
+		// No manifest can name an erased item's hashes again: its entries are
+		// deleted whoever stamped them, with no fence to respect.
+		erased := cur.Deleted != nil && cur.Deleted.Erased
+		lastSend := stamp.Add(settle / 2)
+		if erased {
+			lastSend = time.Time{}
+		}
 		var ours []string
 		for _, r := range cur.Retired {
-			if r.Deleting != nil && r.Deleting.Equal(stamp) {
+			if r.Deleting != nil && (r.Deleting.Equal(stamp) || erased && !sent[r.Blob]) {
 				ours = append(ours, r.Blob)
 			}
 		}
@@ -335,12 +344,14 @@ func (j *Jobs) drain(ctx context.Context, item Item, cur *Manifest) (*Manifest, 
 		for i, blob := range ours {
 			keys[i] = keyOf(item, blob)
 		}
-		sent, delErrs := j.send(ctx, keys, stamp.Add(settle/2))
+		done, delErrs := j.send(ctx, keys, lastSend)
 		errs = append(errs, delErrs...)
 		clear(unsent)
 		for i, blob := range ours {
-			if !sent[i] {
+			if !done[i] {
 				unsent[blob] = stamp
+			} else if erased {
+				sent[blob] = true
 			}
 		}
 		if len(gone) == 0 && len(unsent) == len(ours) {

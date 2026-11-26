@@ -168,6 +168,8 @@ func TestMediaManifestWriter(t *testing.T) {
 		}
 	})
 	t.Run("CK-J09-S36_concurrent_writers_converge_through_412_and_reapply", func(t *testing.T) {
+		// Each writer is its own process: within one, edits of a manifest
+		// queue instead (CK-J09-S66).
 		manifests, err := mediastore.NewManifests(n.store, n.reg, mediastore.ManifestOptions{MaxRetries: 64})
 		must(t, err)
 		ref, item := n.item(t)
@@ -178,10 +180,12 @@ func TestMediaManifestWriter(t *testing.T) {
 		}
 		var wg sync.WaitGroup
 		for i := 0; i < writers; i++ {
+			process, err := mediastore.NewManifests(n.store, n.reg, mediastore.ManifestOptions{MaxRetries: 64})
+			must(t, err)
 			wg.Go(func() {
 				// Each writer's delta adds its own file: re-applied to whatever
 				// it reads after a 412, it never undoes another writer's.
-				_, err := manifests.Edit(t.Context(), ref, func(m *mediastore.Manifest) error {
+				_, err := process.Edit(t.Context(), ref, func(m *mediastore.Manifest) error {
 					path := fmt.Sprintf("files/%02d.txt", i)
 					if m.Find(path) >= 0 {
 						return mediastore.ErrUnchanged
