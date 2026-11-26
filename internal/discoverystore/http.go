@@ -18,6 +18,7 @@ import (
 	"github.com/open-rails/contentkit/internal/httpapi"
 	"github.com/open-rails/contentkit/internal/hub"
 	"github.com/open-rails/contentkit/internal/search"
+	"github.com/open-rails/contentkit/internal/subject"
 )
 
 // Handler serves the discovery routes: lists, search, typeahead, similar and
@@ -76,7 +77,7 @@ var (
 		httpapi.Repeated("attribute", "name:value of one of the kind's filterable attributes; repeat for more"),
 		httpapi.Text("released_on", "published on this day (YYYY-MM-DD) or month (YYYY-MM)"),
 		httpapi.Text("tz", "the IANA time zone of released_on and release dates; UTC by default"),
-		httpapi.Text("view_status", "the signed-in reader's unseen, in_progress or completed contents"),
+		httpapi.Text("view_status", "the reader's unseen (new to them: never opened or hidden), in_progress or completed contents; a signed-out reader's by its anonymous id"),
 	}
 )
 
@@ -133,12 +134,18 @@ var routes = []httpapi.Route[handler]{
 		Doc:       "Content covered by the reader's purchased content or version entitlements, within the current domain's hard visibility boundary.",
 		Query:     []httpapi.Param{httpapi.Text("language", "title language"), httpapi.Text("cursor", "previous next_cursor"), httpapi.Int("limit", "page size: 20 by default, at most 100")},
 		Responses: []httpapi.Reply{httpapi.OK(discovery.LibraryPage{})}}, Serve: httpapi.H(handler.library)},
-	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/engagement", Resource: "discovery", Auth: httpapi.Public,
-		Doc:     "Records bounded, idempotent measured engagement snapshots: loaded visible page coverage, focused active time or actually played timeline ranges. No opening, preload or page-turn counters. Each segment reuses its original subject-bound access receipt and revision; positive short partials can accumulate across visits.",
-		Request: discovery.EngagementBatch{}, Responses: []httpapi.Reply{httpapi.NoContent}, Errors: append([]string{httpapi.CodeNotFound}, signals...)}, Serve: httpapi.H(handler.engagement)},
-	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/activity-contexts", Resource: "discovery", Auth: httpapi.Public,
-		Doc:     "Captures signed, immutable event-time access and eligible audience context before displaying or consuming content. Batches up to 100 targets; clients reuse each receipt for all revisions of one view.",
-		Request: discovery.ActivityContextsInput{}, Responses: []httpapi.Reply{httpapi.OK(discovery.ActivityContexts{})}, Errors: signals}, Serve: httpapi.H(handler.activityContexts)},
+	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/activity", Resource: "discovery", Auth: httpapi.Public,
+		Doc:     "Logs the reader's opens and reading progress: an open names the list it came from; progress is the active time since the last report and the furthest and current page or second. A signed-out reader sends its anonymous id in ContentKit-Anonymous-Id, and every request may send ContentKit-UTC-Offset. Unknown content is skipped.",
+		Request: discovery.Activity{}, Responses: []httpapi.Reply{httpapi.NoContent}, Errors: signals}, Serve: httpapi.H(handler.activity)},
+	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/me/anonymous-link", Resource: "discovery", Auth: httpapi.User,
+		Doc:     "Sent once at sign-in: the browser's anonymous id is now this account, so its reading state, history, reactions and recent searches fold into the account's.",
+		Request: discovery.AnonymousLink{}, Responses: []httpapi.Reply{httpapi.NoContent}}, Serve: httpapi.H(handler.link)},
+	{Spec: httpapi.Spec{Method: httpapi.PUT, Path: "/contents/{id}/hidden", Resource: "discovery", Auth: httpapi.Public,
+		Doc:       "Hides a content item from every list the reader is served (\"not interested\"), at once; a signed-out reader hides by its anonymous id.",
+		Responses: []httpapi.Reply{httpapi.NoContent}, Errors: []string{httpapi.CodeNotFound}}, Serve: httpapi.H(handler.hide)},
+	{Spec: httpapi.Spec{Method: httpapi.DELETE, Path: "/contents/{id}/hidden", Resource: "discovery", Auth: httpapi.Public,
+		Doc:       "Shows a hidden content item again: the undo of hiding it.",
+		Responses: []httpapi.Reply{httpapi.NoContent}, Errors: []string{httpapi.CodeNotFound}}, Serve: httpapi.H(handler.unhide)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/releases", Resource: "discovery", Auth: httpapi.Public,
 		Doc:       "Every visible release in a calendar-day window ending on end_date (today by default), grouped newest first, with complete card metadata and empty days. Each day also counts unique contents omitted solely by optional reader entity filters and overlapping per-entity counts, including zero counts for current hidden public toggles. Hard domain, publication, language and access policies remain enforced at the current time; omitted content metadata and covers are not returned. No item limit or pagination; future and deleted releases stay excluded.",
 		Query:     params(dailyFilterParams(), readerParams, []httpapi.Param{cardEntities, httpapi.Int("days", "calendar days including end_date: 10 by default, from 1 through 31"), httpapi.Text("end_date", "inclusive YYYY-MM-DD in time_zone; today by default; future dates are rejected"), httpapi.Text("time_zone", "IANA zone for calendar-day boundaries; UTC by default")}),
@@ -152,10 +159,10 @@ var routes = []httpapi.Route[handler]{
 		Query: params(filterParams, readerParams, []httpapi.Param{sortParam, cardEntities, httpapi.Bool("summary", "selection-wide total, filtered and locked counts on the first page or every numbered page")}, activityParams, pageParams, []httpapi.Param{numberedPage}), Responses: []httpapi.Reply{httpapi.OK(discovery.ContentPage{})},
 		Errors: signals}, Serve: httpapi.H(handler.list)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/search", Resource: "discovery", Auth: httpapi.Public,
-		Doc: "Keyword search over contents, grouped per content item, personalized for a signed-in reader unless sorted otherwise.",
+		Doc: "Keyword search over contents, grouped per content item, personalized for a reader with reading state unless sorted otherwise. A first page's request_id names the search in the activity log.",
 		Query: params([]httpapi.Param{httpapi.Text("q", "the query")}, filterParams, readerParams,
 			[]httpapi.Param{httpapi.Text("sort", "relevance (the default) or a list sort of every match"), cardEntities, httpapi.Bool("summary", "selection-wide total, filtered and locked counts on the first page or every numbered page"),
-				httpapi.Bool("personalize", "false ranks a signed-in reader's results as anyone's"), sessionParam}, pageParams, []httpapi.Param{numberedPage}),
+				httpapi.Bool("personalize", "false ranks the reader's results as anyone's")}, pageParams, []httpapi.Param{numberedPage}),
 		Responses: []httpapi.Reply{httpapi.OK(discovery.SearchPage{})}, Errors: signals}, Serve: httpapi.H(handler.search)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/typeahead", Resource: "discovery", Auth: httpapi.Public,
 		Doc: "Completes literal own title and entity-name/alias substrings while the reader types (name prefixes only under three characters), with prefixes first and common fillers ignored; excludes contextual keywords and typos.",
@@ -192,19 +199,16 @@ var routes = []httpapi.Route[handler]{
 		Doc: "The contents the reader engaged with, most recent first, with their progress.",
 		Query: params([]httpapi.Param{httpapi.Text("kind", "only this content kind"), httpapi.Text("status", "seen, in_progress or completed; any by default"), httpapi.Bool("summary", "selection-wide filtered and locked counts on the first page"),
 			cardEntities}, readerParams, []httpapi.Param{httpapi.Text("cursor", "the previous page's next_cursor"), httpapi.Int("limit", "page size: 24 by default, at most 100")}),
-		Responses: []httpapi.Reply{httpapi.OK(discovery.ContentPage{})}, Errors: signals}, Serve: httpapi.H(handler.history)},
+		Responses: []httpapi.Reply{httpapi.OK(discovery.ContentPage{})}}, Serve: httpapi.H(handler.history)},
+	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/me/continue", Resource: "discovery", Auth: httpapi.Public,
+		Doc: "Continue reading and watching: the reader's contents started but not finished, most recent first, each card with its position; bounced, finished, hidden and disliked ones are left out. A signed-out reader's come from its anonymous id. Filters and access apply.",
+		Query: params([]httpapi.Param{httpapi.Text("kind", "only this content kind"), cardEntities}, readerParams,
+			[]httpapi.Param{httpapi.Text("cursor", "the previous page's next_cursor"), httpapi.Int("limit", "page size: 24 by default, at most 100")}),
+		Responses: []httpapi.Reply{httpapi.OK(discovery.ContentPage{})}}, Serve: httpapi.H(handler.continueReading)},
 	{Spec: httpapi.Spec{Method: httpapi.DELETE, Path: "/me/history", Resource: "discovery", Auth: httpapi.User,
-		Doc:       "Erases the reader's history: of one content item, one kind or everything.",
+		Doc:       "Erases the reader's history: of one content item, one kind or everything. Hidden contents stay hidden.",
 		Query:     []httpapi.Param{httpapi.Text("kind", "only this content kind"), httpapi.Text("content_id", "only this content item")},
 		Responses: []httpapi.Reply{httpapi.NoContent}, Errors: append([]string{httpapi.CodeNotFound}, signals...)}, Serve: httpapi.H(handler.forget)},
-	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/signals", Resource: "discovery", Auth: httpapi.Public,
-		Doc:     "Records explicit clicks of the signed-in reader or, signed out, the stable browser identity; actual reading and playback use POST /engagement.",
-		Request: discovery.Signals{}, Responses: []httpapi.Reply{httpapi.NoContent}, Errors: append([]string{httpapi.CodeNotFound}, signals...)},
-		Serve: httpapi.H(handler.signals)},
-	{Spec: httpapi.Spec{Method: httpapi.POST, Path: "/exposures", Resource: "discovery", Auth: httpapi.Public,
-		Doc:     "Records result lists a client served, rendered or showed, for click attribution.",
-		Request: discovery.Exposures{}, Responses: []httpapi.Reply{httpapi.NoContent}, Errors: append([]string{httpapi.CodeNotFound}, signals...)},
-		Serve: httpapi.H(handler.exposures)},
 }
 
 func list(v string) []string {
@@ -244,7 +248,7 @@ func optionalFlag(r *http.Request, name string) (bool, error) {
 func readerOf(r *http.Request) discovery.Reader {
 	q := r.URL.Query()
 	return discovery.Reader{Actor: gate.Actor(r.Context()), Host: r.Host, Language: q.Get("language"), DisplayLanguage: q.Get("display_language"),
-		Mode: access.Mode(q.Get("mode"))}
+		Mode: access.Mode(q.Get("mode")), AnonymousID: r.Header.Get(subject.Header)}
 }
 
 func filterOf(r *http.Request) Filter {
@@ -338,7 +342,7 @@ func (h handler) search(w http.ResponseWriter, r *http.Request) {
 	}
 	page, err := h.s.Search(r.Context(), o)
 	if err == nil {
-		h.recordSearch(r, o, page)
+		h.recordSearch(r, o, &page)
 	}
 	h.reply(w, r, page, err)
 }
@@ -444,46 +448,47 @@ func (h handler) history(w http.ResponseWriter, r *http.Request) {
 	h.reply(w, r, page, err)
 }
 
+func (h handler) continueReading(w http.ResponseWriter, r *http.Request) {
+	limit, err := intParam(r, "limit")
+	if err != nil {
+		h.fail(w, r, err)
+		return
+	}
+	q := r.URL.Query()
+	page, err := h.s.Continue(r.Context(), discovery.ContinueOptions{Reader: readerOf(r), Kind: q.Get("kind"), CardEntities: list(q.Get("card_entities")),
+		Cursor: q.Get("cursor"), Limit: limit})
+	h.reply(w, r, page, err)
+}
+
 func (h handler) forget(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	h.done(w, r, h.s.ForgetHistory(r.Context(), gate.Actor(r.Context()), q.Get("kind"), q.Get("content_id")))
 }
 
-func (h handler) signals(w http.ResponseWriter, r *http.Request) {
-	var in discovery.Signals
+func (h handler) activity(w http.ResponseWriter, r *http.Request) {
+	var in discovery.Activity
 	if err := decode(r, &in); err != nil {
 		h.fail(w, r, err)
 		return
 	}
-	h.done(w, r, h.s.RecordSignals(r.Context(), gate.Actor(r.Context()), in))
+	h.done(w, r, h.s.RecordActivity(r, gate.Actor(r.Context()), in))
 }
 
-func (h handler) engagement(w http.ResponseWriter, r *http.Request) {
-	var in discovery.EngagementBatch
+func (h handler) link(w http.ResponseWriter, r *http.Request) {
+	var in discovery.AnonymousLink
 	if err := decode(r, &in); err != nil {
 		h.fail(w, r, err)
 		return
 	}
-	h.done(w, r, h.s.RecordEngagement(r.Context(), gate.Actor(r.Context()), in))
+	h.done(w, r, h.s.LinkAnonymous(r.Context(), gate.Actor(r.Context()), in))
 }
 
-func (h handler) activityContexts(w http.ResponseWriter, r *http.Request) {
-	var in discovery.ActivityContextsInput
-	if err := decode(r, &in); err != nil {
-		h.fail(w, r, err)
-		return
-	}
-	out, err := h.s.ActivityContexts(r.Context(), gate.Actor(r.Context()), in)
-	h.reply(w, r, out, err)
+func (h handler) hide(w http.ResponseWriter, r *http.Request) {
+	h.done(w, r, h.s.SetHidden(r, gate.Actor(r.Context()), r.PathValue("id"), true))
 }
 
-func (h handler) exposures(w http.ResponseWriter, r *http.Request) {
-	var in discovery.Exposures
-	if err := decode(r, &in); err != nil {
-		h.fail(w, r, err)
-		return
-	}
-	h.done(w, r, h.s.RecordExposures(r.Context(), gate.Actor(r.Context()), in))
+func (h handler) unhide(w http.ResponseWriter, r *http.Request) {
+	h.done(w, r, h.s.SetHidden(r, gate.Actor(r.Context()), r.PathValue("id"), false))
 }
 
 const maxBody = 1 << 20

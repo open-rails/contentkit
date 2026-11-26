@@ -1,26 +1,22 @@
 package discovery
 
-// Activity is a kind's measured activity for every UTC day of the period,
-// newest first; days without activity are zero.
-type Activity struct {
-	Days []ActivityDay `json:"days"`
-	// Cohorts lists application-defined category IDs in matching priority order.
-	Cohorts []string `json:"cohorts"`
+// ActiveDays is how many people were active on the site for every UTC day
+// of the period, newest first; days without activity are zero.
+type ActiveDays struct {
+	Days []ActiveDay `json:"days"`
 }
 
-// ActivityDay is one day's distinct people who read or played the kind, by
-// application-defined cohort. Readers counts all, including unmatched people.
-type ActivityDay struct {
+// ActiveDay is one day's distinct active people, all sites together, and by
+// access: anonymous, account, or the tiers an account's token claimed.
+type ActiveDay struct {
 	Date     string            `json:"date"`
-	Readers  uint64            `json:"readers"`
-	Cohorts  map[string]uint64 `json:"cohorts"`
-	ActiveMS uint64            `json:"active_ms"`
+	People   uint64            `json:"people"`
+	ByAccess map[string]uint64 `json:"by_access"`
 }
 
 // MyStats is the signed-in reader's account statistics.
 type MyStats struct {
-	// Completed counts the contents they finished, per kind; empty without
-	// a signal plane.
+	// Completed counts the contents they finished, per kind.
 	Completed map[string]int64 `json:"completed"`
 	// AccessSeconds is elapsed access to each configured tier, from billing's
 	// recorded product windows and entitlement history. Overlaps count once;

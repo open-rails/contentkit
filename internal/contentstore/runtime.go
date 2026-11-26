@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/open-rails/authkit/auth"
@@ -17,10 +18,12 @@ import (
 	"github.com/open-rails/contentkit/access"
 	content "github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/activitylog"
 	entitlement "github.com/open-rails/contentkit/internal/entitlement"
 	"github.com/open-rails/contentkit/internal/gate"
 	"github.com/open-rails/contentkit/internal/ratelimit"
 	"github.com/open-rails/contentkit/internal/resolve"
+	"github.com/open-rails/contentkit/internal/subject"
 	"github.com/open-rails/contentkit/kinds"
 )
 
@@ -56,14 +59,6 @@ type Options struct {
 	// kinds and entity kinds, and comments carry one of its languages.
 	Kinds kinds.Config
 
-	// PreferenceSyncOverlap bounds how long a preference write may take to
-	// commit and still be picked up by SyncPreferences.
-	// Default DefaultPreferenceSyncOverlap.
-	PreferenceSyncOverlap time.Duration
-	// Now is the clock preference sync samples the revision sequence by;
-	// default time.Now.
-	Now func() time.Time
-
 	// Optional ports (nil -> default).
 	TextProcessor content.TextProcessor // comments; default: trim plain text
 	// Moderator screens comment writes, and the catalog's (Screen); nil
@@ -84,6 +79,12 @@ type Options struct {
 	// external personal data.
 	// Nil explicitly means stateless ports; never remove it during an outage.
 	ProviderDataEraser content.ProviderDataEraser
+	// Activity logs reactions and favorites to the activity log as they are
+	// written; nil logs none.
+	Activity *activitylog.Log
+	// Touch records a signed-out reaction as its subject's activity, in the
+	// reaction's transaction, so idle subjects expire; nil records none.
+	Touch func(ctx context.Context, tx pgx.Tx, subject uuid.UUID) error
 
 	// Limits are the per-actor interaction rate limits (limits.go); the zero
 	// value takes the defaults, counted per process.
@@ -127,6 +128,8 @@ type Runtime struct {
 	moderator       content.ContentModerator
 	breaker         *moderatorBreaker
 	providerEraser  content.ProviderDataEraser
+	activity        *activitylog.Log
+	touch           func(ctx context.Context, tx pgx.Tx, subject uuid.UUID) error
 	anonymous       content.Anonymous
 	duplicateWindow time.Duration
 	commentMax      int
@@ -135,11 +138,10 @@ type Runtime struct {
 	rules           *rules
 	limiters        map[content.Action]*ratelimit.Limiter
 
-	preferences *preferences
-	reactions   *reactions
-	polls       *polls
-	comments    *comments
-	favorites   *favorites
+	reactions *reactions
+	polls     *polls
+	comments  *comments
+	favorites *favorites
 }
 
 // New constructs a Runtime over a schema the ContentKit baseline was applied to and wires the module services.
@@ -198,6 +200,8 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 		moderator:       opts.Moderator,
 		breaker:         newModeratorBreaker(opts.ModeratorTimeout, opts.ModeratorCooldown),
 		providerEraser:  opts.ProviderDataEraser,
+		activity:        opts.Activity,
+		touch:           opts.Touch,
 		anonymous:       opts.Anonymous,
 		duplicateWindow: opts.DuplicateWindow,
 		commentMax:      orDefault(opts.CommentMaxLength, content.DefaultCommentMaxLength),
@@ -212,9 +216,7 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 	if err := rt.checkSchema(ctx); err != nil {
 		return nil, err
 	}
-	// preferences before the writers that resolve through it; reactions before
-	// comments, which reuse its applyTx primitive.
-	rt.preferences = newPreferences(rt, opts.PreferenceSyncOverlap, opts.Now)
+	// Reactions before comments, which reuse its applyTx primitive.
 	rt.reactions = newReactions(rt)
 	rt.polls = newPolls(rt)
 	rt.comments = newComments(rt)
@@ -225,8 +227,7 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 // checkSchema refuses a schema missing required ContentKit tables.
 func (rt *Runtime) checkSchema(ctx context.Context) error {
 	if _, err := rt.store.pool.Exec(ctx, `SELECT tenant_id, content_kind, content_id, content_version_id FROM `+rt.store.t.counts+` LIMIT 0;
-		SELECT revision FROM `+rt.store.t.reactions+` LIMIT 0; SELECT value, revision FROM `+rt.store.t.favorites+` LIMIT 0;
-		SELECT revision FROM `+rt.store.t.preferenceSync+` LIMIT 0; SELECT revision FROM `+rt.store.t.preferenceCursor+` LIMIT 0;
+		SELECT anonymous_subject FROM `+rt.store.t.reactions+` LIMIT 0; SELECT value FROM `+rt.store.t.favorites+` LIMIT 0;
 		SELECT moderation,author_hidden FROM `+rt.store.t.comments+` LIMIT 0;
 		SELECT tenant_id,actor_id FROM `+rt.hiddenAuthorsTable()+` LIMIT 0;
 		SELECT revision,withdrawn FROM `+pgx.Identifier{rt.schema, "content_comment_notifications"}.Sanitize()+` LIMIT 0;
@@ -393,4 +394,30 @@ func orDefault[T comparable](v, def T) T {
 		return def
 	}
 	return v
+}
+
+// anonymousSubject is a signed-out request's anonymous subject: kept beside
+// its address on a reaction, so signing in re-keys the reaction.
+func (rt *Runtime) anonymousSubject(req *http.Request, actor access.Actor) uuid.UUID {
+	if !actor.Anonymous || rt.activity == nil {
+		return uuid.Nil
+	}
+	who, _ := subject.Anonymous(rt.activity.App, req.Header.Get(subject.Header))
+	return who
+}
+
+// logActivity logs a reaction, favorite or their undoing of a content item
+// (not a comment) as it is written.
+func (rt *Runtime) logActivity(req *http.Request, actor access.Actor, action string, ref contentref.ContentRef, value int16) {
+	if ref.ContentKind == content.KindComment {
+		return
+	}
+	id, err := uuid.Parse(ref.ContentID)
+	if err != nil {
+		return
+	}
+	if row, ok := rt.activity.Row(req, actor, ""); ok {
+		row.Action, row.ContentKind, row.ContentID, row.Value = action, ref.ContentKind, id, int8(value)
+		rt.activity.Add(row)
+	}
 }

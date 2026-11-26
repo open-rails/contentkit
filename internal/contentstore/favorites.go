@@ -13,6 +13,7 @@ import (
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/httpapi"
 	"github.com/open-rails/contentkit/internal/resolve"
+	"github.com/open-rails/contentkit/internal/signalstore"
 	"github.com/open-rails/contentkit/kinds"
 )
 
@@ -80,8 +81,8 @@ func (f *favorites) set(ctx context.Context, actor access.Actor, ref contentref.
 	return tx.Commit(ctx)
 }
 
-// setTx moves the caller's row to value under its row lock, taking a fresh
-// revision on change; a lost insert race re-locks the winner's row once.
+// setTx moves the caller's row to value under its row lock; a lost insert
+// race re-locks the winner's row once.
 func (f *favorites) setTx(ctx context.Context, tx pgx.Tx, userID string, key contentref.ContentKey, value int16, retry bool) (bool, error) {
 	args, _ := favoriteArgs(key, userID)
 	var prev int16
@@ -91,8 +92,8 @@ func (f *favorites) setTx(ctx context.Context, tx pgx.Tx, userID string, key con
 		if value == 0 {
 			return false, nil
 		}
-		tag, err := tx.Exec(ctx, `INSERT INTO `+f.s.t.favorites+` (app_id, content_kind, content_id, content_version_id, user_id, value, revision, import_source)
-			VALUES ($1, $2, $3, $4, $5, 1, `+f.s.nextRevision()+`, '')
+		tag, err := tx.Exec(ctx, `INSERT INTO `+f.s.t.favorites+` (app_id, content_kind, content_id, content_version_id, user_id, value, import_source)
+			VALUES ($1, $2, $3, $4, $5, 1, '')
 			ON CONFLICT (app_id, user_id, content_kind, content_id, content_version_id) WHERE user_id IS NOT NULL DO NOTHING`, args...)
 		if err != nil || tag.RowsAffected() == 1 || !retry {
 			return err == nil && tag.RowsAffected() == 1, err
@@ -105,7 +106,7 @@ func (f *favorites) setTx(ctx context.Context, tx pgx.Tx, userID string, key con
 		return false, err
 	}
 	// Re-favoriting restarts the bookmark's age, which orders the wishlist.
-	_, err = tx.Exec(ctx, `UPDATE `+f.s.t.favorites+` SET import_source = '', value = $6::smallint, revision = `+f.s.nextRevision()+`, updated_at = now(),
+	_, err = tx.Exec(ctx, `UPDATE `+f.s.t.favorites+` SET import_source = '', value = $6::smallint, updated_at = now(),
 		created_at = CASE WHEN $6::smallint = 1 THEN now() ELSE created_at END WHERE `+favoritePred(1)+` AND user_id = $5`, append(args, value)...)
 	return err == nil, err
 }
@@ -183,6 +184,13 @@ func (f *favorites) handleSet(typ content.TargetType, on bool) http.HandlerFunc 
 			ref, res, err = f.add(req.Context(), actor, ref)
 		} else if err == nil {
 			ref, res, err = f.remove(req.Context(), actor, ref)
+		}
+		if err == nil {
+			value := int16(0)
+			if on {
+				value = 1
+			}
+			f.rt.logActivity(req, actor, signalstore.ActionFavorite, ref, value)
 		}
 		f.writeState(w, req, actor.AccountID(), ref, res, err)
 	}

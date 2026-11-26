@@ -2,35 +2,71 @@ package discoverystore
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
+	"net/http"
 	"strconv"
-	"strings"
 
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/authkit/auth"
+
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 	discovery "github.com/open-rails/contentkit/discovery"
-	"github.com/open-rails/contentkit/signal"
+	"github.com/open-rails/contentkit/internal/readingstore"
+	"github.com/open-rails/contentkit/internal/signalstore"
+	"github.com/open-rails/contentkit/internal/subject"
 )
 
-// History pages the contents the signed-in reader engaged with, most
-// recent first they already know. Current domain,
-// publication, preferences and access rules still apply.
+// History statuses of /me/history.
+const (
+	historySeen       = "seen"
+	historyInProgress = "in_progress"
+	historyCompleted  = "completed"
+)
+
+// historyStatus is the reading_state predicate (alias r) of a status.
+func historyStatus(status string) (string, error) {
+	switch status {
+	case "", historySeen:
+		return "true", nil
+	case historyInProgress:
+		return "r.best_outcome < " + strconv.Itoa(int(readingstore.OutcomeComplete)), nil
+	case historyCompleted:
+		return "r.best_outcome = " + strconv.Itoa(int(readingstore.OutcomeComplete)), nil
+	}
+	return "", fmt.Errorf("%w: status %q is seen, in_progress or completed", ErrInvalid, status)
+}
+
+// readIDs pages the content ids subject opened, most recent first, of kind
+// (every kind when empty) and status.
+func (s *Service) readIDs(ctx context.Context, who uuid.UUID, kind, status string, limit, offset int) ([]string, error) {
+	pred, err := historyStatus(status)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := s.o.Pool.Query(ctx, `SELECT c.id FROM `+s.t.reading+` r JOIN `+s.t.items+` c ON c.tenant_id = $1 AND c.id = r.content_id::text
+ WHERE r.app_id = $2 AND r.subject = $3 AND r.last_seen_at IS NOT NULL AND ($4 = '' OR c.kind = $4) AND `+pred+`
+ ORDER BY r.last_seen_at DESC, r.content_id LIMIT $5 OFFSET $6`, s.o.Tenant, s.app(), who, kind, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	return pgx.CollectRows(rows, pgx.RowTo[string])
+}
+
+// History pages the contents the signed-in reader opened, most recent
+// first. Current domain, publication, preferences and access rules apply.
 func (s *Service) History(ctx context.Context, o discovery.HistoryOptions) (discovery.ContentPage, error) {
 	empty := discovery.ContentPage{Contents: []discovery.Card{}}
-	if err := s.signals(); err != nil {
-		return empty, err
-	}
 	if !o.Actor.Member() {
 		return empty, fmt.Errorf("%w: history belongs to a signed-in reader", ErrInvalid)
 	}
-	status := signal.HistoryStatus(o.Status)
-	switch status {
-	case signal.HistoryAny, signal.HistorySeen, signal.HistoryInProgress, signal.HistoryCompleted:
-	default:
-		return empty, fmt.Errorf("%w: status %q is seen, in_progress or completed", ErrInvalid, o.Status)
+	who, ok := subject.Account(o.Actor.AccountID())
+	if !ok {
+		return empty, nil
+	}
+	if _, err := historyStatus(o.Status); err != nil {
+		return empty, err
 	}
 	if o.Kind != "" {
 		if _, ok := s.o.Kinds.Kinds[o.Kind]; !ok {
@@ -46,23 +82,17 @@ func (s *Service) History(ctx context.Context, o discovery.HistoryOptions) (disc
 		offset = n
 	}
 	limit := pageLimit(o.Limit, 24)
-	rows, err := s.o.Hub.History(ctx, signal.Subject{UserID: o.Actor.AccountID()}, signal.HistoryOptions{ContentKind: o.Kind, Status: status, Limit: limit + 1, Offset: offset})
+	ids, err := s.readIDs(ctx, who, o.Kind, o.Status, limit+1, offset)
 	if err != nil {
 		return empty, err
 	}
 	next := ""
-	if len(rows) > limit {
-		rows, next = rows[:limit], strconv.Itoa(offset+limit)
+	if len(ids) > limit {
+		ids, next = ids[:limit], strconv.Itoa(offset+limit)
 	}
 	q, err := s.compileKnown(ctx, o.Reader, Filter{Kind: o.Kind})
 	if err != nil {
 		return empty, err
-	}
-	ids := make([]string, 0, len(rows))
-	for _, r := range rows {
-		if _, ok := s.o.Kinds.Kinds[r.ContentKind]; ok {
-			ids = append(ids, r.ContentID)
-		}
 	}
 	picks, err := s.pickAmong(ctx, q, ids)
 	if err != nil {
@@ -74,22 +104,18 @@ func (s *Service) History(ctx context.Context, o discovery.HistoryOptions) (disc
 	}
 	out := discovery.ContentPage{Contents: cards, NextCursor: next}
 	if o.Summary && offset == 0 {
-		// Bound the caller's own selection, never another subject's state. Large
-		// histories are explicitly lower-bound summaries rather than invented totals.
+		// Bound the caller's own selection. Large histories are explicitly
+		// lower-bound summaries rather than invented totals.
 		const summaryLimit = 100_000
-		history, err := s.o.Hub.History(ctx, signal.Subject{UserID: o.Actor.AccountID()}, signal.HistoryOptions{ContentKind: o.Kind, Status: status, Limit: summaryLimit})
+		all, err := s.readIDs(ctx, who, o.Kind, o.Status, summaryLimit, 0)
 		if err != nil {
 			return empty, err
-		}
-		all := make([]string, 0, len(history))
-		for _, row := range history {
-			all = append(all, row.ContentID)
 		}
 		sort, err := s.parseSort(ctx, discovery.SortNewest, Filter{Kind: o.Kind})
 		if err != nil {
 			return empty, err
 		}
-		out.Summary, err = s.listingSummary(ctx, Filter{Kind: o.Kind}, q, sort, &summaryCandidates{visible: all, relaxed: all, truncated: len(history) == summaryLimit})
+		out.Summary, err = s.listingSummary(ctx, Filter{Kind: o.Kind}, q, sort, &summaryCandidates{visible: all, relaxed: all, truncated: len(all) == summaryLimit})
 		if err != nil {
 			return empty, err
 		}
@@ -97,16 +123,32 @@ func (s *Service) History(ctx context.Context, o discovery.HistoryOptions) (disc
 	return out, nil
 }
 
-// ForgetHistory erases the signed-in reader's signals for one content item,
-// one kind, or every kind.
-func (s *Service) ForgetHistory(ctx context.Context, actor access.Actor, kind, contentID string) error {
-	if err := s.signals(); err != nil {
-		return err
+// subjectsOf are an account's subject and the anonymous ids folded into it.
+func (s *Service) subjectsOf(ctx context.Context, account uuid.UUID) ([]uuid.UUID, error) {
+	anonymous, err := s.o.Reading.Anonymous(ctx, []uuid.UUID{account})
+	if err != nil {
+		return nil, err
 	}
+	return append([]uuid.UUID{account}, anonymous[account]...), nil
+}
+
+// ForgetHistory clears the signed-in reader's reading of one content item,
+// one kind or everything: their reading state and history, and the activity
+// log's rows. Hidden galleries stay hidden.
+func (s *Service) ForgetHistory(ctx context.Context, actor access.Actor, kind, contentID string) error {
 	if !actor.Member() {
 		return fmt.Errorf("%w: history belongs to a signed-in reader", ErrInvalid)
 	}
-	subject := signal.Subject{UserID: actor.AccountID()}
+	who, ok := subject.Account(actor.AccountID())
+	if !ok {
+		return nil
+	}
+	if kind != "" {
+		if _, ok := s.o.Kinds.Kinds[kind]; !ok {
+			return fmt.Errorf("%w: kind %q is not configured", ErrInvalid, kind)
+		}
+	}
+	var ids []uuid.UUID
 	if contentID != "" {
 		kinds, err := s.kindsOf(ctx, []string{contentID})
 		if err != nil {
@@ -116,20 +158,35 @@ func (s *Service) ForgetHistory(ctx context.Context, actor access.Actor, kind, c
 		if !ok || (kind != "" && kind != k) {
 			return ErrNotFound
 		}
-		return s.o.Hub.Forget(ctx, subject, k, contentID)
+		ids = []uuid.UUID{uuid.MustParse(contentID)}
 	}
-	ks := []string{kind}
-	if kind == "" {
-		ks = s.kindNames()
-	} else if _, ok := s.o.Kinds.Kinds[kind]; !ok {
-		return fmt.Errorf("%w: kind %q is not configured", ErrInvalid, kind)
+	subjects, err := s.subjectsOf(ctx, who)
+	if err != nil {
+		return err
 	}
-	for _, k := range ks {
-		if err := s.o.Hub.Forget(ctx, subject, k, ""); err != nil {
+	if contentID == "" && kind != "" {
+		rows, err := s.o.Pool.Query(ctx, `SELECT r.content_id FROM `+s.t.reading+` r JOIN `+s.t.items+` c ON c.tenant_id = $1 AND c.id = r.content_id::text
+ WHERE r.app_id = $2 AND r.subject = ANY($3) AND c.kind = $4`, s.o.Tenant, s.app(), subjects, kind)
+		if err != nil {
+			return err
+		}
+		if ids, err = pgx.CollectRows(rows, pgx.RowTo[uuid.UUID]); err != nil {
+			return err
+		}
+		if ids == nil {
+			ids = []uuid.UUID{}
+		}
+	}
+	if s.o.Hub.SignalsConfigured() {
+		store := s.o.Hub.Signals()
+		if store == nil {
+			return ErrSignalsDown
+		}
+		if err := store.Forget(ctx, s.o.Tenant, subjects, kind, ids); err != nil {
 			return err
 		}
 	}
-	return nil
+	return s.o.Reading.Forget(ctx, subjects, ids)
 }
 
 func (s *Service) kindsOf(ctx context.Context, ids []string) (map[string]string, error) {
@@ -149,234 +206,236 @@ func (s *Service) kindsOf(ctx context.Context, ids []string) (map[string]string,
 	return out, rows.Err()
 }
 
-// maxSignals bounds one signals request.
-const maxSignals = 100
+// maxActiveMS bounds one progress report: five active minutes, with slack
+// for a report delayed by a hidden tab.
+const maxActiveMS = 6 * 60 * 1000
 
-// subject is the actor's signal subject: the person, else a hash of the
-// session id, never stored raw.
-func (s *Service) subject(actor access.Actor, session string) (signal.Subject, error) {
-	if actor.Member() {
-		return signal.Subject{UserID: actor.AccountID()}, nil
-	}
-	if !actor.Anonymous {
-		return signal.Subject{}, auth.ErrForbidden
-	}
-	session = strings.TrimSpace(session)
-	if session == "" || len(session) > 128 {
-		return signal.Subject{}, fmt.Errorf("%w: a signed-out client names its session (1-128 characters)", ErrInvalid)
-	}
-	sum := sha256.Sum256([]byte(s.o.Tenant + "\x00" + session))
-	return signal.Subject{AnonKey: "s_" + hex.EncodeToString(sum[:16])}, nil
+// maxLength bounds a gallery's pages or a video's seconds.
+const maxLength = 1 << 20
+
+// maxSurface bounds a surface name.
+const maxSurface = 64
+
+// playerOverrunMS is how far a player's timeline may run past the probed
+// duration: an audio track a few frames longer.
+const playerOverrunMS = 2000
+
+type length struct {
+	kind       string
+	durationMS int64
 }
 
-// target is a signalled content item and version as stored.
-type target struct {
-	kind, presentation string
-	versions           map[string]versionFacts
-}
-
-type versionFacts struct {
-	pages    *int
-	duration *int64
-}
-
-// RecordSignals records explicit card clicks. Loaded/visible reading attention
-// is submitted separately through RecordEngagement.
-func (s *Service) RecordSignals(ctx context.Context, actor access.Actor, in discovery.Signals) error {
-	if err := s.signals(); err != nil {
-		return err
-	}
-	if len(in.Signals) == 0 || len(in.Signals) > maxSignals {
-		return fmt.Errorf("%w: 1-%d signals", ErrInvalid, maxSignals)
-	}
-	subject, err := s.subject(actor, in.Session)
-	if err != nil {
-		return err
-	}
-	ids := make([]string, 0, len(in.Signals))
-	for _, x := range in.Signals {
-		if err := contentref.ValidateID(x.ContentID); err != nil {
-			return fmt.Errorf("%w: content_id: %w", ErrInvalid, err)
-		}
-		if err := identifiers(x.EventID, x.RenderID, x.Surface); err != nil || x.EventID == "" || x.OccurredAt.IsZero() {
-			return fmt.Errorf("%w: a signal needs an event_id and occurred_at, and identifiers of at most %d bytes", ErrInvalid, signal.MaxIdentifierBytes)
-		}
-		ids = append(ids, x.ContentID)
-	}
-	targets, err := s.targets(ctx, ids)
-	if err != nil {
-		return err
-	}
-	refs := make([]contentref.ContentRef, 0, len(targets))
-	for id, t := range targets {
-		refs = append(refs, contentref.New(s.o.Tenant, t.kind, id))
-	}
-	seen, err := s.o.Resolver.Resolve(ctx, refs, actor)
-	if err != nil {
-		return err
-	}
-	var out []signal.Signal
-	for _, x := range in.Signals {
-		t, ok := targets[x.ContentID]
-		ref := contentref.New(s.o.Tenant, t.kind, x.ContentID)
-		if !ok || !seen[ref.Key()].Visible {
-			return fmt.Errorf("%w: content %s", ErrNotFound, x.ContentID)
-		}
-		_, versioned := t.versions[x.VersionID]
-		if x.VersionID != "" && !versioned {
-			return fmt.Errorf("%w: version %s of content %s", ErrNotFound, x.VersionID, x.ContentID)
-		}
-		var receipt *activityReceipt
-		if x.ActivityToken != "" {
-			r, err := s.readActivityReceipt(x.ActivityToken, subject, discovery.ActivityTarget{ContentID: x.ContentID, VersionID: x.VersionID})
-			if err != nil {
-				if expiredActivity(err) {
-					continue
-				}
-				return err
-			}
-			receipt = &r
-		}
-		if x.Type != discovery.TypeClick {
-			return fmt.Errorf("%w: only click signals are accepted; reading uses /engagement", ErrInvalid)
-		}
-		sig := signal.Signal{ContentRef: ref.WithVersion(x.VersionID), Subject: subject, Type: discovery.TypeClick, EventID: x.EventID, Revision: x.Revision, OccurredAt: x.OccurredAt.UTC()}
-		if receipt != nil {
-			sig.Access = &receipt.Access
-			sig.OccurredAt = receipt.Access.ObservedAt
-		}
-
-		if x.RenderID != "" || x.Surface != "" || x.Position != 0 {
-			sig = sig.WithAttribution(signal.Attribution{RenderID: x.RenderID, Surface: x.Surface, Position: x.Position})
-		}
-		out = append(out, sig)
-	}
-	return s.o.Hub.RecordSignals(ctx, out)
-}
-
-// identifiers checks client strings against the signal plane's bounds.
-func identifiers(values ...string) error {
-	for _, v := range values {
-		if len(v) > signal.MaxIdentifierBytes {
-			return fmt.Errorf("%w: a value is longer than %d bytes", ErrInvalid, signal.MaxIdentifierBytes)
-		}
-	}
-	return nil
-}
-
-func (s *Service) targets(ctx context.Context, ids []string) (map[string]target, error) {
-	rows, err := s.o.Pool.Query(ctx, `SELECT c.id, c.kind, coalesce(v.id, ''), v.pages, v.duration_ms FROM `+s.t.items+` c
- LEFT JOIN `+s.t.versions+` v ON v.tenant_id = c.tenant_id AND v.content_id = c.id WHERE c.tenant_id = $1 AND c.id = ANY($2)`, s.o.Tenant, ids)
+// lengths are content ids' kinds and their longest version's duration; zero
+// when unknown.
+func (s *Service) lengths(ctx context.Context, ids []string) (map[string]length, error) {
+	rows, err := s.o.Pool.Query(ctx, `SELECT c.id, c.kind, coalesce(max(v.duration_ms), 0) FROM `+s.t.items+` c
+ LEFT JOIN `+s.t.versions+` v ON v.tenant_id = c.tenant_id AND v.content_id = c.id WHERE c.tenant_id = $1 AND c.id = ANY($2) GROUP BY c.id, c.kind`, s.o.Tenant, ids)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	out := map[string]target{}
+	out := map[string]length{}
 	for rows.Next() {
-		var id, kind, version string
-		var f versionFacts
-		if err := rows.Scan(&id, &kind, &version, &f.pages, &f.duration); err != nil {
+		var id string
+		var l length
+		if err := rows.Scan(&id, &l.kind, &l.durationMS); err != nil {
 			return nil, err
 		}
-		t, ok := out[id]
-		if !ok {
-			k, configured := s.o.Kinds.Kinds[kind]
-			if !configured {
-				continue
-			}
-			t = target{kind: kind, presentation: k.Presentation, versions: map[string]versionFacts{"": {}}}
-		}
-		if version != "" {
-			t.versions[version] = f
-		}
-		out[id] = t
+		out[id] = l
 	}
 	return out, rows.Err()
 }
 
-// RecordExposures records result lists for click attribution.
-func (s *Service) RecordExposures(ctx context.Context, actor access.Actor, in discovery.Exposures) error {
+// RecordActivity logs a browser's opens and progress reports for the
+// request's reader. Content that does not exist is skipped; nothing waits
+// for ClickHouse.
+func (s *Service) RecordActivity(r *http.Request, actor access.Actor, in discovery.Activity) error {
 	if !actor.Anonymous && !actor.Member() {
 		return auth.ErrForbidden
 	}
-	if err := s.signals(); err != nil {
-		return err
+	if s.o.Activity == nil || s.o.Activity.Write == nil {
+		return ErrNoSignals
 	}
-	if len(in.Exposures) == 0 || len(in.Exposures) > signal.MaxExposuresPerBatch {
-		return fmt.Errorf("%w: 1-%d exposures", ErrInvalid, signal.MaxExposuresPerBatch)
+	if len(in.Events) == 0 || len(in.Events) > discovery.MaxActivityEvents {
+		return fmt.Errorf("%w: 1-%d events", ErrInvalid, discovery.MaxActivityEvents)
 	}
-	var subject signal.Subject
-	if actor.Member() || in.Session != "" {
-		var err error
-		if subject, err = s.subject(actor, in.Session); err != nil {
-			return err
+	base, ok := s.o.Activity.Row(r, actor, in.Language)
+	if !ok {
+		return fmt.Errorf("%w: a signed-out reader sends its anonymous id in %s", ErrInvalid, subject.Header)
+	}
+	ids := make([]string, 0, len(in.Events))
+	for _, e := range in.Events {
+		if err := contentref.ValidateID(e.ContentID); err != nil {
+			return fmt.Errorf("%w: content_id: %w", ErrInvalid, err)
 		}
-	}
-	var ids []string
-	for _, e := range in.Exposures {
-		if e.SearchQuery != "" {
-			if _, ok := searchKey(e.SearchQuery); !ok {
-				return fmt.Errorf("%w: search query must contain 1-%d characters", ErrInvalid, maxSearchQuery)
+		switch e.Type {
+		case discovery.ActivityOpen:
+			if e.RequestID != "" && uuid.Validate(e.RequestID) != nil || len(e.Surface) > maxSurface || e.Position > 1<<16-1 {
+				return fmt.Errorf("%w: an open's request_id is a UUID, its surface at most %d bytes and its position at most 65535", ErrInvalid, maxSurface)
 			}
-		}
-		switch signal.ExposureStage(e.Stage) {
-		case signal.StageServed, signal.StageRendered, signal.StageVisible:
+		case discovery.ActivityProgress:
+			if e.ActiveMS > maxActiveMS || e.Length > maxLength || e.Furthest > e.Length || e.Current > e.Length {
+				return fmt.Errorf("%w: progress is at most %d active ms since the last report, within its length of at most %d", ErrInvalid, maxActiveMS, maxLength)
+			}
 		default:
-			return fmt.Errorf("%w: stage %q is served, rendered or visible", ErrInvalid, e.Stage)
+			return fmt.Errorf("%w: type %q is open or progress", ErrInvalid, e.Type)
 		}
-		emptySearch := e.Stage == string(signal.StageRendered) && e.Surface == signal.SurfaceSearch && e.QueryID != "" && strings.TrimSpace(e.SearchQuery) != ""
-		if e.RenderID == "" || len(e.Shown) == 0 && !emptySearch || len(e.Shown) > signal.MaxShownPerExposure {
-			return fmt.Errorf("%w: an exposure needs a render_id and 1-%d placements, or a completed empty search", ErrInvalid, signal.MaxShownPerExposure)
-		}
-		if err := identifiers(e.RenderID, e.QueryID, e.Surface, e.Ranker, e.Language); err != nil {
-			return err
-		}
-		positions := map[uint32]bool{}
-		for _, p := range e.Shown {
-			if p.Position == 0 || positions[p.Position] {
-				return fmt.Errorf("%w: positions are distinct and 1-based", ErrInvalid)
-			}
-			positions[p.Position] = true
-		}
-		for _, p := range e.Shown {
-			if err := contentref.ValidateID(p.ContentID); err != nil {
-				return fmt.Errorf("%w: content_id: %w", ErrInvalid, err)
-			}
-			ids = append(ids, p.ContentID)
-		}
+		ids = append(ids, e.ContentID)
 	}
-	kinds, err := s.kindsOf(ctx, ids)
+	targets, err := s.lengths(r.Context(), ids)
 	if err != nil {
 		return err
 	}
-	out := make([]signal.Exposure, 0, len(in.Exposures))
-	for _, e := range in.Exposures {
-		x := signal.Exposure{RenderID: e.RenderID, Stage: signal.ExposureStage(e.Stage), Revision: e.Revision, QueryID: e.QueryID, SearchQuery: e.SearchQuery, Surface: e.Surface,
-			Ranker: e.Ranker, Language: e.Language, Subject: subject, OccurredAt: s.now().UTC()}
-		if e.OccurredAt != nil {
-			x.OccurredAt = e.OccurredAt.UTC()
+	rows := make([]signalstore.Row, 0, len(in.Events))
+	for _, e := range in.Events {
+		target, ok := targets[e.ContentID]
+		config, configured := s.o.Kinds.Kinds[target.kind]
+		if !ok || !configured {
+			continue
 		}
-		for _, p := range e.Shown {
-			kind, ok := kinds[p.ContentID]
-			if !ok {
-				return fmt.Errorf("%w: content %s", ErrNotFound, p.ContentID)
+		kind := target.kind
+		if e.Type == discovery.ActivityProgress && config.Presentation == "player" && target.durationMS > 0 {
+			// A player's timeline may run up to two seconds past the probed
+			// duration (a longer audio track), not further.
+			if bound := (target.durationMS + playerOverrunMS + 999) / 1000; int64(max(e.Furthest, e.Current, e.Length)) > bound {
+				return fmt.Errorf("%w: progress of %s is past its duration", ErrInvalid, e.ContentID)
 			}
-			placement := signal.Placement{ContentRef: contentref.NewVersion(s.o.Tenant, kind, p.ContentID, p.VersionID), Position: p.Position}
-			if p.ActivityToken != "" {
-				r, err := s.readActivityReceipt(p.ActivityToken, subject, discovery.ActivityTarget{ContentID: p.ContentID, VersionID: p.VersionID})
-				if err != nil {
-					if expiredActivity(err) {
-						continue
-					}
-					return err
-				}
-				placement.Access = &r.Access
-			}
-			x.Shown = append(x.Shown, placement)
 		}
-		if len(x.Shown) > 0 || len(e.Shown) == 0 {
-			out = append(out, x)
+		row := base
+		row.ContentKind, row.ContentID = kind, uuid.MustParse(e.ContentID)
+		switch e.Type {
+		case discovery.ActivityOpen:
+			row.Action, row.Surface, row.Position = signalstore.ActionOpen, e.Surface, uint16(e.Position)
+			if e.RequestID != "" {
+				row.RequestID = uuid.MustParse(e.RequestID)
+			}
+		case discovery.ActivityProgress:
+			row.Action, row.ActiveMS, row.Furthest, row.Current, row.Length = signalstore.ActionProgress, e.ActiveMS, e.Furthest, e.Current, e.Length
+			row.Unit = signalstore.UnitPage
+			if config.Presentation == "player" {
+				row.Unit = signalstore.UnitSecond
+			}
+		}
+		rows = append(rows, row)
+	}
+	s.o.Activity.Add(rows...)
+	return nil
+}
+
+// LinkAnonymous records that the browser's anonymous id signed in as the
+// actor's account; the next analytics run folds its reading in.
+func (s *Service) LinkAnonymous(ctx context.Context, actor access.Actor, in discovery.AnonymousLink) error {
+	if !actor.Member() {
+		return fmt.Errorf("%w: a link needs a signed-in reader", ErrInvalid)
+	}
+	account, ok := subject.Account(actor.AccountID())
+	if !ok {
+		return nil
+	}
+	anonymous, ok := subject.Anonymous(s.app(), in.AnonymousID)
+	if !ok {
+		return fmt.Errorf("%w: anonymous_id is the browser's anonymous UUID", ErrInvalid)
+	}
+	return s.o.Reading.Link(ctx, anonymous, account)
+}
+
+// SetHidden hides a gallery from every list the reader is served, or shows
+// it again, at once. A signed-out reader hides by its anonymous id.
+func (s *Service) SetHidden(r *http.Request, actor access.Actor, contentID string, hidden bool) error {
+	if err := contentref.ValidateID(contentID); err != nil {
+		return fmt.Errorf("%w: content id: %w", ErrInvalid, err)
+	}
+	if !actor.Anonymous && !actor.Member() {
+		return auth.ErrForbidden
+	}
+	who, ok := subject.FromRequest(s.app(), actor, r)
+	if !ok {
+		return fmt.Errorf("%w: a signed-out reader sends its anonymous id in %s", ErrInvalid, subject.Header)
+	}
+	kinds, err := s.kindsOf(r.Context(), []string{contentID})
+	if err != nil {
+		return err
+	}
+	kind, found := kinds[contentID]
+	if !found {
+		return ErrNotFound
+	}
+	id := uuid.MustParse(contentID)
+	if err := s.o.Reading.SetHidden(r.Context(), who, id, hidden); err != nil {
+		return err
+	}
+	if row, ok := s.o.Activity.Row(r, actor, ""); ok {
+		row.Action, row.ContentKind, row.ContentID = signalstore.ActionHide, kind, id
+		if hidden {
+			row.Value = 1
+		}
+		s.o.Activity.Add(row)
+	}
+	return nil
+}
+
+// subjectKey is a reader's recent-search subject: the account id, else the
+// anonymous subject.
+func (s *Service) subjectKey(actor access.Actor, anonymousID string) (string, bool) {
+	if actor.Member() {
+		return actor.AccountID(), true
+	}
+	who, ok := subject.Of(s.app(), actor, anonymousID)
+	return who.String(), ok
+}
+
+// Continue pages the reader's galleries and videos started but not
+// finished, most recent first, each card with its position: not bounced
+// from, finished, hidden or disliked. A signed-out reader's come from its
+// anonymous id. The reader's filters and access apply.
+func (s *Service) Continue(ctx context.Context, o discovery.ContinueOptions) (discovery.ContentPage, error) {
+	empty := discovery.ContentPage{Contents: []discovery.Card{}}
+	if !o.Actor.Anonymous && !o.Actor.Member() {
+		return empty, auth.ErrForbidden
+	}
+	who, known := s.reader(o.Reader)
+	if !known {
+		return empty, fmt.Errorf("%w: continue reading needs a signed-in reader or an anonymous id", ErrInvalid)
+	}
+	if o.Kind != "" {
+		if _, ok := s.o.Kinds.Kinds[o.Kind]; !ok {
+			return empty, fmt.Errorf("%w: kind %q is not configured", ErrInvalid, o.Kind)
 		}
 	}
-	return s.o.Hub.RecordExposures(ctx, out)
+	offset := 0
+	if o.Cursor != "" {
+		n, err := strconv.Atoi(o.Cursor)
+		if err != nil || n < 0 {
+			return empty, fmt.Errorf("%w: cursor", ErrInvalid)
+		}
+		offset = n
+	}
+	limit := pageLimit(o.Limit, 24)
+	rows, err := s.o.Pool.Query(ctx, `SELECT c.id FROM `+s.t.reading+` r JOIN `+s.t.items+` c ON c.tenant_id = $1 AND c.id = r.content_id::text
+ WHERE r.app_id = $2 AND r.subject = $3 AND r.best_outcome IN ($4, $5) AND NOT r.hidden AND ($6 = '' OR c.kind = $6)
+  AND NOT EXISTS (SELECT 1 FROM `+s.t.reactions+` x WHERE x.tenant_id = $1 AND x.content_id = c.id AND x.value < 0
+   AND (x.user_id = $7 OR x.user_id IS NULL AND x.anonymous_subject = $3))
+ ORDER BY r.last_seen_at DESC, r.content_id LIMIT $8 OFFSET $9`, s.o.Tenant, s.app(), who, readingstore.OutcomeNeutral, readingstore.OutcomeGood,
+		o.Kind, who.String(), limit+1, offset)
+	if err != nil {
+		return empty, err
+	}
+	ids, err := pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return empty, err
+	}
+	next := ""
+	if len(ids) > limit {
+		ids, next = ids[:limit], strconv.Itoa(offset+limit)
+	}
+	q, err := s.compile(ctx, o.Reader, Filter{Kind: o.Kind})
+	if err != nil {
+		return empty, err
+	}
+	picks, err := s.pickAmong(ctx, q, ids)
+	if err != nil {
+		return empty, err
+	}
+	cards, err := s.cards(ctx, q, picks, cardOptions{chips: o.CardEntities})
+	return discovery.ContentPage{Contents: cards, NextCursor: next}, err
 }

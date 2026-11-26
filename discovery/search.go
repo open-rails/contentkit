@@ -13,6 +13,9 @@ const SortRelevance = "relevance"
 type SearchPage struct {
 	ContentPage
 	Entities []entities.EntityCard `json:"entities,omitempty"`
+	// RequestID names this search in the activity log: an open of one of its
+	// results sends it back.
+	RequestID string `json:"request_id,omitempty"`
 }
 
 // TypeaheadOptions select suggestions while a reader types.

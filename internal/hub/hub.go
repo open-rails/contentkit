@@ -14,7 +14,6 @@ import (
 
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/search"
-	"github.com/open-rails/contentkit/signal"
 )
 
 var (
@@ -87,11 +86,12 @@ func (h *Hub) requireStore() (*signalstore.Store, error) {
 
 // --- Content plane ---
 
-// Personalization fuses signal aggregates into search ranking. Recall is
-// unchanged: a ranking-only layer over the candidate set, which discovery
-// applies for signed-in readers.
+// Personalization adjusts search ranking for one reader. Recall is
+// unchanged: a ranking-only layer over the candidate set.
 type Personalization struct {
-	Subject signal.Subject
+	// States is the reader's standing with candidate works, from their
+	// reading state; works absent from the map are unknown to them.
+	States func(ctx context.Context, refs []ContentRef) (map[ContentKey]ViewState, error)
 
 	// PopularityWeight is the RRF weight of the candidate-set popularity
 	// list blended with the content ranking. Defaults to 0.25.
@@ -100,20 +100,19 @@ type Personalization struct {
 	// without a score are absent. Nil leaves popularity out.
 	Popularity func(ctx context.Context, kind string, ids []string) (map[string]float64, error)
 
-	// AffinityWeight boosts works the subject already engaged with by
-	// (1 + AffinityWeight·last_score/100). 0 = off.
-	AffinityWeight float32
-
 	// DemoteSeen demotes already-seen / completed works.
 	DemoteSeen bool
 	// SeenPenalty multiplies seen-but-not-completed scores (default 0.85).
 	SeenPenalty float32
 	// CompletedPenalty multiplies completed scores (default 0.6).
 	CompletedPenalty float32
-	// DislikePenalty multiplies works the subject has net-negative explicit
-	// feedback for (default 0.3). Always applied when view context is loaded
-	// (i.e. AffinityWeight > 0 or DemoteSeen).
+	// DislikePenalty multiplies works the reader disliked (default 0.3).
 	DislikePenalty float32
+}
+
+// ViewState is a reader's standing with one work.
+type ViewState struct {
+	Seen, Completed, Disliked bool
 }
 
 // HubSearchOptions extends content SearchOptions with optional
@@ -133,14 +132,7 @@ func (h *Hub) Search(ctx context.Context, userText string, opts HubSearchOptions
 	if opts.Personalize == nil {
 		return h.client.Search(ctx, userText, opts.SearchOptions)
 	}
-	store, err := h.requireStore()
-	if err != nil {
-		return h.client.Search(ctx, userText, opts.SearchOptions) // no signal plane: unpersonalized
-	}
 	p := *opts.Personalize
-	if err := p.Subject.Validate(); err != nil {
-		return SearchResult{}, err
-	}
 	if p.PopularityWeight <= 0 {
 		p.PopularityWeight = 0.25
 	}
@@ -209,14 +201,14 @@ func (h *Hub) Search(ctx context.Context, userText string, opts HubSearchOptions
 		Weights: []float32{1, p.PopularityWeight},
 	})
 
-	// Per-subject view context: affinity boost + seen/completed demotion.
-	var states map[ContentKey]signal.State
-	if p.AffinityWeight > 0 || p.DemoteSeen {
+	// The reader's standing: dislike and seen/completed demotion.
+	var states map[ContentKey]ViewState
+	if p.States != nil {
 		refs := make([]ContentRef, 0, len(hits))
 		for _, hit := range hits {
 			refs = append(refs, hit.Content())
 		}
-		states, err = store.States(ctx, h.tenant, p.Subject, refs)
+		states, err = p.States(ctx, refs)
 		if err != nil {
 			return unpersonalized(ctx, content, offset, limit, err), nil
 		}
@@ -226,21 +218,14 @@ func (h *Hub) Search(ctx context.Context, userText string, opts HubSearchOptions
 	for _, f := range fused {
 		score := f.Score
 		if st, ok := states[f.Ref().Content().Key()]; ok {
-			if st.NetValue < 0 {
+			switch {
+			case st.Disliked:
 				// Explicit negative feedback outranks every other adjustment.
 				score *= p.DislikePenalty
-			} else {
-				if p.AffinityWeight > 0 && st.Quality > 0 {
-					score *= 1 + p.AffinityWeight*float32(st.Quality)
-				}
-				if p.DemoteSeen {
-					switch {
-					case st.Completed:
-						score *= p.CompletedPenalty
-					case st.Seen:
-						score *= p.SeenPenalty
-					}
-				}
+			case p.DemoteSeen && st.Completed:
+				score *= p.CompletedPenalty
+			case p.DemoteSeen && st.Seen:
+				score *= p.SeenPenalty
 			}
 		}
 		hit := byKey[f.RRFKey]
@@ -292,107 +277,3 @@ func (h *Hub) SetSignals(s *signalstore.Store) { h.store.Store(s) }
 
 // SignalsConfigured reports whether the hub has a signal plane, up or down.
 func (h *Hub) SignalsConfigured() bool { return h.configured }
-
-// RecordExposures logs one row per result list and stage (served, rendered,
-// visible) so clicks can be attributed to what was actually exposed. Hosts call
-// it once per list per stage, never per item.
-func (h *Hub) RecordExposures(ctx context.Context, exposures []signal.Exposure) error {
-	store, err := h.requireStore()
-	if err != nil {
-		return err
-	}
-	return store.RecordExposures(ctx, h.tenant, exposures)
-}
-
-// --- Signal plane ---
-
-// RecordSignals records the batch (see signal.Store.RecordSignals).
-func (h *Hub) RecordSignals(ctx context.Context, signals []signal.Signal) error {
-	store, err := h.requireStore()
-	if err != nil {
-		return err
-	}
-	return store.RecordSignals(ctx, h.tenant, signals)
-}
-
-// --- Discovery plane ---
-
-func (h *Hub) History(ctx context.Context, subject signal.Subject, opts signal.HistoryOptions) ([]signal.StateRow, error) {
-	store, err := h.requireStore()
-	if err != nil {
-		return nil, err
-	}
-	return store.History(ctx, h.tenant, subject, opts)
-}
-
-// Forget erases the subject's signals for one work and its versions
-// (contentID set) or a whole content kind (contentID empty) — host "clear my
-// history" support.
-func (h *Hub) Forget(ctx context.Context, subject signal.Subject, contentKind, contentID string) error {
-	store, err := h.requireStore()
-	if err != nil {
-		return err
-	}
-	return store.Forget(ctx, h.tenant, subject, contentKind, contentID)
-}
-
-// AnonymizeSubject preserves anonymous engagement while unlinking an account.
-func (h *Hub) AnonymizeSubject(ctx context.Context, old, anonymous signal.Subject) error {
-	store, err := h.requireStore()
-	if err != nil {
-		return err
-	}
-	return store.AnonymizeSubject(ctx, h.tenant, old, anonymous)
-}
-
-// SeenIDs returns the subject's seen-set for one content kind (the
-// signal-plane half of an unseen anti-join).
-func (h *Hub) SeenIDs(ctx context.Context, subject signal.Subject, contentKind string) (map[string]struct{}, error) {
-	store, err := h.requireStore()
-	if err != nil {
-		return nil, err
-	}
-	return store.SeenIDs(ctx, h.tenant, subject, contentKind)
-}
-
-func (h *Hub) States(ctx context.Context, subject signal.Subject, refs []ContentRef) (map[ContentKey]signal.State, error) {
-	store, err := h.requireStore()
-	if err != nil {
-		return nil, err
-	}
-	return store.States(ctx, h.tenant, subject, refs)
-}
-
-// ForgetContents erases purged content's signals for every subject.
-func (h *Hub) ForgetContents(ctx context.Context, contents []signal.ForgottenContent) error {
-	store, err := h.requireStore()
-	if err != nil {
-		return err
-	}
-	return store.ForgetContents(ctx, h.tenant, contents)
-}
-
-// Activity is a content kind's distinct measured readership per day of window.
-func (h *Hub) Activity(ctx context.Context, contentKind string, window signal.Window, cohorts ...signal.ActivityCohort) ([]signal.DayActivity, error) {
-	store, err := h.requireStore()
-	if err != nil {
-		return nil, err
-	}
-	return store.Activity(ctx, h.tenant, contentKind, window, cohorts...)
-}
-
-func (h *Hub) CompletedCount(ctx context.Context, subject signal.Subject, kind string) (int64, error) {
-	store, err := h.requireStore()
-	if err != nil {
-		return 0, err
-	}
-	return store.CompletedCount(ctx, h.tenant, subject, kind)
-}
-
-func (h *Hub) ImportLegacyReading(ctx context.Context, in []signal.LegacyReading) error {
-	store, err := h.requireStore()
-	if err != nil {
-		return err
-	}
-	return store.ImportLegacyReading(ctx, h.tenant, in)
-}

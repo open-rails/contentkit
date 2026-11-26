@@ -1,38 +1,47 @@
 package discovery
 
-import (
-	"time"
+// Activity types a browser reports. Everything else (reactions, favorites,
+// hides and searches) the server logs where it happens.
+const (
+	ActivityOpen     = "open"
+	ActivityProgress = "progress"
 )
 
-// ActivitySigner signs domain-separated activity receipts. The media reader
-// implements it with its persistent delivery key; non-media hosts may supply
-// their own signer. No signing key is generated implicitly.
-type ActivitySigner interface {
-	SignTicket(scope string, expires time.Time) string
-	VerifyTicket(ticket, scope string) error
+// MaxActivityEvents bounds one activity report.
+const MaxActivityEvents = 50
+
+// Activity is what a browser reports for its reader: the signed-in account,
+// else the anonymous id in the ContentKit-Anonymous-Id header. The server
+// stamps the site, access, local UTC offset and time.
+type Activity struct {
+	// Language is the content language read; the request's by default.
+	Language string          `json:"language,omitempty"`
+	Events   []ActivityEvent `json:"events"`
 }
 
-// ActivityTarget is the content a client is about to display or consume.
-type ActivityTarget struct {
+// ActivityEvent is an open of a content item or a report of reading it.
+type ActivityEvent struct {
+	// Type is open or progress.
+	Type      string `json:"type"`
 	ContentID string `json:"content_id"`
-	VersionID string `json:"version_id,omitempty"`
+	// RequestID, Surface and Position name the list an open came from: the
+	// request_id of the search or list response, its surface and the
+	// 1-based position; empty for an open from outside.
+	RequestID string `json:"request_id,omitempty"`
+	Surface   string `json:"surface,omitempty"`
+	Position  uint32 `json:"position,omitempty"`
+	// ActiveMS is the time the reader was active on a visible tab since the
+	// previous report, at most five minutes and a little.
+	ActiveMS uint32 `json:"active_ms,omitempty"`
+	// Furthest and Current are 1-based pages of a reader or seconds of a
+	// player; Length is the pages or seconds there are.
+	Furthest uint32 `json:"furthest,omitempty"`
+	Current  uint32 `json:"current,omitempty"`
+	Length   uint32 `json:"length,omitempty"`
 }
 
-type ActivityContextsInput struct {
-	Session  string           `json:"session,omitempty"`
-	Language string           `json:"language,omitempty"`
-	Targets  []ActivityTarget `json:"targets"`
-}
-
-// ActivityContext is an opaque, subject-bound snapshot. OccurredAt is the
-// server's observation time and stays fixed across every view checkpoint.
-type ActivityContext struct {
-	ActivityTarget
-	Token      string    `json:"token"`
-	OccurredAt time.Time `json:"occurred_at"`
-}
-
-type ActivityContexts struct {
-	Enabled  bool              `json:"enabled"`
-	Contexts []ActivityContext `json:"contexts"`
+// AnonymousLink is sent once at sign-in: the anonymous id this browser used
+// signed in as the request's account, so its reading becomes the account's.
+type AnonymousLink struct {
+	AnonymousID string `json:"anonymous_id"`
 }

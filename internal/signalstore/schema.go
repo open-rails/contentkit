@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 
 	signal "github.com/open-rails/contentkit/signal"
@@ -11,10 +12,9 @@ import (
 
 var identRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
-// CreateDatabase creates the dedicated signal database (ON CLUSTER when cluster
-// is set). The schema itself is owned by the versioned migrations in
-// migrations.ClickHouse, applied with migratekit chmigrate; migratekit
-// connects to the database, so it must exist first.
+// CreateDatabase creates the activity database (ON CLUSTER when cluster is
+// set). Its tables come from migrations.ClickHouse; migratekit connects to
+// the database, so it must exist first.
 func CreateDatabase(ctx context.Context, conn signal.Exec, database, cluster string) error {
 	if !identRe.MatchString(database) {
 		return fmt.Errorf("signal: invalid database name %q", database)
@@ -32,73 +32,34 @@ func CreateDatabase(ctx context.Context, conn signal.Exec, database, cluster str
 	return nil
 }
 
-type columnSpec struct{ name, typ string }
-
 type tableSpec struct {
-	engine       string // without the Replicated prefix
-	version      string // ReplacingMergeTree version column
-	sortingKey   string
-	partitionKey string
-	columns      []columnSpec
+	engine, version, sortingKey, partitionKey string
+	columns                                   [][2]string
 }
 
-var refColumnSpecs = []columnSpec{{"content_kind", "LowCardinality(String)"}, {"content_id", "String"}, {"content_version_id", "String"}}
+const lc = "LowCardinality(String)"
 
-// expectedSchema is the schema this library version reads and writes. It must
-// match the applied lineage in migrations/clickhouse.
+// expectedSchema is what this version reads and writes: migrations/clickhouse.
 var expectedSchema = map[string]tableSpec{
-	"measured_population_coverage": {
-		engine: "AggregatingMergeTree", sortingKey: "tenant, content_kind, domain, language",
-		columns: []columnSpec{{"tenant", "LowCardinality(String)"}, {"content_kind", "LowCardinality(String)"}, {"domain", "LowCardinality(String)"}, {"language", "LowCardinality(String)"}, {"started_at", "SimpleAggregateFunction(min, DateTime64(6, 'UTC'))"}},
-	},
-	"measured_population_observations": {
-		engine: "ReplacingMergeTree", version: "version",
-		sortingKey: "tenant, content_kind, subject_kind, subject, observation_id", partitionKey: "toYYYYMM(observed_at)",
-		columns: []columnSpec{{"tenant", "LowCardinality(String)"}, {"subject_kind", "LowCardinality(String)"}, {"subject", "String"}, {"content_kind", "LowCardinality(String)"},
-			{"observation_id", "String"}, {"observed_at", "DateTime64(6, 'UTC')"}, {"domain", "LowCardinality(String)"},
-			{"language", "LowCardinality(String)"}, {"eligible_tiers", "Array(String)"}, {"eligibility_known", "Bool"}, {"version", "UInt64"}},
-	},
-	"signals": {
-		engine: "ReplacingMergeTree", version: "version",
-		sortingKey:   "tenant, content_kind, content_id, content_version_id, subject_kind, subject, signal_type, event_id",
-		partitionKey: "toYYYYMM(occurred_at)",
-		columns: append(append([]columnSpec{{"tenant", "LowCardinality(String)"}}, refColumnSpecs...),
-			columnSpec{"subject_kind", "LowCardinality(String)"}, columnSpec{"subject", "String"}, columnSpec{"signal_type", "LowCardinality(String)"},
-			columnSpec{"event_id", "String"}, columnSpec{"revision", "UInt64"}, columnSpec{"occurred_at", "DateTime('UTC')"},
-			columnSpec{"value", "Float64"}, columnSpec{"payload", "String"}, columnSpec{"version", "UInt128"},
-			columnSpec{"ingested_at", "DateTime64(6, 'UTC')"},
-		),
-	},
-	"erasures": {
-		engine: "ReplacingMergeTree", version: "erased_at",
-		sortingKey: "tenant, subject_hash",
-		columns: []columnSpec{
-			{"tenant", "LowCardinality(String)"}, {"subject_hash", "FixedString(16)"}, {"erased_at", "DateTime64(6, 'UTC')"},
-		},
-	},
-	"exposures": {
-		engine: "ReplacingMergeTree", version: "version",
-		sortingKey:   "tenant, render_id, stage",
-		partitionKey: "toYYYYMM(occurred_at)",
-		columns: []columnSpec{
-			{"tenant", "LowCardinality(String)"}, {"render_id", "String"}, {"stage", "LowCardinality(String)"},
-			{"revision", "UInt64"}, {"query_id", "String"}, {"surface", "LowCardinality(String)"},
-			{"ranker", "LowCardinality(String)"}, {"language", "LowCardinality(String)"},
-			{"subject_kind", "LowCardinality(String)"}, {"subject", "String"},
-			{"content_kinds", "Array(LowCardinality(String))"}, {"content_ids", "Array(String)"}, {"content_version_ids", "Array(String)"},
-			{"positions", "Array(UInt32)"}, {"occurred_at", "DateTime('UTC')"}, {"version", "UInt128"},
-			{"access_contexts", "Array(String)"},
-			{"search_query", "String"},
-			{"ingested_at", "DateTime64(6, 'UTC')"},
-		},
-	},
+	"activity": {engine: "MergeTree", sortingKey: "tenant, subject, ts", partitionKey: "toDate(ts)",
+		columns: [][2]string{{"tenant", lc}, {"subject", "UUID"}, {"ts", "DateTime64(3, 'UTC')"}, {"action", lc},
+			{"content_kind", lc}, {"content_id", "UUID"}, {"domain", lc}, {"language", lc}, {"access", lc}, {"utc_offset", "Int16"},
+			{"request_id", "UUID"}, {"surface", lc}, {"position", "UInt16"}, {"active_ms", "UInt32"}, {"furthest", "UInt32"},
+			{"current", "UInt32"}, {"length", "UInt32"}, {"unit", lc}, {"value", "Int8"}, {"reason", lc}, {"query", "String"},
+			{"results", "Array(UUID)"}, {"ingested_at", "DateTime64(3, 'UTC')"}}},
+	"content_daily": {engine: "MergeTree", sortingKey: "tenant, domain, language, day, content_kind, content_id", partitionKey: "toYYYYMM(day)",
+		columns: [][2]string{{"tenant", lc}, {"domain", lc}, {"language", lc}, {"day", "Date"}, {"content_kind", lc}, {"content_id", "UUID"},
+			{"audience", "Bool"}, {"class", lc}, {"reaction", lc}, {"reason", lc}, {"people", "UInt32"}, {"generation", "DateTime64(3, 'UTC')"}}},
+	"audience_daily": {engine: "MergeTree", sortingKey: "tenant, domain, language, day, access", partitionKey: "toYYYYMM(day)",
+		columns: [][2]string{{"tenant", lc}, {"domain", lc}, {"language", lc}, {"day", "Date"}, {"access", lc}, {"people", "UInt32"},
+			{"generation", "DateTime64(3, 'UTC')"}}},
+	"erasures": {engine: "ReplacingMergeTree", version: "erased_at", sortingKey: "tenant, subject",
+		columns: [][2]string{{"tenant", lc}, {"subject", "UUID"}, {"erased_at", "DateTime64(3, 'UTC')"}}},
 }
 
-// CheckSchema verifies, read-only, that the signal database has exactly the
-// tables, columns, engines and keys this library version uses. Hosts call it at
-// startup with runtime credentials and must not serve analytics on error: table
-// existence alone is not compatibility. Requires SELECT on system.tables and
-// system.columns for the database.
+// CheckSchema verifies, read-only, that the database has exactly the tables,
+// columns, engines and keys this version uses; table existence alone is not
+// compatibility. Needs SELECT on system.tables and system.columns.
 func CheckSchema(ctx context.Context, conn signal.Conn, database string) error {
 	if !identRe.MatchString(database) {
 		return fmt.Errorf("signal: invalid database name %q", database)
@@ -121,12 +82,10 @@ func CheckSchema(ctx context.Context, conn signal.Conn, database string) error {
 		}
 		live[name] = lt
 	}
+	rows.Close()
 	if err := rows.Err(); err != nil {
-		rows.Close()
 		return fmt.Errorf("signal: read schema tables: %w", err)
 	}
-	rows.Close()
-
 	rows, err = conn.Query(ctx, `SELECT table, name, type FROM system.columns WHERE database = ?`, database)
 	if err != nil {
 		return fmt.Errorf("signal: read schema columns: %w", err)
@@ -141,14 +100,17 @@ func CheckSchema(ctx context.Context, conn signal.Conn, database string) error {
 			lt.columns[name] = typ
 		}
 	}
+	rows.Close()
 	if err := rows.Err(); err != nil {
-		rows.Close()
 		return fmt.Errorf("signal: read schema columns: %w", err)
 	}
-	rows.Close()
-
 	var problems []string
-	for _, name := range sortedKeys(expectedSchema) {
+	names := make([]string, 0, len(expectedSchema))
+	for name := range expectedSchema {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	for _, name := range names {
 		want := expectedSchema[name]
 		got, ok := live[name]
 		if !ok {
@@ -169,20 +131,25 @@ func CheckSchema(ctx context.Context, conn signal.Conn, database string) error {
 		if got.partitionKey != want.partitionKey {
 			problems = append(problems, fmt.Sprintf("%s PARTITION BY %q, want %q", name, got.partitionKey, want.partitionKey))
 		}
-		expected := map[string]string{}
+		expected := map[string]bool{}
 		for _, c := range want.columns {
-			expected[c.name] = c.typ
-			switch typ, ok := got.columns[c.name]; {
+			expected[c[0]] = true
+			switch typ, ok := got.columns[c[0]]; {
 			case !ok:
-				problems = append(problems, fmt.Sprintf("%s missing column %s", name, c.name))
-			case typ != c.typ:
-				problems = append(problems, fmt.Sprintf("%s.%s type %s, want %s", name, c.name, typ, c.typ))
+				problems = append(problems, fmt.Sprintf("%s missing column %s", name, c[0]))
+			case typ != c[1]:
+				problems = append(problems, fmt.Sprintf("%s.%s type %s, want %s", name, c[0], typ, c[1]))
 			}
 		}
-		for _, col := range sortedKeys(got.columns) {
-			if _, ok := expected[col]; !ok {
-				problems = append(problems, fmt.Sprintf("%s unexpected column %s", name, col))
+		var extra []string
+		for col := range got.columns {
+			if !expected[col] {
+				extra = append(extra, col)
 			}
+		}
+		slices.Sort(extra)
+		for _, col := range extra {
+			problems = append(problems, fmt.Sprintf("%s unexpected column %s", name, col))
 		}
 	}
 	if len(problems) > 0 {
@@ -191,9 +158,8 @@ func CheckSchema(ctx context.Context, conn signal.Conn, database string) error {
 	return nil
 }
 
-// engineVersionColumn returns the last engine argument of a Replacing engine
-// (its version column), e.g. "recorded_at" from
-// ReplicatedReplacingMergeTree('/path', '{replica}', recorded_at) ORDER BY ...
+// engineVersionColumn is a Replacing engine's last argument, its version
+// column: recorded_at in ReplicatedReplacingMergeTree('/path', '{replica}', recorded_at).
 func engineVersionColumn(engineFull string) string {
 	open := strings.Index(engineFull, "(")
 	if open < 0 {

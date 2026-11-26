@@ -6,12 +6,14 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/contentkit/access"
 	content "github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/clientaddr"
 	"github.com/open-rails/contentkit/internal/httpapi"
+	"github.com/open-rails/contentkit/internal/signalstore"
 	"github.com/open-rails/contentkit/kinds"
 )
 
@@ -33,12 +35,24 @@ func newReactions(rt *Runtime) *reactions {
 // applyTx performs the 3-state upsert for (key, actor) inside tx and returns
 // the count deltas (each -1/0/+1) so the caller can denormalize a split counter
 // in the same transaction. Neutral (0) is a stored state, not a delete (neutral
-// with no row is a no-op). Every value change takes a fresh preference
-// revision under the row lock.
+// with no row is a no-op).
 //
 // Concurrency: SELECT ... FOR UPDATE locks the existing row; a lost insert race
 // re-selects and updates. Exact under concurrent double-like and switches.
-func (r *reactions) applyTx(ctx context.Context, tx pgx.Tx, actor access.Actor, key contentref.ContentKey, value int16) (dLikes, dDislikes int, err error) {
+// anon is a signed-out reactor's anonymous subject, kept on its row.
+func (r *reactions) applyTx(ctx context.Context, tx pgx.Tx, actor access.Actor, key contentref.ContentKey, value int16, anon uuid.UUID) (dLikes, dDislikes int, err error) {
+	dLikes, dDislikes, err = r.apply(ctx, tx, actor, key, value)
+	if userID, ip, _ := reactionKey(actor); err == nil && userID == "" && anon != uuid.Nil {
+		_, err = tx.Exec(ctx, `UPDATE `+r.s.t.reactions+` SET anonymous_subject = $6 WHERE `+keyPred(1)+` AND `+actorPred("", 5)+`
+ AND anonymous_subject IS DISTINCT FROM $6`, append(keyArgs(key), ip, anon)...)
+		if err == nil && r.rt.touch != nil {
+			err = r.rt.touch(ctx, tx, anon)
+		}
+	}
+	return dLikes, dDislikes, err
+}
+
+func (r *reactions) apply(ctx context.Context, tx pgx.Tx, actor access.Actor, key contentref.ContentKey, value int16) (dLikes, dDislikes int, err error) {
 	userID, ip, ok := reactionKey(actor)
 	if !ok {
 		return 0, 0, badRequest("cannot identify reactor (no user id or ip)")
@@ -72,7 +86,7 @@ func (r *reactions) applyTx(ctx context.Context, tx pgx.Tx, actor access.Actor, 
 	// ON CONFLICT DO NOTHING makes the losing racer block on the other tx then
 	// no-op; a bare INSERT would abort the whole transaction.
 	tag, err := tx.Exec(ctx, `INSERT INTO `+r.s.t.reactions+`
-		(`+keyCols+`, user_id, ip, value, revision, author_hidden, import_source) VALUES ($1, $2, $3, $4, $5, $6, $7, `+r.s.nextRevision()+`, $8, '')`+onConflict(userID),
+		(`+keyCols+`, user_id, ip, value, author_hidden, import_source) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, '')`+onConflict(userID),
 		append(keyArgs(key), nullIf(userID), nullIf(ip), value, hidden)...)
 	if err != nil {
 		return 0, 0, err
@@ -104,7 +118,7 @@ func (r *reactions) applyTx(ctx context.Context, tx pgx.Tx, actor access.Actor, 
 }
 
 func (r *reactions) update(ctx context.Context, tx pgx.Tx, userID, ip string, key contentref.ContentKey, value int16) error {
-	_, err := tx.Exec(ctx, `UPDATE `+r.s.t.reactions+` SET import_source = '', value = $1, revision = `+r.s.nextRevision()+`, updated_at = now()
+	_, err := tx.Exec(ctx, `UPDATE `+r.s.t.reactions+` SET import_source = '', value = $1, updated_at = now()
 		WHERE `+keyPred(2)+` AND `+actorPred(userID, 6), append([]any{value}, append(keyArgs(key), actorArg(userID, ip))...)...)
 	return err
 }
@@ -134,7 +148,7 @@ func (r *reactions) lockExisting(ctx context.Context, tx pgx.Tx, userID, ip stri
 // react applies the reaction under the canonical reference, which it
 // returns. The actor must see the target's reactions: content they open, or
 // whose kind's locked view shows reactions.
-func (r *reactions) react(ctx context.Context, actor access.Actor, target contentref.ContentRef, value int16) (contentref.ContentRef, error) {
+func (r *reactions) react(ctx context.Context, actor access.Actor, target contentref.ContentRef, value int16, anon uuid.UUID) (contentref.ContentRef, error) {
 	if actor.Account != nil && !actor.Member() {
 		return contentref.ContentRef{}, errForbidden
 	}
@@ -153,7 +167,7 @@ func (r *reactions) react(ctx context.Context, actor access.Actor, target conten
 	if err := r.rt.guardErasedSubject(ctx, tx, viewerID(actor)); err != nil {
 		return contentref.ContentRef{}, err
 	}
-	if _, _, err := r.applyTx(ctx, tx, actor, ref.Key(), value); err != nil {
+	if _, _, err := r.applyTx(ctx, tx, actor, ref.Key(), value, anon); err != nil {
 		return contentref.ContentRef{}, err
 	}
 	return ref, tx.Commit(ctx)
@@ -239,7 +253,10 @@ func (r *reactions) handleSet(typ content.TargetType, value int16) http.HandlerF
 		}
 		var ref contentref.ContentRef
 		if err == nil {
-			ref, err = r.react(req.Context(), actor, target, value)
+			ref, err = r.react(req.Context(), actor, target, value, r.rt.anonymousSubject(req, actor))
+		}
+		if err == nil {
+			r.rt.logActivity(req, actor, signalstore.ActionReaction, ref, value)
 		}
 		var cnt content.ReactionCounts
 		if err == nil {

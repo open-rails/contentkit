@@ -10,27 +10,27 @@ import (
 	discovery "github.com/open-rails/contentkit/discovery"
 	"github.com/open-rails/contentkit/internal/gate"
 	"github.com/open-rails/contentkit/internal/httpapi"
-	signalstore "github.com/open-rails/contentkit/internal/signalstore"
-	"github.com/open-rails/contentkit/signal"
+	"github.com/open-rails/contentkit/internal/readingstore"
+	"github.com/open-rails/contentkit/internal/subject"
 )
 
 var statsRoutes = []httpapi.Route[handler]{
-	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/stats/activity", Resource: "stats", Auth: httpapi.Staff, Perm: string(access.ContentViewRestricted),
-		Doc:       "A content kind's measured readership for every UTC day of the period, newest first: distinct people who read or played it (a visit without reading never counts), split into application-defined cohorts, with their focused active time, from the signal plane.",
-		Query:     []httpapi.Param{httpapi.Text("kind", "the content kind; required"), httpapi.Int("days", "the last days, today included: 10 by default, at most 90")},
-		Responses: []httpapi.Reply{httpapi.OK(discovery.Activity{})}, Errors: signals}, Serve: httpapi.H(handler.activity)},
+	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/stats/active", Resource: "stats", Auth: httpapi.Staff, Perm: string(access.ContentViewRestricted),
+		Doc:       "Distinct people active on the site for every UTC day of the period, newest first, by access (anonymous, account or the tiers an account's token claimed), from the analytics job's daily rollups; today is as of its last hourly rebuild.",
+		Query:     []httpapi.Param{httpapi.Int("days", "the last days, today included: 10 by default, at most 90")},
+		Responses: []httpapi.Reply{httpapi.OK(discovery.ActiveDays{})}, Errors: signals}, Serve: httpapi.H(handler.active)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/me/stats", Resource: "stats", Auth: httpapi.User,
 		Doc:       "The signed-in reader's account statistics: the contents they finished per kind, their comments and the reactions those received, and elapsed access seconds per tier when billing supplies its history.",
 		Responses: []httpapi.Reply{httpapi.OK(discovery.MyStats{})}}, Serve: httpapi.H(handler.myStats)},
 }
 
-func (h handler) activity(w http.ResponseWriter, r *http.Request) {
+func (h handler) active(w http.ResponseWriter, r *http.Request) {
 	days, err := intParam(r, "days")
 	if err != nil {
 		h.fail(w, r, err)
 		return
 	}
-	out, err := h.s.Activity(r.Context(), r.URL.Query().Get("kind"), days)
+	out, err := h.s.Active(r.Context(), days)
 	h.reply(w, r, out, err)
 }
 
@@ -39,16 +39,10 @@ func (h handler) myStats(w http.ResponseWriter, r *http.Request) {
 	h.reply(w, r, out, err)
 }
 
-// Activity reads a kind's measured readership per day of the last days (10 by default, at
-// most 90).
-func (s *Service) Activity(ctx context.Context, kind string, days int) (discovery.Activity, error) {
-	out := discovery.Activity{Days: []discovery.ActivityDay{}, Cohorts: []string{}}
-	for _, cohort := range s.o.ActivityCohorts {
-		out.Cohorts = append(out.Cohorts, cohort.ID)
-	}
-	if _, ok := s.o.Kinds.Kinds[kind]; !ok {
-		return out, fmt.Errorf("%w: kind %q is not configured", ErrInvalid, kind)
-	}
+// Active reads the site's active people per day of the last days (10 by
+// default, at most 90) from audience_daily.
+func (s *Service) Active(ctx context.Context, days int) (discovery.ActiveDays, error) {
+	out := discovery.ActiveDays{Days: []discovery.ActiveDay{}}
 	switch {
 	case days == 0:
 		days = 10
@@ -60,30 +54,29 @@ func (s *Service) Activity(ctx context.Context, kind string, days int) (discover
 	if err := s.signals(); err != nil {
 		return out, err
 	}
-	now := s.o.Now()
-	got, err := s.o.Hub.Activity(ctx, kind, signalstore.LastDays(days, now), s.o.ActivityCohorts...)
+	store := s.o.Hub.Signals()
+	if store == nil {
+		return out, ErrSignalsDown
+	}
+	today := utcDay(s.o.Now())
+	from := today.AddDate(0, 0, 1-days)
+	got, err := store.ActiveDays(ctx, s.o.Tenant, from, today.AddDate(0, 0, 1))
 	if err != nil {
 		return out, err
 	}
-	byDay := make(map[string]signal.DayActivity, len(got))
-	for _, d := range got {
-		byDay[d.Day.Format(time.DateOnly)] = d
-	}
-	today := now.UTC()
 	for i := range days {
-		date := today.AddDate(0, 0, -i).Format(time.DateOnly)
-		d := byDay[date]
-		counts := make(map[string]uint64, len(out.Cohorts))
-		for _, id := range out.Cohorts {
-			counts[id] = d.Cohorts[id]
+		date := today.AddDate(0, 0, -i)
+		d := discovery.ActiveDay{Date: date.Format(time.DateOnly), ByAccess: map[string]uint64{}}
+		for access, n := range got[date] {
+			d.ByAccess[access] = n
+			d.People += n
 		}
-		out.Days = append(out.Days, discovery.ActivityDay{Date: date, Readers: d.Readers, Cohorts: counts, ActiveMS: d.ActiveMS})
+		out.Days = append(out.Days, d)
 	}
 	return out, nil
 }
 
-// MyStats reads a person's account statistics; finished contents only with
-// a signal plane.
+// MyStats reads a person's account statistics.
 func (s *Service) MyStats(ctx context.Context, actor access.Actor) (discovery.MyStats, error) {
 	out := discovery.MyStats{Completed: map[string]int64{}}
 	if !actor.Member() {
@@ -102,18 +95,33 @@ func (s *Service) MyStats(ctx context.Context, actor access.Actor) (discovery.My
 		&out.Comments, &out.CommentLikes, &out.CommentDislikes); err != nil {
 		return out, err
 	}
-	if !s.o.Hub.SignalPlane() {
+	for _, kind := range s.kindNames() {
+		out.Completed[kind] = 0
+	}
+	who, ok := subject.Account(actor.AccountID())
+	if !ok {
 		return out, nil
 	}
-	subject := signal.Subject{UserID: actor.AccountID()}
-	for _, kind := range s.kindNames() {
-		n, err := s.o.Hub.CompletedCount(ctx, subject, kind)
-		if err != nil {
-			s.o.Logger.WarnContext(ctx, "discovery: completed counts unavailable", "err", err)
-			out.Completed = map[string]int64{}
-			return out, nil
-		}
-		out.Completed[kind] = n
+	rows, err := s.o.Pool.Query(ctx, `SELECT c.kind, count(*) FROM `+s.t.reading+` r JOIN `+s.t.items+` c ON c.tenant_id = $1 AND c.id = r.content_id::text
+ WHERE r.app_id = $2 AND r.subject = $3 AND r.best_outcome = $4 GROUP BY c.kind`, s.o.Tenant, s.app(), who, readingstore.OutcomeComplete)
+	if err != nil {
+		return out, err
 	}
-	return out, nil
+	defer rows.Close()
+	for rows.Next() {
+		var kind string
+		var n int64
+		if err := rows.Scan(&kind, &n); err != nil {
+			return out, err
+		}
+		if _, ok := out.Completed[kind]; ok {
+			out.Completed[kind] = n
+		}
+	}
+	return out, rows.Err()
+}
+
+func utcDay(t time.Time) time.Time {
+	u := t.UTC()
+	return time.Date(u.Year(), u.Month(), u.Day(), 0, 0, 0, 0, time.UTC)
 }

@@ -499,3 +499,19 @@ func claims(a access.Actor) []string {
 	}
 	return nil
 }
+
+// ClaimedTiers are the configured tiers the actor's token claims, sorted:
+// what it holds without a billing read.
+func (g *Gate) ClaimedTiers(actor access.Actor) []string {
+	if anonymous(actor) {
+		return nil
+	}
+	claimed := g.claimed(actor)
+	out := make([]string, 0, len(claimed))
+	for _, t := range g.tiers {
+		if claimed[t] {
+			out = append(out, t)
+		}
+	}
+	return out
+}

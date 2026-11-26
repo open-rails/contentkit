@@ -17,6 +17,9 @@ type Reader struct {
 	DisplayLanguage string
 	// Mode is lock (the default) or hide.
 	Mode access.Mode
+	// AnonymousID is a signed-out browser's anonymous id: its reading state
+	// and hidden galleries.
+	AnonymousID string
 }
 
 const (

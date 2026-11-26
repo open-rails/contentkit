@@ -157,14 +157,22 @@ type ViewerState struct {
 	Favorited bool `json:"favorited"`
 	// Reaction is their like (1) or dislike (-1) of the item; absent for neither.
 	Reaction int `json:"reaction,omitempty"`
-	// Seen, Completed, Progress, ProgressMax and Resume (the client's own
-	// pointer, such as a page) come from the signal plane. Progress counts
-	// whole pages for a reader and seconds for a player.
+	// Seen, Completed, Outcome, Progress, Position and Hidden are their
+	// reading state, which the analytics job keeps about 15 minutes behind
+	// (hiding is at once). Progress is the furthest page of a reader or
+	// second of a player, of ProgressMax, the version's length, and Percent
+	// the share of it, 0-100; Position is the last reported point; Outcome
+	// the best read so far: bounce, neutral, good or complete. A signed-out
+	// reader's come from its anonymous id; Favorited and Reaction need an
+	// account.
 	Seen        bool       `json:"seen"`
 	Completed   bool       `json:"completed"`
+	Outcome     string     `json:"outcome,omitempty"`
 	Progress    uint32     `json:"progress"`
 	ProgressMax uint32     `json:"progress_max"`
-	Resume      string     `json:"resume,omitempty"`
+	Percent     uint8      `json:"percent"`
+	Position    *uint32    `json:"position,omitempty"`
+	Hidden      bool       `json:"hidden,omitempty"`
 	LastReadAt  *time.Time `json:"last_read_at,omitempty"`
 }
 

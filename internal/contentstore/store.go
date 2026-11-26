@@ -27,8 +27,6 @@ type store struct {
 	qs     string // quoted schema
 	tenant string
 	t      tables
-	// revisionSeq is the schema-qualified preference revision sequence.
-	revisionSeq string
 }
 
 // tables are the fully-qualified ("schema"."name") identifiers, sanitized once.
@@ -47,9 +45,6 @@ type tables struct {
 	entities      string
 	bannedWords   string
 	ipBans        string
-
-	preferenceSync   string
-	preferenceCursor string
 }
 
 func newStore(pool *pgxpool.Pool, schema, tenant string) *store {
@@ -74,11 +69,7 @@ func newStore(pool *pgxpool.Pool, schema, tenant string) *store {
 			entities:      q("content_entities"),
 			bannedWords:   q("content_banned_words"),
 			ipBans:        q("content_ip_bans"),
-
-			preferenceSync:   q("content_preference_sync"),
-			preferenceCursor: q("content_preference_cursor"),
 		},
-		revisionSeq: revisionSeqName(schema),
 	}
 }
 

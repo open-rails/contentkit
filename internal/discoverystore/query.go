@@ -25,8 +25,8 @@ import (
 	contentstore "github.com/open-rails/contentkit/internal/contentstore"
 	"github.com/open-rails/contentkit/internal/edition"
 	entitlement "github.com/open-rails/contentkit/internal/entitlement"
+	"github.com/open-rails/contentkit/internal/readingstore"
 	"github.com/open-rails/contentkit/kinds"
-	"github.com/open-rails/contentkit/signal"
 )
 
 // Filter selects contents: what lists, search and release dates share.
@@ -53,8 +53,7 @@ type Filter struct {
 	ReleasedOn string
 	// TimeZone is an IANA zone; UTC by default.
 	TimeZone string
-	// ViewStatus is unseen, in_progress or completed: the signed-in
-	// reader's own.
+	// ViewStatus is unseen, in_progress or completed: the reader's own.
 	ViewStatus string
 	// ChannelIDs keeps content one of these channels owns (the original feed);
 	// owning is not membership and opens nothing.
@@ -70,9 +69,6 @@ type Filter struct {
 	// Tiers keeps content locked behind one of these tiers.
 	Tiers []string
 }
-
-// historyDepth bounds the reader history a view_status filter reads.
-const historyDepth = 10_000
 
 // sel is one compiled request: the reader's predicate over content_facets
 // row f, with its args.
@@ -247,8 +243,13 @@ func (s *Service) compileWithViewer(ctx context.Context, r discovery.Reader, f F
 		}
 		q.and("f.published_at >= @d_from AND f.published_at < @d_to", pgx.NamedArgs{"d_from": from, "d_to": to})
 	}
+	if who, known := s.reader(r); known {
+		// Hidden galleries leave every list the reader is served.
+		q.and(`NOT EXISTS (SELECT 1 FROM `+s.t.reading+` h WHERE h.app_id = @d_app AND h.subject = @d_reader AND h.content_id = f.content_id::uuid AND h.hidden)`,
+			pgx.NamedArgs{"d_app": s.app(), "d_reader": who})
+	}
 	if f.ViewStatus != "" {
-		if err := s.viewStatus(ctx, q, r.Actor, f.Kind, f.ViewStatus); err != nil {
+		if err := s.viewStatus(q, f.ViewStatus); err != nil {
 			return nil, err
 		}
 	}
@@ -351,45 +352,25 @@ func releasedOn(v string, loc *time.Location) (time.Time, time.Time, error) {
 }
 
 // viewStatus keeps the reader's in-progress or completed contents, or drops
-// those they have seen, read from the signal plane.
-func (s *Service) viewStatus(ctx context.Context, q *sel, actor access.Actor, kind, status string) error {
-	if !actor.Member() {
-		return fmt.Errorf("%w: view_status needs a signed-in reader", ErrInvalid)
+// those they opened or hid ("new to you"), from their reading state; a
+// signed-out reader's by its anonymous id.
+func (s *Service) viewStatus(q *sel, status string) error {
+	who, known := s.reader(q.reader)
+	if !known {
+		return fmt.Errorf("%w: view_status needs a signed-in reader or an anonymous id", ErrInvalid)
 	}
-	if err := s.signals(); err != nil {
-		return err
+	if status == discovery.Unseen {
+		pred, args := readingstore.ExcludeSeen(s.o.Schema, s.app(), who, readingstore.SeenOpened, "f.content_id")
+		q.and(pred, args)
+		return nil
 	}
-	subject := signal.Subject{UserID: actor.AccountID()}
-	var ids []string
+	read := `SELECT 1 FROM ` + s.t.reading + ` v WHERE v.app_id = @d_app AND v.subject = @d_reader AND v.content_id = f.content_id::uuid AND v.last_seen_at IS NOT NULL`
+	args := pgx.NamedArgs{"d_app": s.app(), "d_reader": who, "d_complete": readingstore.OutcomeComplete}
 	switch status {
-	case discovery.InProgress, discovery.Completed:
-		hs := signal.HistoryInProgress
-		if status == discovery.Completed {
-			hs = signal.HistoryCompleted
-		}
-		rows, err := s.o.Hub.History(ctx, subject, signal.HistoryOptions{ContentKind: kind, Status: hs, Limit: historyDepth})
-		if err != nil {
-			return err
-		}
-		for _, r := range rows {
-			ids = append(ids, r.ContentID)
-		}
-		q.and("f.content_id = ANY(@d_viewed::text[])", pgx.NamedArgs{"d_viewed": nonNil(ids)})
-	case discovery.Unseen:
-		ks := []string{kind}
-		if kind == "" {
-			ks = s.kindNames()
-		}
-		for _, k := range ks {
-			seen, err := s.o.Hub.SeenIDs(ctx, subject, k)
-			if err != nil {
-				return err
-			}
-			for id := range seen {
-				ids = append(ids, id)
-			}
-		}
-		q.and("f.content_id <> ALL(@d_seen::text[])", pgx.NamedArgs{"d_seen": nonNil(ids)})
+	case discovery.InProgress:
+		q.and("EXISTS ("+read+" AND v.best_outcome < @d_complete)", args)
+	case discovery.Completed:
+		q.and("EXISTS ("+read+" AND v.best_outcome = @d_complete)", args)
 	default:
 		return fmt.Errorf("%w: view_status %q is unseen, in_progress or completed", ErrInvalid, status)
 	}

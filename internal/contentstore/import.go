@@ -475,9 +475,8 @@ func (rt *Runtime) ImportComments(ctx context.Context, tx pgx.Tx, in []content.I
 	return rt.settle(ctx, tx, later, Recounts{keys: keys, threads: threads})
 }
 
-// ImportReactions writes reactions in tx: a new value takes a fresh
-// preference revision, so preference sync exports it. Counts follow, or
-// later recounts them.
+// ImportReactions writes reactions in tx. Counts follow, or later recounts
+// them.
 func (rt *Runtime) ImportReactions(ctx context.Context, tx pgx.Tx, in []content.ImportReaction, later *Recounts) error {
 	if len(in) == 0 {
 		return nil
@@ -546,12 +545,12 @@ func (rt *Runtime) ImportReactions(ctx context.Context, tx pgx.Tx, in []content.
 		if err != nil {
 			return err
 		}
-		if _, err := tx.Exec(ctx, `INSERT INTO `+s.t.reactions+` AS x (tenant_id, content_kind, content_id, content_version_id, user_id, ip, value, revision,
+		if _, err := tx.Exec(ctx, `INSERT INTO `+s.t.reactions+` AS x (tenant_id, content_kind, content_id, content_version_id, user_id, ip, value,
  created_at, updated_at, author_hidden, import_source)
- SELECT $1, r.kind, r.id, r.version, r.user_id, r.ip, r.value, `+s.nextRevision()+`, r.created_at, r.updated_at,
+ SELECT $1, r.kind, r.id, r.version, r.user_id, r.ip, r.value, r.created_at, r.updated_at,
  EXISTS (SELECT 1 FROM `+rt.hiddenAuthorsTable()+` h WHERE h.tenant_id=$1 AND h.actor_id=r.user_id), NULLIF(r.source, '')
  FROM jsonb_to_recordset($2::jsonb) AS r(kind text, id text, version text, user_id text, ip text, value smallint, created_at timestamptz, updated_at timestamptz, source text)
- ON CONFLICT `+part.target+` DO UPDATE SET value = EXCLUDED.value, revision = `+s.nextRevision()+`, updated_at = EXCLUDED.updated_at, import_source = EXCLUDED.import_source
+ ON CONFLICT `+part.target+` DO UPDATE SET value = EXCLUDED.value, updated_at = EXCLUDED.updated_at, import_source = EXCLUDED.import_source
  WHERE (x.import_source = EXCLUDED.import_source OR
   (x.import_source IS NULL AND EXCLUDED.import_source IS NOT NULL AND EXCLUDED.user_id IS NOT NULL AND EXCLUDED.value = 0))
  AND x.value <> EXCLUDED.value`, rt.tenant, string(data)); err != nil {
@@ -561,8 +560,8 @@ func (rt *Runtime) ImportReactions(ctx context.Context, tx pgx.Tx, in []content.
 	return rt.settle(ctx, tx, later, Recounts{keys: keys})
 }
 
-// ImportFavorites writes bookmarks in tx: a new one takes a fresh preference
-// revision. Counts follow, or later recounts them.
+// ImportFavorites writes bookmarks in tx. Counts follow, or later recounts
+// them.
 func (rt *Runtime) ImportFavorites(ctx context.Context, tx pgx.Tx, in []content.ImportFavorite, later *Recounts) error {
 	if len(in) == 0 {
 		return nil
@@ -606,11 +605,11 @@ func (rt *Runtime) ImportFavorites(ctx context.Context, tx pgx.Tx, in []content.
 		return err
 	}
 	s := rt.store
-	if _, err := tx.Exec(ctx, `INSERT INTO `+s.t.favorites+` AS f (app_id, user_id, content_kind, content_id, content_version_id, value, revision,
+	if _, err := tx.Exec(ctx, `INSERT INTO `+s.t.favorites+` AS f (app_id, user_id, content_kind, content_id, content_version_id, value,
  created_at, updated_at, import_source)
- SELECT $1::uuid, r.user_id, r.kind, r.id, r.version, r.value, `+s.nextRevision()+`, r.created_at, r.created_at, NULLIF(r.source, '')
+ SELECT $1::uuid, r.user_id, r.kind, r.id, r.version, r.value, r.created_at, r.created_at, NULLIF(r.source, '')
  FROM jsonb_to_recordset($2::jsonb) AS r(user_id uuid, kind text, id uuid, version uuid, value smallint, source text, created_at timestamptz)
- ON CONFLICT (app_id, user_id, content_kind, content_id, content_version_id) WHERE user_id IS NOT NULL DO UPDATE SET value = EXCLUDED.value, revision = `+s.nextRevision()+`,
+ ON CONFLICT (app_id, user_id, content_kind, content_id, content_version_id) WHERE user_id IS NOT NULL DO UPDATE SET value = EXCLUDED.value,
   created_at = EXCLUDED.created_at, updated_at = clock_timestamp(), import_source = EXCLUDED.import_source
  WHERE (f.import_source = EXCLUDED.import_source OR
   (f.import_source IS NULL AND EXCLUDED.import_source IS NOT NULL AND EXCLUDED.value = 0))
@@ -1160,21 +1159,6 @@ func (rt *Runtime) recountVotes(ctx context.Context, tx pgx.Tx, polls map[string
  FROM `+s.t.pollOptions+` x LEFT JOIN (SELECT option_id, count(*)::int AS votes FROM `+s.t.pollVotes+` WHERE tenant_id = $2 AND question_id = ANY($1::uuid[])
   GROUP BY option_id) c ON c.option_id = x.id WHERE x.tenant_id = $2 AND x.question_id = ANY($1::uuid[])) n
  WHERE o.tenant_id = $2 AND o.id = n.id AND o.vote_count <> n.votes`, ids, rt.tenant)
-	return err
-}
-
-// RaisePreferenceFloor advances the preference revision sequence so every
-// later revision exceeds floor: after a Postgres restore, past the newest
-// revision a retained signal plane holds. It never moves it back and fails
-// outside the safe range.
-func (rt *Runtime) RaisePreferenceFloor(ctx context.Context, tx pgx.Tx, floor int64) error {
-	if floor < 0 || floor > maxPreferenceRevisionFloor {
-		return invalidImport("preference floor %d is outside [0, %d]", floor, int64(maxPreferenceRevisionFloor))
-	}
-	s := rt.store
-	_, err := tx.Exec(ctx, `SELECT setval('`+s.revisionSeq+`', greatest($1::bigint, (SELECT last_value FROM `+s.revisionSeq+`),
- (SELECT coalesce(max(revision), 0) FROM `+s.t.reactions+`), (SELECT coalesce(max(revision), 0) FROM `+s.t.favorites+`)))
- WHERE $1::bigint > (SELECT CASE WHEN is_called THEN last_value ELSE last_value - 1 END FROM `+s.revisionSeq+`)`, floor)
 	return err
 }
 

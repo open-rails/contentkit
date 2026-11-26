@@ -46,7 +46,7 @@ func (e *Engine) ReplayErasureFences(ctx context.Context) (signal.ErasureReport,
 		}
 	}
 	for after := ""; ; {
-		actors, err := e.erasedAccountRecipients(ctx, after, min(1000, signal.MaxErasureSubjects))
+		actors, err := e.erasedAccountRecipients(ctx, after, 1000)
 		if err != nil || len(actors) == 0 {
 			return report, err
 		}
@@ -71,7 +71,7 @@ func (e *Engine) ReplayAccountErasures(ctx context.Context) (signal.ErasureRepor
 	for after := ""; ; {
 		rows, err := e.pool.Query(ctx, `SELECT r.actor_id FROM (`+e.accountAnonymizationQuery()+`) r
 WHERE r.actor_id>$4 AND NOT EXISTS(SELECT 1 FROM `+pgx.Identifier{e.schema, "content_account_lifecycle"}.Sanitize()+` a WHERE a.tenant_id=$3 AND a.actor_id=r.actor_id AND a.state='purged')
-ORDER BY r.actor_id LIMIT $5`, append(args, after, min(1000, signal.MaxErasureSubjects))...)
+ORDER BY r.actor_id LIMIT $5`, append(args, after, 1000)...)
 		if err != nil {
 			return report, err
 		}

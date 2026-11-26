@@ -7,8 +7,6 @@ import (
 	"time"
 
 	discovery "github.com/open-rails/contentkit/discovery"
-	signalstore "github.com/open-rails/contentkit/internal/signalstore"
-	"github.com/open-rails/contentkit/signal"
 )
 
 // popularOrder reads only the configured bucket's stored snapshot. Cold buckets
@@ -36,7 +34,7 @@ func popularSort(raw string) (string, bool) {
 
 // rangeOrder ranked prepared daily activity, which is gone with ClickHouse's
 // daily popularity tables; a custom range has no source until rankings do.
-func (s *Service) rangeOrder(context.Context, string, signal.Window, discovery.Reader, string) (order, *discovery.PopularitySnapshot, error) {
+func (s *Service) rangeOrder(context.Context, string, dayWindow, discovery.Reader, string) (order, *discovery.PopularitySnapshot, error) {
 	return order{}, nil, fmt.Errorf("%w: popularity over a custom range is unavailable", ErrInvalid)
 }
 
@@ -55,12 +53,15 @@ func (e *popularityRangeError) Error() string {
 
 func (e *popularityRangeError) Unwrap() error { return ErrInvalid }
 
-func activityWindow(o ListOptions) (signal.Window, bool, error) {
+// dayWindow is a range of whole UTC days, [from, until).
+type dayWindow struct{ from, until time.Time }
+
+func activityWindow(o ListOptions) (dayWindow, bool, error) {
 	if o.ActivityFrom == "" && o.ActivityUntil == "" {
-		return signal.Window{}, false, nil
+		return dayWindow{}, false, nil
 	}
-	invalid := func(message string) (signal.Window, bool, error) {
-		return signal.Window{}, false, fmt.Errorf("%w: %s", ErrInvalid, message)
+	invalid := func(message string) (dayWindow, bool, error) {
+		return dayWindow{}, false, fmt.Errorf("%w: %s", ErrInvalid, message)
 	}
 	if o.ActivityFrom == "" || o.ActivityUntil == "" {
 		return invalid("activity_from and activity_until are required together")
@@ -76,13 +77,12 @@ func activityWindow(o ListOptions) (signal.Window, bool, error) {
 	if err != nil || until.IsZero() {
 		return invalid("activity_until must be a UTC date YYYY-MM-DD")
 	}
-	w := signalstore.Between(from, until)
-	if err := w.Validate(); err != nil {
+	if !from.Before(until) {
 		return invalid("activity_until must be after activity_from")
 	}
-	return w, true, nil
+	return dayWindow{from, until}, true, nil
 }
 
-func historicalSort(kind string, w signal.Window) string {
-	return discovery.SortPopular + ":" + kind + ":" + w.String()
+func historicalSort(kind string, w dayWindow) string {
+	return discovery.SortPopular + ":" + kind + ":[" + w.from.Format(time.DateOnly) + "," + w.until.Format(time.DateOnly) + ")"
 }
