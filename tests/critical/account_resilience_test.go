@@ -25,6 +25,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/authkit"
+	"github.com/open-rails/authkit/authtest"
 	"github.com/open-rails/authkit/iam"
 	"github.com/open-rails/authkit/notify"
 	ck "github.com/open-rails/contentkit"
@@ -36,12 +37,32 @@ import (
 	"github.com/open-rails/contentkit/signal"
 )
 
-// eraseAuthKitAccount purges id's account as AuthKit does: PurgeUsers ends
-// its recovery window and AuthKit's own River deletes it, its inbox erased in
-// the same transaction. ContentKit's consumer (AnonymizeAccount) has not run.
+// eraseAuthKitAccount purges id's account as a host does. AuthKit keeps every
+// live group owned (409 last_owner), so the host first hands each group the
+// account owns, such as its channels' scopes, to a steward. PurgeUsers then
+// ends the recovery window and AuthKit's own River deletes the account, its
+// inbox erased in the same transaction. ContentKit's consumer
+// (AnonymizeAccount) has not run.
 func eraseAuthKitAccount(t *testing.T, w *world, a *application, id string) {
 	t.Helper()
 	w.startAuth(t)
+	var steward *authtest.User
+	for m, err := range iam.All(func(p iam.PageRequest) (iam.ListPage[iam.Membership], error) {
+		return a.tenant.ListMemberships(t.Context(), iam.UserSubject(id), p)
+	}) {
+		must(t, err)
+		if !m.Role.IsOwner() {
+			continue
+		}
+		if steward == nil {
+			// An owner counts only once enrolled in a second factor, as in an
+			// ownership transfer.
+			u := authtest.NewUser(t, a.tenant)
+			u.TOTP = authtest.EnrollTOTP(t, a.tenant, u)
+			steward = &u
+		}
+		authtest.GrantRole(t, a.tenant, iam.GroupByID(m.Group.ID), iam.UserSubject(steward.ID), m.Role)
+	}
 	results, err := a.tenant.PurgeUsers(t.Context(), []string{id})
 	must(t, err)
 	for _, result := range results {

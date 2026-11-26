@@ -108,8 +108,17 @@ func TestHTTPAuthenticationMatrix(t *testing.T) {
 				if response.StatusCode != status {
 					t.Fatalf("%s %s returned %d, want %d; body=%s", method, row[2], response.StatusCode, status, body)
 				}
-				if status == 401 && !strings.HasPrefix(response.Header.Get("WWW-Authenticate"), "Bearer") {
-					t.Fatalf("credential refusal omitted challenge: %v", response.Header)
+				// The challenge names the scheme the credential came in (RFC 6750
+				// §3, RFC 9449 §7.1): a refused DPoP-bound session token is
+				// invalid_token under DPoP; none, or a Bearer one, is Bearer.
+				if challenge := response.Header.Get("WWW-Authenticate"); status == 401 {
+					if scheme, _, _ := strings.Cut(request.Header.Get("Authorization"), " "); scheme == "DPoP" {
+						if !strings.HasPrefix(challenge, "DPoP ") || !strings.Contains(challenge, `error="invalid_token"`) {
+							t.Fatalf("DPoP credential refusal omitted its DPoP invalid_token challenge: %v", response.Header)
+						}
+					} else if !strings.HasPrefix(challenge, "Bearer") {
+						t.Fatalf("credential refusal omitted challenge: %v", response.Header)
+					}
 				}
 				if method != "HEAD" {
 					var result struct {
