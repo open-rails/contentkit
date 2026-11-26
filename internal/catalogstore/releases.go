@@ -11,10 +11,14 @@ import (
 )
 
 // recordReleases records effective audience transitions under parent locks.
-// Receipts are independent of retained-log pruning and consumer cursors.
+// Receipts are independent of retained-log pruning and consumer cursors. A
+// receipt belongs to the version's first release, so re-publishing it never
+// repeats one; one is recorded only while the version is open.
 func (s *Store) recordReleases(ctx context.Context, tx pgx.Tx, ids []string) (int, error) {
-	rows, err := tx.Query(ctx, `SELECT f.content_id,f.version_id,f.kind,f.live_from,release,`+s.qs+`.content_release_key(release),availability.reopened
- FROM `+s.t.facets+` f CROSS JOIN LATERAL jsonb_array_elements(f.access_releases) release
+	rows, err := tx.Query(ctx, `SELECT f.content_id,f.version_id,f.kind,greatest(c.published_at,v.published_at),f.live_from,release,`+s.qs+`.content_release_key(release),availability.reopened
+ FROM `+s.t.facets+` f JOIN `+s.t.items+` c ON c.tenant_id=f.tenant_id AND c.id=f.content_id
+ JOIN `+s.t.versions+` v ON v.tenant_id=f.tenant_id AND v.id=f.version_id
+ CROSS JOIN LATERAL jsonb_array_elements(f.access_releases) release
  LEFT JOIN LATERAL (SELECT h.occurred_at AS reopened FROM `+s.qs+`.content_access_history h
  WHERE h.tenant_id=f.tenant_id AND h.content_id=f.content_id AND h.version_id=f.version_id AND h.id>(
  SELECT max(prior.id) FROM `+s.qs+`.content_access_history prior WHERE prior.tenant_id=f.tenant_id AND prior.content_id=f.content_id AND prior.version_id=f.version_id
@@ -30,7 +34,7 @@ func (s *Store) recordReleases(ctx context.Context, tx pgx.Tx, ids []string) (in
 	}
 	type candidate struct {
 		content, version, kind, key string
-		live                        time.Time
+		first, live                 time.Time
 		reopened                    *time.Time
 		release                     access.Release
 	}
@@ -38,7 +42,7 @@ func (s *Store) recordReleases(ctx context.Context, tx pgx.Tx, ids []string) (in
 	for rows.Next() {
 		var c candidate
 		var raw []byte
-		if err := rows.Scan(&c.content, &c.version, &c.kind, &c.live, &raw, &c.key, &c.reopened); err != nil {
+		if err := rows.Scan(&c.content, &c.version, &c.kind, &c.first, &c.live, &raw, &c.key, &c.reopened); err != nil {
 			rows.Close()
 			return 0, err
 		}
@@ -61,7 +65,7 @@ func (s *Store) recordReleases(ctx context.Context, tx pgx.Tx, ids []string) (in
 		if c.reopened != nil && c.reopened.After(at) {
 			at = *c.reopened
 		}
-		tag, err := tx.Exec(ctx, `INSERT INTO `+s.qs+`.content_release_receipts(tenant_id,content_id,version_id,release_key,live_from,occurred_at) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING`, s.tenant, c.content, c.version, c.key, c.live, at)
+		tag, err := tx.Exec(ctx, `INSERT INTO `+s.qs+`.content_release_receipts(tenant_id,content_id,version_id,release_key,live_from,occurred_at) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING`, s.tenant, c.content, c.version, c.key, c.first, at)
 		if err != nil {
 			return 0, err
 		}

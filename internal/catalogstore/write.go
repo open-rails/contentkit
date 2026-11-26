@@ -544,7 +544,8 @@ func (s *Store) putCodes(ctx context.Context, q entitystore.Querier, ids []strin
 }
 
 // Publish accepts durable publication now, or schedules it for a future At.
-// Already released files stay available while any new publication is pending.
+// Re-accepting an open publication keeps it readable while the new one is
+// pending; a future At hides it until then.
 func (s *Store) Publish(ctx context.Context, actor access.Actor, in []catalog.Publish) error {
 	ids := make([]string, len(in))
 	for i, p := range in {
@@ -579,8 +580,11 @@ func (s *Store) Publish(ctx context.Context, actor access.Actor, in []catalog.Pu
 			if p.At != nil && p.At.After(now) {
 				at = *p.At
 			}
-			if _, err := tx.Exec(ctx, `UPDATE `+s.t.items+` SET state = 'published', publish_at = $3::timestamptz
- WHERE tenant_id = $1 AND id = $2`, s.tenant, p.ContentID, at); err != nil {
+			// Re-accepting an open publication keeps its date, and so its
+			// live_from.
+			if _, err := tx.Exec(ctx, `UPDATE `+s.t.items+` SET state = 'published',
+ publish_at = CASE WHEN $4 AND state = 'published' AND (publish_at IS NULL OR publish_at <= $3) THEN publish_at ELSE $3::timestamptz END
+ WHERE tenant_id = $1 AND id = $2`, s.tenant, p.ContentID, at, !at.After(now)); err != nil {
 				return fx, err
 			}
 			fx.events = append(fx.events, catalog.Event{Type: catalog.EventContentScheduled, Kind: o.kind, ContentID: p.ContentID})
@@ -1043,8 +1047,9 @@ func (s *Store) updateVersion(ctx context.Context, tx pgx.Tx, contentID, kind st
 	if err := s.checkVersionRule(ctx, tx, r.access); err != nil {
 		return err
 	}
-	// Scheduling changes intent only. A prior completed release remains
-	// available until the publisher commits its replacement or withdrawal.
+	// Scheduling moves no files: a prior release stays in place until the
+	// publisher commits its replacement or withdrawal, though readers see the
+	// version only from its publish_at (RefreshFacets).
 	if _, err := tx.Exec(ctx, `UPDATE `+s.t.versions+` SET languages = $4, traits = $5, label = $6, state = $7, publish_at = $8,
  deleted_at = CASE WHEN $7 = 'deleted' THEN deleted_at END, access = $9, attributes = $10, ordinal = $11, cover = $12, updated_at = clock_timestamp(),
  revision = revision + 1, original_title=nullif($13,''),original_language=nullif($14,'')
