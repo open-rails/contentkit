@@ -9,6 +9,7 @@ import (
 	"github.com/open-rails/contentkit/contentref"
 	discovery "github.com/open-rails/contentkit/discovery"
 	entitlement "github.com/open-rails/contentkit/internal/entitlement"
+	"github.com/open-rails/contentkit/internal/rankings"
 	"github.com/open-rails/contentkit/internal/resolve"
 )
 
@@ -86,7 +87,9 @@ func recLimit(n int) int {
 }
 
 // Similar lists contents like the anchor content that the reader's listing
-// shows; of the anchor's kind unless the filter names one.
+// shows, of the anchor's kind unless the filter names one: those sharing its
+// most specific entities, rarer ones counting more, and its artist
+// (rankings.Engine.Similar).
 func (s *Service) Similar(ctx context.Context, anchorID string, o RecommendationOptions) (discovery.ContentPage, error) {
 	ctx = entitlement.WithMemo(ctx)
 	empty := discovery.ContentPage{Contents: []discovery.Card{}}
@@ -154,11 +157,7 @@ func (s *Service) Recommendations(ctx context.Context, o RecommendationOptions) 
 	hits, err := recs.Recommend(ctx, discovery.RecommendOptions{ContentKinds: s.searchKinds(o.Kind),
 		Limit: recLimit(o.Limit), Backfill: s.newest(q), Admit: a.admit,
 		Popular: func(ctx context.Context, kind string, limit int) ([]string, error) {
-			key, ok := s.rankingFor(ctx, o.Reader, kind, "")
-			if !ok {
-				return nil, nil
-			}
-			return s.topRanked(ctx, key, limit)
+			return s.topPopular(ctx, o.Reader, kind, rankings.Days30, limit)
 		}})
 	if err != nil {
 		return empty, err

@@ -78,7 +78,7 @@ bodies' wire and data types and its ports; its implementation is the
 | `internal/catalogstore` | content items, versions, `content_facets`, the one visibility rule, the `content_events` log ([cursor reads](docs/events.md)), search documents, totals, retention jobs |
 | `internal/entitystore`, `internal/channelstore` | entities by kind and channels: names, text, covers, scopes, merges, memberships |
 | `internal/contentstore` | comments, reactions, favorites, polls, bans, moderation, interaction limits |
-| `internal/discoverystore`, `internal/search`, `internal/popularity` | public reads: lists, search, typeahead, similar and recommended, release dates, history; keyword search; ranking policy |
+| `internal/discoverystore`, `internal/search`, `internal/rankings` | public reads: lists, search, typeahead, similar and recommended, release dates, history; keyword search; popularity rankings and similar lists ([popularity](docs/popularity.md)) |
 | `internal/signalstore`, `internal/readingstore`, `internal/analytics` | the ClickHouse activity log and daily rollups; reading state, history and sign-in links in PostgreSQL; the job folding one into the other ([docs/analytics.md](docs/analytics.md)) |
 | `internal/mediastore`, `internal/versionstore` | media manifests, uploads, reads, processing records; version reader plans, publication and downloads |
 | `internal/entitlement` | the access `Gate`, its listing `Filter` and the request memo |
@@ -121,8 +121,8 @@ for _, r := range routes {
   scope, with tenant-shared account media. Content kinds' media are their
   versions' (`media.ForContent`, the `media/versions` service). All content
   belongs to ContentKit: hosts create it through `/v1/contents` (or `Client()`).
-- `Start` runs every background job: search indexing, the analytics job,
-  entity popularity, publication events, event retention and content purge,
+- `Start` runs every background job: search indexing, the analytics job and
+  its ranking precompute, publication events, event retention and content purge,
   and the media jobs. Hosts schedule nothing. Start before
   serving: writes queue jobs.
 - The engine builds the access `Gate` from `Config.Content` and
@@ -381,13 +381,12 @@ Audio attachments are played as uploaded after verified placement, with no conve
 ## Entities
 
 Entity kinds come from `kinds.Config.EntityKinds` (ordered, parent, scoped_by,
-version_level, roles, attributes, popular). They describe content; channel ownership and
+version_level, roles, attributes, artist). They describe content; channel ownership and
 authority are configured separately with `channels` and a content kind's `channel`
 policy. See [Posts and channels](docs/posts-and-channels.md) for fixed staff blogs,
 creator feeds and reposts.
 
-`popular: {content_kind}` enables `sort=popular`, refreshed hourly from recent
-account favourites in Postgres. See [Entity popularity](docs/popularity-policy.md#entity-popularity).
+A public listing of one kind defaults to `sort=popular`: the sum of its contents' popularity on the site over `window`. `artist: true` marks the kinds that name who made the content: similar lists weigh a shared artist and their cards show a read-through rate. See [Popularity](docs/popularity.md).
 
 Reader editors use one page per stable version code. Shared entity edits use
 `PUT /contents/{id}/entities/shared`; per-version credits use
@@ -517,6 +516,11 @@ state and history. Product pages read only PostgreSQL. See
   immediate.
 - `AnonymizeAccount` deletes the account's reading and fences its rows; see
   [account lifecycle](HOST_INTEGRATION.md#account-lifecycle-and-interaction-erasure).
+- Popularity is quality-weighted person-days from `content_daily`, per site,
+  over featured windows (week, 30d, 90d, year, all, today included), calendar
+  months and years, or ranges of days; no decay. See [Popularity](docs/popularity.md).
+- Similar lists share the anchor's most specific entities and its artist; see
+  [discovery candidates](HOST_INTEGRATION.md#discovery-candidates).
 
 ## Testing
 

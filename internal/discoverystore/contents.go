@@ -18,15 +18,18 @@ import (
 type ListOptions struct {
 	discovery.Reader
 	Filter
-	// Sort is newest, oldest, title, popular[:period], top_rated,
-	// most_favorited, position or random; the kind's configured
-	// sort, else newest, by default. Popular suffixes are configured bucket IDs.
+	// Sort is newest, oldest, title, popular, top_rated, most_favorited,
+	// position or random; the kind's configured sort, else newest, by
+	// default. Popular needs Kind.
 	Sort string
-	// ActivityFrom and ActivityUntil choose a custom popularity window of whole
-	// UTC dates [from, until). Both require SortPopular and an explicit Kind.
-	// They select activity dates, independently of publication-date filters.
-	ActivityFrom  string
-	ActivityUntil string
+	// Window is the popular sort's ranking window (rankings.ParseWindow):
+	// week by default, a featured window, a calendar month or year, or a
+	// range of days. It selects activity days, independently of
+	// publication-date filters.
+	Window string
+	// SiteLanguage picks the popular sort's site when Language is empty:
+	// the request's Accept-Language.
+	SiteLanguage string
 	// CardEntities are the entity kinds cards name; every kind with a page by
 	// default.
 	CardEntities []string
@@ -71,36 +74,37 @@ func pageOffset(page, limit int, cursor, sort string) (int, error) {
 // matches the filter, in the sort's order.
 func (s *Service) List(ctx context.Context, o ListOptions) (discovery.ContentPage, error) {
 	ctx = entitlement.WithMemo(ctx)
-	window, custom, err := activityWindow(o)
-	if err != nil {
-		return discovery.ContentPage{Contents: []discovery.Card{}}, err
-	}
 	sort := s.sortName(o.Sort, o.Kind)
-	if custom {
-		sort = historicalSort(o.Kind, window)
+	if o.Window != "" && sort != discovery.SortPopular {
+		return discovery.ContentPage{Contents: []discovery.Card{}}, fmt.Errorf("%w: window needs sort=popular", ErrInvalid)
 	}
 	q, err := s.compile(ctx, o.Reader, o.Filter)
 	if err != nil {
 		return discovery.ContentPage{Contents: []discovery.Card{}}, err
 	}
-	var srt order
-	var snapshot *discovery.PopularitySnapshot
-	if custom {
-		srt, snapshot, err = s.rangeOrder(ctx, o.Kind, window, o.Reader, sort)
-	} else if id, popular := popularSort(sort); popular {
-		srt, snapshot, err = s.popularOrder(ctx, o.Kind, id, o.Reader, sort)
-	} else {
-		srt, err = s.parseSort(ctx, o.Sort, o.Filter)
-	}
-	if err != nil {
-		return discovery.ContentPage{Contents: []discovery.Card{}}, err
-	}
 	limit := pageLimit(o.Limit, 24)
-	offset, err := pageOffset(o.Page, limit, o.Cursor, sort)
-	if err != nil {
-		return discovery.ContentPage{Contents: []discovery.Card{}}, err
+	var picks []pick
+	var next string
+	var snapshot *discovery.PopularitySnapshot
+	var srt order
+	if sort == discovery.SortPopular {
+		var offset int
+		if offset, err = pageOffset(o.Page, limit, o.Cursor, sort); err != nil {
+			return discovery.ContentPage{Contents: []discovery.Card{}}, err
+		}
+		picks, next, snapshot, err = s.popular(ctx, q, popularQuery{reader: o.Reader, kind: o.Kind, window: o.Window, siteLanguage: o.SiteLanguage,
+			cursor: o.Cursor, limit: limit, offset: offset, niche: len(o.Filter.Entities) > 0, selective: o.Filter.selective()})
+		if err == nil {
+			srt, err = s.parseSort(ctx, discovery.SortNewest, Filter{})
+		}
+	} else {
+		var offset int
+		if srt, err = s.parseSort(ctx, o.Sort, o.Filter); err == nil {
+			if offset, err = pageOffset(o.Page, limit, o.Cursor, sort); err == nil {
+				picks, next, err = s.page(ctx, q, srt, o.Cursor, limit, offset)
+			}
+		}
 	}
-	picks, next, err := s.page(ctx, q, srt, o.Cursor, limit, offset)
 	if err != nil {
 		return discovery.ContentPage{Contents: []discovery.Card{}}, err
 	}

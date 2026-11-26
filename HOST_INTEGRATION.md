@@ -29,8 +29,8 @@ Behind PgBouncer in transaction mode, `Deps.Postgres` is the PgBouncer pool and 
 
 ### Jobs
 
-ContentKit runs its background work (search indexing, the analytics job,
-entity popularity, publication, retention and release work) on its own River
+ContentKit runs its background work (search indexing, the analytics job and
+its ranking precompute, publication, retention and release work) on its own River
 client, on `Deps.Postgres` in `Config.Database.RiverSchema` (default
 `{schema}_river`), never in a host's fleet or schema. `Start` builds that
 client so requests enqueue; it works nothing. The process that works jobs
@@ -908,7 +908,7 @@ that fits the reader (`display_language` first, then position).
   (`unseen|in_progress|completed`, signed in), `language` (only content
   serving it), `display_language`, `mode` (`lock` marks locked cards,
   `hide` lists only what the reader opens), `sort` (`newest`, `oldest`,
-  `title`, `popular[:period]`, `top_rated`, `most_favorited`,
+  `title`, `popular` (with `kind` and `window`; see [Popularity](docs/popularity.md)), `top_rated`, `most_favorited`,
   `position` in the first of `groups`, which must be of an ordered entity
   kind, `random`), `cursor`, `limit`. A reader's content filters never hide
   an entity's content from a list requiring that entity: a hidden tag's page
@@ -926,8 +926,8 @@ that fits the reader (`display_language` first, then position).
 - Cursors are opaque: one whose value, content id or seed is malformed, or from another sort, answers `400 invalid_request`, as do `tz=Local` and `time_zone=Local`. A `newest`/`oldest` cursor issued before v0.139 is refused once; restart from the first page.
 - `GET /contents/{id}/similar`, `GET /recommendations`: candidates admitted
   through the reader's visibility; see [discovery candidates](#discovery-candidates).
-  Recommendations fill from popularity, then the newest content the reader
-  has not seen, disliked or hidden.
+  Recommendations fill from the last 30 days' popularity, then the newest
+  content the reader has not seen, disliked or hidden.
 - `GET /release-dates` (`by=day|month`, the list filters): counts and free
   counts per date.
 - `GET /releases` (`days=10`, `time_zone=America/Denver`, the reader/content
@@ -937,8 +937,8 @@ that fits the reader (`display_language` first, then position).
   days, defaults to 10 and UTC, and has no item count cap or cursor. Reveal
   cards from that response in the browser; mount thumbnails only as needed.
   Future, unlisted and deleted publications are excluded.
-- Popular ordering uses the shared ContentKit quality score, not personal
-  affinity.
+- Popular ordering uses the shared quality-weighted popularity of the site,
+  not personal affinity.
 - `GET /content-filters` (public): the configured `content_filters`, their
   entrypoint defaults and the current reader's effective settings.
   `PATCH /me/content-filters` atomically merges submitted shared entity choices,
@@ -1595,24 +1595,11 @@ since the backup. Each host erases its own tenant.
 
 ## Discovery candidates
 
-Recommendations seed from the reader's recent good or complete reads; similar
-lists have no candidate source until the on-demand rankings land. The
-recommender applies one policy to them: tenant and kinds, never the anchor,
-seen, disliked and hidden works, the reader's visibility (admission in one
-batch), dedupe, limit, and the popularity fill.
+Similar lists are the contents sharing the anchor's most specific entities (rarer ones count more) and its artist, computed in Postgres and cached per content. Recommendations seed from the reader's recent good or complete reads and fuse each seed's similar list. The recommender applies one policy to its candidates: tenant and kinds, never the anchor, seen, disliked and hidden works, the reader's visibility (admission in one batch), dedupe, limit, and the popularity fill.
 
-## Popularity (policy-ranked)
+## Popularity
 
-Hosts declare popularity presets per content kind and scope. Preset requests
-read stored rankings; arbitrary whole-UTC-day ranges read prepared daily counts.
-The score is the mean daily `U/(N+20)`, where `U` counts qualified participants
-once per person/item/day and `N` is the day's active eligible audience. Arbitrary
-range requests outside trustworthy prepared coverage are rejected; an unprepared
-preset stays pending. Recent days remain provisional through the 24-hour receipt window,
-then finalized days are retained and reused until an explicit rebuild. See
-[docs/popularity-policy.md](docs/popularity-policy.md) for qualification,
-coverage, refresh and retention semantics. `top_rated` keeps its separate
-rating behavior.
+Popular lists rank by quality-weighted person-days from ClickHouse's `content_daily`, per site, over featured windows precomputed after each hourly rebuild, calendar months and years, or ranges of days. Pages never query ClickHouse for featured windows, and a failed precompute leaves the previous ranking served. See [docs/popularity.md](docs/popularity.md). `top_rated` keeps its separate rating behavior.
 
 ## Migration checklist
 
@@ -1727,6 +1714,6 @@ visitor. It applies that IP's location rules and the host's content-filter domai
 the trusted client IP, not an unverified forwarded header. HTTP integrations set
 `Config.TrustedProxies` or rewrite `RemoteAddr` in their own trusted-proxy step ([Client address](#client-address)). Each request reads enabled
 rules for its tenant and domain from Postgres; replicas retain no rule cache.
-Catalog totals and the global precomputed entity popularity ordering remain
-aggregate statistics, while returned content and public entity counts are
-filtered for the current visitor.
+Catalog totals and the cached popularity rankings remain aggregate statistics,
+while returned content and public entity counts are filtered for the current
+visitor.

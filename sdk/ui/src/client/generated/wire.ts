@@ -745,6 +745,7 @@ export interface EntityCard {
   attributes: Record<string, unknown>;
   access?: EntityAccess;
   created_at: string;
+  popularity?: EntityPopularity;
 }
 
 export interface EntityDetail {
@@ -800,17 +801,20 @@ export interface EntityKind {
   creatable?: boolean;
   roles?: string[];
   attributes?: Record<string, Attribute>;
-  popular?: EntityPopularity;
+  artist?: boolean;
 }
 
 export interface EntityPage {
   entities: EntityCard[];
   next_cursor?: string;
   total?: number;
+  popularity?: PopularWindow;
 }
 
 export interface EntityPopularity {
-  content_kind: string;
+  score: number;
+  polarization: number;
+  read_through?: ReadThrough;
 }
 
 export interface EntityRecord {
@@ -1139,7 +1143,6 @@ export interface Kind {
   attributes?: Record<string, Attribute>;
   channel?: ChannelPolicy;
   sort?: string;
-  popularity?: PopularityBucket[];
   locked?: Locked;
   download?: Download;
 }
@@ -1595,32 +1598,22 @@ export interface PollVote {
   option_id: string;
 }
 
-export interface PopularityBucket {
-  id: string;
-  label?: string;
-  days?: number;
-  from?: string;
-  until?: string;
-  all?: boolean;
-  scopes?: PopularityScope[];
-  refresh_every?: number;
-}
-
-export interface PopularityScope {
-  domain?: string;
-  language?: string;
+export interface PopularWindow {
+  window: string;
+  from: string;
+  until: string;
+  computed_at?: string;
+  ready: boolean;
+  stale?: boolean;
 }
 
 export interface PopularitySnapshot {
-  bucket: string;
-  ready: boolean;
-  window_from?: string;
-  window_until?: string;
-  from?: string;
-  until?: string;
-  available_from?: string;
+  window: string;
+  from: string;
+  until: string;
   computed_at?: string;
-  provisional?: boolean;
+  ready: boolean;
+  stale?: boolean;
 }
 
 export interface PresetRule {
@@ -1756,6 +1749,11 @@ export interface ReadResult {
   status?: MediaStatus;
   uploads?: UploadRule[];
   files: FileInfo[];
+}
+
+export interface ReadThrough {
+  rate: number;
+  readers: number;
 }
 
 export interface ReaderDefaults {

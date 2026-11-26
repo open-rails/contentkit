@@ -14,6 +14,7 @@ import (
 
 	"github.com/open-rails/authkit/auth"
 	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/contenturl"
 	entities "github.com/open-rails/contentkit/entities"
 	entitlement "github.com/open-rails/contentkit/internal/entitlement"
 	"github.com/open-rails/contentkit/internal/gate"
@@ -69,7 +70,9 @@ var routes = []httpapi.Route[handler]{
 			httpapi.Text("scope", "only entities scoped by this entity"), httpapi.Text("slug", "only the entity with this slug"),
 			httpapi.Text("letter", "only sort names starting with this letter (a-z), or with anything else (#)"), language,
 			httpapi.Text("content_kind", "count contents of this kind; every kind by default"),
-			httpapi.Text("sort", "name (the default), count, newest or popular (one kind with popularity; its hourly ranking, then count)"), httpapi.Text("cursor", "the previous page's next_cursor"),
+			httpapi.Text("sort", "popular (the default with kind: its popularity on this site over window, then the entities without activity by count), name (the default without kind), count or newest"),
+			httpapi.Text("window", "the popular sort's window: week (the default), 30d, 90d, year, all, month:YYYY-MM, year:YYYY or YYYY-MM-DD..YYYY-MM-DD"),
+			httpapi.Text("cursor", "the previous page's next_cursor"),
 			httpapi.Int("page", "a numbered page from 1 instead of cursor, with the total; page × limit is at most 10,000"),
 			httpapi.Int("limit", "page size: 50 by default, at most 200")},
 		Responses: []httpapi.Reply{httpapi.OK(entities.EntityPage{})}}, Serve: httpapi.H(handler.list)},
@@ -80,7 +83,8 @@ var routes = []httpapi.Route[handler]{
 		httpapi.List("ids", "only these entity ids (at most 100), in every state; one page, without state, cursor or page"),
 		httpapi.Text("state", "active (the default) or deleted, the restorable ones"), httpapi.Text("kind", "only entities of this kind"), httpapi.Text("parent", "only children of this entity"), httpapi.Text("scope", "only entities scoped by this entity"),
 		httpapi.Text("slug", "only the entity with this slug"), httpapi.Text("q", "match a canonical name, alias or slug; sorted by name, the exact matches come first"), httpapi.Text("letter", "only sort names starting with this letter"), language,
-		httpapi.Text("content_kind", "count contents of this kind"), httpapi.Text("sort", "name, count, newest or popular"), httpapi.Text("cursor", "the previous page's next_cursor"), httpapi.Int("limit", "page size: at most 200")),
+		httpapi.Text("content_kind", "count contents of this kind"), httpapi.Text("sort", "name (the default), count, newest or popular"),
+		httpapi.Text("window", "the popular sort's window, as for the public listing"), httpapi.Text("cursor", "the previous page's next_cursor"), httpapi.Int("limit", "page size: at most 200")),
 	staff(httpapi.GET, "/manage/entities/match", "Resolves names to active, public entities of one kind within one scope whose canonical name or alias equals each name, literally or normalized: one result per name in order, each with at most two ids, two meaning ambiguous. Merged and deleted entities never match; nothing is created or reserved.",
 		nil, httpapi.OK([]entities.NameMatch{}), httpapi.H(handler.match), nil,
 		httpapi.Text("kind", "required: the entity kind"), httpapi.Text("scope", "the entity the names are unique within; unscoped entities by default"),
@@ -263,7 +267,10 @@ func (h handler) listEntities(w http.ResponseWriter, r *http.Request, management
 	}
 	opts := ListOptions{Kind: q.Get("kind"), Parent: entities.EntityID(q.Get("parent")), Scope: entities.EntityID(q.Get("scope")),
 		Slug: q.Get("slug"), Letter: q.Get("letter"), Language: q.Get("language"), ContentKind: q.Get("content_kind"),
-		Sort: entities.Sort(q.Get("sort")), Cursor: q.Get("cursor"), Page: page, Limit: limit, IncludeInternal: management}
+		Sort: entities.Sort(q.Get("sort")), Window: q.Get("window"), Cursor: q.Get("cursor"), Page: page, Limit: limit, IncludeInternal: management}
+	if opts.Language == "" {
+		opts.SiteLanguage = contenturl.AcceptLanguage(h.s.cfg.Languages, r.Header.Get("Accept-Language"))
+	}
 	if management {
 		opts.Query = q.Get("q")
 		for _, id := range strings.Split(strings.Join(q["ids"], ","), ",") {

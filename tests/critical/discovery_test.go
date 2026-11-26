@@ -85,13 +85,6 @@ func TestDiscoveryVisibility(t *testing.T) {
 		{Name: "main", Hosts: []string{"restricted.invalid"}, RequireEntities: map[string][]kinds.EntityRef{"article": {{Kind: "tag", Slug: "required"}}}, Filters: []kinds.ContentFilter{{Entity: kinds.EntityRef{Kind: "tag", Slug: "choice"}, Visible: true}}},
 		{Name: "wide", Hosts: []string{"wide.invalid"}},
 	}}
-	article := a.cfg.Content.Kinds["article"]
-	article.Popularity = []kinds.PopularityBucket{
-		{ID: "7d", Days: 7, Scopes: []kinds.PopularityScope{{Domain: "main"}}},
-		{ID: "30d", Days: 30, Scopes: []kinds.PopularityScope{{Domain: "main"}}},
-		{ID: "november", From: "2025-11-01", Until: "2025-11-24", Scopes: []kinds.PopularityScope{{Domain: "main"}}},
-	}
-	a.cfg.Content.Kinds["article"] = article
 	a.cfg.Database.SkipMigrations = true
 	configureDiscoverySignals(t, w, a)
 	a.engine, err = ck.New(t.Context(), a.cfg, a.deps)
@@ -484,65 +477,6 @@ func TestDiscoveryVisibility(t *testing.T) {
 		must(t, err)
 		assertCards(t, unnamed.ContentPage, one.ID)
 	})
-	t.Run("CK-J07-S15_popular_list_follows_the_stored_ranking", func(t *testing.T) {
-		listed, err := public.GetContents(t.Context(), ck.GetContentsQuery{Kind: "article", Mode: "hide"})
-		must(t, err)
-		if len(listed.Contents) < 2 {
-			t.Fatalf("fixture lists %d articles; want at least two", len(listed.Contents))
-		}
-		var ranked []string
-		for i := len(listed.Contents) - 1; i >= 0; i-- {
-			ranked = append(ranked, listed.Contents[i].ID)
-		}
-		popular := func() []string {
-			t.Helper()
-			page, err := public.GetContents(t.Context(), ck.GetContentsQuery{Kind: "article", Sort: "popular:30d", Mode: "hide"})
-			must(t, err)
-			var ids []string
-			for _, card := range page.Contents {
-				ids = append(ids, card.ID)
-			}
-			return ids
-		}
-		if got := popular(); len(got) != 0 {
-			t.Fatalf("popular list before its ranking is built lists %v; want an empty prepared ranking", got)
-		}
-		_, err = w.pool.Exec(t.Context(), `INSERT INTO `+w.schema+`.content_popular_rankings (tenant_id,kind,period,domain,language,computed_at,content_ids)
- VALUES ($1,'article','30d','main','',now(),$2)
- ON CONFLICT (tenant_id,kind,period,domain,language) DO UPDATE SET computed_at=excluded.computed_at,content_ids=excluded.content_ids`, a.cfg.Scope.AppID.String(), ranked)
-		must(t, err)
-		if got := popular(); !reflect.DeepEqual(got, ranked) {
-			t.Fatalf("popular list order %v; want the stored ranking %v", got, ranked)
-		}
-	})
-	t.Run("CK-J07-S16_public_requests_cannot_create_popularity_work", func(t *testing.T) {
-		rankings := w.schema + ".content_popular_rankings"
-		var before int
-		must(t, w.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+rankings).Scan(&before))
-		for _, q := range []ck.GetContentsQuery{
-			{Kind: "article", Sort: "popular:unknown"},
-			{Kind: "article", Sort: "popular:7d", Language: "xx"},
-			{Kind: "missing", Sort: "popular:7d"},
-		} {
-			_, err := public.GetContents(t.Context(), q)
-			requireError(t, err, 400, "invalid_request")
-		}
-		_, err := wide.GetContents(t.Context(), ck.GetContentsQuery{Kind: "article", Sort: "popular:7d"})
-		requireError(t, err, 400, "invalid_request")
-		request, err := http.NewRequestWithContext(t.Context(), http.MethodGet, a.server.URL+"/content/v1/contents?kind=article&sort=popular&activity_from=2025-11-01&activity_until=2025-11-24", nil)
-		must(t, err)
-		response, err := (&http.Client{Transport: domainTransport{host: "restricted.invalid"}}).Do(request)
-		must(t, err)
-		response.Body.Close()
-		if response.StatusCode != 400 {
-			t.Fatalf("arbitrary activity range accepted: HTTP %d", response.StatusCode)
-		}
-		var after int
-		must(t, w.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+rankings).Scan(&after))
-		if after != before {
-			t.Fatalf("public requests created ranking rows: %d -> %d", before, after)
-		}
-	})
 	t.Run("CK-J07-S12_search_tolerates_one_edit_per_word", func(t *testing.T) {
 		for q, want := range map[string][]string{
 			"CriticalVsi": {one.ID, two.ID},
@@ -686,14 +620,11 @@ func TestDiscoveryVisibility(t *testing.T) {
 			cursor = page.NextCursor
 		}
 		assertCards(t, discovery.ContentPage{Contents: cards}, one.ID, two.ID)
-		// Similar never lists content the reader's policy excludes.
+		// Every fixture shares the required tag with one, so only the reader's
+		// policy keeps the excluded candidates out of the similar list.
 		similar, err := public.GetContentSimilar(t.Context(), one.ID, ck.GetContentSimilarQuery{Kind: "article", Mode: "hide"})
 		must(t, err)
-		for _, card := range similar.Contents {
-			if card.ID != two.ID {
-				t.Fatalf("similar listed excluded content %s", card.ID)
-			}
-		}
+		assertCards(t, similar, two.ID)
 		recommended, err := viewer.GetRecommendations(t.Context(), ck.GetRecommendationsQuery{Kind: "article", Mode: "hide"})
 		must(t, err)
 		assertCards(t, recommended, one.ID, two.ID)

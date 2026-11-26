@@ -1,6 +1,6 @@
 import { cn } from "cn";
 import { useCallback, useMemo, useState } from "react";
-import type { ContentQuery, ListSort } from "../../client/discovery.js";
+import type { ContentQuery, FeaturedWindow, ListSort } from "../../client/discovery.js";
 import { useLanguageName, useMessages } from "../../i18n/context.js";
 import type { MessageKey, Translator } from "../../i18n/messages.js";
 import { useKinds } from "../../react/entities.js";
@@ -10,11 +10,27 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "#
 import { labelOf } from "../entities/parts.js";
 import { ContentGrid, type CardListProps, type LockedCards } from "./grid.js";
 
-const SORTS: readonly ListSort[] = ["newest", "popular:7d", "popular:30d", "popular", "top_rated", "most_favorited", "title", "oldest"];
+/** A sort menu choice: a list sort, or popular over a featured window. */
+export type SortChoice = Exclude<ListSort, "popular"> | `popular:${FeaturedWindow}`;
+
+const SORTS: readonly SortChoice[] = ["newest", "popular:week", "popular:30d", "popular:all", "top_rated", "most_favorited", "title", "oldest"];
 const ANY = "*";
 
+/** A choice's query fields: popular:30d is sort popular over window 30d. */
+export function choiceQuery(choice: SortChoice): Pick<ContentQuery, "sort" | "window"> {
+  const [sort, window] = choice.split(":") as [ListSort, FeaturedWindow | undefined];
+  return window ? { sort, window } : { sort, window: undefined };
+}
+
+/** A query's choice: popular without a window is the week. */
+export function queryChoice(q: Pick<ContentQuery, "sort" | "window">): SortChoice | undefined {
+  if (q.sort !== "popular") return q.sort;
+  const w = q.window ?? "week";
+  return (["week", "30d", "90d", "year", "all"] as const).includes(w as FeaturedWindow) ? (`popular:${w}` as SortChoice) : "popular:week";
+}
+
 /** A sort's name: "Newest", "Popular, this week", "Best match". */
-export function sortLabel(m: Translator, sort: ListSort | "relevance"): string {
+export function sortLabel(m: Translator, sort: SortChoice | "popular" | "position" | "random" | "relevance"): string {
   const [base, period] = sort.split(":");
   const name = m.t(`listing.sort_${base}` as MessageKey);
   return period ? m.t("listing.sortPeriod", { sort: name, period: m.t(`listing.period_${period}` as MessageKey) }) : name;
@@ -33,7 +49,7 @@ export interface SortMenuProps<S extends string> {
 /** A list's sort control; hosts keep the choice (URL, remembered per page type). */
 export function SortMenu<S extends string>({ value, sorts, onChange, label, className }: SortMenuProps<S>) {
   const m = useMessages();
-  const name = label ?? ((s: S) => sortLabel(m, s as ListSort));
+  const name = label ?? ((s: S) => sortLabel(m, s as SortChoice));
   return (
     <Select value={value} onValueChange={(v) => onChange(v as S)}>
       <SelectTrigger size="sm" aria-label={m.t("listing.sort")} className={cn("comfortable:data-[size=sm]:h-10", className)} data-ckui="listing-sort">
@@ -56,8 +72,8 @@ export interface ContentListingProps extends CardListProps {
   /** The sort and filters; with onQueryChange the host keeps them (e.g. in the URL). Other fields (groups, a tag page's) pass through. A changed query starts again at page 1: a host keeping the page drops it with the query. */
   query?: ContentQuery;
   onQueryChange?: (query: ContentQuery) => void;
-  /** The sorts offered; default newest, popular (week, month, all time), top rated, most favorited, title, oldest. */
-  sorts?: readonly ListSort[];
+  /** The sorts offered; default newest, popular (this week, last 30 days, all time), top rated, most favorited, title, oldest. */
+  sorts?: readonly SortChoice[];
   /** Cards the reader doesn't open: show (default), hide or collapse. */
   locked?: LockedCards;
   /** Offer a language filter; default when the site has several languages. */
@@ -82,7 +98,7 @@ export function ContentListing({ kind, query: controlled, onQueryChange, sorts =
     [controlled, onQueryChange],
   );
   const spec = kind ? model?.kinds[kind] : undefined;
-  const sort: ListSort = query.sort ?? (spec?.sort as ListSort | undefined) ?? sorts[0] ?? "newest";
+  const choice: SortChoice = (query.sort && queryChoice(query)) || (spec?.sort ? queryChoice({ sort: spec.sort as ListSort }) : undefined) || sorts[0] || "newest";
   const offered = (name: string) => !filters || filters.includes(name);
   const traits = (spec?.versions.traits ?? []).filter(offered);
   const attributes = Object.entries(spec?.attributes ?? {}).filter(([n, a]) => a.filterable && (a.values?.length || a.type === "bool") && offered(n));
@@ -95,11 +111,11 @@ export function ContentListing({ kind, query: controlled, onQueryChange, sorts =
     set({ ...query, traits: on ? query.traits!.filter((y) => y !== x) : [...(query.traits ?? []), x] });
   };
   const filtered = !!(query.language || query.traits?.length || query.attribute?.length);
-  const list = useMemo(() => ({ ...query, kind: kind ?? query.kind, sort }), [query, kind, sort]);
+  const list = useMemo(() => ({ ...query, kind: kind ?? query.kind, ...choiceQuery(choice) }), [query, kind, choice]);
   return (
     <ContentKitUiRoot appearance={p.appearance} className={cn("grid gap-4 text-sm", p.className)} data-ckui="content-listing">
       <div role="toolbar" aria-label={t("listing.filters")} className="flex flex-wrap items-center gap-2">
-        <SortMenu<ListSort> value={sort} sorts={sorts} onChange={(s) => set({ ...query, sort: s })} />
+        <SortMenu<SortChoice> value={choice} sorts={sorts} onChange={(s) => set({ ...query, ...choiceQuery(s) })} />
         {languageFilter && (
           <Select value={query.language ?? ANY} onValueChange={(v) => set({ ...query, language: v === ANY ? undefined : (v as string) })}>
             <SelectTrigger size="sm" aria-label={t("listing.language")} data-ckui="listing-language">

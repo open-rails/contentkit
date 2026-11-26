@@ -439,19 +439,19 @@ For custom interfaces, pass selection-specific `counts` to
 `ContentFilterSettings` or the controlled `ContentFilterDialog`; omit `counts`
 for ordinary settings without listing totals.
 
-`<PopularContentGrid query={{ kind: "gallery" }} />` supplies four visible tabs
-for 7-day, 90-day, 365-day and all-time activity and loads further pages as the
-reader scrolls. Publication age is unrestricted, so older content can trend
-again. `period` and `onPeriodChange`
-optionally keep its state in the host's URL. For a homepage preview, pass
-`popularQuery("7d", { kind: "gallery", limit: 6 })` to a `ContentRail`'s `list`.
+`<PopularContentGrid query={{ kind: "gallery" }} />` shows a tab per featured
+window (this week, last 30 days, last 90 days, this year, all time, each
+including today) and loads further pages as the reader scrolls. Publication age
+is unrestricted, so older content can trend again. `window` and
+`onWindowChange` optionally keep its state in the host's URL. For a homepage
+preview, pass `popularQuery("week", { kind: "gallery", limit: 6 })` to a
+`ContentRail`'s `list`.
 
-For a historical activity window, pass `period={{ from: "2026-04-01", until:
-"2026-05-01" }}` and `query={{ kind: "gallery" }}`. Dates are UTC, with an
-inclusive start and exclusive end. No preset tab is selected for a custom
-range; selecting a tab calls `onPeriodChange` so the host can replace the range
-in its URL with that rolling preset. `popularQuery` accepts the same range
-object and sends `sort=popular&activity_from=...&activity_until=...`.
+`window` also takes a calendar month (`"month:2026-10"`), a year
+(`"year:2025"`) or UTC days (`"2026-04-01..2026-04-30"`, both included); no
+tab is selected for those, and selecting a tab calls `onWindowChange`.
+`popularBetween(from, last, filters)` builds the same days window. The grid
+shows while the site records signals (`useKinds().kinds.signals`).
 
 ### MediaFolderEditor
 
@@ -645,9 +645,10 @@ const content = useContentEntities(contentId); // content.set(memberships, kinds
 
 - **`EntityDirectory`**: one kind's entities with A–Z buckets (`letter` and
   `onLetterChange` to keep it in the URL), content counts, `layout` list or
-  grid, paged. With `popular`, for a kind with `popular` configured, the
-  first button reads "Popular" instead of "All". Entities rank by recent account
-  favourites, refreshed hourly; unranked entities follow by content count. **`EntityHeader`**: an entity page's cover, names, description,
+  grid, paged. With `popular` the first button reads "Popular" instead of
+  "All": entities rank by the sum of their contents' popularity on the site
+  over `window` (the week by default); those without activity follow by
+  content count. **`EntityHeader`**: an entity page's cover, names, description,
   typed attributes, parent, scope and sub-entities. Links go to each entity's
   canonical path (`href` overrides) through the provider's `navigate`.
 - **`EntityEditor`** (staff): create, or edit slug, parent, scope, declared
