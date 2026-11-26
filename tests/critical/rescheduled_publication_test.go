@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 	ck "github.com/open-rails/contentkit"
+	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/internal/jobhook"
 	"github.com/open-rails/contentkit/media"
@@ -23,15 +24,21 @@ func TestRescheduledPublication(t *testing.T) {
 	a := w.apps[0]
 	attachMedia(t, w, a)
 	admin := a.engine.Client()
-	gallery := func(title string) media.RefBody {
+	base := w.clock.now()
+	gallery := func(title string, rule *access.Rule) media.RefBody {
 		t.Helper()
-		ref := galleryRef(t, admin, title)
-		_, err := admin.IngestMedia(t.Context(), http.DefaultClient, ref, uuid.NewString(), []ck.MediaFile{{Path: "pages/01.png", Type: "image/png", Body: bytes.NewReader(imageBytes(t))}})
+		item, err := admin.PostContents(t.Context(), catalog.ContentInput{Kind: "gallery", Access: rule, Versions: []catalog.VersionInput{{Languages: []string{"en"}, Text: map[string]catalog.VersionText{"en": {Title: title}}}}})
+		must(t, err)
+		ref := media.RefBody{Kind: "gallery", ID: item.ID, Version: item.Versions[0].ID}
+		_, err = admin.IngestMedia(t.Context(), http.DefaultClient, ref, uuid.NewString(), []ck.MediaFile{{Path: "pages/01.png", Type: "image/png", Body: bytes.NewReader(imageBytes(t))}})
 		must(t, err)
 		awaitMediaReady(t, admin, ref)
 		return ref
 	}
-	rescheduled, scheduled, unpublished := gallery("Re-scheduled gallery"), gallery("Scheduled gallery"), gallery("Unpublished gallery")
+	// Gold until a public release half a minute in: its fact belongs to the
+	// first release, and a re-publication never repeats it.
+	rescheduled := gallery("Re-scheduled gallery", &access.Rule{Level: access.TierLevel, Tiers: []string{"gold"}, Releases: []access.Release{{At: base.Add(30 * time.Second), Level: access.Public}}})
+	scheduled, unpublished := gallery("Scheduled gallery", nil), gallery("Unpublished gallery", nil)
 	// Redeploy without job consumers: a release runs only when a case runs it.
 	a.server.Close()
 	must(t, a.engine.Close(t.Context()))
@@ -44,7 +51,6 @@ func TestRescheduledPublication(t *testing.T) {
 	t.Cleanup(func() { must(t, fleet.Stop(context.Background())) })
 	admin = a.engine.Client()
 	reader := a.client("")
-	base := w.clock.now()
 	release := func(t *testing.T) { t.Helper(); runPublicationWorker(t, fleet, a) }
 	// shown checks every reader surface: the page, the edition, its card and
 	// its media.
@@ -104,6 +110,8 @@ func TestRescheduledPublication(t *testing.T) {
 		if got := status(t, ref).LiveFrom; first == nil || got == nil || !got.Equal(*first) {
 			t.Fatalf("re-accepting an open publication moved live_from from %v to %v", first, got)
 		}
+		release(t) // the public audience opens
+		shown(t, ref, true)
 		_, err = admin.PostContentUnpublish(t.Context(), ref.ID)
 		must(t, err)
 		shown(t, ref, false)
@@ -125,6 +133,20 @@ func TestRescheduledPublication(t *testing.T) {
 		shown(t, ref, true)
 		if st := status(t, ref); !st.Live {
 			t.Fatalf("status at its date: %+v", st)
+		}
+		w.clock.set(at.Add(time.Minute))
+		_, err = admin.PostContentPublish(t.Context(), ref.ID, catalog.PublishInput{})
+		must(t, err)
+		log, err := admin.ListEvents(t.Context(), catalog.EventQuery{Types: []string{catalog.EventAudienceReleased}})
+		must(t, err)
+		var receipts []catalog.EventRecord
+		for _, event := range log.Events {
+			if event.ContentID == ref.ID {
+				receipts = append(receipts, event)
+			}
+		}
+		if len(receipts) != 1 {
+			t.Fatalf("public release facts %+v; want one", receipts)
 		}
 	})
 	t.Run("CK-J09-S68_a_first_scheduled_publication_opens_once_released_at_its_date", func(t *testing.T) {

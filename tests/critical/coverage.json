@@ -3567,7 +3567,7 @@
     {
       "id": "CK-J09-S68",
       "journey": "CK-J09",
-      "behavior": "A version is live from the later of its completed release and its scheduled publication: re-scheduling a released item hides its page, edition, card and media at once, before the withdrawal of its earlier release runs; re-accepting an open publication keeps its live_from; a first scheduled publication and a plain unpublish are unchanged",
+      "behavior": "A version is live from the later of its completed release and its scheduled publication: re-scheduling a released item hides its page, edition, card and media at once, before the withdrawal of its earlier release runs; re-accepting an open publication keeps its live_from, and a re-publication repeats no audience release fact; a first scheduled publication and a plain unpublish are unchanged",
       "status": "verified",
       "evidence": [
         "fix/309-reschedule-visibility: real PostgreSQL, bucket and media worker; publication jobs run only when the case runs them, so the re-schedule lands while the withdrawal is still queued behind the first release."
