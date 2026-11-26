@@ -175,7 +175,8 @@ func (s *Service) canEdit(ctx context.Context, actor access.Actor, k *mediastore
 	if !actor.Member() {
 		return media.UploadGrant{Allowed: true, Exempt: true}, nil
 	}
-	// An erased account stores nothing again: no commit may record it.
+	// An erased account uploads nothing again. A commit stores no account
+	// id, so this read needs no subject lock.
 	if erased, err := subjectfence.Erased(ctx, s.o.Pool, s.o.Schema, s.o.Tenant, actor.AccountID()); err != nil || erased {
 		return media.UploadGrant{}, err
 	}

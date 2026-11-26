@@ -847,9 +847,9 @@ Content anonymization commits atomically:
   they set stay, without their id);
 - location rules and their history keep what changed and when, without the subject as creator, updater or actor.
 
-After the avatar erasure, the subject's upload rates go; manifests record no uploader. An avatar's folder path keeps the account id: it is the permanent storage fence that keeps a purged id's avatar unwritable, and its cache row is folder bookkeeping, not attribution.
+Media stores no account id: manifests name no uploader and no editor who restored pages, and the commit rate limit forgets an uploader one window after its last commit. An avatar's folder path keeps the account id: it is the permanent storage fence that keeps a purged id's avatar unwritable, and its cache row is folder bookkeeping, not attribution.
 
-Every writer that stores an account id takes the subject fence and refuses an erased one: comments, reactions, favorites, votes, reposts, content creation (`created_by`) and creators, channel owners, imports naming them (`erased`) and media upload grants. A purged id is never reactivated.
+Every writer that stores an account id takes the subject fence and refuses an erased one: comments, reactions, favorites, votes, reposts, content creation (`created_by`) and creators, channel owners and imports naming them (`erased`). Media upload grants refuse an erased account too; since a commit stores no account id, they need no fence. A purged id is never reactivated.
 
 Other tenants and subjects and externally stored media are untouched.
 Every guarded writer takes the subject fence before other source locks.
