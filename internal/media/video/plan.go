@@ -213,7 +213,7 @@ func (c WorkerConfig) probeSource(ctx context.Context, ref contentref.ContentRef
 	var raw []byte
 	err = c.Pool.QueryRow(ctx, `SELECT probe FROM `+c.runTable()+`
 WHERE ref = $1 AND file_name = $2 AND source_name = $3 AND probe ? 'packets' ORDER BY created_at DESC LIMIT 1`, refJSON, f.Path, f.Blob).Scan(&raw)
-	if err == nil && json.Unmarshal(raw, &pr) == nil {
+	if err == nil && json.Unmarshal(raw, &pr) == nil && pr.Version == probeVersion {
 		return pr, nil
 	} else if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return pr, err
@@ -238,6 +238,15 @@ WHERE ref = $1 AND file_name = $2 AND source_name = $3 AND probe ? 'packets' ORD
 		return pr, &PermanentError{fmt.Errorf("unreadable video packets: %w", err)}
 	}
 	pr.Packets = &scan
+	if pl.color.hdr() {
+		if pr.Frame, err = firstFrame(ctx, url, pl.video, remoteInputOptions(sourceDemuxers)); err != nil {
+			if ctx.Err() != nil {
+				return pr, ctx.Err()
+			}
+			return pr, &PermanentError{fmt.Errorf("unreadable first frame: %w", err)}
+		}
+	}
+	pr.Version = probeVersion
 	return pr, nil
 }
 
@@ -314,7 +323,7 @@ func (e *Encoder) measured(ctx context.Context, item mediastore.Item, f media.Fi
 			return err
 		}
 		g := &m.Files[m.Find(f.Path)]
-		g.W, g.H, g.Dur = pl.width, pl.height, math.Round(pl.duration*1000)/1000
+		g.W, g.H, g.Dur, g.Range = pl.width, pl.height, math.Round(pl.duration*1000)/1000, pl.color.dynamicRange()
 		for _, p := range presets {
 			if e.todo(m, *g, p) {
 				m.AddPending(f.Path, p.Name)

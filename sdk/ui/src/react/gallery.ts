@@ -10,7 +10,7 @@ import {
   classifyMediaError,
   hlsConfig,
   initialEstimate,
-  otherCodecLevels,
+  otherLevels,
   expiryDelay,
   refreshable,
   startRung,
@@ -260,7 +260,14 @@ export interface QualityLevel {
   height: number;
   width: number;
   bitrate: number;
+  /** The level's VIDEO-RANGE: every level of a player has the same. */
+  range: VideoRange;
 }
+
+/** An HLS VIDEO-RANGE: HDR is PQ (HDR10) or HLG. */
+export type VideoRange = "SDR" | "PQ" | "HLG";
+
+const rangeOf = (l: { videoRange?: string }): VideoRange => (l.videoRange === "PQ" || l.videoRange === "HLG" ? l.videoRange : "SDR");
 
 export interface PlayerQuality {
   /** Ascending; empty until the manifest loads, and always under native HLS (Safari), which picks for itself. */
@@ -720,18 +727,21 @@ export function useHlsPlayer({
             void play();
           };
           hls.on(Hls.Events.MANIFEST_PARSED, () => {
-            parsed = true;
-            for (const i of otherCodecLevels(hls.levels, hls.firstLevel)) hls.removeLevel(i);
-            const max = policy?.maxHeight ?? Infinity;
-            const list = hls.levels
-              .map((l, index) => ({ index, height: Math.min(l.width, l.height) || l.height, width: l.width, bitrate: l.bitrate }))
-              .filter((l) => l.height > 0 && l.height <= max);
-            setLevels(list);
-            // A remembered rung this video lacks (e.g. 2160p not yet encoded) plays Auto.
-            const saved = storedQuality(opts.current.qualityKey);
-            const match = typeof saved === "number" ? list.find((l) => l.height === saved) : undefined;
-            if (match) choose.current(match.index);
-            if (want.current) start.current?.();
+            void otherLevels(hls.levels, hls.firstLevel).then((drop) => {
+              if (dead) return;
+              for (const i of drop) hls.removeLevel(i);
+              parsed = true;
+              const max = policy?.maxHeight ?? Infinity;
+              const list = hls.levels
+                .map((l, index) => ({ index, height: Math.min(l.width, l.height) || l.height, width: l.width, bitrate: l.bitrate, range: rangeOf(l) }))
+                .filter((l) => l.height > 0 && l.height <= max);
+              setLevels(list);
+              // A remembered rung this video lacks (e.g. 2160p not yet encoded) plays Auto.
+              const saved = storedQuality(opts.current.qualityKey);
+              const match = typeof saved === "number" ? list.find((l) => l.height === saved) : undefined;
+              if (match) choose.current(match.index);
+              if (want.current) start.current?.();
+            });
           });
           hls.loadSource(src);
           hls.attachMedia(el);

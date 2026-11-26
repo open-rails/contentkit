@@ -308,7 +308,7 @@ func (o *opRun) put(op media.Op) error {
 		page, _ := pageMetadata(old.Meta)
 		legacy = page["schema_version"] == nil && page["name"] == nil
 		if old.Source() == f.Source() {
-			f.W, f.H, f.Dur = old.W, old.H, old.Dur
+			f.W, f.H, f.Dur, f.Range = old.W, old.H, old.Dur, old.Range
 		}
 		if f.Meta == nil {
 			f.Meta = old.Meta

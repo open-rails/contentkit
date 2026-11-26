@@ -3,6 +3,7 @@ package video
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"os"
@@ -51,12 +52,13 @@ type encoding struct {
 // streamArgs are output stream i's settings: rung r in codec c at the rung's
 // capped CRF (NVENC: CQ) with a 2 s VBV buffer, closed GOPs and no scene-cut
 // keyframes, so every rendition has its keyframes where -force_key_frames
-// puts them.
-func (e encoding) streamArgs(i int, r rung, c media.Codec) []string {
+// puts them; an HDR source's outputs declare their color (out).
+func (e encoding) streamArgs(i int, r rung, c media.Codec, out color) []string {
 	o := func(name string) string { return fmt.Sprintf("-%s:v:%d", name, i) }
 	rt := r.rate(c)
 	enc := e.encoders[c]
 	args := []string{o("c"), enc, o("maxrate"), fmt.Sprintf("%dk", rt.maxrate), o("bufsize"), fmt.Sprintf("%dk", 2*rt.maxrate)}
+	args = append(args, out.args(o)...)
 	preset := e.preset
 	if r.n > 1080 {
 		preset = e.topPreset
@@ -79,7 +81,7 @@ func (e encoding) streamArgs(i int, r rung, c media.Codec) []string {
 	case "libsvtav1":
 		// SVT ignores -threads. Native lp levels above 3 allocate extra in-flight mini-GOPs.
 		args = append(args, o("preset"), strconv.Itoa(svtAV1Preset), o("crf"), strconv.Itoa(rt.crf),
-			o("svtav1-params"), fmt.Sprintf("tune=0:mbr=%d:lp=%d", rt.maxrate, min(e.threads, 3)))
+			o("svtav1-params"), fmt.Sprintf("tune=0:mbr=%d:lp=%d", rt.maxrate, min(e.threads, 3))+out.svtParams())
 	case "av1_nvenc":
 		args = append(args, nvenc(rt.crf+nvencCQOffset[c])...)
 	}
@@ -128,7 +130,7 @@ func probeEncoder(ctx context.Context, dir string, c media.Codec, enc string) er
 	out := filepath.Join(d, "probe.mp4")
 	e := encoding{encoders: map[media.Codec]string{c: enc}, threads: 2, preset: "ultrafast", topPreset: "ultrafast"}
 	args := append([]string{"-v", "error", "-nostdin", "-f", "lavfi", "-i", "testsrc2=s=256x256:r=10:d=1"},
-		e.streamArgs(0, rung{n: 256, w: 256, h: 256}, c)...)
+		e.streamArgs(0, rung{n: 256, w: 256, h: 256}, c, color{})...)
 	args = append(args, "-pix_fmt", "yuv420p", "-force_key_frames", "expr:gte(t,n_forced*0.5)", "-y", out)
 	if _, err := command(ctx, "ffmpeg", args...); err != nil {
 		return err
@@ -172,7 +174,20 @@ func codecString(path string) (string, error) {
 		if r[2]&0x40 != 0 {
 			depth = map[bool]int{false: 10, true: 12}[r[2]&0x20 != 0 && r[1]>>5 == 2]
 		}
-		return fmt.Sprintf("av01.%d.%02d%s.%02d", r[1]>>5, r[1]&0x1f, map[bool]string{false: "M", true: "H"}[r[2]&0x80 != 0], depth), nil
+		codec := fmt.Sprintf("av01.%d.%02d%s.%02d", r[1]>>5, r[1]&0x1f, map[bool]string{false: "M", true: "H"}[r[2]&0x80 != 0], depth)
+		// The short form means BT.709: an HDR rendition states its color
+		// (monochrome, subsampling, primaries, transfer, matrix, range).
+		if c := rec("colr", 11); c != nil && string(c[0:4]) == "nclx" {
+			pri, trc, mtx := binary.BigEndian.Uint16(c[4:]), binary.BigEndian.Uint16(c[6:]), binary.BigEndian.Uint16(c[8:])
+			if trc == 16 || trc == 18 {
+				x, y, pos := r[2]>>3&1, r[2]>>2&1, r[2]&3
+				if x != 1 || y != 1 {
+					pos = 0
+				}
+				codec += fmt.Sprintf(".%d.%d%d%d.%02d.%02d.%02d.%d", r[2]>>4&1, x, y, pos, pri, trc, mtx, c[10]>>7)
+			}
+		}
+		return codec, nil
 	}
 	return "", fmt.Errorf("%s: no avcC or av1C", path)
 }

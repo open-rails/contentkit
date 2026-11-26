@@ -21,10 +21,16 @@ import (
 )
 
 type probeResult struct {
+	// Version is probeVersion when this worker probed it: a run's probe is
+	// reused only then.
+	Version int `json:"version,omitempty"`
 	// Packets and MaxFPS are plan-time facts kept with the encode runs: the
 	// video stream's real packets and the upload's output rate cap.
-	Packets *packetScan   `json:"packets,omitempty"`
-	MaxFPS  float64       `json:"max_fps,omitempty"`
+	Packets *packetScan `json:"packets,omitempty"`
+	MaxFPS  float64     `json:"max_fps,omitempty"`
+	// Frame is an HDR source's first frame's side data: HDR10 metadata
+	// carried in the bitstream rather than the container.
+	Frame   []sideData    `json:"frame,omitempty"`
 	Streams []probeStream `json:"streams"`
 	Format  struct {
 		Duration   string `json:"duration"`
@@ -49,6 +55,10 @@ type probeStream struct {
 	SAR        string `json:"sample_aspect_ratio"`
 	PixFmt     string `json:"pix_fmt"`
 	FieldOrder string `json:"field_order"`
+	Range      string `json:"color_range,omitempty"`
+	Matrix     string `json:"color_space,omitempty"`
+	Transfer   string `json:"color_transfer,omitempty"`
+	Primaries  string `json:"color_primaries,omitempty"`
 	StartTime  string `json:"start_time"`
 	Duration   string `json:"duration"`
 	AvgRate    string `json:"avg_frame_rate"`
@@ -64,9 +74,27 @@ type probeStream struct {
 		Forced      int `json:"forced"`
 		AttachedPic int `json:"attached_pic"`
 	} `json:"disposition"`
-	SideData []struct {
-		Rotation float64 `json:"rotation"`
-	} `json:"side_data_list"`
+	SideData []sideData `json:"side_data_list"`
+}
+
+// sideData is a stream's or frame's side data as ffprobe prints it: a
+// rotation, or HDR10 static metadata (chromaticities and luminances as
+// "n/d", light levels in cd/m²).
+type sideData struct {
+	Type       string  `json:"side_data_type,omitempty"`
+	Rotation   float64 `json:"rotation"`
+	RedX       string  `json:"red_x,omitempty"`
+	RedY       string  `json:"red_y,omitempty"`
+	GreenX     string  `json:"green_x,omitempty"`
+	GreenY     string  `json:"green_y,omitempty"`
+	BlueX      string  `json:"blue_x,omitempty"`
+	BlueY      string  `json:"blue_y,omitempty"`
+	WhiteX     string  `json:"white_point_x,omitempty"`
+	WhiteY     string  `json:"white_point_y,omitempty"`
+	MinLum     string  `json:"min_luminance,omitempty"`
+	MaxLum     string  `json:"max_luminance,omitempty"`
+	MaxContent int     `json:"max_content,omitempty"`
+	MaxAverage int     `json:"max_average,omitempty"`
 }
 
 // packetScan is a stream's packets as demuxed: their count and the span of
@@ -171,6 +199,7 @@ type plan struct {
 	tileW, tileH  int     // sprite tile
 	audio, subs   []track
 	stream        probeStream // the video stream, for passthrough
+	color         color       // the video stream's
 	formatName    string
 	start         float64 // the container's start time
 }
@@ -204,6 +233,7 @@ func newPlan(p probeResult) (plan, error) {
 				return pl, errors.New("invalid video dimensions")
 			}
 			pl.video, pl.width, pl.height, pl.stream = s.Index, s.Width, s.Height, s
+			pl.color = streamColor(s, p.Frame)
 			if d := selectedVideoEnd(s, pl.start, p.Format.FormatName); d > 0 {
 				pl.duration = d
 			}

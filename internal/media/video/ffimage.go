@@ -22,6 +22,15 @@ type frameInput struct {
 	path   string
 	opts   []string // input options: ownMP4, or the source's remote options
 	offset float64
+	toSDR  string // the filter tone-mapping an HDR input; "" for SDR
+}
+
+// sdr appends the input's tone mapping to filter.
+func (in frameInput) sdr(filter string) string {
+	if in.toSDR == "" {
+		return filter
+	}
+	return filter + "," + in.toSDR
 }
 
 // args put the frame showing at the offset through filter, as a paused
@@ -83,9 +92,9 @@ func copyRange(ctx context.Context, store media.Store, w io.Writer, key string, 
 	return err
 }
 
-// grabFrame writes the input's frame, scaled to w×h, as a PNG.
+// grabFrame writes the input's frame, scaled to w×h, as an SDR PNG.
 func grabFrame(ctx context.Context, in frameInput, w, h int, out string, threads int) error {
-	args := append(in.args(threads, fmt.Sprintf("scale=%d:%d:flags=lanczos,setsar=1", w, h)), "-c:v", "png", "-f", "image2", "-y", out)
+	args := append(in.args(threads, in.sdr(fmt.Sprintf("scale=%d:%d:flags=lanczos,setsar=1", w, h))), "-c:v", "png", "-f", "image2", "-y", out)
 	if _, err := command(ctx, "ffmpeg", args...); err != nil {
 		return err
 	}
@@ -98,7 +107,7 @@ func grabFrame(ctx context.Context, in frameInput, w, h int, out string, threads
 // detail is the luma standard deviation (0-255) of the input's frame,
 // measured on a 64×36 thumbnail: near zero for black and flat frames.
 func detail(ctx context.Context, in frameInput, threads int) (float64, error) {
-	out, err := command(ctx, "ffmpeg", append(in.args(threads, "scale=64:36,format=gray"), "-f", "rawvideo", "pipe:1")...)
+	out, err := command(ctx, "ffmpeg", append(in.args(threads, in.sdr("scale=64:36")+",format=gray"), "-f", "rawvideo", "pipe:1")...)
 	if err != nil {
 		return 0, err
 	}

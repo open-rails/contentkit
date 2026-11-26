@@ -187,6 +187,7 @@ export {
   type PlayerStatus,
   type PlayerTracks,
   type QualityLevel,
+  type VideoRange,
   type UseCarousel,
   type UseHlsPlayer,
 } from "./gallery.js";

@@ -19,7 +19,7 @@ import (
 // rung in one of the ladder's codecs is stream-copied instead of encoded in
 // that codec. Every check is strict; any doubt encodes. The copy keeps the
 // source's frames and timestamps, so the source must be constant-rate H.264
-// High/Main (8-bit 4:2:0, progressive, level ≤ 5.2,
+// High/Main (8-bit 4:2:0 SDR, progressive, level ≤ 5.2,
 // square pixels, unrotated) at exactly the rung's frame, within the rung's
 // bitrate cap in its codec, in MP4/MOV, and IDR-coded (closed GOP) on the
 // frame that starts each segment, where the encoded rungs put theirs.
@@ -101,6 +101,8 @@ func passthroughCandidate(p plan, top rung) (c media.Codec, ok bool, why string)
 		return c, false, "codec " + s.CodecName + " " + s.Profile + " " + s.CodecTag
 	case s.PixFmt != "yuv420p" || s.FieldOrder != "progressive":
 		return c, false, "format " + s.PixFmt + " " + s.FieldOrder
+	case p.color.hdr():
+		return c, false, "HDR: its H.264 rendition is tone-mapped"
 	case s.Level <= 0 || s.Level > 52:
 		return c, false, "level " + strconv.Itoa(s.Level)
 	case rotated(s) || p.limitFPS:

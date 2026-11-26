@@ -6,6 +6,7 @@ export default {
     rollupOptions: { input: {
       index: fileURLToPath(new URL("index.html", import.meta.url)),
       "video-poster-picker": fileURLToPath(new URL("video-poster-picker.html", import.meta.url)),
+      "video-player": fileURLToPath(new URL("video-player.html", import.meta.url)),
     } },
   },
 };

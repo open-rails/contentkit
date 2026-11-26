@@ -571,7 +571,7 @@ const (
 )
 
 const (
-	trackEntryBytes = 640 + 24 + 74 // fresh allocation UUIDs in both Blob and Track.Index
+	trackEntryBytes = 640 + 24 + 74 + 30 // fresh allocation UUIDs in both Blob and Track.Index; an HDR rendition's range and long-form codecs
 )
 
 const (
@@ -579,7 +579,7 @@ const (
 )
 
 const (
-	measuredBytes = 48 // an upload's w and h, or dur, once measured
+	measuredBytes = 64 // an upload's w and h, or dur, and a video's range, once measured
 )
 
 const (

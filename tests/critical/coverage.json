@@ -1428,6 +1428,57 @@
       ]
     },
     {
+      "id": "CK-J12-S07",
+      "journey": "CK-J12",
+      "behavior": "A PQ (HDR10) upload keeps its range in 10-bit AV1 with its HDR10 metadata in the bitstream; its H.264 rendition, seek sprite and poster are tone-mapped BT.709 SDR; the master playlist labels the AV1 variant PQ with its long-form codecs and the H.264 one SDR",
+      "status": "verified",
+      "evidence": [
+        "A synthetic 10-bit HEVC PQ BT.2020 source with x265 mastering-display and MaxCLL SEI, made by ffmpeg in the test, is processed by the actual worker into AV1 and H.264. The delivered AV1 is probed as yuv420p10le smpte2084 bt2020 bt2020nc tv, and dav1d reads the mastering display and content light level from its OBUs alone (remuxed to a raw OBU stream). The H.264 is yuv420p BT.709; its first frame, the sprite and the grabbed poster keep the SDR picture's brightness and contrast, which PQ code values shown as BT.709 lose.",
+        "The editor master playlist labels every variant: AV1 PQ with CODECS av01.P.LLT.10.0.11x.09.16.09.0, H.264 SDR. Added with HDR video; it runs in CI's critical suite."
+      ],
+      "cases": [
+        "TestMediaHDRVideo/CK-J12-S07_a_PQ_upload_keeps_HDR10_in_AV1_and_plays_tone-mapped_SDR_elsewhere"
+      ]
+    },
+    {
+      "id": "CK-J12-S08",
+      "journey": "CK-J12",
+      "behavior": "An HLG upload keeps HLG in 10-bit AV1 without invented metadata; its H.264 rendition, sprite and poster are tone-mapped BT.709 SDR; the playlist labels the AV1 variant HLG",
+      "status": "verified",
+      "evidence": [
+        "A synthetic 10-bit HEVC HLG BT.2020 source is processed by the actual worker: the AV1 is yuv420p10le arib-std-b67 bt2020 with no mastering or light-level metadata, the H.264 is BT.709 SDR, and its frame, sprite and poster keep the SDR picture's brightness and contrast; the master says VIDEO-RANGE=HLG with CODECS ending .09.18.09.0 for AV1 and SDR for H.264."
+      ],
+      "cases": [
+        "TestMediaHDRVideo/CK-J12-S08_an_HLG_upload_keeps_HLG_in_AV1_and_plays_tone-mapped_SDR_elsewhere"
+      ]
+    },
+    {
+      "id": "CK-J12-S09",
+      "journey": "CK-J12",
+      "behavior": "An SDR upload is encoded exactly as before HDR support and every variant is labelled SDR",
+      "status": "verified",
+      "evidence": [
+        "An 8-bit H.264 source's AV1 and H.264 renditions keep its own tags in 8-bit 4:2:0, the AV1 carries no HDR metadata, its frame and poster match the picture, and the master labels both variants VIDEO-RANGE=SDR with the short AV1 codecs form (av01.P.LLT.08).",
+        "Byte identity: internal/media/video's TestSDRCommandLinesUnchanged pins an SDR source's encode, track, sprite, NVENC, frame and detail command lines to those of the release before; identical ffmpeg arguments over the same input with bitexact muxing produce the same bytes, and an SDR upload's fingerprint gains no HDR component, so nothing is re-encoded."
+      ],
+      "cases": [
+        "TestMediaHDRVideo/CK-J12-S09_an_SDR_upload_is_encoded_as_before_and_labelled_SDR"
+      ]
+    },
+    {
+      "id": "CK-J12-S10",
+      "journey": "CK-J12",
+      "behavior": "The shipped player plays an HDR ladder's PQ rungs only on an HDR screen whose decoder MediaCapabilities confirms; otherwise its SDR rungs; it never draws video through a canvas",
+      "status": "verified",
+      "evidence": [
+        "useHlsPlayer from the built package, in Chromium with real hls.js, plays CK-J12-S07's worker-encoded PQ clip three times: on headless Chromium's SDR screen it loads only the H.264 media playlist and its levels say SDR, without asking the decoder; with (dynamic-range: high) matching and decodingInfo confirming pq it loads only the AV1 playlist, its levels say PQ and the 10-bit video plays; with the decoder refusing pq it plays SDR. No canvas context is created in any.",
+        "The same runner passed locally in Google Chrome against a PQ ladder from the encoder's own pass (AV1 and H.264 renditions with a labelled master) before the scenario was added."
+      ],
+      "cases": [
+        "TestMediaHDRVideo/CK-J12-S10_the_shipped_player_plays_HDR_only_on_an_HDR_screen_whose_decoder_confirms_it"
+      ]
+    },
+    {
       "id": "CK-J13-S01",
       "journey": "CK-J13",
       "behavior": "An item token opens its own item's private files and no other item's",
@@ -11714,6 +11765,17 @@
       ],
       "evidence": [
         "The shipped JavaScript export is invoked with independent positive and negative value vectors; its exact named report is required and checked for omissions and duplicates."
+      ]
+    },
+    {
+      "id": "ts:otherLevels",
+      "name": "otherLevels",
+      "status": "verified",
+      "cases": [
+        "TestShippedTypeScriptValues/otherLevels"
+      ],
+      "evidence": [
+        "The shipped export chooses an HDR ladder's levels as the player does: SDR on an SDR screen without asking the decoder; on an HDR screen, HDR only for levels MediaCapabilities confirms (media-source, PQ or HLG transfer, rec2020), each asked; a ladder without SDR keeps its HDR; an SDR ladder keeps the first-listed codec set as before."
       ]
     },
     {
