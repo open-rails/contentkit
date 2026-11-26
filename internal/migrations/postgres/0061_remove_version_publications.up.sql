@@ -1,1 +1,0 @@
-DROP TABLE content_version_publications;

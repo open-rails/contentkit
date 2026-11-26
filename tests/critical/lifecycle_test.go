@@ -5,9 +5,11 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	ck "github.com/open-rails/contentkit"
@@ -152,5 +154,47 @@ func TestHostLifecycle(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 		defer cancel()
 		must(t, w.pool.Ping(ctx))
+	})
+}
+
+// A schema an earlier migration history built is rebuilt, never migrated
+// forward: migration and a SkipMigrations start refuse it and name the rebuild.
+func TestEarlierMigrationHistoryRefused(t *testing.T) {
+	w := newWorld(t)
+	a := w.apps[0]
+	cfg := a.cfg
+	cfg.Database.Schema = w.schema + "_earlier"
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		for _, schema := range []string{cfg.Database.Schema, cfg.Database.Schema + "_river"} {
+			if _, err := w.pool.Exec(ctx, "DROP SCHEMA IF EXISTS "+pgx.Identifier{schema}.Sanitize()+" CASCADE"); err != nil {
+				t.Errorf("drop schema: %v", err)
+			}
+		}
+	})
+	t.Run("CK-J01-S19_a_schema_an_earlier_history_built_is_refused_naming_the_rebuild", func(t *testing.T) {
+		must(t, ck.MigratePostgres(t.Context(), w.pool, cfg))
+		// As a pre-0.141 database records it: its 0001 had other content.
+		tag, err := w.pool.Exec(t.Context(), `UPDATE public.migrations SET content_sha256 = repeat('0', 64)
+WHERE app = 'contentkit' AND database = 'postgres' AND schema = $1 AND sequence = 1`, cfg.Database.Schema)
+		must(t, err)
+		if tag.RowsAffected() != 1 {
+			t.Fatalf("ledger rows for the baseline: %d", tag.RowsAffected())
+		}
+		refused := func(err error) {
+			t.Helper()
+			if err == nil || errors.Is(err, ck.ErrMigrationsRequired) || !strings.Contains(err.Error(), "rebuild it") || !strings.Contains(err.Error(), cfg.Database.Schema) {
+				t.Fatalf("earlier history: %v", err)
+			}
+		}
+		refused(ck.MigratePostgres(t.Context(), w.pool, cfg))
+		prepared := cfg
+		prepared.Database.SkipMigrations = true
+		engine, err := ck.New(t.Context(), prepared, a.deps)
+		if engine != nil {
+			t.Fatal("an engine started on an earlier history")
+		}
+		refused(err)
 	})
 }

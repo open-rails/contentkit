@@ -17,6 +17,8 @@ run on its own database ([host references](HOST_INTEGRATION.md#host-references))
 Post/channel policies: [docs/posts-and-channels.md](docs/posts-and-channels.md). Migrations:
 [docs/migration.md](docs/migration.md), [docs/restore.md](docs/restore.md).
 
+From 0.141.0 each migration set is one immutable baseline. A database an earlier release built is refused and rebuilt, never migrated forward: [rebuilding](docs/migration.md#rebuilding-a-database-from-before-01410).
+
 ## Release policy
 
 Standalone gateway patches use `media-gateway/vX.Y.Z` tags and publish only
@@ -84,7 +86,7 @@ bodies' wire and data types and its ports; its implementation is the
 | `internal/entitlement` | the access `Gate`, its listing `Filter` and the request memo |
 | `internal/urlstore`, `internal/importstore` | content codes, slugs, aliases; the bulk import |
 | `internal/media/{worker,workqueue,image,video}` | the media worker (`cmd/media-worker`), its queue, libvips and ffmpeg producers |
-| `internal/migrations` | PostgreSQL migration chains and ClickHouse baseline |
+| `internal/migrations` | the PostgreSQL catalog and account baselines and the ClickHouse baseline |
 
 ## Engine
 

@@ -283,8 +283,12 @@ func (e *Engine) validateDatabase(ctx context.Context) error {
 }
 
 // Connectivity, cancellation, resource pressure and server shutdown are retryable
-// validation failures; they are not evidence that migrations are missing.
+// validation failures; they are not evidence that migrations are missing. A
+// schema an earlier history built is rebuilt, not migrated.
 func migrationValidationError(err error) error {
+	if errors.Is(err, migrations.ErrEarlierHistory) {
+		return err
+	}
 	var network net.Error
 	var connect *pgconn.ConnectError
 	var pg *pgconn.PgError

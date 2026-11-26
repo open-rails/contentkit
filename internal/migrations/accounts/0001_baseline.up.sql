@@ -1,13 +1,13 @@
--- ContentKit's shared account schema: tenant bindings, account media and
--- erasure records. Without Config.Accounts it is the catalog schema.
--- Functions may precede the tables they read, as in a pg_dump.
+-- ContentKit's shared account schema: account media, avatar placement and
+-- account erasure records. Without Config.Accounts it is the catalog schema,
+-- whose baseline has already created the event log and content_media_items:
+-- they are created here only where absent. With bodies unchecked, a function
+-- may precede the tables it reads.
 SET LOCAL check_function_bodies = false;
 
--- Media journal, processing and event-log storage. A catalog in this same
--- schema already created identical objects, so they are created only once.
 DO $ckguard$
 BEGIN
-    IF to_regclass(format('%I.content_media_commits', current_schema())) IS NOT NULL THEN
+    IF to_regclass(format('%I.eventlog_events', current_schema())) IS NOT NULL THEN
         RETURN;
     END IF;
     EXECUTE replace($ckshared$
@@ -53,114 +53,19 @@ BEGIN
  RAISE EXCEPTION 'retained event facts are immutable';
 END $$;
 
-CREATE SEQUENCE "__contentkit_schema__".content_event_ids
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1;
+-- The account event log: account media events, one ordered stream per scope.
+CREATE SEQUENCE "__contentkit_schema__".content_event_ids;
 
-CREATE TABLE "__contentkit_schema__".content_media_allocations (
-    tenant_id text NOT NULL,
-    folder_prefix text NOT NULL,
-    object_key text NOT NULL,
-    incarnation uuid NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    retired_at timestamp with time zone,
-    CONSTRAINT content_media_allocations_check CHECK (((tenant_id <> ''::text) AND (folder_prefix <> ''::text) AND (object_key <> ''::text)))
-);
-
-CREATE TABLE "__contentkit_schema__".content_media_cleanup (
-    tenant_id text NOT NULL,
-    folder_prefix text NOT NULL,
-    content_kind text NOT NULL,
-    due_at timestamp with time zone NOT NULL,
-    revision uuid DEFAULT gen_random_uuid() NOT NULL,
-    deletion_operations uuid[] DEFAULT '{}'::uuid[] NOT NULL
-);
-
-CREATE TABLE "__contentkit_schema__".content_media_commits (
-    tenant_id text NOT NULL,
-    operation_id uuid NOT NULL,
-    content_kind text NOT NULL,
-    content_id text NOT NULL,
-    folder_prefix text NOT NULL,
-    actor_id text NOT NULL,
-    fingerprint bytea NOT NULL,
-    lease_id uuid NOT NULL,
-    attempt_id uuid,
-    expected_etag text DEFAULT ''::text NOT NULL,
-    state text DEFAULT 'open'::text NOT NULL,
-    effects jsonb DEFAULT '{}'::jsonb NOT NULL,
-    charged_bytes bigint DEFAULT 0 NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    content_version_id text,
-    CONSTRAINT content_media_commits_attempt_id_check CHECK (((attempt_id IS NULL) OR (attempt_id <> '00000000-0000-0000-0000-000000000000'::uuid))),
-    CONSTRAINT content_media_commits_check CHECK (((tenant_id <> ''::text) AND (content_kind <> ''::text) AND (content_id <> ''::text) AND (folder_prefix <> ''::text))),
-    CONSTRAINT content_media_commits_check1 CHECK (((operation_id <> '00000000-0000-0000-0000-000000000000'::uuid) AND (lease_id <> '00000000-0000-0000-0000-000000000000'::uuid))),
-    CONSTRAINT content_media_commits_check2 CHECK (((state <> 'prepared'::text) OR (attempt_id IS NOT NULL))),
-    CONSTRAINT content_media_commits_check3 CHECK (((charged_bytes >= 0) AND (jsonb_typeof(effects) = 'object'::text))),
-    CONSTRAINT content_media_commits_fingerprint_check CHECK ((octet_length(fingerprint) = 32)),
-    CONSTRAINT content_media_commits_state_check CHECK ((state = ANY (ARRAY['open'::text, 'prepared'::text, 'frozen'::text, 'applied'::text, 'absent'::text]))),
-    CONSTRAINT content_media_commits_version_check CHECK ((content_version_id <> ''::text))
-);
-
-CREATE TABLE "__contentkit_schema__".content_media_processing (
-    tenant_id text NOT NULL,
-    folder_prefix text NOT NULL,
-    fingerprint bytea NOT NULL,
-    observed_at timestamp with time zone NOT NULL
-);
-
-CREATE TABLE "__contentkit_schema__".content_media_publications (
-    tenant_id text NOT NULL,
-    content_kind text NOT NULL,
-    content_id text NOT NULL,
-    upload_name text NOT NULL,
-    upload_path text NOT NULL,
-    preset text NOT NULL,
-    ordinal integer NOT NULL,
-    generation uuid,
-    renditions jsonb NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    content_version_id text,
-    CONSTRAINT content_media_publications_check CHECK (((tenant_id <> ''::text) AND (content_kind <> ''::text) AND (content_id <> ''::text) AND (upload_path <> ''::text) AND (preset <> ''::text))),
-    CONSTRAINT content_media_publications_check1 CHECK (((ordinal >= 0) AND (jsonb_typeof(renditions) = 'array'::text) AND (jsonb_array_length(renditions) > 0))),
-    CONSTRAINT content_media_publications_version_check CHECK ((content_version_id <> ''::text))
-);
-
-CREATE TABLE "__contentkit_schema__".content_media_releases (
-    tenant_id text NOT NULL,
-    operation_id text NOT NULL,
-    folder_prefix text NOT NULL,
-    owner_id text NOT NULL,
-    bytes bigint NOT NULL,
-    applied boolean DEFAULT false NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT content_media_releases_bytes_check CHECK ((bytes >= 0))
-);
-
-CREATE TABLE "__contentkit_schema__".content_media_reservations (
-    tenant_id text NOT NULL,
-    object_key text NOT NULL,
-    owner_id text NOT NULL,
-    bytes bigint NOT NULL,
-    expires_at timestamp with time zone NOT NULL
-);
-
-CREATE TABLE "__contentkit_schema__".content_media_upload_rates (
-    tenant_id text NOT NULL,
-    uploader text NOT NULL,
-    hour timestamp with time zone NOT NULL,
-    files integer NOT NULL,
-    bytes bigint NOT NULL
-);
-
-CREATE TABLE "__contentkit_schema__".content_media_usage (
-    tenant_id text NOT NULL,
-    owner_id text NOT NULL,
-    used_bytes bigint DEFAULT 0 NOT NULL
+CREATE TABLE "__contentkit_schema__".eventlog_streams (
+    source text NOT NULL,
+    scope text NOT NULL,
+    epoch text DEFAULT (gen_random_uuid())::text NOT NULL,
+    "position" bigint DEFAULT 0 NOT NULL,
+    head_id text DEFAULT ''::text NOT NULL,
+    pruned_through bigint DEFAULT 0 NOT NULL,
+    pruned_id text DEFAULT ''::text NOT NULL,
+    recorded_at timestamp with time zone DEFAULT '-infinity'::timestamp with time zone NOT NULL,
+    CONSTRAINT eventlog_streams_pkey PRIMARY KEY (source, scope)
 );
 
 CREATE TABLE "__contentkit_schema__".eventlog_events (
@@ -176,15 +81,17 @@ CREATE TABLE "__contentkit_schema__".eventlog_events (
     recorded_at timestamp with time zone NOT NULL,
     subject_type text NOT NULL,
     subject_id text NOT NULL,
-    data jsonb NOT NULL
+    data jsonb NOT NULL,
+    CONSTRAINT eventlog_events_pkey PRIMARY KEY (source, scope, "position"),
+    CONSTRAINT eventlog_events_source_scope_id_key UNIQUE (source, scope, id),
+    CONSTRAINT eventlog_events_source_scope_fkey FOREIGN KEY (source, scope) REFERENCES "__contentkit_schema__".eventlog_streams(source, scope) ON DELETE CASCADE
 );
-
-CREATE TABLE "__contentkit_schema__".eventlog_migrations (
-    version integer NOT NULL
-);
+CREATE INDEX eventlog_events_source_scope_event_type_position_idx ON "__contentkit_schema__".eventlog_events USING btree (source, scope, event_type, "position");
+CREATE INDEX eventlog_events_source_scope_recorded_at_position_idx ON "__contentkit_schema__".eventlog_events USING btree (source, scope, recorded_at, "position");
+CREATE TRIGGER eventlog_immutable BEFORE UPDATE ON "__contentkit_schema__".eventlog_events FOR EACH ROW EXECUTE FUNCTION "__contentkit_schema__".eventlog_immutable();
 
 CREATE TABLE "__contentkit_schema__".eventlog_pending (
-    ordinal bigint NOT NULL,
+    ordinal bigint GENERATED ALWAYS AS IDENTITY NOT NULL,
     transaction_id xid8 DEFAULT pg_current_xact_id() NOT NULL,
     source text NOT NULL,
     scope text NOT NULL,
@@ -201,121 +108,31 @@ CREATE TABLE "__contentkit_schema__".eventlog_pending (
     CONSTRAINT eventlog_pending_id_check CHECK ((id <> ''::text)),
     CONSTRAINT eventlog_pending_scope_check CHECK ((scope <> ''::text)),
     CONSTRAINT eventlog_pending_source_check CHECK ((source <> ''::text)),
-    CONSTRAINT eventlog_pending_version_check CHECK ((version > 0))
+    CONSTRAINT eventlog_pending_version_check CHECK ((version > 0)),
+    CONSTRAINT eventlog_pending_pkey PRIMARY KEY (ordinal)
 );
-
-ALTER TABLE "__contentkit_schema__".eventlog_pending ALTER COLUMN ordinal ADD GENERATED ALWAYS AS IDENTITY (
-    SEQUENCE NAME "__contentkit_schema__".eventlog_pending_ordinal_seq
-    START WITH 1
-    INCREMENT BY 1
-    NO MINVALUE
-    NO MAXVALUE
-    CACHE 1
-);
-
-CREATE TABLE "__contentkit_schema__".eventlog_streams (
-    source text NOT NULL,
-    scope text NOT NULL,
-    epoch text DEFAULT (gen_random_uuid())::text NOT NULL,
-    "position" bigint DEFAULT 0 NOT NULL,
-    head_id text DEFAULT ''::text NOT NULL,
-    pruned_through bigint DEFAULT 0 NOT NULL,
-    pruned_id text DEFAULT ''::text NOT NULL,
-    recorded_at timestamp with time zone DEFAULT '-infinity'::timestamp with time zone NOT NULL
-);
-
-ALTER TABLE ONLY "__contentkit_schema__".content_media_allocations
-    ADD CONSTRAINT content_media_allocations_pkey PRIMARY KEY (tenant_id, object_key);
-
-ALTER TABLE ONLY "__contentkit_schema__".content_media_cleanup
-    ADD CONSTRAINT content_media_cleanup_pkey PRIMARY KEY (tenant_id, folder_prefix);
-
-ALTER TABLE ONLY "__contentkit_schema__".content_media_commits
-    ADD CONSTRAINT content_media_commits_pkey PRIMARY KEY (tenant_id, operation_id);
-
-ALTER TABLE ONLY "__contentkit_schema__".content_media_processing
-    ADD CONSTRAINT content_media_processing_pkey PRIMARY KEY (tenant_id, folder_prefix);
-
-ALTER TABLE ONLY "__contentkit_schema__".content_media_publications
-    ADD CONSTRAINT content_media_publications_key UNIQUE NULLS NOT DISTINCT (tenant_id, content_kind, content_id, content_version_id, upload_name, upload_path, preset);
-
-ALTER TABLE ONLY "__contentkit_schema__".content_media_releases
-    ADD CONSTRAINT content_media_releases_pkey PRIMARY KEY (tenant_id, operation_id);
-
-ALTER TABLE ONLY "__contentkit_schema__".content_media_reservations
-    ADD CONSTRAINT content_media_reservations_pkey PRIMARY KEY (tenant_id, object_key);
-
-ALTER TABLE ONLY "__contentkit_schema__".content_media_upload_rates
-    ADD CONSTRAINT content_media_upload_rates_pkey PRIMARY KEY (tenant_id, uploader, hour);
-
-ALTER TABLE ONLY "__contentkit_schema__".content_media_usage
-    ADD CONSTRAINT content_media_usage_pkey PRIMARY KEY (tenant_id, owner_id);
-
-ALTER TABLE ONLY "__contentkit_schema__".eventlog_events
-    ADD CONSTRAINT eventlog_events_pkey PRIMARY KEY (source, scope, "position");
-
-ALTER TABLE ONLY "__contentkit_schema__".eventlog_events
-    ADD CONSTRAINT eventlog_events_source_scope_id_key UNIQUE (source, scope, id);
-
-ALTER TABLE ONLY "__contentkit_schema__".eventlog_migrations
-    ADD CONSTRAINT eventlog_migrations_pkey PRIMARY KEY (version);
-
-ALTER TABLE ONLY "__contentkit_schema__".eventlog_pending
-    ADD CONSTRAINT eventlog_pending_pkey PRIMARY KEY (ordinal);
-
-ALTER TABLE ONLY "__contentkit_schema__".eventlog_streams
-    ADD CONSTRAINT eventlog_streams_pkey PRIMARY KEY (source, scope);
-
-CREATE INDEX content_media_allocations_folder ON "__contentkit_schema__".content_media_allocations USING btree (tenant_id, folder_prefix);
-
-CREATE INDEX content_media_cleanup_due ON "__contentkit_schema__".content_media_cleanup USING btree (tenant_id, content_kind, due_at, folder_prefix);
-
-CREATE INDEX content_media_commits_notify ON "__contentkit_schema__".content_media_commits USING btree (tenant_id, updated_at, operation_id) WHERE ((state = 'applied'::text) AND ((effects ->> 'notify'::text) = 'true'::text));
-
-CREATE INDEX content_media_commits_pending ON "__contentkit_schema__".content_media_commits USING btree (tenant_id, updated_at, operation_id) WHERE (state = ANY (ARRAY['open'::text, 'prepared'::text, 'frozen'::text]));
-
-CREATE UNIQUE INDEX content_media_commits_pending_folder ON "__contentkit_schema__".content_media_commits USING btree (tenant_id, folder_prefix) WHERE (state = ANY (ARRAY['open'::text, 'prepared'::text, 'frozen'::text]));
-
-CREATE UNIQUE INDEX content_media_releases_pending_folder ON "__contentkit_schema__".content_media_releases USING btree (tenant_id, folder_prefix) WHERE (NOT applied);
-
-CREATE INDEX content_media_reservations_owner ON "__contentkit_schema__".content_media_reservations USING btree (tenant_id, owner_id, expires_at);
-
-CREATE INDEX eventlog_events_source_scope_event_type_position_idx ON "__contentkit_schema__".eventlog_events USING btree (source, scope, event_type, "position");
-
-CREATE INDEX eventlog_events_source_scope_recorded_at_position_idx ON "__contentkit_schema__".eventlog_events USING btree (source, scope, recorded_at, "position");
-
 CREATE INDEX eventlog_pending_transaction_id_idx ON "__contentkit_schema__".eventlog_pending USING btree (transaction_id);
-
 CREATE CONSTRAINT TRIGGER eventlog_flush_at_commit AFTER INSERT ON "__contentkit_schema__".eventlog_pending DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION "__contentkit_schema__".eventlog_flush();
 
-CREATE TRIGGER eventlog_immutable BEFORE UPDATE ON "__contentkit_schema__".eventlog_events FOR EACH ROW EXECUTE FUNCTION "__contentkit_schema__".eventlog_immutable();
-
-ALTER TABLE ONLY "__contentkit_schema__".eventlog_events
-    ADD CONSTRAINT eventlog_events_source_scope_fkey FOREIGN KEY (source, scope) REFERENCES "__contentkit_schema__".eventlog_streams(source, scope) ON DELETE CASCADE;
-
-
---
-
+CREATE TABLE "__contentkit_schema__".eventlog_migrations (
+    version integer NOT NULL,
+    CONSTRAINT eventlog_migrations_pkey PRIMARY KEY (version)
+);
 INSERT INTO "__contentkit_schema__".eventlog_migrations (version) VALUES (1);
 $ckshared$, '"__contentkit_schema__"', quote_ident(current_schema()));
 END
 $ckguard$;
 
+-- Each tenant's avatar primary: the app whose bucket holds account media.
 CREATE TABLE content_account_avatar_placement (
     tenant_id uuid NOT NULL,
     primary_app_id uuid NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT content_account_avatar_placement_primary_app_id_check CHECK ((primary_app_id <> '00000000-0000-0000-0000-000000000000'::uuid))
+    CONSTRAINT content_account_avatar_placement_primary_app_id_check CHECK ((primary_app_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT content_account_avatar_placement_pkey PRIMARY KEY (tenant_id)
 );
 
-CREATE TABLE content_account_bindings (
-    account_namespace text NOT NULL,
-    tenant_id uuid NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT content_account_bindings_account_namespace_check CHECK ((account_namespace <> ''::text)),
-    CONSTRAINT content_account_bindings_tenant_id_check CHECK ((tenant_id <> '00000000-0000-0000-0000-000000000000'::uuid))
-);
-
+-- Account erasure: requested, then completed per app.
 CREATE TABLE content_account_erasure_intents (
     tenant_id uuid NOT NULL,
     app_id text NOT NULL,
@@ -326,8 +143,11 @@ CREATE TABLE content_account_erasure_intents (
 CASE
     WHEN (app_id = ''::text) THEN true
     ELSE (((app_id)::uuid <> '00000000-0000-0000-0000-000000000000'::uuid) AND (((app_id)::uuid)::text = app_id))
-END)
+END),
+    CONSTRAINT content_account_erasure_intents_pkey PRIMARY KEY (tenant_id, app_id, actor_id)
 );
+-- The pending-anonymization probe reads intents by request time.
+CREATE INDEX content_account_erasure_intents_requested ON content_account_erasure_intents USING btree (tenant_id, app_id, requested_at);
 
 CREATE TABLE content_account_erasure_receipts (
     tenant_id uuid NOT NULL,
@@ -335,29 +155,36 @@ CREATE TABLE content_account_erasure_receipts (
     actor_id text NOT NULL,
     completed_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT content_account_erasure_receipts_actor_id_check CHECK ((actor_id <> ''::text)),
-    CONSTRAINT content_account_erasure_receipts_app_id_check CHECK ((app_id <> '00000000-0000-0000-0000-000000000000'::uuid))
+    CONSTRAINT content_account_erasure_receipts_app_id_check CHECK ((app_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT content_account_erasure_receipts_pkey PRIMARY KEY (tenant_id, app_id, actor_id)
 );
 
-ALTER TABLE ONLY content_account_avatar_placement
-    ADD CONSTRAINT content_account_avatar_placement_pkey PRIMARY KEY (tenant_id);
+-- An app whose signal plane was ever provisioned (MigrateClickHouse) keeps
+-- account erasure pending on an engine without one.
+CREATE TABLE content_signal_planes (
+    tenant_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    provisioned_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT content_signal_planes_app_id_check CHECK ((app_id <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT content_signal_planes_pkey PRIMARY KEY (tenant_id, app_id)
+);
 
-ALTER TABLE ONLY content_account_bindings
-    ADD CONSTRAINT content_account_bindings_pkey PRIMARY KEY (account_namespace);
-
-ALTER TABLE ONLY content_account_bindings
-    ADD CONSTRAINT content_account_bindings_tenant_id_key UNIQUE (tenant_id);
-
-ALTER TABLE ONLY content_account_erasure_intents
-    ADD CONSTRAINT content_account_erasure_intents_pkey PRIMARY KEY (tenant_id, app_id, actor_id);
-
-ALTER TABLE ONLY content_account_erasure_receipts
-    ADD CONSTRAINT content_account_erasure_receipts_pkey PRIMARY KEY (tenant_id, app_id, actor_id);
-
-ALTER TABLE ONLY content_account_avatar_placement
-    ADD CONSTRAINT content_account_avatar_placement_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES content_account_bindings(tenant_id);
-
-ALTER TABLE ONLY content_account_erasure_intents
-    ADD CONSTRAINT content_account_erasure_intents_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES content_account_bindings(tenant_id);
-
-ALTER TABLE ONLY content_account_erasure_receipts
-    ADD CONSTRAINT content_account_erasure_receipts_tenant_id_fkey FOREIGN KEY (tenant_id) REFERENCES content_account_bindings(tenant_id);
+-- Each account media item's manifest.json in the bucket is the only record of
+-- its files; this is a rebuildable cache of it, one row per item.
+CREATE TABLE IF NOT EXISTS content_media_items (
+    tenant_id text NOT NULL,
+    content_kind text NOT NULL,
+    content_id text NOT NULL,
+    content_version_id text DEFAULT ''::text NOT NULL,
+    rev bigint NOT NULL,
+    etag text NOT NULL,
+    state text NOT NULL,
+    status jsonb NOT NULL,
+    images jsonb NOT NULL,
+    deleted boolean DEFAULT false NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT content_media_items_check CHECK (((tenant_id <> ''::text) AND (content_kind <> ''::text) AND (content_id <> ''::text) AND (rev > 0) AND (etag <> ''::text))),
+    CONSTRAINT content_media_items_images_check CHECK ((jsonb_typeof(images) = 'array'::text)),
+    CONSTRAINT content_media_items_status_check CHECK ((jsonb_typeof(status) = 'object'::text)),
+    CONSTRAINT content_media_items_pkey PRIMARY KEY (tenant_id, content_kind, content_id, content_version_id)
+);

@@ -1,22 +1,30 @@
 # Database initialization
 
-Each store has one baseline; later schema changes are numbered migrations after it:
+From 0.141.0 each migration set is one baseline, and later schema changes are numbered migrations after it:
 
 | Store | Embedded filesystem | File | Contents |
 |---|---|---|---|
-| PostgreSQL catalog | `migrations.Postgres` | `postgres/0001_baseline.up.sql` | content, versions, entities, memberships, facets, the event log, import ids, codes, interactions, polls, search, preferences, erasure and media state |
-| PostgreSQL accounts | `migrations.Accounts` | `accounts/0001_baseline.up.sql` | account media, avatar placement and account erasure records |
+| PostgreSQL catalog | `migrations.Postgres` | `postgres/0001_baseline.up.sql` | content, versions, entities, memberships, facets, the event log, import ids, codes, interactions, polls, location rules, search, reading state, erasure and media state |
+| PostgreSQL accounts | `migrations.Accounts` | `accounts/0001_baseline.up.sql` | account media, avatar placement, account erasure records and provisioned signal planes |
+| PostgreSQL media worker | `internal/media/workqueue` | `migrations/0001_baseline.up.sql` | video conversion runs and their chunks, beside River's tables |
 | ClickHouse | `migrations.ClickHouse` | `clickhouse/0001_activity.up.sql` | the activity log, `content_daily`, `audience_daily` and erasure fences |
 
-No checksum is silently accepted or rewritten; a database recorded by an
-earlier migration history is recreated, not converted. A version id is NULL for
-the work itself in PostgreSQL and `''` in ClickHouse, whose sorting keys hold it.
+Released migrations are immutable: a schema change is a new migration, and CI refuses a change to any migration the latest release shipped (`scripts/check-released-migrations.sh`). A version id is NULL for the work itself in PostgreSQL and `''` in ClickHouse, whose sorting keys hold it.
 
-Account keys are derived from `Config.Scope.TenantID` as `tenant_<TenantID>`.
-The accounts migration `0002_remove_account_bindings.up.sql` removes
-ContentKit's obsolete key-binding table and its three dependent foreign keys.
-AuthKit's inbox tables are unchanged. No account-key conversion or row rewrite
-runs during migration or startup.
+A database built before 0.141.0, or whose ledger records a migration this release does not ship byte for byte, is never converted: `MigratePostgres` and a `SkipMigrations` start refuse it, naming the schema and the rebuild. That refusal is not `ErrMigrationsRequired`, since migrating cannot fix it.
+
+## Rebuilding a database from before 0.141.0
+
+Every ContentKit database an earlier release built is rebuilt. Stop the host and its media workers, then drop ContentKit's PostgreSQL schemas (the catalog, its River schema `<catalog>_river`, the account schema, which the tenant's apps share, and each media worker schema, the tenant's account-media `ck_account_<tenant>` included) and their migration records:
+
+```sql
+DROP SCHEMA <catalog>, <catalog>_river, <accounts>, <media_worker>, ck_account_<tenant> CASCADE;
+DELETE FROM public.migrations
+WHERE app IN ('contentkit', 'contentkit-accounts', 'contentkit-media-worker')
+  AND database = 'postgres' AND schema IN ('<catalog>', '<accounts>', '<media_worker>', 'ck_account_<tenant>');
+```
+
+Drop the ClickHouse database too, with its records (`app = 'contentkit_signal' AND database = 'clickhouse' AND schema = '<signal database>'`). Then run the host's migration command (`MigratePostgres`, then `MigrateClickHouse`), start media on a new bucket ([media model](#media-model)) and import the content again.
 
 ## Content model configuration
 
@@ -45,20 +53,9 @@ WHERE kind = 'contentkit_version_release' AND finalized_at IS NULL;
 
 Catalog events are kept fourteen days by default, not ninety (`event_retention`). The next catalog maintenance prunes the older ones. A reader whose cursor is older gets `event_cursor_expired` (`eventlog.ErrExpiredCursor`), resyncs current state and reads on without a cursor, as on any expiry.
 
-## Favorites keys
-
-Catalog migrations `0072`–`0074` rebuild `content_favorites` with `uuid` keys: `app_id` replaces the text `tenant_id`, and `user_id`, `content_id` and `content_version_id` become `uuid`. The five indexes keep their names, led by `app_id`. A favorite needs a UUID account id, live and imported. `0072` refuses a row whose id is not a canonical lowercase UUID and names it; correct or delete such rows and migrate again.
-
-The table is copied, not altered, so writers keep writing during the copy:
-
-1. `0072` checks every id, creates the new table and a trigger that notes each key written to the old one. Its scan holds only `ACCESS SHARE`; creating the trigger waits for in-flight writes (`lock_timeout` 10s).
-2. `0073` runs outside a transaction: it copies the rows in batches of 4096 pages, each committed on its own, rewrites the noted keys and indexes the copy. Nothing waits on it. If it fails, resolve it with `migratekit repair resolve` and migrate again; it starts over.
-3. `0074` locks the old table (`ACCESS EXCLUSIVE`, `lock_timeout` 10s), rewrites the keys written since `0073`, drops it and renames the copy. The lock lasts as long as those keys take, normally well under a second; a timeout fails only this step.
-
-At 15.1M rows (2.7 GB of heap, 9.7 GB of indexes) expect about 30–60 s for the check, 1–3 minutes for the copy, 2–5 minutes for the indexes at the default `maintenance_work_mem` and under a second for the swap: 4–9 minutes and 6–8 GB of WAL. The table ends at about 6 GB (2 GB heap, 4 GB indexes). The previous release cannot read it, so roll the hosts forward with the migration.
 ## Media model
 
-Media's bucket is now the only record of an item's files (README "Media"). Migrations `postgres/0076_bucket_media_model` and `accounts/0004_bucket_media_model` drop the media journal, allocations, cleanup, processing, publication, publication-request, quota, lock and delivery tables and create the cache `content_media_items`. Stable avatar names, MP4 download renditions, ZIP presets, upload quotas (`UploadLimits`, `Channels.Uploads`) and media restore are gone; `MEDIA_GATEWAY_DEFAULTS` is no longer read.
+Media's bucket is now the only record of an item's files (README "Media"). The media journal, allocations, cleanup, processing, publication, publication-request, quota, lock and delivery tables are gone; `content_media_items` caches each item's manifest. Stable avatar names, MP4 download renditions, ZIP presets, upload quotas (`UploadLimits`, `Channels.Uploads`) and media restore are gone; `MEDIA_GATEWAY_DEFAULTS` is no longer read.
 
 The bucket must never have had versioning, and an existing bucket's media is not carried over: start the release on a new, empty bucket created without versioning (`MEDIA_S3_BUCKET`), run `media-worker publish-defaults`, then import the media again. Delete the old bucket once the site is verified.
 
@@ -68,7 +65,7 @@ A video kind's download streams its original as uploaded (its master under the i
 
 ## Time-ordered ids
 
-ContentKit mints its row, operation and object ids as UUIDv7s, so new rows append to their indexes. Catalog migration `0075` and media-worker migration `0005` change the remaining `gen_random_uuid()` column defaults to `uuidv7()`; existing rows keep their ids. Media lifecycle ids (erasure, purge, folder retirement, delivery adoption and withdrawal, archive ingestion) are deterministic UUIDv7s instead of name-based UUIDv5s, so one retried across the upgrade derives a new id and runs again under it.
+ContentKit mints its row, operation and object ids as UUIDv7s, so new rows append to their indexes; generated ids default to `uuidv7()`. Media lifecycle ids (erasure, purge, folder retirement, delivery adoption and withdrawal, archive ingestion) are deterministic UUIDv7s instead of name-based UUIDv5s, so one retried across the upgrade derives a new id and runs again under it.
 
 The media journal keys a commit by a hash of its `operation_id`, never the id as sent, so no caller can claim an id a lifecycle operation derives. Send a UUIDv7 (`contentref.NewID`, Postgres `uuidv7()`) to keep that index ordered; a UUIDv4 is still accepted.
 

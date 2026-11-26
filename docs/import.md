@@ -185,8 +185,7 @@ or a pre-provenance `NULL` row; a cleared row records that source. Native-marked
 and other-source rows stay protected. Non-clear imports update only rows already
 owned by their source. Hosts are responsible for selecting their own historical
 imports when clearing unknown rows; no timestamp or user-ID heuristic infers
-ownership. Migration 0067 leaves existing rows at default `NULL`, with no backfill;
-native writes record their marker going forward.
+ownership. Native writes record their marker.
 
 For legacy reading, send the same target and account with `removed: true` to
 clear that reading; a later record with progress restores it.
