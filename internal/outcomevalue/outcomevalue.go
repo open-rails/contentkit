@@ -1,9 +1,9 @@
-// Package readquality is the quality of a read: P(sequel), the probability
-// that the person would read a sequel, remake or enhanced version, per
-// segment and outcome, and q, its place from -1 to +1 around the segment's
-// base rate. It names the keys of read_quality and holds the starting guesses
-// used until the monthly refit measures them.
-package readquality
+// Package outcomevalue is what each outcome of a read is worth: P(sequel),
+// the probability that the person would read a sequel, remake or enhanced
+// version, per segment and outcome, and q, its place from -1 to +1 around the
+// segment's base rate. It names the keys of outcome_values and holds the
+// starting guesses used until the monthly refit measures them.
+package outcomevalue
 
 import (
 	"context"
@@ -89,7 +89,7 @@ func Q(p, b float64) float64 {
 	return (p - b) / b
 }
 
-// Row is one read_quality row.
+// Row is one outcome_values row.
 type Row struct {
 	Segment, Outcome string
 	PSequel, Q       float64
@@ -130,7 +130,7 @@ func Defaults() Table {
 	return t
 }
 
-// Querier reads read_quality.
+// Querier reads outcome_values.
 type Querier interface {
 	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 }
@@ -139,7 +139,7 @@ type Querier interface {
 // unseeded segment or outcome still has its guess.
 func Load(ctx context.Context, q Querier, schema, app string) (Table, error) {
 	t := Defaults()
-	rows, err := q.Query(ctx, `SELECT segment, outcome, q FROM `+pgx.Identifier{schema, "read_quality"}.Sanitize()+` WHERE app_id = $1::uuid`, app)
+	rows, err := q.Query(ctx, `SELECT segment, outcome, q FROM `+pgx.Identifier{schema, "outcome_values"}.Sanitize()+` WHERE app_id = $1::uuid`, app)
 	if err != nil {
 		return nil, err
 	}
