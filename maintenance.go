@@ -66,19 +66,3 @@ func (e *Engine) RegenerateMedia(ctx context.Context, r media.Regeneration) (int
 	}
 	return e.media.jobs.Regenerate(ctx, r)
 }
-
-// ResyncPreferences sends every reaction and favorite (zeros included) to the
-// signal plane once more: the repair after it lost data, such as a restored
-// ClickHouse. It rewinds the preference cursor and queues the preference job,
-// which sends them in its bounded batches; the process running StartJobs does
-// that work.
-func (e *Engine) ResyncPreferences(ctx context.Context) error {
-	if e.erasureRecovery {
-		return ErrErasureReplayRequired
-	}
-	if err := e.content.ResyncPreferences(ctx); err != nil {
-		return err
-	}
-	e.signalsBack()
-	return nil
-}

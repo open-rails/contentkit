@@ -68,8 +68,8 @@ func TestEntityPopularity(t *testing.T) {
 			// User IDs are fixture account UUIDs; generate_series keeps the floor fixtures cheap.
 			favorite := func(content string, accounts, days int, version *string) {
 				_, err := w.pool.Exec(t.Context(), `INSERT INTO `+table("content_favorites")+`
- (app_id,content_kind,content_id,user_id,content_version_id,value,revision,created_at)
- SELECT $1::uuid,'article',$2::uuid,('00000000-0000-4000-8000-'||lpad(n::text,12,'0'))::uuid,$5::uuid,1,1,now()-make_interval(days=>$4)
+ (app_id,content_kind,content_id,user_id,content_version_id,value,created_at)
+ SELECT $1::uuid,'article',$2::uuid,('00000000-0000-4000-8000-'||lpad(n::text,12,'0'))::uuid,$5::uuid,1,now()-make_interval(days=>$4)
  FROM generate_series(1,$3::int) n`,
 					tenant, content, accounts, days, version)
 				must(t, err)

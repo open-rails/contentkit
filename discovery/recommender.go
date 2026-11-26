@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"github.com/open-rails/contentkit/contentref"
-	"github.com/open-rails/contentkit/signal"
 )
 
 // Hit is one ranked work of a discovery list.
@@ -18,12 +17,6 @@ type SimilarOptions struct {
 	Limit int
 	// ContentKinds limits result kinds (default: any).
 	ContentKinds []string
-	// Window bounds the candidate evidence (default all time).
-	Window signal.Window
-
-	// ExcludeSeenFor drops works this subject has already seen (and always
-	// drops works they negatively reacted to).
-	ExcludeSeenFor *signal.Subject
 
 	// Admit keeps the works the reader may be shown; nil admits all.
 	Admit Admit
@@ -42,8 +35,8 @@ type RecommendOptions struct {
 	// Limit caps results (default: Recommender.DefaultLimit).
 	Limit int
 
-	// SeedLimit is how many of the subject's highest-signal works inform
-	// candidates (source default; Engagement: 5).
+	// SeedLimit is how many of the reader's recent good or complete reads
+	// inform candidates (default 5).
 	SeedLimit int
 
 	// SeedContentKinds limits which kinds may seed (default: any).

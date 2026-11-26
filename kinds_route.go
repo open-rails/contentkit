@@ -22,10 +22,8 @@ type ContentModel struct {
 	Tiers       []string                    `json:"tiers"`
 	Kinds       map[string]kinds.Kind       `json:"kinds"`
 	EntityKinds map[string]kinds.EntityKind `json:"entity_kinds"`
-	// Signals: the site records signals and exposures now. Without, clients
-	// send none and read the model again later: a configured signal plane
-	// that is down comes back (history, similar and recommendations answer
-	// unavailable meanwhile), one never configured answers not_configured.
+	// Signals: the site logs activity (it has a signal plane). Without,
+	// clients send none: POST /v1/activity answers not_configured.
 	Signals bool `json:"signals"`
 	// Avatars is people's avatar preset with its default image; uploads
 	// target {kind, user id}. Absent: people have none. Another person's
@@ -76,7 +74,7 @@ func init() { httpapi.Register(httpapi.Kinds, kindsRoutes) }
 
 var kindsRoutes = []httpapi.Route[*kindsServer]{
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/kinds", Resource: "kinds", Auth: httpapi.Open,
-		Doc:       "The site's content model: languages, tiers, content kinds, entity kinds, whether signals are recorded now and people's avatar preset.",
+		Doc:       "The site's content model: languages, tiers, content kinds, entity kinds, whether activity is logged and people's avatar preset.",
 		Responses: []httpapi.Reply{httpapi.OK(ContentModel{})}, Cache: httpapi.Cache{MaxAge: time.Minute}}, Serve: httpapi.H((*kindsServer).handle)},
 }
 

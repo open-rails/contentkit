@@ -15,8 +15,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/catalog"
-	"github.com/open-rails/contentkit/contentref"
-	"github.com/open-rails/contentkit/signal"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverpgxv5"
 	"github.com/riverqueue/river/rivertype"
@@ -68,26 +66,22 @@ func TestContentPurgeRetriesSignalCleanup(t *testing.T) {
 	store, err := signalstore.NewStore(direct, a.cfg.ClickHouse.Database)
 	must(t, err)
 	for _, item := range []catalog.Content{deleted, untouched} {
-		measurement, err := signalstore.MeasurePages([]signal.PageEngagement{{Index: 0, Ranges: []signal.CoverageRange{{From: 0, To: 10_000}}, ActiveMS: 1_000}}, 1, 1_000)
+		_, err := store.Insert(t.Context(), a.cfg.Scope.AppID.String(), []signalstore.Row{{Subject: uuid.MustParse(user.ID), At: time.Now(),
+			Action: signalstore.ActionProgress, ContentKind: item.Kind, ContentID: uuid.MustParse(item.ID), Access: signalstore.AccessAccount,
+			ActiveMS: 1_000, Furthest: 1, Current: 1, Length: 1, Unit: signalstore.UnitPage}})
 		must(t, err)
-		measurement.VersionID = item.Versions[0].ID
-		measurement.VisitID, measurement.SegmentID = uuid.NewString(), uuid.NewString()
-		at := time.Now().UTC().Truncate(time.Microsecond)
-		must(t, store.RecordSignals(t.Context(), a.cfg.Scope.AppID.String(), []signal.Signal{{
-			ContentRef: contentref.NewVersion(a.cfg.Scope.AppID.String(), item.Kind, item.ID, item.Versions[0].ID),
-			Subject:    signal.Subject{UserID: user.ID}, Type: signal.TypeEngagement, EventID: uuid.NewString(), Revision: 1,
-			OccurredAt: at, Measurement: &measurement,
-			Access: &signal.AccessContext{ObservedAt: at, ContentAccess: "public", ViewerAccess: "full", PolicyRevision: "critical-v1", Audience: "public", EligibilityKnown: true},
-		}}))
 	}
 	assertState := func(item catalog.Content, want bool) {
 		t.Helper()
-		ref := contentref.New(a.cfg.Scope.AppID.String(), item.Kind, item.ID)
-		states, err := store.States(t.Context(), a.cfg.Scope.AppID.String(), signal.Subject{UserID: user.ID}, []signal.ContentRef{ref})
+		rows, err := direct.Query(t.Context(), `SELECT count() FROM `+a.cfg.ClickHouse.Database+`.activity WHERE tenant = ? AND content_id = ?`, a.cfg.Scope.AppID.String(), item.ID)
 		must(t, err)
-		_, exists := states[ref.Key()]
-		if exists != want {
-			t.Fatalf("content %s signal presence=%v want%v", item.ID, exists, want)
+		defer rows.Close()
+		var n uint64
+		for rows.Next() {
+			must(t, rows.Scan(&n))
+		}
+		if exists := n > 0; exists != want {
+			t.Fatalf("content %s activity presence=%v want %v", item.ID, exists, want)
 		}
 	}
 	assertState(deleted, true)

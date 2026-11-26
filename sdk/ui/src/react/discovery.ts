@@ -1,20 +1,17 @@
 import { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
-import { Beacons, eventId, type BeaconOptions } from "../client/beacons.js";
-import { forgetOriginLink, originID, originLink } from "../client/navigation-origin.js";
+import { ActivityReporter, type ActivityReporterOptions, type OpenSource } from "../client/activity.js";
 import type { ContentKitClient } from "../client/client.js";
 import type { MineQuery } from "../client/content/favorites.js";
-import type { ContentQuery, DailyReleasesQuery, HistoryQuery, RailQuery, ReleaseDatesQuery, SearchQuery, TypeaheadQuery } from "../client/discovery.js";
+import type { ContentQuery, ContinueQuery, DailyReleasesQuery, HistoryQuery, RailQuery, ReleaseDatesQuery, SearchQuery, TypeaheadQuery } from "../client/discovery.js";
 import { ContentKitError, toContentKitError } from "../client/errors.js";
 import type { Card, ContentFilters, ContentFiltersUpdate, ContentPage, DailyReleases, DateCount, EntityCard, Interaction, InteractionPage, RecentSearch, SearchPage, Typeahead } from "../client/generated/wire.js";
 import { ContentKitContext, useGuarded } from "./context.js";
 import { keyOf, useContentScope, useList, useResource, type UseList } from "./use-resource.js";
-import { guestStanding, type GuestReadingItem } from "../client/guest-reading-history.js";
 import { recentSearchLimit } from "../client/browser-search-history.js";
 
 const page = (p: ContentPage) => ({ items: p.contents, next: p.next_cursor ?? null, metadata: p.summary });
 export interface UseContents extends UseList<Card, ContentPage["summary"]> { summary?: ContentPage["summary"]; popularity?: ContentPage["popularity"] }
 const NO_SEARCHES: RecentSearch[] = [];
-const NO_READING: readonly GuestReadingItem[] = Object.freeze([]);
 
 // A new identity even after A → B → A, so late requests cannot write into the new visit.
 function useCurrentDiscoveryScope(client: ContentKitClient, scope: string): () => boolean {
@@ -47,6 +44,8 @@ export function useContents(q: ContentQuery | null, o: { client?: ContentKitClie
 /** One numbered page of a list or search: its cards and the selection's summary (total included). */
 export interface UseContentsPage {
   items: Card[];
+  /** A search's request_id: opens of its results send it back. */
+  requestId?: string;
   popularity?: ContentPage["popularity"];
   summary?: ContentPage["summary"];
   loading: boolean;
@@ -83,7 +82,7 @@ export function useSearchPage(q: SearchQuery | null, page: number, o: { client?:
     if (n === 1 && viewer === null && !signal.aborted && isCurrent()) client.discovery.browserSearches.record(query!.q, out.contents.length);
     return out;
   });
-  return { items: r.data?.contents ?? NO_CARDS, popularity:r.data?.popularity, summary: r.data?.summary, entities: r.data?.entities ?? NO_ENTITIES, loading: r.loading || (!!key && !r.loaded), error: r.error, reload: r.reload };
+  return { items: r.data?.contents ?? NO_CARDS, requestId: r.data?.request_id, popularity:r.data?.popularity, summary: r.data?.summary, entities: r.data?.entities ?? NO_ENTITIES, loading: r.loading || (!!key && !r.loaded), error: r.error, reload: r.reload };
 }
 
 /** Locked contents in the same full selection, including its activity window. */
@@ -103,16 +102,16 @@ export function useLockedCount(q: ContentQuery | null, o: { client?: ContentKitC
 }
 
 /** Keyword search results as cards, and the entities matching the query; nothing while q.q is empty. */
-export function useSearch(q: SearchQuery | null, o: { client?: ContentKitClient } = {}): UseContents & { entities: EntityCard[] } {
+export function useSearch(q: SearchQuery | null, o: { client?: ContentKitClient } = {}): UseContents & { entities: EntityCard[]; requestId?: string } {
   const { client, store, scope, viewer } = useContentScope(o.client);
   const query = useDisplay(q?.q.trim() ? q : null);
   const isCurrent = useCurrentDiscoveryScope(client, scope);
-  const list = useList<Card, Pick<SearchPage, "summary" | "entities" | "popularity">>(store, query ? keyOf("cards", scope, "search", query) : null, { type: "cards" }, async (cursor, signal) => {
+  const list = useList<Card, Pick<SearchPage, "summary" | "entities" | "popularity" | "request_id">>(store, query ? keyOf("cards", scope, "search", query) : null, { type: "cards" }, async (cursor, signal) => {
     const out = await client.discovery.search({ ...query!, cursor: cursor as string | undefined, summary: cursor ? undefined : query?.summary }, signal);
     if (!cursor && viewer === null && !signal.aborted && isCurrent()) client.discovery.browserSearches.record(query!.q, out.contents.length);
-    return { items: out.contents, next: out.next_cursor ?? null, metadata: { summary: out.summary, entities: out.entities, popularity:out.popularity } };
+    return { items: out.contents, next: out.next_cursor ?? null, metadata: { summary: out.summary, entities: out.entities, popularity:out.popularity, request_id: out.request_id } };
   });
-  return { ...list, metadata: list.metadata?.summary, summary: list.metadata?.summary, popularity:list.metadata?.popularity, entities: list.metadata?.entities ?? NO_ENTITIES };
+  return { ...list, metadata: list.metadata?.summary, summary: list.metadata?.summary, popularity:list.metadata?.popularity, entities: list.metadata?.entities ?? NO_ENTITIES, requestId: list.metadata?.request_id };
 }
 
 export interface UseRail {
@@ -132,7 +131,7 @@ function useRail(key: string | null, fetch: (signal: AbortSignal) => Promise<Con
   return { items: r.data?.contents ?? [], summary: r.data?.summary, loading: !!key && (r.loading || !r.loaded), error: unavailable ? undefined : r.error, unavailable, reload: r.reload };
 }
 
-/** Contents like one: co-engagement, or the site's configured source. */
+/** Contents like one. */
 export function useSimilar(id: string | null | undefined, q: RailQuery = {}, o: { client?: ContentKitClient } = {}): UseRail {
   const { client, scope } = useContentScope(o.client);
   const query = useDisplay(q)!;
@@ -175,51 +174,32 @@ export function useDailyReleases(q: DailyReleasesQuery | null = {}, o: { client?
 }
 
 export interface UseHistory extends UseContents {
-  /** A status-filtered guest selection has hidden candidates whose current version facts cannot be inspected. */
-  filterSummaryUnknown?: boolean;
   /** Erases the reader's history: of one content item, one kind, or (no argument) everything. */
   forget: (o?: { kind?: string; content_id?: string }) => Promise<void>;
 }
 
-/** Account history is authoritative; signed-out reading stays in this browser across tabs. */
+/** The signed-in reader's history, most recent first; nothing signed out. */
 export function useHistory(q: HistoryQuery | null = {}, o: { client?: ContentKitClient } = {}): UseHistory {
   const { client, store, scope, viewer } = useContentScope(o.client);
   const query = useDisplay(q);
   const guarded = useGuarded();
-  const guest = viewer === null;
   const isCurrent = useCurrentDiscoveryScope(client, scope);
-  const browser = client.guestHistory;
-  const enabled = query !== null;
-  const subscribe = useCallback((listener: () => void) => guest && enabled ? browser.subscribe(listener) : () => {}, [browser, guest, enabled]);
-  const snapshot = useCallback(() => guest && enabled ? browser.snapshot() : NO_READING, [browser, guest, enabled]);
-  const local = useSyncExternalStore(subscribe, snapshot, () => NO_READING);
-  const selected = useMemo(() => local.filter(row => !query?.kind || row.kind === query.kind).slice(0, 100), [local, query?.kind]);
-  const localRevision = guest ? selected.map(row => [row.id, row.at, row.checkpoints.map(checkpoint => [checkpoint.visit_id, checkpoint.segment_id, checkpoint.revision])]) : undefined;
-  const list = useList(store, !query || viewer === undefined ? null : keyOf("history", scope, query, localRevision), { type: "history" }, async (cursor, signal) => {
-    if (!guest) return page(await client.discovery.history({ ...query, cursor: cursor as string | undefined, summary: cursor ? undefined : query?.summary }, signal));
-    const offset = typeof cursor === "number" ? cursor : 0;
-    const limit = Math.max(1, Math.min(100, query?.limit ?? 50));
-    const batch = selected.slice(offset, offset + limit);
-    if (!batch.length) return { items: [], next: null };
-    // Bounded known-ID hydration restores history under current reader policy.
-    const out = await client.discovery.knownCards({ ids: (query?.summary && !cursor ? selected : batch).map(row => row.id), summary: !cursor ? query?.summary : undefined, kind: query?.kind, language: query?.language,
-      display_language: query?.display_language, mode: query?.mode, card_entities: query?.card_entities }, signal);
-    const cards = new Map(out.contents.map(card => [card.id, card]));
-    const items = batch.flatMap(row => {
-      const card = cards.get(row.id); if (!card) return [];
-      const viewer = guestStanding(card, row);
-      if (query?.status === "seen" && !viewer.seen || query?.status === "in_progress" && (!viewer.seen || viewer.completed) || query?.status === "completed" && !viewer.completed) return [];
-      return [{ ...card, viewer }];
-    });
-    return { items, next: offset + batch.length < selected.length ? offset + batch.length : null, metadata: out.summary };
-  });
+  const list = useList(store, !query || typeof viewer !== "string" ? null : keyOf("history", scope, query), { type: "history" }, async (cursor, signal) =>
+    page(await client.discovery.history({ ...query, cursor: cursor as string | undefined, summary: cursor ? undefined : query?.summary }, signal)));
   const forget = useCallback((filter: { kind?: string; content_id?: string } = {}) => {
-    if (!isCurrent()) return Promise.resolve();
-    if (guest) { browser.clear(filter); return Promise.resolve(); }
+    if (!isCurrent() || typeof viewer !== "string") return Promise.resolve();
     return guarded(() => client.discovery.forgetHistory(filter));
-  }, [browser, client, guest, guarded, isCurrent]);
-  const uncertain = guest && !!query?.status;
-  return { ...list, summary: uncertain ? undefined : list.metadata, filterSummaryUnknown: uncertain && (list.metadata?.filtered_count ?? 0) > 0, forget };
+  }, [client, viewer, guarded, isCurrent]);
+  return { ...list, summary: list.metadata, forget };
+}
+
+/** Continue reading and watching: started, not finished, newest first, each card with its position; signed out, the browser's. */
+export function useContinue(q: ContinueQuery | null = {}, o: { client?: ContentKitClient } = {}): UseContents {
+  const { client, store, scope, viewer } = useContentScope(o.client);
+  const query = useDisplay(q);
+  const list = useList(store, !query || viewer === undefined ? null : keyOf("history", scope, "continue", query), { type: "history" }, async (cursor, signal) =>
+    page(await client.discovery.continue({ ...query, cursor: cursor as string | undefined }, signal)));
+  return { ...list, summary: undefined };
 }
 
 export interface UseRecentSearches {
@@ -455,163 +435,56 @@ export function useTypeahead(
   return state.scope === scope ? state : { ...NONE, query: "", loading: q.length >= minLength };
 }
 
-const beacons = new WeakMap<ContentKitClient, Beacons>();
+const reporters = new WeakMap<ContentKitClient, ActivityReporter>();
 
-/** The client's signal and exposure batcher: one per client. */
-export function beaconsFor(client: ContentKitClient, o?: BeaconOptions): Beacons {
-  let b = beacons.get(client);
-  if (!b) beacons.set(client, (b = new Beacons(client, o)));
-  return b;
+/** The client's activity reporter: one per client. */
+export function reporterFor(client: ContentKitClient, o?: ActivityReporterOptions): ActivityReporter {
+  let r = reporters.get(client);
+  if (!r) reporters.set(client, (r = new ActivityReporter(client, o)));
+  return r;
 }
 
-export function useBeacons(o: { client?: ContentKitClient } = {}): Beacons {
+export function useActivityReporter(o: { client?: ContentKitClient } = {}): ActivityReporter {
   const { client } = useContentScope(o.client);
-  return beaconsFor(client);
+  return reporterFor(client);
 }
 
-export interface ExposureOptions {
-  /** Where the list is: "home", "search", "similar". */
-  surface: string;
-  /** Changes with what the list shows: a new render id. */
-  render: string;
-  ranker?: string;
-  query_id?: string;
-  search_query?: string;
-  /** A completed full search returned no items; never infer this while loading. */
-  settledEmpty?: boolean;
-  language?: string;
-  client?: ContentKitClient;
+/** Reports an open of a content item, from a list (its request_id, surface and 1-based position) or from outside. */
+export function useOpen(o: { client?: ContentKitClient } = {}): (contentId: string, source?: OpenSource) => void {
+  const reporter = useActivityReporter(o);
+  return useCallback((contentId: string, source?: OpenSource) => reporter.open(contentId, source), [reporter]);
 }
 
-export interface UseExposure {
-  /** The first bounded segment; click() selects the matching segment for later positions. */
-  render_id: string;
-  /** A card's ref: reports it shown once at least half of it is in view. */
-  track: (content: string, position: number) => (el: Element | null) => void;
-  /** Reports a click on the card at position. */
-  click: (content: string, position: number, href?: string) => void;
-  /** Link carrying only an opaque navigation ID; also works with native new tabs. */
-  href: (content: string, position: number, href: string | undefined) => string | undefined;
+export interface UseHide {
+  hidden: boolean;
+  pending: boolean;
+  error?: ContentKitError;
+  /** Hides the item from every list the reader is served. */
+  hide: () => Promise<void>;
+  /** Shows it again. */
+  unhide: () => Promise<void>;
+  /** Reverts the last hide or unhide. */
+  undo: () => Promise<void>;
 }
 
-/** A rendered result list: each page rendered, each card shown, clicks attributed to the render. */
-export function useExposure(items: readonly { id: string; position?: number; version_id?: string; version?: { id: string } | null }[], o: ExposureOptions): UseExposure {
-  const { client, scope, language } = useContentScope(o.client);
-  const b = beaconsFor(client);
-  const isCurrent = useCurrentDiscoveryScope(client, scope);
-  const renderId = useMemo(() => eventId(), [o.render, scope]); // eslint-disable-line react-hooks/exhaustive-deps
-  const base = useMemo(() => ({ surface: o.surface, ranker: o.ranker, query_id: o.query_id, search_query: o.search_query, language: o.language ?? language }), [o.surface, o.ranker, o.query_id, o.search_query, o.language, language]);
-  const state = useMemo(() => ({ segments: new Map<number, ExposureSegment>(), pending: new Set<number>(), timer: undefined as ReturnType<typeof setTimeout> | undefined }), [renderId]); // eslint-disable-line react-hooks/exhaustive-deps
-  const segmentID = useCallback((index: number) => index === 0 ? renderId : `${renderId}-${index}`, [renderId]);
-  const segmentFor = useCallback((index: number) => {
-    let segment = state.segments.get(index);
-    if (!segment) {
-      segment = { rendered: new Map(), visible: new Map(), renderedRevision: 0, visibleRevision: 0 };
-      state.segments.set(index, segment);
+/** "Not interested" on a card: optimistic, and reverted if the server refuses. hidden is the card's viewer.hidden. */
+export function useHide(contentId: string | null | undefined, o: { client?: ContentKitClient; hidden?: boolean } = {}): UseHide {
+  const { client } = useContentScope(o.client);
+  const guarded = useGuarded();
+  const [state, setState] = useState<{ id?: string | null; hidden?: boolean; previous?: boolean; pending: boolean; error?: ContentKitError }>({ pending: false });
+  const current = state.id === contentId && state.hidden !== undefined ? state.hidden : !!o.hidden;
+  const set = useCallback(async (hidden: boolean, previous: boolean) => {
+    if (!contentId) return;
+    setState({ id: contentId, hidden, previous, pending: true });
+    try {
+      await guarded(() => (hidden ? client.discovery.hide(contentId) : client.discovery.unhide(contentId)));
+      setState((s) => (s.id === contentId ? { ...s, pending: false } : s));
+    } catch (e) {
+      setState({ id: contentId, hidden: previous, pending: false, error: toContentKitError(e) });
     }
-    return segment;
-  }, [state]);
-  useEffect(() => {
-    if (!isCurrent()) return;
-    const changed = new Set<number>();
-    if (o.settledEmpty && !items.length && o.surface === "search" && base.query_id && base.search_query?.trim()) {
-      const segment = segmentFor(0);
-      if (segment.renderedRevision === 0) changed.add(0);
-    }
-    for (const [i, item] of items.entries()) {
-      const supplied = item.position;
-      const position = supplied !== undefined && Number.isSafeInteger(supplied) && supplied > 0 ? supplied : i + 1;
-      const index = Math.floor((position - 1) / EXPOSURE_SEGMENT_SIZE), segment = segmentFor(index);
-      if (segment.rendered.has(item.id)) continue;
-      segment.rendered.set(item.id, { content_id: item.id, version_id: item.version_id ?? item.version?.id, position });
-      changed.add(index);
-    }
-    for (const index of changed) {
-      const segment = segmentFor(index);
-      b.exposure({ ...base, render_id: segmentID(index), stage: "rendered", revision: ++segment.renderedRevision,
-        occurred_at: segment.renderedAt ??= new Date().toISOString(), shown: [...segment.rendered.values()] });
-    }
-  }, [b, base, items, state, segmentFor, segmentID, isCurrent, o.settledEmpty, o.surface]);
-  const observer = useMemo(() => {
-    if (typeof IntersectionObserver !== "function") return null;
-    return new IntersectionObserver((entries) => {
-      if (!isCurrent()) return;
-      for (const e of entries) {
-        if (!e.isIntersecting) continue;
-        const el = e.target as HTMLElement, content = el.dataset.exposureContent!;
-        const position = Number(el.dataset.exposurePosition), index = Math.floor((position - 1) / EXPOSURE_SEGMENT_SIZE);
-        const segment = segmentFor(index);
-        if (segment.visible.has(content)) continue;
-        segment.visible.set(content, segment.rendered.get(content) ?? { content_id: content, position });
-        state.pending.add(index);
-      }
-      if (!state.pending.size) return;
-      state.timer ??= setTimeout(() => {
-        state.timer = undefined;
-        if (!isCurrent()) return;
-        for (const index of state.pending) {
-          const segment = segmentFor(index);
-          b.exposure({ ...base, render_id: segmentID(index), stage: "visible", revision: ++segment.visibleRevision,
-            occurred_at: segment.visibleAt ??= new Date().toISOString(), shown: [...segment.visible.values()] });
-        }
-        state.pending.clear();
-      }, 300);
-    }, { threshold: 0.5 });
-  }, [b, base, state, segmentFor, segmentID, isCurrent]);
-  useEffect(() => () => { observer?.disconnect(); clearTimeout(state.timer); }, [observer, state]);
-  useEffect(() => {
-    for (const index of state.segments.keys()) b.beginExposure(segmentID(index));
-    return () => { for (const index of state.segments.keys()) b.endExposure(segmentID(index)); };
-  }, [b, state, segmentID]);
-  const track = useCallback((content: string, position: number) => (el: Element | null) => {
-    if (!el || !observer) return;
-    (el as HTMLElement).dataset.exposureContent = content;
-    (el as HTMLElement).dataset.exposurePosition = String(position);
-    observer.observe(el);
-  }, [observer]);
-  const linkState = useMemo(() => ({ links: new Map<string, string>(), revision: 0 }), [renderId]); // eslint-disable-line react-hooks/exhaustive-deps
-  const links = linkState.links;
-  useEffect(() => {
-    linkState.revision++;
-    return () => {
-      const revision = ++linkState.revision;
-      queueMicrotask(() => { if (linkState.revision === revision) for (const link of links.values()) forgetOriginLink(link); });
-    };
-  }, [linkState, links]);
-  const href = useCallback((content: string, position: number, url: string | undefined) => {
-    if (!url || !isCurrent()) return url;
-    const key = `${content}\u0000${position}\u0000${url}`;
-    let link = links.get(key);
-    if (!link) {
-      const item = items.find((item) => item.id === content);
-      const attribution = {
-        render_id: segmentID(Math.floor((position - 1) / EXPOSURE_SEGMENT_SIZE)), surface: o.surface, position, language: base.language,
-      };
-      link = originLink(client, content, item?.version_id ?? item?.version?.id, attribution, url,
-        id => { if (isCurrent()) b.click(content, { ...attribution, version_id: item?.version_id ?? item?.version?.id }, id); });
-      links.set(key, link);
-    }
-    return link;
-  }, [base.language, isCurrent, links, items, client, segmentID, o.surface, b]);
-  const click = useCallback((content: string, position: number, url?: string) => {
-    if (!isCurrent()) return;
-    const index = Math.floor((position - 1) / EXPOSURE_SEGMENT_SIZE);
-    const item = items.find((item) => item.id === content);
-    const version = item?.version_id ?? item?.version?.id;
-    // Decorated links emit during activation, with destination fallback for
-    // native navigation that bypasses a source event.
-    if (!url || !originID(url)) b.click(content, { render_id: segmentID(index), surface: o.surface, position, version_id: version, language: base.language });
-  }, [b, items, segmentID, o.surface, base.language, isCurrent]);
-  return { render_id: renderId, track, click, href };
+  }, [client, contentId, guarded]);
+  const hide = useCallback(() => set(true, current), [set, current]);
+  const unhide = useCallback(() => set(false, current), [set, current]);
+  const undo = useCallback(() => (state.id === contentId && state.previous !== undefined ? set(state.previous, current) : Promise.resolve()), [set, state, contentId, current]);
+  return { hidden: current, pending: state.id === contentId && state.pending, error: state.id === contentId ? state.error : undefined, hide, unhide, undo };
 }
-
-type ObservedPlacement = { content_id: string; version_id?: string; position: number };
-type ExposureSegment = {
-  rendered: Map<string, ObservedPlacement>;
-  visible: Map<string, ObservedPlacement>;
-  renderedRevision: number;
-  visibleRevision: number;
-  renderedAt?: string;
-  visibleAt?: string;
-};
-const EXPOSURE_SEGMENT_SIZE = 32;

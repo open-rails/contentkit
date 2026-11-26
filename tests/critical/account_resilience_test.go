@@ -17,8 +17,6 @@ import (
 	"testing"
 	"time"
 
-	signalstore "github.com/open-rails/contentkit/internal/signalstore"
-
 	"github.com/ClickHouse/clickhouse-go/v2"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
@@ -29,8 +27,6 @@ import (
 	"github.com/open-rails/authkit/iam"
 	"github.com/open-rails/authkit/notify"
 	ck "github.com/open-rails/contentkit"
-	"github.com/open-rails/contentkit/contentref"
-	"github.com/open-rails/contentkit/discovery"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/layout"
 	medias3 "github.com/open-rails/contentkit/media/s3"
@@ -127,16 +123,11 @@ func TestAccountAnonymizationRecoveryAcrossStores(t *testing.T) {
 		_, err := app.publishInbox(t.Context(), inboxPublication{Notifications: []notify.Input{{Recipient: notify.Recipient{Audience: "user", ID: user.ID}, Origin: notify.Origin{System: "critical", Scope: app.cfg.Scope.AppID.String(), ID: uuid.NewString()}, Kind: "account.private", CreatedAt: time.Now(), Data: json.RawMessage(`{"message":"Private account inbox"}`)}}})
 		must(t, err)
 	}
-	eventID := uuid.NewString()
-	must(t, a.client(credential).PostSignals(t.Context(), discovery.Signals{Signals: []discovery.SignalInput{{ContentID: item.ID, Type: "click", EventID: eventID, OccurredAt: time.Now()}}}))
-	signalStore, err := signalstore.NewStore(direct, a.cfg.ClickHouse.Database)
-	must(t, err)
-	signalRef := contentref.New(a.cfg.Scope.AppID.String(), "article", item.ID)
-	beforeHistory, err := signalStore.States(t.Context(), a.cfg.Scope.AppID.String(), signal.Subject{UserID: user.ID}, []signal.ContentRef{signalRef})
-	must(t, err)
-	if _, present := beforeHistory[signalRef.Key()]; !present {
-		t.Fatalf("account history positive control missing: %+v", beforeHistory)
+	opened(t, a.client(credential), item.ID)
+	activity := func(app *application, id string) uint64 {
+		return logged(t, direct, a.cfg.ClickHouse.Database, app.cfg.Scope.AppID.String(), uuid.MustParse(id))
 	}
+	waitForWithin(t, 30*time.Second, func() bool { return activity(a, user.ID) > 0 })
 	uploadAvatar := func(id, token string) string {
 		ref := media.RefBody{Kind: "user", ID: id}
 		_, err := a.client(token).IngestMedia(t.Context(), nil, ref, uuid.NewString(), []ck.MediaFile{{Path: "avatar.png", Type: "image/png", Body: bytes.NewReader(imageBytes(t))}})
@@ -178,11 +169,13 @@ func TestAccountAnonymizationRecoveryAcrossStores(t *testing.T) {
 	}{{a, item.ID}, {sibling, siblingItem.ID}} {
 		_, err := target.app.client(appResetCredential).PostContentFavorite(t.Context(), target.id, ck.PostContentFavoriteQuery{})
 		must(t, err)
-		must(t, target.app.client(appResetCredential).PostSignals(t.Context(), discovery.Signals{Signals: []discovery.SignalInput{{ContentID: target.id, Type: "click", EventID: uuid.NewString(), OccurredAt: time.Now()}}}))
+		opened(t, target.app.client(appResetCredential), target.id)
 		appNotice[target.app] = uuid.NewString()
 		_, err = target.app.publishInbox(t.Context(), inboxPublication{Notifications: []notify.Input{{Recipient: notify.Recipient{Audience: "user", ID: appReset.ID}, Origin: notify.Origin{System: "critical", Scope: target.app.cfg.Scope.AppID.String(), ID: appNotice[target.app]}, Kind: "app.private", CreatedAt: time.Now(), Data: json.RawMessage(`{"message":"App receipt"}`)}}})
 		must(t, err)
 	}
+	// Both apps hold appReset's activity before any erasure.
+	waitForWithin(t, 30*time.Second, func() bool { return activity(a, appReset.ID) > 0 && activity(sibling, appReset.ID) > 0 })
 	shared, err := w.tenant[0].Notifications(authkit.NotificationProducer{Name: "critical-shared", Origin: notify.OriginScope{System: "critical-shared", Scope: a.cfg.Scope.TenantID.String()}, Visibility: notify.VisibilityTenant})
 	must(t, err)
 	sharedNotice := uuid.NewString()
@@ -274,16 +267,11 @@ func TestAccountAnonymizationRecoveryAcrossStores(t *testing.T) {
 		if retained.Count == nil || *retained.Count != 3 {
 			t.Fatalf("app replay lost an anonymous contribution: %+v", retained)
 		}
-		localState, err := signalStore.States(t.Context(), a.cfg.Scope.AppID.String(), signal.Subject{UserID: appReset.ID}, []signal.ContentRef{signalRef})
-		must(t, err)
-		if len(localState) != 0 {
-			t.Fatal("app replay left target signal attribution")
+		if activity(a, appReset.ID) != 0 {
+			t.Fatal("app replay left the target's activity readable")
 		}
-		siblingRef := contentref.New(sibling.cfg.Scope.AppID.String(), "article", siblingItem.ID)
-		otherState, err := signalStore.States(t.Context(), sibling.cfg.Scope.AppID.String(), signal.Subject{UserID: appReset.ID}, []signal.ContentRef{siblingRef})
-		must(t, err)
-		if _, exists := otherState[siblingRef.Key()]; !exists {
-			t.Fatal("app replay erased same subject in sibling signal partition")
+		if activity(sibling, appReset.ID) == 0 {
+			t.Fatal("app replay erased same subject in sibling activity")
 		}
 		response, err := http.Get(resetAvatar)
 		must(t, err)
@@ -298,9 +286,7 @@ func TestAccountAnonymizationRecoveryAcrossStores(t *testing.T) {
 		if masked.UserID != "" || masked.AnonName != "<Deleted>" || masked.Body != comment.Body {
 			t.Fatal("soft deletion did not mask retained discussion")
 		}
-		states, err := signalStore.States(t.Context(), a.cfg.Scope.AppID.String(), signal.Subject{UserID: user.ID}, []signal.ContentRef{signalRef})
-		must(t, err)
-		if _, present := states[signalRef.Key()]; !present {
+		if activity(a, user.ID) == 0 {
 			t.Fatal("soft deletion removed recoverable interaction data")
 		}
 		response, err := http.Get(avatarURL)
@@ -394,12 +380,8 @@ CREATE CONSTRAINT TRIGGER critical_reject_anonymization AFTER INSERT OR UPDATE O
 		if response.StatusCode != 404 {
 			t.Fatalf("avatar remained accessible during physical cleanup: %d", response.StatusCode)
 		}
-		states, err := signalstore.NewStore(direct, a.cfg.ClickHouse.Database)
-		must(t, err)
-		history, err := states.States(t.Context(), a.cfg.Scope.AppID.String(), signal.Subject{UserID: user.ID}, []signal.ContentRef{signalRef})
-		must(t, err)
-		if len(history) != 0 {
-			t.Fatal("old account still reads history after anonymization fence")
+		if activity(a, user.ID) != 0 {
+			t.Fatal("old account still reads activity after its erasure fence")
 		}
 		sibling.server.Close()
 		must(t, sibling.engine.Close(t.Context()))
@@ -439,16 +421,17 @@ CREATE CONSTRAINT TRIGGER critical_reject_anonymization AFTER INSERT OR UPDATE O
 		if accountObjects() != 0 {
 			t.Fatal("successful terminal retry left account media")
 		}
-		rows, err := direct.Query(t.Context(), "SELECT count(),countIf(subject_kind='user') FROM "+a.cfg.ClickHouse.Database+".signals FINAL WHERE tenant=? AND event_id=?", a.cfg.Scope.AppID.String(), eventID)
+		// The account's activity is fenced once, however often the purge ran.
+		rows, err := direct.Query(t.Context(), "SELECT count() FROM "+a.cfg.ClickHouse.Database+".erasures FINAL WHERE tenant=? AND subject=?", a.cfg.Scope.AppID.String(), user.ID)
 		must(t, err)
-		var total, attributed uint64
+		var fences uint64
 		if !rows.Next() {
-			t.Fatal("retained signal aggregate missing")
+			t.Fatal("erasure fence missing")
 		}
-		must(t, rows.Scan(&total, &attributed))
+		must(t, rows.Scan(&fences))
 		must(t, rows.Close())
-		if total != 1 || attributed != 0 {
-			t.Fatalf("terminal retries lost/duplicated/reattributed signal: total=%d attributed=%d", total, attributed)
+		if fences != 1 || activity(a, user.ID) != 0 {
+			t.Fatalf("terminal retries left %d fences, %d readable rows", fences, activity(a, user.ID))
 		}
 		must(t, a.engine.Close(t.Context()))
 		a.engine, err = ck.New(t.Context(), a.cfg, a.deps)

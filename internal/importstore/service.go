@@ -43,8 +43,7 @@ type Options struct {
 	Entities *entitystore.Store
 	Channels *channelstore.Store
 	Content  *contentstore.Runtime
-	// Signals is nil, or answers discovery.ErrNoSignals, without a signal
-	// plane: signals are skipped.
+	// Signals imports legacy reading into reading state; nil skips it.
 	Signals *discoverystore.Service
 	// Rebuild queues the jobs that rebuild what an import changed: search
 	// documents, entity counts and listing counts.
@@ -89,15 +88,6 @@ func (s *Service) Import(ctx context.Context, b importer.Batch) (importer.Result
 	}
 	if len(b.Channels) > 0 && s.o.Channels == nil {
 		return res, fmt.Errorf("%w: channels are not configured", ErrInvalid)
-	}
-	if b.PreferenceFloor != 0 {
-		err := pgx.BeginFunc(ctx, s.o.Pool, func(tx pgx.Tx) error { return s.o.Content.RaisePreferenceFloor(ctx, tx, b.PreferenceFloor) })
-		if errors.Is(err, contentstore.ErrInvalid) {
-			return res, fmt.Errorf("%w: %v", ErrInvalid, err)
-		}
-		if err != nil {
-			return res, err
-		}
 	}
 	run := &batchRun{s: s, b: b, res: &res}
 	for _, sec := range run.sections() {

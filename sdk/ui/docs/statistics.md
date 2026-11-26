@@ -1,33 +1,10 @@
-# Measured content statistics
+# Content statistics
 
-`StatsDashboard`, `useActivity`, `useTopContents` and `client.stats` expose the
-same statistics queries as the ContentKit API. Staff need the content statistics
-permission. Account statistics remain available separately through `useMyStats`
-and `client.stats.mine()`.
+`StatsDashboard`, `useActive` and `client.stats.active()` read `GET /stats/active?days=7`, which needs the content statistics permission. Each UTC day has:
 
-`GET /stats/activity?kind=gallery&days=7` returns one row per UTC day:
+- `people`: distinct people active on the site that day, all sites together. A person is an account, or a browser's anonymous id until it signs in.
+- `by_access`: the same people by their access that day: `anonymous`, `account`, or the tiers an account's token claimed.
 
-- `readers`: distinct account or browser identities with at least one second of
-  measured, focused attention and actual loaded/visible content coverage.
-- `users`: the signed-in identities among those people.
-- `active_ms`: measured focused active milliseconds, including positive partials
-  below the one-second qualification threshold.
+The analytics job rebuilds today's counts hourly and yesterday's once more after midnight UTC. People are distinct within a day only, so days can't be summed into a count of unique people over the period.
 
-Opening a route, preloading an image or turning a page is not an activity count.
-Actual attention and coverage are measured separately. Daily people cannot be
-summed into a unique-person count for the whole period, since one person may
-participate on multiple days. The dashboard sums active time only.
-
-`GET /stats/top?kind=gallery&metric=readers&period=30d` ranks by distinct qualified
-people across that period. `metric=comments` ranks by published comments and still
-works without the signal plane. The SDK accepts only `readers` and `comments`;
-there is no route-open, raw-view or session-count metric or compatibility alias.
-This staff ranking by people is separate from the public popularity policy,
-which averages audience-adjusted daily participation. A returning person can
-contribute on multiple days to popularity while still counting once in this
-staff period-wide unique-reader metric.
-
-The activity table displays active time as `m:ss` or `h:mm:ss`. The server retains
-millisecond precision; the display truncates incomplete seconds. Existing account
-completion statistics continue to require measured coverage and attention, rather
-than assuming that reaching the last page means every earlier page was read.
+Account statistics are separate: `useMyStats` and `client.stats.mine()` count the contents a signed-in reader finished, from their reading state.

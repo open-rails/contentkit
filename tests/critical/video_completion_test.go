@@ -118,39 +118,38 @@ func TestVideoCompletion(t *testing.T) {
 	}
 	stored := uint32(*version.DurationMS)
 
-	_, credential := w.person(t, 0)
+	person, credential := w.person(t, 0)
 	reader := a.client(credential)
 	end := uint32(math.Round(hlsEnd(t, reader, ref, "streams/master.m3u8") * 1000))
 	if end <= stored {
 		t.Fatalf("the rendition ends at %d ms, within the stored %d ms: the fixture does not reproduce a longer timeline", end, stored)
 	}
-	contexts, err := reader.PostActivityContexts(ctx, discovery.ActivityContextsInput{Targets: []discovery.ActivityTarget{{ContentID: ref.ID, VersionID: ref.Version}}})
-	must(t, err)
-	if !contexts.Enabled || len(contexts.Contexts) != 1 {
-		t.Fatalf("no activity receipt: %+v", contexts)
-	}
-	// The viewer then watches for longer than the rendition runs.
+	// The viewer then watches for longer than the rendition runs; the player
+	// reports seconds of its own timeline.
 	w.clock.set(w.clock.now().Add(30 * time.Second))
-	watched := func(to uint32) discovery.EngagementBatch {
-		return discovery.EngagementBatch{Snapshots: []discovery.EngagementSnapshot{{ContentID: ref.ID, VersionID: ref.Version,
-			VisitID: uuid.NewString(), SegmentID: uuid.NewString(), Revision: 1, ActivityToken: contexts.Contexts[0].Token,
-			ActiveMS: to, Watched: []discovery.WatchedRange{{FromMS: 0, ToMS: to}}}}}
+	watched := func(to uint32) discovery.Activity {
+		seconds := (to + 999) / 1000
+		return discovery.Activity{Events: []discovery.ActivityEvent{{Type: discovery.ActivityOpen, ContentID: ref.ID},
+			{Type: discovery.ActivityProgress, ContentID: ref.ID, ActiveMS: to, Furthest: seconds, Current: seconds, Length: seconds}}}
 	}
 
 	t.Run("CK-J07-S35_watching_the_rendition_to_its_end_records_a_completion", func(t *testing.T) {
-		if err := reader.PostEngagement(ctx, watched(end)); err != nil {
+		if err := reader.PostActivity(ctx, watched(end)); err != nil {
 			t.Fatalf("watching %d ms of a rendition stored as %d ms was refused: %v", end, stored, err)
 		}
-		waitFor(t, func() bool {
-			done, err := reader.GetMeHistory(ctx, ck.GetMeHistoryQuery{Kind: "clip", Status: "completed"})
-			must(t, err)
-			return len(done.Contents) == 1 && done.Contents[0].ID == ref.ID
+		waitForWithin(t, 30*time.Second, func() bool {
+			return logged(t, a.deps.ClickHouse, a.cfg.ClickHouse.Database, a.cfg.Scope.AppID.String(), uuid.MustParse(person.ID)) >= 2
 		})
+		w.runAnalytics(t)
+		done, err := reader.GetMeHistory(ctx, ck.GetMeHistoryQuery{Kind: "clip", Status: "completed"})
+		must(t, err)
+		if len(done.Contents) != 1 || done.Contents[0].ID != ref.ID {
+			t.Fatalf("watched to the end, completed history = %v", ids(done))
+		}
 	})
 
 	t.Run("CK-J07-S35_a_range_past_the_duration_and_its_tolerance_is_refused", func(t *testing.T) {
 		// Two seconds past the stored duration is the tolerated overrun.
-		err := reader.PostEngagement(ctx, watched(stored+2_001))
-		requireError(t, err, 400, "invalid_request")
+		requireError(t, reader.PostActivity(ctx, watched(stored+3_001)), 400, "invalid_request")
 	})
 }

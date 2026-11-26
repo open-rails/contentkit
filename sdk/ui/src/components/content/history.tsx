@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type ReactNode } from "react";
+import { useMemo, type ReactNode } from "react";
 import type { Card } from "../../client/generated/wire.js";
 import type { HistoryQuery } from "../../client/discovery.js";
 import { formatDuration } from "../../client/gallery.js";
@@ -8,19 +8,16 @@ import { useKinds } from "../../react/entities.js";
 import { Button } from "#ckui/ui/button";
 import { ContentKitUiRoot } from "../../scope.js";
 import { formatDate, relativeTime, useAction } from "../social/parts.js";
-import { ContentFilterDialog } from "./filter-dialog.js";
 import { ContentCard } from "./card.js";
 import { CardGrid, type CardListProps } from "./grid.js";
 
-/** Account history or this browser's guest history, each removable, with a clear-all. */
+/** The signed-in reader's history, each removable, with a clear-all; nothing signed out. */
 export function ContentHistory({ query = {}, heading, ...p }: CardListProps & { query?: HistoryQuery; /** The page's heading, sharing a row with the clear-all. */ heading?: ReactNode }) {
   const { t } = useMessages();
   const q = useMemo(() => ({ ...query, summary: true, mode: p.locked === "collapse" ? "lock" as const : p.locked === "hide" ? "hide" as const : query.mode, limit: query.limit ?? p.pageSize }), [query, p.pageSize, p.locked]);
   const list = useHistory(q, { client: p.client });
   const forget = useAction("history.forget");
   const { kinds } = useKinds({ client: p.client });
-  const [filtersOpen, setFiltersOpen] = useState(false);
-  const filterTrigger = useRef<HTMLButtonElement | null>(null);
   return (
     <div className="grid gap-3" data-ckui="content-history">
       {(heading || list.items.length > 0) && (
@@ -36,12 +33,6 @@ export function ContentHistory({ query = {}, heading, ...p }: CardListProps & { 
           )}
         </div>
       )}
-      {list.filterSummaryUnknown && p.showFilteredSummary !== false && (
-        <ContentKitUiRoot appearance={p.appearance} className="justify-self-start">
-          <Button ref={filterTrigger} variant="outline" className="comfortable:h-10" onClick={() => setFiltersOpen(true)}>{t("releases.manageFilters")}</Button>
-        </ContentKitUiRoot>
-      )}
-      <ContentFilterDialog client={p.client} language={q.language} open={filtersOpen} onOpenChange={setFiltersOpen} returnFocus={() => filterTrigger.current} />
       <CardGrid
         surface="history"
         empty={t("contents.historyEmpty")}

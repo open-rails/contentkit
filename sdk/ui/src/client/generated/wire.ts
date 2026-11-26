@@ -31,39 +31,31 @@ export interface AccountErasure {
   completed_at: string | null;
 }
 
-export interface Activity {
-  days: ActivityDay[];
-  cohorts: string[];
-}
-
-export interface ActivityContext {
-  content_id: string;
-  version_id?: string;
-  token: string;
-  occurred_at: string;
-}
-
-export interface ActivityContexts {
-  enabled: boolean;
-  contexts: ActivityContext[];
-}
-
-export interface ActivityContextsInput {
-  session?: string;
-  language?: string;
-  targets: ActivityTarget[];
-}
-
-export interface ActivityDay {
+export interface ActiveDay {
   date: string;
-  readers: number;
-  cohorts: Record<string, number>;
-  active_ms: number;
+  people: number;
+  by_access: Record<string, number>;
 }
 
-export interface ActivityTarget {
+export interface ActiveDays {
+  days: ActiveDay[];
+}
+
+export interface Activity {
+  language?: string;
+  events: ActivityEvent[];
+}
+
+export interface ActivityEvent {
+  type: string;
   content_id: string;
-  version_id?: string;
+  request_id?: string;
+  surface?: string;
+  position?: number;
+  active_ms?: number;
+  furthest?: number;
+  current?: number;
+  length?: number;
 }
 
 export interface AdminComment {
@@ -134,6 +126,10 @@ export interface Anonymous {
   votes: boolean;
 }
 
+export interface AnonymousLink {
+  anonymous_id: string;
+}
+
 export interface ArchiveStatus {
   completed: number;
   total: number;
@@ -189,7 +185,6 @@ export interface BannedWordInput {
 
 export interface Batch {
   source: string;
-  preference_floor?: number;
   entities?: EntityRecord[];
   channels?: ChannelRecord[];
   contents?: ContentRecord[];
@@ -201,7 +196,6 @@ export interface Batch {
   polls?: PollRecord[];
   votes?: VoteRecord[];
   legacy_reading?: LegacyReadingRecord[];
-  signals?: SignalRecord[];
   deletes?: DeleteRecord[];
   defer_recounts?: boolean;
   recount?: number;
@@ -627,11 +621,6 @@ export interface Counts {
   favorites?: number;
 }
 
-export interface CoverageRange {
-  from: number;
-  to: number;
-}
-
 export interface Creator {
   user_id: string;
   role?: string;
@@ -698,25 +687,6 @@ export interface EncodeProgress {
   stalled?: boolean;
   stage?: number;
   stages?: number;
-}
-
-export interface EngagementBatch {
-  session?: string;
-  snapshots: EngagementSnapshot[];
-}
-
-export interface EngagementSnapshot {
-  content_id: string;
-  version_id?: string;
-  visit_id: string;
-  origin_click_id?: string;
-  segment_id: string;
-  revision: number;
-  activity_token: string;
-  active_ms: number;
-  resume?: string;
-  pages?: PageEngagement[];
-  watched?: WatchedRange[];
 }
 
 export interface EntitiesCover {
@@ -938,24 +908,6 @@ export interface EventRecord {
   data?: unknown;
 }
 
-export interface ExposureInput {
-  render_id: string;
-  stage: string;
-  revision?: number;
-  query_id?: string;
-  search_query?: string;
-  surface?: string;
-  ranker?: string;
-  language?: string;
-  occurred_at?: string;
-  shown: Placement[];
-}
-
-export interface Exposures {
-  session?: string;
-  exposures: ExposureInput[];
-}
-
 export interface ExternalID {
   external_id: string;
   id: string;
@@ -1164,15 +1116,12 @@ export interface LanguageTotal {
 export interface LegacyReadingRecord {
   target: TargetRef;
   removed?: boolean;
-  user_id?: string;
-  anon_key?: string;
+  user_id: string;
   first_read_at?: string;
   last_read_at: string;
   progress: number;
   progress_max: number;
   completed: boolean;
-  resume?: string;
-  revision?: number;
 }
 
 export interface LibraryItem {
@@ -1444,12 +1393,6 @@ export interface OrderInput {
   ids: string[];
 }
 
-export interface PageEngagement {
-  index: number;
-  ranges: CoverageRange[];
-  active_ms: number;
-}
-
 export interface PageNotice {
   id: string;
   kind: string;
@@ -1489,13 +1432,6 @@ export interface PartsReply {
 
 export interface Pending {
   status: string;
-}
-
-export interface Placement {
-  content_id: string;
-  position: number;
-  version_id?: string;
-  activity_token?: string;
 }
 
 export interface PlanPage {
@@ -1914,6 +1850,7 @@ export interface SearchPage {
   summary?: ListingSummary;
   next_cursor?: string;
   entities?: EntityCard[];
+  request_id?: string;
 }
 
 export interface Segment {
@@ -1939,34 +1876,6 @@ export interface SegmentInput {
 
 export interface SegmentsInput {
   segments: SegmentInput[];
-}
-
-export interface SignalInput {
-  content_id: string;
-  version_id?: string;
-  type: string;
-  event_id: string;
-  revision?: number;
-  occurred_at: string;
-  render_id?: string;
-  surface?: string;
-  position?: number;
-  activity_token?: string;
-}
-
-export interface SignalRecord {
-  target: TargetRef;
-  user_id?: string;
-  anon_key?: string;
-  type: string;
-  event_id: string;
-  revision?: number;
-  occurred_at: string;
-}
-
-export interface Signals {
-  session?: string;
-  signals: SignalInput[];
 }
 
 export interface SitemapAlias {
@@ -2156,9 +2065,12 @@ export interface ViewerState {
   reaction?: number;
   seen: boolean;
   completed: boolean;
+  outcome?: string;
   progress: number;
   progress_max: number;
-  resume?: string;
+  percent: number;
+  position?: number;
+  hidden?: boolean;
   last_read_at?: string;
 }
 
@@ -2175,11 +2087,6 @@ export interface VoteRecord {
   user_id?: string;
   ip?: string;
   created_at?: string;
-}
-
-export interface WatchedRange {
-  from_ms: number;
-  to_ms: number;
 }
 
 export interface Written {

@@ -65,7 +65,7 @@ export { useContentConfig, type UseContentConfig } from "./config.js";
 export { useFavorite, useReaction, type UseFavorite, type UseReaction } from "./engagement.js";
 export { usePoll, usePollEditor, usePolls, withVote, type PollFilter, type PollImages, type UsePoll, type UsePollEditor } from "./polls.js";
 export { useContent, useManagedContents, type ManageFilter, type UseContent } from "./contents.js";
-export { useActivity, useMyStats, type UseStats } from "./stats.js";
+export { useActive, useMyStats, type UseStats } from "./stats.js";
 export { defaultVersion, editionOf, findVersion, liveVersions, useContentDetail, type ContentDetailOptions, type UseContentDetail } from "./detail.js";
 export { useVersionParam } from "./location.js";
 export {
@@ -86,13 +86,15 @@ export {
   type UseKinds,
 } from "./entities.js";
 export {
-  beaconsFor,
-  useBeacons,
+  reporterFor,
+  useActivityReporter,
   useContentFilters,
   useContents,
   useContentsPage,
-  useExposure,
+  useContinue,
+  useHide,
   useHistory,
+  useOpen,
   useLockedCount,
   useMyFavorites,
   useRecentSearches,
@@ -104,13 +106,12 @@ export {
   useSearchPage,
   useSimilar,
   useTypeahead,
-  type ExposureOptions,
   type MyInteraction,
   type UseInteractions,
   type ReleaseDate,
   type UseContentFilters,
   type UseContentsPage,
-  type UseExposure,
+  type UseHide,
   type UseHistory,
   type UseRail,
   type UseRecentSearches,
@@ -192,6 +193,6 @@ export type { PlaybackProgress, ProgressReason } from "./player.js";
 export { HOVER_DELAY, InlinePreviewContext, useInlinePreview, useReducedMotion, type InlinePreviewOptions } from "./inline-preview.js";
 
 
-export { useReadingEngagement, type ReadingEngagement, type ReadingEngagementOptions } from "./use-engagement.js";
+export { useReadingProgress, type ReadingProgress, type ReadingProgressOptions } from "./use-reading.js";
 export { usePostReading, usePostReads, type PostReadingOptions, type PostReads } from "./post-reads.js";
 export { useRememberedSort } from "./remembered-sort.js";

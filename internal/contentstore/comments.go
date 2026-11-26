@@ -12,6 +12,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/contentkit/access"
 	content "github.com/open-rails/contentkit/content"
@@ -791,7 +792,7 @@ func (c *comments) loadComment(ctx context.Context, cid string) (writeTarget, er
 // counter on the comment row in the same tx. Its owning content must be visible
 // and open to the actor; the comment must still be published and not deleted
 // when its row is locked.
-func (c *comments) reactTx(ctx context.Context, actor access.Actor, cid string, value int16) (content.ReactionCounts, error) {
+func (c *comments) reactTx(ctx context.Context, actor access.Actor, cid string, value int16, anon uuid.UUID) (content.ReactionCounts, error) {
 	if !uuidRe.MatchString(cid) {
 		return content.ReactionCounts{}, ErrNotFound
 	}
@@ -826,7 +827,7 @@ func (c *comments) reactTx(ctx context.Context, actor access.Actor, cid string, 
 		return content.ReactionCounts{}, ErrNotFound
 	}
 	key := c.rt.Ref(content.KindComment, cid).Key()
-	dLikes, dDislikes, err := c.rt.reactions.applyTx(ctx, tx, actor, key, value)
+	dLikes, dDislikes, err := c.rt.reactions.applyTx(ctx, tx, actor, key, value, anon)
 	if err != nil {
 		return content.ReactionCounts{}, err
 	}
@@ -1086,7 +1087,7 @@ func (c *comments) handleReact(value int16) http.HandlerFunc {
 			writeErr(w, err)
 			return
 		}
-		cnt, err := c.reactTx(req.Context(), actor, req.PathValue("cid"), value)
+		cnt, err := c.reactTx(req.Context(), actor, req.PathValue("cid"), value, c.rt.anonymousSubject(req, actor))
 		if err != nil {
 			writeErr(w, err)
 			return

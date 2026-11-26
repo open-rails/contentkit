@@ -24,7 +24,6 @@ import (
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/content"
-	"github.com/open-rails/contentkit/discovery"
 	"github.com/open-rails/contentkit/entities"
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
@@ -55,16 +54,14 @@ type Config struct {
 	// Media is the media registry and how it is served; nil runs without
 	// media (no upload or media route groups, no post and poll images).
 	Media *MediaConfig `yaml:"media" json:"media"`
-	// ClickHouse is the signal plane: signals, exposures, history,
-	// preferences, popularity and recommendations from signals. Unset, or
-	// while a configured one is down, they are off: the content model says
-	// so (signals: false), lists sort on what Postgres holds and the
-	// contentkit_clickhouse probe fails with the cause. The engine retries a
-	// down one in the background and turns signals back on when it answers.
+	// ClickHouse is the signal plane: the activity log every open, read,
+	// reaction, favorite, hide and search is logged to, which the analytics
+	// job folds into PostgreSQL's reading state and the daily rollups.
+	// Unset, nothing is logged and reading state stays empty: the content
+	// model says so (signals: false). While a configured one is down, rows
+	// wait in each process's buffer, the contentkit_clickhouse probe fails
+	// with the cause and the engine retries in the background.
 	ClickHouse ClickHouseConfig `yaml:"clickhouse" json:"clickhouse"`
-	// ActivityCohorts defines application-owned daily readership buckets. First
-	// match wins; nil reports totals without audience-specific categories.
-	ActivityCohorts []signal.ActivityCohort `yaml:"activity_cohorts,omitempty" json:"activity_cohorts,omitempty"`
 	// Accounts declares one shared account space for avatars and account
 	// erasure records.
 	// It does not combine this site's content catalog with any other site's.
@@ -75,7 +72,14 @@ type Config struct {
 	Jobs JobsConfig `yaml:"jobs" json:"jobs"`
 	// EventRetention keeps catalog facts independently of readers; zero is fourteen days.
 	EventRetention time.Duration `yaml:"event_retention,omitempty" json:"event_retention,omitempty"`
+	// AnonymousRetention keeps a signed-out visitor's reading state, history
+	// and recent searches this long after their last activity; their
+	// reactions stay, unlinked. Zero is thirty days.
+	AnonymousRetention time.Duration `yaml:"anonymous_retention,omitempty" json:"anonymous_retention,omitempty"`
 }
+
+// DefaultAnonymousRetention is Config.AnonymousRetention's zero value.
+const DefaultAnonymousRetention = 30 * 24 * time.Hour
 
 // DatabaseConfig names the Postgres schemas New validates or migrates; the
 // pool's role owns them. Shared account metadata may use its separately configured schema.
@@ -334,9 +338,6 @@ type Deps struct {
 	// over an embedded engine or the remote client): held entitlement keys
 	// and prices, free grants. Nil holds no keys and sells nothing.
 	Billing access.Billing
-	// ActivitySigner optionally signs event-time audience receipts for apps
-	// without media. Media apps reuse their persistent delivery signer.
-	ActivitySigner discovery.ActivitySigner
 	// Scopes provisions and retires the AuthKit groups of auth_scope entity
 	// kinds (adapters/authkit.Scopes over an AuthKit client); nil leaves
 	// auth_scope to staff.

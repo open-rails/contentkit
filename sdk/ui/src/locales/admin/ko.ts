@@ -392,7 +392,6 @@ export const admin: typeof en = {
   },
   stats: {
     title: "통계",
-    kind: "콘텐츠",
     activity: "일별 실제 독자",
     visitorsNote: "하나 이상의 콘텐츠를 읽거나 재생한 사람을 하루에 한 번 집계합니다.",
     days: "기간",
@@ -400,7 +399,6 @@ export const admin: typeof en = {
     today: "오늘",
     visitors: "독자",
     peak: "최대 {count}",
-    activeTime: "활동 시간",
     date: "날짜",
     showTable: "표 보기",
     noActivity: "이 기간에는 측정된 활동이 없습니다.",

@@ -392,7 +392,6 @@ export const admin: typeof en = {
   },
   stats: {
     title: "统计",
-    kind: "内容",
     activity: "每日活跃读者",
     visitorsNote: "阅读或播放过至少一项内容的人，每天计一次。",
     days: "天数",
@@ -400,7 +399,6 @@ export const admin: typeof en = {
     today: "今天",
     visitors: "读者",
     peak: "峰值 {count}",
-    activeTime: "活跃时长",
     date: "日期",
     showTable: "显示表格",
     noActivity: "此期间没有测得的活动。",

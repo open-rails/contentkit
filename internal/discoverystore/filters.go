@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/authkit/auth"
@@ -200,4 +201,19 @@ func (s *Service) setContentFilters(ctx context.Context, actor access.Actor, cho
 	}
 	_, err = s.o.Pool.Exec(ctx, `INSERT INTO `+s.t.prefs+` AS saved(tenant_id,user_id,overrides,updated_at) VALUES($1,$2,$3,now()) ON CONFLICT(tenant_id,user_id) `+conflict, s.o.Tenant, actor.AccountID(), raw)
 	return err
+}
+
+// PolarizingTags are the entities whose galleries have an audience: for now
+// the site's declared toggleable content filters, on every domain.
+func (s *Service) PolarizingTags(ctx context.Context) ([]string, error) {
+	inventory, err := s.filterEntitiesForDomains(ctx, s.o.Kinds.ContentFilters.Domains)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]string, 0, len(inventory))
+	for _, id := range inventory {
+		out = append(out, id)
+	}
+	slices.Sort(out)
+	return slices.Compact(out), nil
 }

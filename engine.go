@@ -22,6 +22,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/uuid"
+	"github.com/open-rails/contentkit/internal/activitylog"
 	catalogstore "github.com/open-rails/contentkit/internal/catalogstore"
 	channelstore "github.com/open-rails/contentkit/internal/channelstore"
 	contentstore "github.com/open-rails/contentkit/internal/contentstore"
@@ -30,6 +32,8 @@ import (
 	entitystore "github.com/open-rails/contentkit/internal/entitystore"
 	importstore "github.com/open-rails/contentkit/internal/importstore"
 	mediastore "github.com/open-rails/contentkit/internal/mediastore"
+	"github.com/open-rails/contentkit/internal/readingstore"
+	signalstore "github.com/open-rails/contentkit/internal/signalstore"
 	urlstore "github.com/open-rails/contentkit/internal/urlstore"
 	versionstore "github.com/open-rails/contentkit/internal/versionstore"
 
@@ -57,7 +61,6 @@ import (
 	"github.com/open-rails/contentkit/internal/migrations"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/token"
-	"github.com/open-rails/contentkit/signal"
 )
 
 // DefaultSchema is Config.Database.Schema's default.
@@ -80,6 +83,10 @@ type Engine struct {
 
 	hub      *hub.Hub
 	signals  *signalPlane // nil without ClickHouse
+	reading  *readingstore.Store
+	activity *signalstore.Writer // nil without ClickHouse
+	now      func() time.Time
+	alog     *activitylog.Log
 	chMu     sync.Mutex
 	ownCH    clickhouse.Conn // opened from Config.ClickHouse
 	content  *contentstore.Runtime
@@ -146,6 +153,7 @@ func newEngine(ctx context.Context, cfg Config, deps Deps, recovery bool) (_ *En
 	if now == nil {
 		now = time.Now
 	}
+	e.now = now
 	if err := e.validate(deps); err != nil {
 		return nil, err
 	}
@@ -172,6 +180,13 @@ func newEngine(ctx context.Context, cfg Config, deps Deps, recovery bool) (_ *En
 	}
 	if e.gate, err = entitlement.NewGate(entitlement.GateConfig{Tenant: cfg.Scope.AppID.String(), Kinds: cfg.Content, Billing: deps.Billing, Logger: e.log, Now: now}); err != nil {
 		return nil, err
+	}
+	e.reading = readingstore.New(e.pool, e.schema, uuid.UUID(cfg.Scope.AppID), now)
+	e.alog = &activitylog.Log{App: uuid.UUID(cfg.Scope.AppID), Kinds: cfg.Content, Gate: e.gate, Now: now}
+	if e.signals != nil && !recovery {
+		e.activity = signalstore.NewWriter(cfg.Scope.AppID.String(), e.hub.Signals, e.log)
+		e.alog.Write = e.activity.Add
+		e.activity.Start()
 	}
 	if err := e.newCatalog(ctx, deps, now); err != nil {
 		return nil, err
@@ -229,8 +244,11 @@ func (e *Engine) validate(deps Deps) error {
 	if err := clientaddr.CheckTrusted(cfg.TrustedProxies); err != nil {
 		return fmt.Errorf("contentkit: Config.TrustedProxies: %w", err)
 	}
-	if err := signal.ValidateActivityCohorts(cfg.ActivityCohorts); err != nil {
-		return fmt.Errorf("contentkit: Config.ActivityCohorts: %w", err)
+	if cfg.AnonymousRetention < 0 {
+		return errors.New("contentkit: Config.AnonymousRetention is negative")
+	}
+	if cfg.AnonymousRetention == 0 {
+		cfg.AnonymousRetention = DefaultAnonymousRetention
 	}
 	if err := cfg.Content.Validate(); err != nil {
 		return fmt.Errorf("contentkit: Config.Content: %w", err)
@@ -302,6 +320,9 @@ func (e *Engine) migratePostgres(ctx context.Context, options MigrationOptions) 
 	}
 	if err := e.bindScope(ctx); err != nil {
 		return err
+	}
+	if err := readingstore.SeedOutcomeValues(ctx, e.pool, e.schema, uuid.UUID(e.cfg.Scope.AppID)); err != nil {
+		return fmt.Errorf("contentkit: seed outcome values: %w", err)
 	}
 	if options.explicit {
 		// A retry after a lost provider reply must converge here, not enqueue
@@ -500,10 +521,14 @@ func (e *Engine) contentOptions(deps Deps) contentstore.Options {
 		Accounts:              e,
 		Moderator:             deps.Moderator, ModeratorTimeout: in.ModeratorTimeout, ModeratorCooldown: in.ModeratorCooldown,
 		ProviderDataEraser: deps.ProviderDataEraser,
+		Activity:           e.alog,
+		Touch: func(ctx context.Context, tx pgx.Tx, s uuid.UUID) error {
+			return e.reading.Touch(ctx, tx, s)
+		},
 		Limits: contentstore.Limits{Disabled: l.Disabled, Redis: deps.Redis, Comment: rates(l.Comment), CommentReaction: rates(l.CommentReaction),
 			Reaction: rates(l.Reaction), Favorite: rates(l.Favorite), PollVote: rates(l.PollVote)},
 		Anonymous: in.Anonymous, CommentMaxLength: in.CommentMaxLength, DuplicateWindow: in.DuplicateWindow,
-		Logger: e.log, Now: deps.Clock,
+		Logger: e.log,
 	}
 	if e.media != nil {
 		o.Media = &contentstore.Media{Namespace: e.media.reg.Namespace(), Images: e.media.cache, Folders: e.media.jobs, Reader: e.media.reader}
@@ -562,7 +587,7 @@ func (e *Engine) mount(deps Deps) error {
 	if e.avatars != nil {
 		avatars = e.avatars.rule
 	}
-	e.modules[httpapi.Kinds] = kindsHandler((&gate.Gate{Auth: e.auth, Log: e.log}).Guard, c, e.hub.SignalPlane, avatars)
+	e.modules[httpapi.Kinds] = kindsHandler((&gate.Gate{Auth: e.auth, Log: e.log}).Guard, c, e.hub.SignalsConfigured, avatars)
 	if e.importer, err = importstore.New(importstore.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Scope.AppID.String(), Catalog: e.catalog, Entities: e.entities, Channels: e.channels,
 		Content: e.content, Signals: e.discover, Rebuild: e.rebuild, Logger: e.log}); err != nil {
 		return err
@@ -587,14 +612,10 @@ func (e *Engine) mount(deps Deps) error {
 // mountDiscovery builds the public read routes over the catalog's rule.
 func (e *Engine) mountDiscovery(deps Deps) error {
 	o := discoverystore.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Scope.AppID.String(), Kinds: e.cfg.Content, Resolver: e.catalog.Resolver(), Gate: e.gate,
-		Entities: e.entities, Channels: e.channels, Hub: e.hub, Logger: e.log, Now: deps.Clock, Visibility: e.catalog, ActivitySigner: deps.ActivitySigner,
-		ActivityCohorts: e.cfg.ActivityCohorts}
+		Entities: e.entities, Channels: e.channels, Hub: e.hub, Logger: e.log, Now: deps.Clock, Visibility: e.catalog, Reading: e.reading, Activity: e.alog}
 	o.Tenure, _ = deps.Billing.(access.TenureReader)
 	if e.media != nil {
 		o.Media = e.media.versions
-		if o.ActivitySigner == nil {
-			o.ActivitySigner = e.media.reader
-		}
 	}
 	var err error
 	if e.discover, err = discoverystore.New(o); err != nil {
@@ -638,8 +659,8 @@ func (e *Engine) start(ctx context.Context) error {
 }
 
 // StartJobs works ContentKit's background jobs in this process: search
-// indexing, preference sync, popularity refresh, publication, retention and
-// media release work, and their schedules. A host calls it from the process
+// indexing, the analytics job, entity popularity, publication, retention
+// and media release work, and their schedules. A host calls it from the process
 // that runs jobs (its worker command); processes that only serve call Start.
 // It starts the engine first when Start has not run. Close stops the jobs.
 func (e *Engine) StartJobs(ctx context.Context) error {
@@ -689,6 +710,14 @@ func (e *Engine) Close(ctx context.Context) error {
 		return nil
 	}
 	e.closed = true
+	if e.activity != nil {
+		// Write what requests queued while ClickHouse can still take it.
+		flush, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		if err := e.activity.Close(flush); err != nil {
+			e.log.Warn("contentkit: activity not written at close", "err", err)
+		}
+		cancel()
+	}
 	if e.signals != nil {
 		e.signals.close()
 	}

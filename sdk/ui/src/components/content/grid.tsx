@@ -7,7 +7,7 @@ import type { AccessMode, ContentQuery, HistoryQuery, RailQuery, SearchQuery } f
 import type { Card, EntityCard, ListingSummary } from "../../client/generated/wire.js";
 import { EntityLink, type EntityLike } from "../entities/parts.js";
 import { useMessages } from "../../i18n/context.js";
-import { useContents, useExposure, useHistory, useRecommendations, useSearch, useSimilar, type UseRail } from "../../react/discovery.js";
+import { useContents, useHistory, useOpen, useRecommendations, useSearch, useSimilar, type UseRail } from "../../react/discovery.js";
 import { useKinds } from "../../react/entities.js";
 import type { UseList } from "../../react/use-resource.js";
 import { ContentKitContext } from "../../react/context.js";
@@ -22,11 +22,10 @@ import { useReleaseReveal } from "./release-reveal.js";
 import { ContentSummaryTile } from "./summary-tile.js";
 import { ContentCard, type ContentCardProps } from "./card.js";
 import { PagedContentGrid, PagedSearchResults } from "./paged-grid.js";
-import { eventId } from "../../client/beacons.js";
 
 export interface CardListProps extends Omit<ContentCardProps, "card" | "onOpen" | "children" | "className" | "compactVideo"> {
   /**
-   * Where the list is, for exposures and click attribution: "home", "search", "similar".
+   * Where the list is, reported with each open: "home", "search", "similar".
    * Home video cards with only inline tags use the compact layout unless `entityStyle` is set.
    */
   surface?: string;
@@ -102,7 +101,7 @@ export function cardGridLayout(layout?: CardGridLayout): { className: string; st
 
 /** A list carries exact selection-wide counts when the API was asked for them. */
 type SummaryList = UseList<Card> & { summary?: ListingSummary };
-type GridProps = CardListProps & { list: SummaryList; render: string; filterKinds?: readonly string[]; filterLanguage?: string; horizontal?: boolean; searchQuery?: string; queryID?: string; ranker?: string; positionOffset?: number; settledEmpty?: boolean; onExpandLocked?: () => void };
+type GridProps = CardListProps & { list: SummaryList; render: string; filterKinds?: readonly string[]; filterLanguage?: string; horizontal?: boolean; requestId?: string; positionOffset?: number; onExpandLocked?: () => void };
 
 /** A list's cards and summary controls share one responsive, animated grid. */
 export function CardGrid(p: GridProps) {
@@ -117,7 +116,7 @@ export function CardGrid(p: GridProps) {
   return <CardGridBody key={session.key} {...p} />;
 }
 
-function CardGridBody({ list, render, filterKinds, filterLanguage, horizontal, searchQuery, queryID, ranker, positionOffset = 0, settledEmpty, onExpandLocked, ...p }: GridProps) {
+function CardGridBody({ list, render: _render, filterKinds, filterLanguage, horizontal, requestId, positionOffset = 0, onExpandLocked, ...p }: GridProps) {
   const m = useMessages();
   const { t } = m;
   const { kinds } = useKinds({ client: p.client });
@@ -168,8 +167,7 @@ function CardGridBody({ list, render, filterKinds, filterLanguage, horizontal, s
     if (tile) kept.push({ key: "premium-summary", premium: true, card: preview });
     return kept;
   }, [list.items, collapse, p.locked, lockedTile, mobile, p.mobileCardLimit, p.cardLimit, p.premiumLast, p.pagination, p.infinite, positionOffset]);
-  const shown = useMemo(() => entries.flatMap((entry) => ("premium" in entry ? [] : [{ ...entry.card, position: entry.position }])), [entries]);
-  const exposure = useExposure(shown, { surface: p.surface ?? "list", render, client: p.client, query_id: queryID, search_query: searchQuery, ranker, settledEmpty });
+  const open = useOpen({ client: p.client });
   const [sentinel, near] = useNearViewport({ margin: "600px 0px", leaveMargin: "1200px 0px" });
   const { hasMore, loadingMore, loadMore, error } = list;
   useEffect(() => {
@@ -249,14 +247,14 @@ function CardGridBody({ list, render, filterKinds, filterLanguage, horizontal, s
                 }}
               />
             ) : (
-              <li key={entry.key} data-release-key={entry.key} ref={exposure.track(entry.card.id, entry.position)}>
+              <li key={entry.key} data-release-key={entry.key}>
                 {p.renderCard ? (
                   p.renderCard(entry.card, entry.position)
                 ) : (
                   <ContentCard
                     card={entry.card}
                     client={p.client}
-                    href={(card) => exposure.href(card.id, entry.position, p.href ? p.href(card) : card.path)}
+                    href={(card) => (p.href ? p.href(card) : card.path)}
                     shape={p.shape}
                     aspectRatio={p.aspectRatio}
                     titlePosition={p.titlePosition}
@@ -283,7 +281,7 @@ function CardGridBody({ list, render, filterKinds, filterLanguage, horizontal, s
                       (p.entityKinds ?? Object.keys(entry.card.entities)).every((kind) => kind === "tag")
                       ? COMPACT_VIDEO_CARD
                       : undefined)}
-                    onOpen={() => exposure.click(entry.card.id, entry.position, exposure.href(entry.card.id, entry.position, p.href ? p.href(entry.card) : entry.card.path))}
+                    onOpen={() => open(entry.card.id, { requestId, surface: p.surface ?? "list", position: entry.position })}
                   />
                 )}
               </li>
@@ -394,7 +392,6 @@ function CursorSearchResults({ query, entityHref, ...p }: SearchResultsProps) {
     [query, p.pageSize, p.locked],
   );
   const list = useSearch(q, { client: p.client });
-  const queryID = useMemo(() => eventId(), [JSON.stringify(query)]); // eslint-disable-line react-hooks/exhaustive-deps
   if (!query.q.trim()) return null;
   return (
     <>
@@ -405,10 +402,7 @@ function CursorSearchResults({ query, entityHref, ...p }: SearchResultsProps) {
         {...p}
         list={list}
         render={JSON.stringify(q)}
-        queryID={queryID}
-        searchQuery={query.q}
-        settledEmpty={!list.loading && !list.error && list.items.length === 0}
-        ranker={query.sort ?? "relevance"}
+        requestId={list.requestId}
         filterKinds={query.kind ? [query.kind] : undefined}
         filterLanguage={query.display_language ?? query.language}
       />

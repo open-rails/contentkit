@@ -19,11 +19,12 @@ import (
 	"github.com/open-rails/contentkit/internal/edition"
 	entitlement "github.com/open-rails/contentkit/internal/entitlement"
 	entitystore "github.com/open-rails/contentkit/internal/entitystore"
+	"github.com/open-rails/contentkit/internal/readingstore"
+	"github.com/open-rails/contentkit/internal/subject"
 	urlstore "github.com/open-rails/contentkit/internal/urlstore"
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/versions"
-	"github.com/open-rails/contentkit/signal"
 )
 
 // cardOptions shape hydration.
@@ -88,9 +89,6 @@ func (s *Service) lock(rows []cardRow) {
 		}
 	}
 }
-
-// standingTimeout bounds a card list's progress read.
-const standingTimeout = 500 * time.Millisecond
 
 // excerptChars bounds a card excerpt; clients trim further.
 const excerptChars = 300
@@ -210,7 +208,7 @@ func (s *Service) cards(ctx context.Context, q *sel, picks []pick, o cardOptions
 		if err := s.owners(ctx, q, got); err != nil {
 			return nil, err
 		}
-		if err := s.viewerState(ctx, q.reader.Actor, got); err != nil {
+		if err := s.viewerState(ctx, q.reader, got); err != nil {
 			return nil, err
 		}
 		if err := s.cardStatus(ctx, got, q.viewer.Staff()); err != nil {
@@ -475,17 +473,28 @@ func isUUID(s string) bool {
 	return err == nil && len(s) == 36
 }
 
-// viewerState fills a signed-in reader's standing with the cards' items.
-func (s *Service) viewerState(ctx context.Context, actor access.Actor, rows []cardRow) error {
-	if !actor.Member() || len(rows) == 0 {
+// viewerState fills the reader's standing with the cards' items in one batch
+// per page: a signed-in reader's favorites, reactions and reading state, a
+// signed-out one's reading state by its anonymous id.
+func (s *Service) viewerState(ctx context.Context, reader discovery.Reader, rows []cardRow) error {
+	who, known := s.reader(reader)
+	if !known || len(rows) == 0 {
 		return nil
 	}
 	refs := make([]contentref.ContentRef, len(rows))
+	versions := make([]contentref.ContentRef, len(rows))
 	for i, c := range rows {
 		refs[i] = contentref.New(s.o.Tenant, c.Kind, c.ID)
+		versions[i] = contentref.NewVersion(s.o.Tenant, c.Kind, c.ID, c.Version.ID)
 	}
-	got, err := s.standing(ctx, actor, refs, standingTimeout)
-	if err != nil {
+	got := make([]catalog.ViewerState, len(refs))
+	if reader.Actor.Member() {
+		if err := s.interactions(ctx, reader.Actor, refs, got); err != nil {
+			return err
+		}
+	}
+	// Progress against the card's own version's length.
+	if err := s.readingStanding(ctx, who, versions, got); err != nil {
 		return err
 	}
 	for i := range rows {
@@ -495,24 +504,31 @@ func (s *Service) viewerState(ctx context.Context, actor access.Actor, rows []ca
 }
 
 // Standing is a signed-in person's standing with content items and versions,
-// per ref in order: their favorites and, with a signal plane, their progress.
-// A failed signal read leaves progress out.
+// per ref in order: their favorites, reactions and reading state.
 func (s *Service) Standing(ctx context.Context, actor access.Actor, refs []contentref.ContentRef) ([]catalog.ViewerState, error) {
-	return s.standing(ctx, actor, refs, 0)
-}
-
-// standing is Standing with its progress read bounded by limit (0: none).
-func (s *Service) standing(ctx context.Context, actor access.Actor, refs []contentref.ContentRef, limit time.Duration) ([]catalog.ViewerState, error) {
 	out := make([]catalog.ViewerState, len(refs))
 	if !actor.Member() || len(refs) == 0 {
 		return out, nil
 	}
+	if err := s.interactions(ctx, actor, refs, out); err != nil {
+		return nil, err
+	}
+	if who, ok := subject.Account(actor.AccountID()); ok {
+		if err := s.readingStanding(ctx, who, refs, out); err != nil {
+			return nil, err
+		}
+	}
+	return out, nil
+}
+
+// interactions fills out (per ref) with the member's favorites and reactions.
+func (s *Service) interactions(ctx context.Context, actor access.Actor, refs []contentref.ContentRef, out []catalog.ViewerState) error {
 	kinds, ids, versions := make([]string, len(refs)), make([]string, len(refs)), make([]string, len(refs))
 	for i, r := range refs {
 		kinds[i], ids[i], versions[i] = r.ContentKind, r.ContentID, r.Version()
 	}
 	if err := s.favorited(ctx, actor.AccountID(), refs, out); err != nil {
-		return nil, err
+		return err
 	}
 	// A version's own reaction wins over one on the whole item.
 	reacted, err := s.o.Pool.Query(ctx, `SELECT r.n, x.value FROM unnest($3::text[], $4::text[], $5::text[]) WITH ORDINALITY AS r(kind, id, version, n)
@@ -520,7 +536,7 @@ func (s *Service) standing(ctx context.Context, actor access.Actor, refs []conte
   AND a.value <> 0 AND (a.content_version_id IS NULL OR a.content_version_id = nullif(r.version, ''))
   ORDER BY a.content_version_id IS NULL, a.updated_at DESC LIMIT 1) x ON true`, s.o.Tenant, actor.AccountID(), kinds, ids, versions)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	reactions, err := pgx.CollectRows(reacted, func(row pgx.CollectableRow) (struct{ n, value int64 }, error) {
 		var v struct{ n, value int64 }
@@ -528,37 +544,81 @@ func (s *Service) standing(ctx context.Context, actor access.Actor, refs []conte
 		return v, err
 	})
 	if err != nil {
-		return nil, err
+		return err
 	}
 	for _, r := range reactions {
 		out[r.n-1].Reaction = int(r.value)
 	}
-	if !s.o.Hub.SignalPlane() {
-		return out, nil
+	return nil
+}
+
+// readingStanding fills out (per ref) with who's reading state: the work's,
+// against the length of the card's version.
+func (s *Service) readingStanding(ctx context.Context, who uuid.UUID, refs []contentref.ContentRef, out []catalog.ViewerState) error {
+	kinds, ids, versions := make([]string, len(refs)), make([]string, len(refs)), make([]string, len(refs))
+	for i, r := range refs {
+		kinds[i], ids[i], versions[i] = r.ContentKind, r.ContentID, r.Version()
 	}
-	readCtx := ctx
-	if limit > 0 {
-		// Progress is optional on a card: a slow signal plane drops it, not the list.
-		var cancel context.CancelFunc
-		readCtx, cancel = context.WithTimeout(ctx, limit)
-		defer cancel()
-	}
-	states, err := s.o.Hub.States(readCtx, signal.Subject{UserID: actor.AccountID()}, refs)
+	read, err := s.o.Pool.Query(ctx, `SELECT r.n, st.last_seen_at, st.best_outcome, st.furthest, st."position", st.hidden,
+ coalesce(CASE WHEN r.kind = ANY($7) THEN v.duration_ms / 1000 ELSE v.pages END, 0)
+FROM unnest($2::text[], $3::text[], $4::text[]) WITH ORDINALITY AS r(kind, id, version, n)
+JOIN `+s.t.reading+` st ON st.app_id = $5 AND st.subject = $6 AND st.content_id = r.id::uuid
+LEFT JOIN `+s.t.versions+` v ON v.tenant_id = $1 AND v.content_id = r.id AND v.id = nullif(r.version, '')`, s.o.Tenant, kinds, ids, versions, s.app(), who, s.playerKinds())
 	if err != nil {
-		s.o.Logger.WarnContext(ctx, "discovery: viewer progress unavailable", "err", err)
-		return out, nil
+		return err
 	}
-	for i, ref := range refs {
-		st, ok := states[ref.Key()]
-		if !ok {
-			continue
+	defer read.Close()
+	for read.Next() {
+		var n int64
+		var seen *time.Time
+		var outcome int16
+		var furthest int32
+		var position *int32
+		var hidden bool
+		var length int64
+		if err := read.Scan(&n, &seen, &outcome, &furthest, &position, &hidden, &length); err != nil {
+			return err
 		}
-		v := &out[i]
-		v.Seen, v.Completed, v.Progress, v.ProgressMax, v.Resume = st.Seen, st.Completed, st.MaxProgress, st.ProgressMax, st.Resume
-		if !st.LastReadAt.IsZero() {
-			t := st.LastReadAt
+		v := &out[n-1]
+		v.Seen, v.Completed, v.Hidden = seen != nil, outcome == readingstore.OutcomeComplete, hidden
+		v.Outcome, v.Progress, v.ProgressMax = outcomeName(outcome), uint32(furthest), uint32(max(length, 0))
+		if length > 0 {
+			v.Percent = uint8(min(100, int64(furthest)*100/length))
+		}
+		if position != nil {
+			p := uint32(*position)
+			v.Position = &p
+		}
+		if seen != nil {
+			t := seen.UTC()
 			v.LastReadAt = &t
 		}
 	}
-	return out, nil
+	return read.Err()
+}
+
+// playerKinds are the kinds whose points are seconds of video.
+func (s *Service) playerKinds() []string {
+	out := []string{}
+	for name, k := range s.o.Kinds.Kinds {
+		if k.Presentation == "player" {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+// outcomeName is a reading_state outcome as the API names it.
+func outcomeName(outcome int16) string {
+	switch outcome {
+	case readingstore.OutcomeBounce:
+		return "bounce"
+	case readingstore.OutcomeNeutral:
+		return "neutral"
+	case readingstore.OutcomeGood:
+		return "good"
+	case readingstore.OutcomeComplete:
+		return "complete"
+	}
+	return ""
 }

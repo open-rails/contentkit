@@ -18,7 +18,6 @@ import (
 	entitystore "github.com/open-rails/contentkit/internal/entitystore"
 	"github.com/open-rails/contentkit/internal/hub"
 	"github.com/open-rails/contentkit/internal/search"
-	"github.com/open-rails/contentkit/signal"
 )
 
 // SearchOptions select one page of keyword search.
@@ -143,8 +142,11 @@ func (s *Service) Search(ctx context.Context, o SearchOptions) (result discovery
 	}
 	base.Limit, base.Offset = limit, offset
 	opts := hub.HubSearchOptions{SearchOptions: base}
-	if a := o.Actor; a.Member() && !o.Unpersonalized {
-		opts.Personalize = &hub.Personalization{Subject: signal.Subject{UserID: a.AccountID()}, DemoteSeen: true,
+	if who, known := s.reader(o.Reader); known && !o.Unpersonalized {
+		opts.Personalize = &hub.Personalization{DemoteSeen: true,
+			States: func(ctx context.Context, refs []contentref.ContentRef) (map[contentref.ContentKey]hub.ViewState, error) {
+				return s.viewStates(ctx, who, refs)
+			},
 			Popularity: func(ctx context.Context, kind string, ids []string) (map[string]float64, error) {
 				key, ok := s.rankingFor(ctx, o.Reader, kind, "")
 				if !ok {

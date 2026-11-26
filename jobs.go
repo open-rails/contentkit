@@ -7,7 +7,11 @@ import (
 	"sync"
 	"time"
 
+	"github.com/open-rails/contentkit/internal/analytics"
 	mediastore "github.com/open-rails/contentkit/internal/mediastore"
+	"github.com/open-rails/contentkit/internal/outcomevalue"
+	"github.com/open-rails/contentkit/internal/readingstore"
+	signalstore "github.com/open-rails/contentkit/internal/signalstore"
 
 	"github.com/jackc/pgx/v5"
 	riverhelpers "github.com/open-rails/helpers/river"
@@ -40,10 +44,11 @@ func (j *jobs) bound() *river.Client[pgx.Tx] {
 
 // The engine's schedules; each periodic run is unique per its period.
 const (
-	searchSyncEvery     = 5 * time.Minute // backstop: writes queue their own sync (syncDocuments)
-	preferenceSyncEvery = time.Minute     // also samples the revision sequence that settles its rows
-	searchPruneEvery    = time.Hour
-	popularRefreshEvery = 5 * time.Minute
+	searchSyncEvery  = 5 * time.Minute // backstop: writes queue their own sync (syncDocuments)
+	searchPruneEvery = time.Hour
+	// anonymousExpiryEvery runs the expiry often enough that its bounded
+	// runs keep up with a day's new visitors.
+	anonymousExpiryEvery = time.Hour
 )
 
 // contribution is the engine's River composition: its own workers, queues and
@@ -73,9 +78,9 @@ func (j *jobs) contribution() riverhelpers.Contribution {
 		}
 		for _, add := range []func() error{
 			func() error { return river.AddWorkerSafely(cfg.Workers, &searchSyncWorker{e: e}) },
-			func() error { return river.AddWorkerSafely(cfg.Workers, &preferenceSyncWorker{e: e}) },
+			func() error { return river.AddWorkerSafely(cfg.Workers, &analyticsWorker{e: e}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &searchPruneWorker{e: e}) },
-			func() error { return river.AddWorkerSafely(cfg.Workers, &popularRefreshWorker{e: e}) },
+			func() error { return river.AddWorkerSafely(cfg.Workers, &anonymousExpiryWorker{e: e}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &entityPopularRefreshWorker{e: e}) },
 		} {
 			if err := add(); err != nil {
@@ -91,17 +96,17 @@ func (j *jobs) contribution() riverhelpers.Contribution {
 		}
 		periodic("contentkit_search_sync", searchSyncEvery, searchSyncArgs{})
 		periodic("contentkit_search_prune", searchPruneEvery, searchPruneArgs{})
+		periodic("contentkit_anonymous_expiry", anonymousExpiryEvery, anonymousExpiryArgs{})
 		cfg.PeriodicJobs = append(cfg.PeriodicJobs, riverhelpers.NewPeriodicJob(cfg, time.Hour,
 			func() (river.JobArgs, *river.InsertOpts) {
 				return entityPopularRefreshArgs{}, &river.InsertOpts{Queue: queueContentKit, MaxAttempts: 3, UniqueOpts: mediastore.PendingOnce}
 			}, &river.PeriodicJobOpts{ID: "contentkit_entity_popular_refresh", RunOnStart: true}))
-		if e.hub.SignalsConfigured() { // their runs skip while it is down
-			periodic("contentkit_preference_sync", preferenceSyncEvery, preferenceSyncArgs{})
-			// A refresh can outlast its period; it never runs twice at once.
-			cfg.PeriodicJobs = append(cfg.PeriodicJobs, riverhelpers.NewPeriodicJob(cfg, popularRefreshEvery,
+		if e.hub.SignalsConfigured() {
+			// One run at a time; a run can outlast its period.
+			cfg.PeriodicJobs = append(cfg.PeriodicJobs, riverhelpers.NewPeriodicJob(cfg, analytics.FoldEvery,
 				func() (river.JobArgs, *river.InsertOpts) {
-					return popularRefreshArgs{}, &river.InsertOpts{Queue: queueContentKit, MaxAttempts: 3, UniqueOpts: mediastore.PendingOnce}
-				}, &river.PeriodicJobOpts{ID: "contentkit_popular_refresh", RunOnStart: true}))
+					return analyticsArgs{}, &river.InsertOpts{Queue: queueContentKit, MaxAttempts: 3, UniqueOpts: mediastore.PendingOnce}
+				}, &river.PeriodicJobOpts{ID: "contentkit_analytics", RunOnStart: true}))
 		}
 		return nil
 	}, func(_ context.Context, b riverhelpers.Binding) error {
@@ -218,57 +223,51 @@ func (w *searchPruneWorker) Work(ctx context.Context, _ *river.Job[searchPruneAr
 	return err
 }
 
-type preferenceSyncArgs struct {
-	After int64 `json:"after,omitempty"`
-}
+type anonymousExpiryArgs struct{}
 
-func (preferenceSyncArgs) Kind() string                      { return "contentkit_preference_sync" }
-func (a preferenceSyncArgs) FollowUp(id int64) river.JobArgs { a.After = id; return a }
+func (anonymousExpiryArgs) Kind() string { return "contentkit_anonymous_expiry" }
 
-// preferenceSyncWorker sends changed reactions and favorites into the signal
-// plane, each once.
-type preferenceSyncWorker struct {
-	river.WorkerDefaults[preferenceSyncArgs]
+// anonymousExpiryWorker expires signed-out visitors idle longer than
+// Config.AnonymousRetention. PostgreSQL only: it runs without ClickHouse.
+type anonymousExpiryWorker struct {
+	river.WorkerDefaults[anonymousExpiryArgs]
 	e *Engine
 }
 
-// Work runs one sync bounded by its budget and its job's timeout; a
-// backlog's next run follows at once.
-func (w *preferenceSyncWorker) Work(ctx context.Context, job *river.Job[preferenceSyncArgs]) error {
-	c := river.ClientFromContext[pgx.Tx](ctx)
-	if err := mediastore.WaitFor(ctx, c, job.Args.After); err != nil {
-		return err
-	}
-	h := w.e.hub
-	if !h.SignalPlane() {
-		return nil
-	}
-	report, err := w.e.content.SyncPreferences(ctx, h.SendPreferences)
-	if err != nil || !report.More {
-		return err
-	}
-	return mediastore.InsertOnce(ctx, c.Insert, preferenceSyncArgs{After: job.ID}, river.InsertOpts{Queue: queueContentKit, MaxAttempts: 3})
+func (w *anonymousExpiryWorker) Work(ctx context.Context, _ *river.Job[anonymousExpiryArgs]) error {
+	_, err := w.e.reading.ExpireIdle(ctx, w.e.now().Add(-w.e.cfg.AnonymousRetention))
+	return err
 }
 
-type popularRefreshArgs struct{}
+type analyticsArgs struct{}
 
-func (popularRefreshArgs) Kind() string { return "contentkit_popular_refresh" }
+func (analyticsArgs) Kind() string { return "contentkit_analytics" }
 
-// popularRefreshWorker prepares reusable daily participation and refreshes
-// host-declared popular rankings independently of public requests.
-type popularRefreshWorker struct {
-	river.WorkerDefaults[popularRefreshArgs]
+// analyticsWorker folds the activity log into reading state and history,
+// rebuilds the daily rollups and deletes erased rows (analytics.Job).
+type analyticsWorker struct {
+	river.WorkerDefaults[analyticsArgs]
 	e *Engine
 }
 
-// Each ranking is stored as it completes, so a run cut short resumes with
-// the rest on the next.
-func (w *popularRefreshWorker) Timeout(*river.Job[popularRefreshArgs]) time.Duration {
-	return time.Hour
+func (w *analyticsWorker) Timeout(*river.Job[analyticsArgs]) time.Duration { return 30 * time.Minute }
+
+func (w *analyticsWorker) Work(ctx context.Context, _ *river.Job[analyticsArgs]) error {
+	return w.e.analyticsJob().Run(ctx)
 }
 
-func (w *popularRefreshWorker) Work(ctx context.Context, _ *river.Job[popularRefreshArgs]) error {
-	return w.e.discover.RefreshPopularRankings(ctx)
+// analyticsJob is the engine's analytics job.
+func (e *Engine) analyticsJob() *analytics.Job {
+	return &analytics.Job{Tenant: e.cfg.Scope.AppID.String(), Signals: e.hub.Signals, Reading: e.reading, Thresholds: signalstore.DefaultThresholds,
+		Polarizing: e.discover.PolarizingTags,
+		Values: func(ctx context.Context) (outcomevalue.Table, error) {
+			return outcomevalue.Load(ctx, e.pool, e.schema, e.cfg.Scope.AppID.String())
+		},
+		Segment: func(kind string) string { return outcomevalue.SegmentOf(e.cfg.Content.Kinds[kind].Presentation) },
+		Surface: func(name string) readingstore.Surface {
+			return readingstore.SurfaceOf(name, func(kind string) bool { _, ok := e.cfg.Content.EntityKinds[kind]; return ok })
+		},
+		Now: e.now, Log: e.log}
 }
 
 type entityPopularRefreshArgs struct{}

@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/internal/hub"
-	"github.com/open-rails/contentkit/signal"
+	"github.com/open-rails/contentkit/internal/subject"
 )
 
 // SetAccountDeleted hides account attribution during AuthKit's recovery
@@ -26,8 +28,8 @@ func (e *Engine) SetAccountHidden(ctx context.Context, accountID string, hidden 
 
 // AnonymizeAccount is the host consumer's idempotent response to user.purged.
 // It keeps comments and anonymous contributions, unlinks the account and
-// removes its avatars, searches and provider data; AuthKit's purge has already
-// erased its inbox. Errors keep the consumer's checkpoint pending for retry; no
+// removes its avatars, searches, reading and provider data; AuthKit's purge
+// has already erased its inbox. Errors keep the consumer's checkpoint pending for retry; no
 // periodic job is needed.
 func (e *Engine) AnonymizeAccount(ctx context.Context, accountID string) error {
 	if strings.TrimSpace(accountID) == "" {
@@ -56,10 +58,10 @@ RETURNING state,coalesce(anonymous_key::text,'')`, e.cfg.Scope.AppID.String(), a
 	if err := e.content.AnonymizeAccount(ctx, accountID, anonymous); err != nil {
 		return err
 	}
-	if err := e.anonymizeSignals(ctx, accountID, anonymous); err != nil {
+	if err := e.eraseReading(ctx, accountID); err != nil {
 		return err
 	}
-	if err := e.discover.EraseSearches(ctx, []signal.Subject{{UserID: accountID}}); err != nil {
+	if err := e.discover.EraseSearches(ctx, accountID); err != nil {
 		return err
 	}
 	if err := e.eraseAvatars(ctx, []string{accountID}); err != nil {
@@ -77,26 +79,42 @@ RETURNING state,coalesce(anonymous_key::text,'')`, e.cfg.Scope.AppID.String(), a
 
 // ErrSignalPlaneRequired keeps an account erasure pending on an engine without
 // a signal plane when the app's plane was provisioned (MigrateClickHouse):
-// its signals still hold the account.
+// its activity log still holds the account.
 var ErrSignalPlaneRequired = errors.New("contentkit: this app's signal plane is provisioned; configure ClickHouse to finish account erasure")
 
-// anonymizeSignals moves the account's signals to its anonymous key. Only an
-// app whose signal plane was never provisioned has none to move.
-func (e *Engine) anonymizeSignals(ctx context.Context, accountID, anonymous string) error {
-	err := e.hub.AnonymizeSubject(ctx, signal.Subject{UserID: accountID}, signal.Subject{AnonKey: anonymous})
-	if err == nil || errors.Is(err, hub.ErrSignalPlaneDown) || !errors.Is(err, hub.ErrSignalPlaneDisabled) {
+// eraseReading erases the account's reading and that of the anonymous ids
+// folded into it: ClickHouse records them as erased first, so its reads drop
+// their rows at once and its daily delete removes them; then their reading
+// state, history and links are deleted.
+func (e *Engine) eraseReading(ctx context.Context, accountID string) error {
+	account, ok := subject.Account(accountID)
+	if !ok {
+		return nil // only a UUID account has reading state or activity
+	}
+	linked, err := e.reading.Anonymous(ctx, []uuid.UUID{account})
+	if err != nil {
 		return err
 	}
-	schema, _ := e.accountStorage()
-	var provisioned bool
-	if err := e.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM `+pgx.Identifier{schema, "content_signal_planes"}.Sanitize()+` WHERE tenant_id=$1 AND app_id=$2)`,
-		e.scope.TenantID.String(), e.scope.AppID.String()).Scan(&provisioned); err != nil {
-		return err
+	anonymous := linked[account]
+	switch store := e.hub.Signals(); {
+	case store != nil:
+		if err := store.Erase(ctx, e.cfg.Scope.AppID.String(), append([]uuid.UUID{account}, anonymous...), time.Now()); err != nil {
+			return err
+		}
+	case e.hub.SignalsConfigured():
+		return hub.ErrSignalPlaneDown
+	default:
+		schema, _ := e.accountStorage()
+		var provisioned bool
+		if err := e.pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM `+pgx.Identifier{schema, "content_signal_planes"}.Sanitize()+` WHERE tenant_id=$1 AND app_id=$2)`,
+			e.scope.TenantID.String(), e.scope.AppID.String()).Scan(&provisioned); err != nil {
+			return err
+		}
+		if provisioned {
+			return ErrSignalPlaneRequired
+		}
 	}
-	if provisioned {
-		return ErrSignalPlaneRequired
-	}
-	return nil
+	return e.reading.Erase(ctx, account, anonymous)
 }
 
 // eraseMediaBookkeeping has nothing to remove: no media bookkeeping keeps an

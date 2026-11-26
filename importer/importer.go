@@ -1,5 +1,5 @@
 // Package importer is ContentKit's bulk import, POST /v1/import: how a legacy
-// importer writes content, entities, interactions and signals. Records are
+// importer writes content, entities, interactions and reading. Records are
 // idempotent by their (source, entity, external id) in content_external_ids
 // and keep the ids they give, so re-running an import converges: changed rows
 // are updated and nothing is duplicated. A record that fails is reported and
@@ -31,23 +31,18 @@ const MaxRecount = 1000
 type Batch struct {
 	// Source names the importing system ("doujins-legacy"): external ids and
 	// aliases are scoped by it.
-	Source string `json:"source"`
-	// PreferenceFloor raises the preference revision sequence past a
-	// retained signal plane's newest revision before anything is stamped, as
-	// after a Postgres restore. It only ever advances.
-	PreferenceFloor int64                 `json:"preference_floor,omitempty"`
-	Entities        []EntityRecord        `json:"entities,omitempty"`
-	Channels        []ChannelRecord       `json:"channels,omitempty"`
-	Contents        []ContentRecord       `json:"contents,omitempty"`
-	Memberships     []MembershipSet       `json:"memberships,omitempty"`
-	Aliases         []AliasRecord         `json:"aliases,omitempty"`
-	Comments        []CommentRecord       `json:"comments,omitempty"`
-	Reactions       []ReactionRecord      `json:"reactions,omitempty"`
-	Favorites       []FavoriteRecord      `json:"favorites,omitempty"`
-	Polls           []PollRecord          `json:"polls,omitempty"`
-	Votes           []VoteRecord          `json:"votes,omitempty"`
-	LegacyReading   []LegacyReadingRecord `json:"legacy_reading,omitempty"`
-	Signals         []SignalRecord        `json:"signals,omitempty"`
+	Source        string                `json:"source"`
+	Entities      []EntityRecord        `json:"entities,omitempty"`
+	Channels      []ChannelRecord       `json:"channels,omitempty"`
+	Contents      []ContentRecord       `json:"contents,omitempty"`
+	Memberships   []MembershipSet       `json:"memberships,omitempty"`
+	Aliases       []AliasRecord         `json:"aliases,omitempty"`
+	Comments      []CommentRecord       `json:"comments,omitempty"`
+	Reactions     []ReactionRecord      `json:"reactions,omitempty"`
+	Favorites     []FavoriteRecord      `json:"favorites,omitempty"`
+	Polls         []PollRecord          `json:"polls,omitempty"`
+	Votes         []VoteRecord          `json:"votes,omitempty"`
+	LegacyReading []LegacyReadingRecord `json:"legacy_reading,omitempty"`
 	// Deletes, written last, remove records gone from the source. Records
 	// are never deleted by their absence from a batch.
 	Deletes []DeleteRecord `json:"deletes,omitempty"`
@@ -307,36 +302,19 @@ type VoteRecord struct {
 	CreatedAt *time.Time `json:"created_at,omitempty"`
 }
 
-// LegacyReadingRecord preserves source bookmarks/progress as legacy state,
-// never as measured attention or popularity evidence. Removed withdraws that
-// legacy state, ordered by LastReadAt and Revision, without erasing measured reading.
+// LegacyReadingRecord merges an account's source bookmark and progress into
+// its reading state, by maximum and latest; it is never popularity
+// evidence. Progress reaching ProgressMax, or Completed, is a complete read.
+// Removed clears that reading.
 type LegacyReadingRecord struct {
 	Target      TargetRef  `json:"target"`
 	Removed     bool       `json:"removed,omitempty"`
-	UserID      string     `json:"user_id,omitempty"`
-	AnonKey     string     `json:"anon_key,omitempty"`
+	UserID      string     `json:"user_id"`
 	FirstReadAt *time.Time `json:"first_read_at,omitempty"`
 	LastReadAt  time.Time  `json:"last_read_at"`
 	Progress    uint32     `json:"progress"`
 	ProgressMax uint32     `json:"progress_max"`
 	Completed   bool       `json:"completed"`
-	Resume      string     `json:"resume,omitempty"`
-	Revision    uint64     `json:"revision,omitempty"`
-}
-
-// SignalRecord imports an explicit click. Existing bookmarks/progress use
-// LegacyReadingRecord; raw opens and imported counters are not accepted.
-type SignalRecord struct {
-	Target TargetRef `json:"target"`
-	// UserID or, signed out, an opaque AnonKey.
-	UserID  string `json:"user_id,omitempty"`
-	AnonKey string `json:"anon_key,omitempty"`
-	// Type is click; imported raw opens are rejected.
-	Type string `json:"type"`
-	// EventID is the event's stable identity: re-sending it adds nothing.
-	EventID    string    `json:"event_id"`
-	Revision   uint64    `json:"revision,omitempty"`
-	OccurredAt time.Time `json:"occurred_at"`
 }
 
 // DeleteRecord deletes a record the source no longer has, as its delete
@@ -395,10 +373,6 @@ const (
 )
 
 const (
-	SectionSignals = "signals"
-)
-
-const (
 	SectionDeletes = "deletes"
 )
 
@@ -434,8 +408,7 @@ const (
 // and the ids of the records with external ids.
 type Result struct {
 	Written map[string]int `json:"written"`
-	// Skipped counts records an engine without the capability leaves out:
-	// signals without a signal plane.
+	// Skipped counts records an engine without the capability leaves out.
 	Skipped map[string]int `json:"skipped,omitempty"`
 	// Merged counts records of entities merged into another: accepted, not
 	// written; references to them resolve to the survivor.

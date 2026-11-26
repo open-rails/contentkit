@@ -763,42 +763,17 @@ The forward schema migration preserves existing text in its existing editions
 without moving or deleting any source images. Hosts use the normal migration
 command; no additional title-copy helper or background worker is needed.
 
-## Daily readership statistics
+## Daily active people
 
-`StatsDashboard` charts distinct engaged readers for the past ten UTC days.
-It reads `GET /stats/activity?kind=gallery&days=10`; opening a page without
-reading does not count. A subject needs at least one second of measured active
-reading and nonempty page coverage. Counts are distinct per day, not across the
-whole period, and the same anonymous person using different browser identities
-can count more than once.
-
-The host defines audience groups on the server, for example:
-
-```go
-cfg.ActivityCohorts = []signal.ActivityCohort{
-    {ID: "supporter", Identity: signal.ActivityAccount, AnyTier: []string{"paid"}},
-    {ID: "member", Identity: signal.ActivityAccount},
-    {ID: "guest", Identity: signal.ActivityAnonymous},
-}
-```
-
-The first matching group wins for each subject/day. Tier eligibility comes
-from trusted observations on that day; an account that gains a matching tier
-is counted once in that group, even if it also read before upgrading. A host
-that omits groups gets only the overall total. Unmatched readers also remain
-in that total. Labels, colors and display order belong to the host UI:
+`StatsDashboard` and `useActive({ days })` read `GET /stats/active`: distinct people active on the site per UTC day, by access (`anonymous`, `account`, or the tiers an account's token claimed), from the analytics job's daily rollups. People are distinct within a day only. Labels and colors per access value belong to the host:
 
 ```tsx
-<StatsDashboard kinds={["gallery"]} days={10} series={[
-  { id: "guest", label: "Guests", color: "#3987e5" },
-  { id: "member", label: "Members", color: "#e98042" },
-  { id: "supporter", label: "Supporters", color: "#21a87e" },
+<StatsDashboard days={10} series={[
+  { id: "anonymous", label: "Guests", color: "#3987e5" },
+  { id: "account", label: "Members", color: "#e98042" },
+  { id: "premium", label: "Premium", color: "#21a87e" },
 ]} />
 ```
-
-The endpoint returns `cohorts: string[]` and each day's `cohorts` count map,
-`readers` total and `active_ms`. The chart uses line series, zero-filled days,
-an accessible daily table and no built-in commercial audience categories.
 
 ## Admin flows
 
@@ -1184,70 +1159,17 @@ language choice. Ordinary sign-ins never import guest preferences.
 a retry action. ReaderSettings shows an incomplete transfer and lets the reader
 retry it. Guest preferences are retained separately after registration and logout.
 
-### Measured engagement
+### Reading activity
 
-`useReadingEngagement(contentId, versionId, options)` measures loaded, visible
-content while the page is focused. Keep the hook above the horizontal/vertical
-reader switch so a mode change retains its visit. Attach `engagement.page(index,
-filename)` to the actual image element (zero-based index), or `engagement.video`
-to the playing video. `engagement.setResume(filenameOrAnchor)` records the opaque
-reader selector separately from measured coverage. Optional
-`[data-reader-viewport]` on the reader container clips page measurements to that
-viewport, including long-page breakpoint readers.
+Requests carry `ContentKit-UTC-Offset` and, signed out, `ContentKit-Anonymous-Id`: a random id the browser keeps in local storage (`anonymousId()`). The server keeps a signed-out reader's reading state, hidden items and recent searches under it. Allow both headers in the host's CORS policy. When the provider's viewer becomes an account, the client posts `POST /me/anonymous-link` once with the anonymous id it used, so that reading folds into the account, then starts a fresh one; signing out also starts a fresh one.
 
-Opening the route, preloading an image and changing the page selector produce
-no engagement on their own. The tracker measures the visible part of each image
-and focused active milliseconds; multiple visible pages share elapsed attention.
-Static-page attention pauses after 60 seconds without genuine input (configurable
-with `idleAfter`). Visible, focused playback continues without requiring mouse
-motion, but pauses, buffering and seeks do not become watched coverage. Suspended
-timer gaps over five seconds are discarded rather than guessed.
+`useReadingProgress(contentId, { length, source })` reports one reading: an open when it mounts, then progress (active time on a visible tab with input in the last 60 seconds or playback, the furthest and current page or second, the length) every five active minutes and when the reader leaves (unmount, hidden tab, `pagehide` with keepalive), skipping unchanged reports. Keep it above the reader's mode switch. Attach `reading.page(index)` to each page's image (zero-based; the most visible page is the current one) or call `reading.setPage(n)` (1-based) in a paged reader; pass `reading` to `VideoPlayer`/`VideoMiniPlayer` (`reading={reading}`), or `reading.video(element)`; posts use `usePostReading`. Pass `enabled: false` to honor consent.
 
-Page changes stay local. Cumulative snapshots flush at most every 120 seconds
-(`checkpointInterval` may shorten this), and on hiding/exiting the page or
-unmounting the reader. `engagement.flush()` offers an explicit checkpoint.
-Each segment captures its own immutable server activity receipt when observation
-starts, retaining event-time premium/free access across retries; a later receipt
-never reclassifies earlier attention. Revisions replace the same segment, rather
-than incrementing visit or page-open counters. Positive short partials are kept
-so later measured attention can accumulate; qualification happens server-side.
+Cards report an open when clicked, with the list's surface, the 1-based position and, for search results, the page's `request_id`; the reader page's own open is then skipped. `useOpen()` reports one for a custom card. `ActivityReporter` (`reporterFor(client)`) batches events into `POST /activity` and stops while the content model's `signals` is false; `ProgressTracker` is the framework-free tracker.
 
-Use `enabled` to honor the host's consent and authentication-readiness policy.
-With an explicitly signed-out provider (`viewer={null}`), positive partials also
-save browser-local resume/history across tabs. This remains useful when the signal
-plane is unavailable, without inventing remote analytics. Account history stays
-server-owned. An account switch discards old in-flight observations instead of
-assigning them to the next account. The optional `kind` groups local guest history
-only; remote requests never trust a browser-supplied content kind.
+The server turns these into reading state about 15 minutes later: each card's `viewer` carries `seen`, `completed`, `outcome`, `progress`/`progress_max`/`percent` and `position`, for signed-out readers too. `useContinue()` lists what the reader started and did not finish (`GET /me/continue`); `view_status: "unseen"` lists only what is new to them. `useHistory` is the signed-in reader's history.
 
-`useHistory` retains previously read items for guests and accounts.
-Guest cards hydrate through `client.discovery.knownCards({ ids })`
-(`GET /content-cards?ids=…`, at most 100 IDs, caller order), rather than a browse
-listing. This read records no engagement. Current domain rules, reader filters,
-languages, publication/deletion state and access decisions still apply; hidden
-items are omitted and locked cards use normal redaction. Published items use
-the same domain, filter and access policy in `/contents` and search.
-
-
-For a custom integration, `EngagementTracker` accepts injected `begin` and
-`submit` callbacks. `client.discovery.activityContexts(targets, session, language)`
-exposes `POST /activity-contexts`; `client.discovery.engagement(snapshots, options)`
-exposes `POST /engagement`. Capture receipts when their segments begin, not when
-delayed batches flush. A missing, disabled or invalid receipt prevents remote
-engagement submission and never falls back to legacy route-open tracking.
-
-`useExposure(items, options)` separately records cumulative rendered and visible
-list placements and attributes clicks to their original ranks. Hidden paid tiles
-are not impressions. An explicit item `position` preserves gaps from omitted
-cards. Each new placement receives a server context; the client supplies no
-premium-status or eligibility claims. End custom `Beacons.exposure` receipt state
-with `endExposure(renderId)` when its list leaves the page; `useExposure` does this
-automatically. These bounded exposure/click packets serialize keepalive requests;
-exit delivery remains best effort.
-
-The staff dashboard and SDK statistics queries use measured people and active
-time, with comments ranking retained. See [statistics semantics](docs/statistics.md)
-for daily distinctness, qualification and active-time units.
+`useHide(contentId, { hidden: card.viewer?.hidden })` hides an item from every list the reader is served, optimistically, with `undo()`; `client.discovery.hide(id)`/`unhide(id)` are the plain calls.
 
 ## Billing boundary
 

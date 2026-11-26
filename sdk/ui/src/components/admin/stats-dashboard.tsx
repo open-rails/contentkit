@@ -1,18 +1,10 @@
 import { useState } from "react";
 import type { ContentKitClient } from "../../client/client.js";
 import type { ContentKitError } from "../../client/errors.js";
-import { formatDuration } from "../../client/gallery.js";
-import type { ActivityDay } from "../../client/generated/wire.js";
+import type { ActiveDay } from "../../client/generated/wire.js";
 import { useMessages } from "../../i18n/context.js";
 import { useFlowClient } from "../../react/admin.js";
-import { useActivity } from "../../react/stats.js";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "#ckui/ui/select";
+import { useActive } from "../../react/stats.js";
 import {
   AdminRoot,
   LoadFailed,
@@ -21,19 +13,13 @@ import {
   type AdminFlowProps,
 } from "./shell.js";
 
-type Choice = string | { value: string; label: string };
-
 export interface StatsDashboardProps extends AdminFlowProps {
-  /** Content kinds offered: codes, or codes with labels; the first shows first. */
-  kinds: readonly Choice[];
-  /** Host-owned labels and colors for the server's configured cohort IDs. */
+  /** Host-owned labels and colors for the access values: anonymous, account and the tiers an account's token claims. */
   series?: readonly ActivitySeries[];
   /** UTC days to show, today included; defaults to ten. */
   days?: number;
 }
 
-const choices = (list: readonly Choice[]) =>
-  list.map((c) => (typeof c === "string" ? { value: c, label: c } : c));
 const refused = (e?: ContentKitError) =>
   e?.code === "forbidden" || e?.code === "unauthorized";
 
@@ -45,14 +31,13 @@ export interface ActivitySeries {
 }
 
 const COLORS = ["#3987e5", "#e98042", "#21a87e", "#aa79da", "#d66088"];
-const value = (day: ActivityDay | undefined, id: string) =>
-  day?.cohorts?.[id] ?? 0;
+const value = (day: ActiveDay | undefined, id: string) =>
+  day?.by_access?.[id] ?? 0;
 
 /**
- * Staff statistics from measured attention: distinct people per UTC day who
- * read or played at least one item, by application-defined cohort.
- * People are distinct within a day only, so days are never summed into a
- * period-unique total.
+ * Staff statistics from the activity log: distinct people active on the
+ * site per UTC day, by access. People are distinct within a day only, so
+ * days are never summed into a period-unique total.
  */
 export function StatsDashboard({
   client: own,
@@ -93,20 +78,17 @@ type Inner = Omit<
 > & { client: ContentKitClient };
 
 function Dashboard({
-  kinds,
   series: configured = [],
   days = 10,
   client,
 }: Inner) {
   const { t } = useMessages();
-  const options = choices(kinds);
-  const [kind, setKind] = useState(options[0]?.value ?? "");
-  const activity = useActivity(kind ? { kind, days } : null, { client });
+  const activity = useActive({ days }, { client });
   if (refused(activity.error))
     return <NoAccess>{t("stats.noAccess")}</NoAccess>;
   // Newest first from the server; the chart reads oldest to newest.
   const rows = [...(activity.data?.days ?? [])].reverse();
-  const ids = activity.data?.cohorts ?? [];
+  const ids = [...new Set(rows.flatMap((d) => Object.keys(d.by_access ?? {})))].sort();
   const ordered: ActivitySeries[] = [
     ...configured.filter((s) => ids.includes(s.id)),
     ...ids
@@ -121,14 +103,6 @@ function Dashboard({
     <>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h2 className="text-base font-semibold">{t("stats.title")}</h2>
-        {options.length > 1 && (
-          <Pick
-            label={t("stats.kind")}
-            value={kind}
-            onChange={setKind}
-            options={options}
-          />
-        )}
       </div>
 
       <section className="grid gap-3" data-ckui="stats-activity">
@@ -171,7 +145,7 @@ function Today({
   day,
   series,
 }: {
-  day?: ActivityDay;
+  day?: ActiveDay;
   series: readonly ActivitySeries[];
 }) {
   const { t } = useMessages();
@@ -179,7 +153,7 @@ function Today({
     {
       id: "__total",
       label: t("stats.visitors"),
-      value: day?.readers ?? 0,
+      value: day?.people ?? 0,
       color: undefined,
     },
     ...series.map((s) => ({
@@ -193,13 +167,6 @@ function Today({
     <div className="grid gap-2" data-ckui="stats-today">
       <p className="text-xs font-medium text-muted-foreground">
         {t("stats.today")}
-        {day && day.active_ms > 0 && (
-          <span className="font-normal">
-            {" · "}
-            {t("stats.activeTime")}{" "}
-            {formatDuration(Math.floor(day.active_ms / 1000))}
-          </span>
-        )}
       </p>
       <dl
         className="grid gap-2"
@@ -232,7 +199,7 @@ function Chart({
   rows,
   series,
 }: {
-  rows: ActivityDay[];
+  rows: ActiveDay[];
   series: readonly ActivitySeries[];
 }) {
   const m = useMessages();
@@ -241,7 +208,7 @@ function Chart({
   const most = Math.max(
     0,
     ...rows.flatMap((d) =>
-      series.length ? series.map((s) => value(d, s.id)) : [d.readers],
+      series.length ? series.map((s) => value(d, s.id)) : [d.people],
     ),
   );
   const scale = most || 1;
@@ -264,7 +231,7 @@ function Chart({
   const x = (i: number) =>
     rows.length > 1 ? 12 + (i / (rows.length - 1)) * 976 : 500;
   const y = (n: number) => 190 - (n / scale) * 178;
-  const count = (d: ActivityDay, id: string) => (id ? value(d, id) : d.readers);
+  const count = (d: ActiveDay, id: string) => (id ? value(d, id) : d.people);
   return (
     // One shrinkable column: an auto track grew to the date labels' combined
     // width and pushed narrow pages sideways.
@@ -327,7 +294,7 @@ function Chart({
               key={d.date}
               tabIndex={0}
               data-ckui="stats-day"
-              aria-label={`${long.format(at(d.date))}: ${t("stats.visitors")} ${d.readers}${series.map((s) => `, ${s.label} ${value(d, s.id)}`).join("")}`}
+              aria-label={`${long.format(at(d.date))}: ${t("stats.visitors")} ${d.people}${series.map((s) => `, ${s.label} ${value(d, s.id)}`).join("")}`}
               className="h-full min-w-0 flex-1 cursor-default rounded-sm outline-none hover:bg-muted/20 focus-visible:bg-muted/20 focus-visible:ring-1 focus-visible:ring-ring"
               onMouseEnter={() => setActive(i)}
               onFocus={() => setActive(i)}
@@ -346,7 +313,7 @@ function Chart({
             <p className="font-medium">{long.format(at(shown.date))}</p>
             <p className="flex justify-between gap-3 tabular-nums">
               <span>{t("stats.visitors")}</span>
-              <span className="font-semibold">{shown.readers}</span>
+              <span className="font-semibold">{shown.people}</span>
             </p>
             {series.map((s) => (
               <p
@@ -395,7 +362,7 @@ function DayTable({
   rows,
   series,
 }: {
-  rows: ActivityDay[];
+  rows: ActiveDay[];
   series: readonly ActivitySeries[];
 }) {
   const { t } = useMessages();
@@ -414,57 +381,22 @@ function DayTable({
                 {s.label}
               </th>
             ))}
-            <th className="py-1 text-end font-medium">
-              {t("stats.activeTime")}
-            </th>
           </tr>
         </thead>
         <tbody>
           {[...rows].reverse().map((d) => (
             <tr key={d.date} className="border-t border-border">
               <td className="py-1.5 pe-3 whitespace-nowrap">{d.date}</td>
-              <td className="py-1.5 text-end">{d.readers}</td>
+              <td className="py-1.5 text-end">{d.people}</td>
               {series.map((s) => (
                 <td key={s.id} className="py-1.5 text-end">
                   {value(d, s.id)}
                 </td>
               ))}
-              <td className="py-1.5 text-end">
-                {formatDuration(Math.floor(d.active_ms / 1000))}
-              </td>
             </tr>
           ))}
         </tbody>
       </table>
     </details>
-  );
-}
-
-function Pick({
-  label,
-  value,
-  onChange,
-  options,
-}: {
-  label: string;
-  value: string;
-  onChange: (v: string) => void;
-  options: { value: string; label: string }[];
-}) {
-  return (
-    <Select value={value} onValueChange={(v) => onChange(String(v))}>
-      <SelectTrigger size="sm" aria-label={label}>
-        <SelectValue>
-          {(v: string) => options.find((o) => o.value === v)?.label ?? v}
-        </SelectValue>
-      </SelectTrigger>
-      <SelectContent>
-        {options.map((o) => (
-          <SelectItem key={o.value} value={o.value}>
-            {o.label}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
   );
 }
