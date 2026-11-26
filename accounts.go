@@ -24,7 +24,6 @@ func (c Config) withAccounts() (Config, error) {
 	if a.Avatars != nil {
 		avatars := *a.Avatars
 		kind, _ := avatars.kind()
-		kind.Namespace = ""
 		kind.Account = true
 		avatars.Kind = &kind
 		c.avatars = &avatars

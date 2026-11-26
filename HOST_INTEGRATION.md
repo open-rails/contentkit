@@ -1006,15 +1006,19 @@ and a stale build never overwrites a newer one.
 
 ## Media
 
-Media is a self-describing file system in one private bucket; no database
-table records what media exists. The app declares everything in one registry
+Media is a self-describing file system in the app's own private bucket; no
+database table records what media exists. The app declares everything in one registry
 at startup (`media.Config`); ContentKit hard-codes no kinds, names or
 layouts.
 
-- **Items.** App media uses `tenant/{tenant}/app/{app}/{kind}/{id}/`.
-  For a content kind, `id` is the version ID; a content has no item of its
-  own. Account media uses `tenant/{tenant}/account/{kind}/{id}/`.
-  Both roots derive from `Config.Scope`. An item holds
+- **One bucket per app.** The bucket is the tenancy boundary: keys name no
+  tenant or app, so two apps never share a bucket. `Config.Scope` names
+  database partitions and refs only. A hosted deployment gives each tenant
+  app its own bucket and S3 credentials.
+- **Items.** App media uses `{kind}/{id}/`. For a content kind, `id` is the
+  version ID; a content has no item of its own. Account media uses
+  `_accounts/{kind}/{id}/` in the avatar primary's bucket. Top-level names
+  starting with `_` and `work/` are reserved: no kind takes them. An item holds
   `manifest.json` (gzip JSON, never served), `private/` (hash-named blobs:
   uploads, derived files, editor views), `public/` (published renditions
   such as `cover-460-{generation}.webp`) and `temp/` (in-flight server-side
@@ -1037,7 +1041,7 @@ layouts.
   reorders them, then each preset's outputs in their uploads' order. A
   derived file records `from`, `preset` and `fp` (its inputs' fingerprint);
   it is stale exactly when the fingerprint no longer matches.
-- **URLs.** `https://media.<site>/v1/tenant/{tenant}/app/{app}/{kind}/{id}/{public|private}/{sha256}`.
+- **URLs.** `https://media.<site>/v1/{kind}/{id}/{public|private}/{sha256}`.
   Names are hashes, so no URL is built from a preset's `to` template: reads
   and listings carry them (see "Public image URLs"), and a preset's default
   image is in `GET /v1/media/presets`.
@@ -1134,11 +1138,10 @@ worker, _ := cfg.MediaRegistry() // the stock worker's MEDIA_KINDS_FILE
 - **Defaults.** A kind's `Defaults` (an `fs.FS`, e.g. `go:embed`) holds the
   images its public presets name in `Public.Default`; the registry checks
   they exist. A shared kind ships its own, so importing apps merge nothing.
-- **Shared kinds.** Account avatars use `tenant/{tenant}/account/{kind}/{id}/`.
-  One app (the primary) writes them; other sites reach it
+- **Shared kinds.** Account avatars use `_accounts/{kind}/{id}/` in the
+  primary's bucket. One app (the primary) writes them; other sites reach it
   through its API (Avatars below) and serve its files from their media hosts
-  (a `MEDIA_GATEWAY_ROUTES` entry for the tenant account root). The root is
-  derived from `Config.Scope`.
+  (their `MEDIA_GATEWAY_ROUTES` entry's `accounts` names the primary's bucket).
 - The stock worker reads the registry as JSON (`MEDIA_KINDS_FILE`; hooks
   are not included): an engine's is `Config.MediaKinds()`, printed
   by `contentkit media-config`.
@@ -1161,10 +1164,10 @@ cfg.Accounts.Avatars = &contentkit.AvatarsConfig{
   which every site of the tenant reads), else the kind's default; the
   content model's `avatars` (`GET /v1/kinds`) is the preset rule with its
   `default_image`. URLs are at the site's own media host,
-  `{media}/v1/tenant/{tenant}/account/user/{id}/public/{sha256}`. The
+  `{media}/v1/_accounts/user/{id}/public/{sha256}`. The
   gateway's resource policy is same-site, so each site's host serves them:
-  every media host has a `MEDIA_GATEWAY_ROUTES` entry for the tenant
-  account root, pointing at the primary's bucket.
+  every media host's `MEDIA_GATEWAY_ROUTES` entry names the primary's bucket
+  in `accounts`.
 - On the other site, a person's avatar presigns, commits and editor reads
   (`/v1/media/upload/{presign,commit}`, `/v1/media/{kind}/{id}`) go through
   its own routes, which forward them to the primary's with `Key`: only
@@ -1438,11 +1441,12 @@ the host's periodic jobs. The worker migrates its schema itself.
   CookieDomain: "<site domain>"}`); URL delivery only for apps without cookies.
   Either way one item token opens the whole item's `private/`, and viewers
   without access get none.
-- **Media gateway config**: `MEDIA_GATEWAY_ROUTES` lists each root a media
-  host serves: `{"host", "scope": {"tenant_id", "app_id"}, "bucket",
-  "origins"}` for the app and the same without `app_id` for account media,
-  whose bucket is the avatar primary's. URL paths use the tenant/app or
-  tenant/account roots above. `origins` are exactly your sites' origins
+- **Media gateway config**: `MEDIA_GATEWAY_ROUTES` lists each media host
+  once: `{"host", "bucket", "accounts", "origins"}`, its app's bucket and,
+  in `accounts`, the bucket holding the tenant's `_accounts/` media (the
+  avatar primary's; omit it when the site shows no avatars). An item token
+  is bound to its bucket, so one gateway key serves many apps without one
+  app's token opening another's item. `origins` are exactly your sites' origins
   (`https://<domain>`, `https://www.<domain>`; no wildcards, no third
   parties). `Cross-Origin-Resource-Policy` is always `same-site`.
 - **Bucket**: one per app, private (no public ACL or policy), and never versioned: media writes refuse a bucket that ever had versioning. The gateway's key reads only `*/private/*` and `*/public/*` of each; only the hosts write.

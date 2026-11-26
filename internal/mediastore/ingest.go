@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"slices"
 
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
@@ -49,11 +48,11 @@ func (u *Uploads) StageCopies(ctx context.Context, actor access.Actor, ref conte
 	return out, nil
 }
 
-// copySource refuses a source inside ContentKit's namespaces: an item's
-// upload copies with OpCopy.
+// copySource refuses a source in ContentKit's media layout: an item's upload
+// copies with OpCopy.
 func (u *Uploads) copySource(from string) error {
-	if key, ok := layout.Parse(from); ok && (!key.Scope.IsZero() || slices.Contains(u.reg.Namespaces(), key.Namespace)) {
-		return uploadErr(media.CodeInvalid, "copy source %q is in a ContentKit namespace: use OpCopy", from)
+	if _, ok := layout.Parse(from); ok {
+		return uploadErr(media.CodeInvalid, "copy source %q is a ContentKit media key: use OpCopy", from)
 	}
 	return nil
 }

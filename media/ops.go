@@ -78,7 +78,7 @@ type Op struct {
 // of a versioned kind, one version's. Into
 // a published kind's item, it names a file of a version of the kind it
 // publishes: an upload, or a finished output, which comes alone, as an upload.
-// A frame op's names a video upload of any item in the namespace (Kind,
+// A frame op's names a video upload of any item of the app (Kind,
 // default this item's) the editor may edit; the worker grabs it once.
 type CopyFrom struct {
 	Kind    string `json:"kind,omitempty"` // frame only

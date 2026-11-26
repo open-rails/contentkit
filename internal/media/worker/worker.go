@@ -292,10 +292,10 @@ func (c Config) cache(queue mediastore.ProcessQueue) (*mediastore.PGCache, error
 	if c.AccountSchema == "" {
 		return cache, nil
 	}
-	scope, ok := c.Kinds.Scope()
-	if !ok || c.AccountWorkerSchema == "" {
-		return nil, errors.New("media/worker: account storage requires scoped kinds and queue")
+	if c.AccountWorkerSchema == "" {
+		return nil, errors.New("media/worker: account storage requires its queue")
 	}
+	scope := c.Kinds.Scope()
 	account, err := mediastore.NewPGCache(c.Pool, c.AccountSchema, c.Kinds, o)
 	if err != nil {
 		return nil, err

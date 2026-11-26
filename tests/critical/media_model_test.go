@@ -397,7 +397,7 @@ func TestMediaGatewayAreas(t *testing.T) {
 	}
 	ring, err := token.NewRing(n.storage.key, nil)
 	must(t, err)
-	firstToken := ring.Sign(token.ItemScope(first.Prefix()), time.Now().Add(time.Hour))
+	firstToken := ring.Sign(token.ItemScope(n.storage.bucket, first.Prefix()), time.Now().Add(time.Hour))
 	get := func(key, cookie string) int {
 		t.Helper()
 		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, n.storage.gateway.URL+layout.URLPrefix+key, nil)
@@ -788,11 +788,16 @@ func mustManifests(t *testing.T, store media.Store, reg *mediastore.Registry) *m
 	return m
 }
 
-// privateFileScope is the token scope of the item holding a private key:
-// there are no per-file tokens.
-func privateFileScope(key string) string {
+// newMediaScope is a fresh app's media scope, for a registry outside an engine.
+func newMediaScope() layout.Scope {
+	return layout.Scope{TenantID: uuid.NewString(), AppID: uuid.NewString()}
+}
+
+// privateFileScope is the token scope of the item holding a private key in
+// bucket: there are no per-file tokens.
+func privateFileScope(bucket, key string) string {
 	k, _ := layout.Parse(key)
-	return token.ItemScope(k.Folder())
+	return token.ItemScope(bucket, k.Folder())
 }
 
 // mustQueue is the worker's processing queue.

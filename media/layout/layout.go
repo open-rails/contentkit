@@ -1,19 +1,24 @@
 // Package layout defines media object keys, dependency-free so the media
-// gateway can classify paths without importing the media runtime. Every
-// stored file is named by the SHA-256 of its bytes, in the area that decides
-// who may read it: public/ everyone, private/ the item's signed readers,
-// internal/ nobody (never served).
+// gateway can classify paths without importing the media runtime. The bucket
+// is the tenancy boundary: each app has its own, so no key names a tenant or
+// an app. Every stored file is named by the SHA-256 of its bytes, in the area
+// that decides who may read it: public/ everyone, private/ the item's signed
+// readers, internal/ nobody (never served).
 //
-//	{root}/{kind}/{id}/manifest.json         gzip JSON, the item's only record of its files; never served
-//	                  /internal/{sha256}     unreleased uploads and outputs
-//	                  /private/{sha256}      released files, behind the item's path-scoped token
-//	                  /public/{sha256}       always-visible files (covers), served to anyone
-//	                  /public/_contentkit_erased  fence: while it exists the gateway serves nothing of the item
-//	                  /tmp/u-{uuid}          staged uploads (tag-expired); never served
-//	{root}/{kind}/_default/                  a kind's default images, an item like any other
+//	{kind}/{id}/manifest.json         gzip JSON, the item's only record of its files; never served
+//	           /internal/{sha256}     unreleased uploads and outputs
+//	           /private/{sha256}      released files, behind the item's bucket-bound token
+//	           /public/{sha256}       always-visible files (covers), served to anyone
+//	           /public/_contentkit_erased  fence: while it exists the gateway serves nothing of the item
+//	           /tmp/u-{uuid}          staged uploads (tag-expired); never served
+//	{kind}/_default/                  a kind's default images, an item like any other
+//	_accounts/{kind}/{id}/…           a tenant's account media (avatars), the same folders,
+//	                                  in the avatar primary's bucket
 //
-// A versioned kind's item is its version: {kind}/{version}/. The URL of a
-// served object is its key under /v1/ on the site's media host.
+// A versioned kind's item is its version: {kind}/{version}/. Top-level names
+// starting with "_" are ContentKit's (_accounts/, the store's _probe/), and
+// work/ is the bucket's video-work lifecycle prefix: neither is a kind. The
+// URL of a served object is its key under /v1/ on the site's media host.
 package layout
 
 import (
@@ -49,50 +54,37 @@ const (
 	StagedPrefix = "u-"
 	// URLPrefix is the path every media URL starts with.
 	URLPrefix = "/v1/"
+	// AccountRoot holds a tenant's account media, in the avatar primary's
+	// bucket.
+	AccountRoot = "_accounts/"
 )
 
 // Key is a parsed object key.
 type Key struct {
-	Namespace, Kind, ID string
-	Scope               Scope
-	Area                string
-	Name                string // the name within the area; "" for the manifest
+	Account  bool // under AccountRoot
+	Kind, ID string
+	Area     string
+	Name     string // the name within the area; "" for the manifest
 }
 
 // Folder is the key's item folder.
 func (k Key) Folder() string {
-	if !k.Scope.IsZero() {
-		return k.Scope.Prefix(k.Kind, k.ID)
+	if k.Account {
+		return AccountPrefix(k.Kind, k.ID)
 	}
-	return Prefix(k.Namespace, k.Kind, k.ID)
+	return Prefix(k.Kind, k.ID)
 }
 
 // Parse classifies an object key; ok is false for anything outside the layout.
 func Parse(key string) (Key, bool) {
+	var k Key
+	key, k.Account = strings.CutPrefix(key, AccountRoot)
 	parts := strings.Split(key, "/")
-	var scope Scope
-	if len(parts) >= 3 && parts[0] == "tenant" && (parts[2] == "app" || parts[2] == "account") {
-		scope.TenantID = parts[1]
-		switch parts[2] {
-		case "app":
-			if len(parts) < 5 {
-				return Key{}, false
-			}
-			scope.AppID = parts[3]
-			parts = parts[4:]
-		case "account":
-			parts = parts[3:]
-		}
-		if !scope.Valid() {
-			return Key{}, false
-		}
-		parts = append([]string{scope.Partition()}, parts...)
-	}
-	if len(parts) < 4 || len(parts) > 5 || !ValidSegment(parts[0]) || !ValidSegment(parts[1]) || !ValidSegment(parts[2]) {
+	if len(parts) < 3 || len(parts) > 4 || !ValidKind(parts[0]) || !ValidSegment(parts[1]) {
 		return Key{}, false
 	}
-	k := Key{Namespace: parts[0], Scope: scope, Kind: parts[1], ID: parts[2]}
-	rest := parts[3:]
+	k.Kind, k.ID = parts[0], parts[1]
+	rest := parts[2:]
 	switch {
 	case len(rest) == 1 && rest[0] == ManifestName:
 		k.Area = AreaManifest
@@ -106,15 +98,22 @@ func Parse(key string) (Key, bool) {
 	return k, true
 }
 
-// Prefix is an item's folder: "{namespace}/{kind}/{id}/".
-func Prefix(namespace, kind, id string) string {
-	return namespace + "/" + kind + "/" + id + "/"
-}
+// Prefix is an app item's folder: "{kind}/{id}/".
+func Prefix(kind, id string) string { return kind + "/" + id + "/" }
+
+// AccountPrefix is an account item's folder: "_accounts/{kind}/{id}/".
+func AccountPrefix(kind, id string) string { return AccountRoot + Prefix(kind, id) }
 
 // ParseFolder parses an item folder.
 func ParseFolder(prefix string) (Key, bool) {
 	k, ok := Parse(prefix + ManifestName)
 	return k, ok && k.Folder() == prefix
+}
+
+// ValidKind accepts a kind name: a segment that is not one of the bucket's
+// reserved top-level names ("_…" and "work").
+func ValidKind(name string) bool {
+	return ValidSegment(name) && !strings.HasPrefix(name, "_") && name != "work"
 }
 
 // ValidSegment keeps keys stable ASCII: [A-Za-z0-9._-]{1,128}, no leading dot.

@@ -78,8 +78,7 @@ func TestDeletedMediaFence(t *testing.T) {
 	}
 	buyer := a.client(credential)
 
-	root := layout.Scope{TenantID: a.cfg.Scope.TenantID.String(), AppID: a.cfg.Scope.AppID.String()}.Root()
-	folder := func(version string) string { return root + "gallery/" + version + "/" }
+	folder := func(version string) string { return layout.Prefix("gallery", version) }
 	// served lists a version's public/ and private/ keys, without its fence.
 	served := func(version string) []string {
 		t.Helper()
@@ -114,7 +113,7 @@ func TestDeletedMediaFence(t *testing.T) {
 		t.Helper()
 		for _, k := range served(version) {
 			if strings.HasPrefix(k, folder(version)+"private/") {
-				return m.gateway.URL + layout.URLPrefix + k + "?t=" + url.QueryEscape(ring.Sign(strings.TrimSuffix(folder(version), "/"), time.Now().Add(time.Minute)))
+				return m.gateway.URL + layout.URLPrefix + k + "?t=" + url.QueryEscape(ring.Sign(token.ItemScope(m.bucket, folder(version)), time.Now().Add(time.Minute)))
 			}
 		}
 		t.Fatalf("version %s has no private page", version)

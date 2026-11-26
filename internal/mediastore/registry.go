@@ -65,14 +65,8 @@ func (r *Registry) defaultImage(ctx context.Context, k *RegisteredKind, p *media
 
 // NewRegistry validates c and its version reader configuration.
 func NewRegistry(c media.Config, hooks Hooks) (*Registry, error) {
-	if !c.Scope.IsZero() {
-		if !c.Scope.Valid() || c.Scope.AppID == "" || c.Namespace != "" && c.Namespace != c.Scope.Partition() {
-			return nil, errors.New("media: Scope requires tenant and app IDs and no legacy Namespace")
-		}
-		c.Namespace = c.Scope.Partition()
-	}
-	if !layout.ValidSegment(c.Namespace) {
-		return nil, fmt.Errorf("media: invalid namespace %q", c.Namespace)
+	if !c.Scope.Valid() || c.Scope.AppID == "" {
+		return nil, errors.New("media: Scope requires tenant and app IDs")
 	}
 	if c.BaseURL != "" {
 		u, err := endpoint.Secure(c.BaseURL)
@@ -100,9 +94,6 @@ func NewRegistry(c media.Config, hooks Hooks) (*Registry, error) {
 		if _, dup := r.kinds[k.Name]; dup {
 			return nil, fmt.Errorf("media: duplicate kind %q", k.Name)
 		}
-		if k.Namespace != "" && (!layout.ValidSegment(k.Namespace) || k.Namespace == c.Namespace) {
-			return nil, fmt.Errorf("media: kind %q: invalid shared namespace %q (an app's namespace is never a shared one)", k.Name, k.Namespace)
-		}
 		k.Uploads, k.Private, k.Public = slices.Clone(k.Uploads), slices.Clone(k.Private), slices.Clone(k.Public)
 		if err := k.validate(); err != nil {
 			return nil, fmt.Errorf("media: kind %q: %w", k.Name, err)
@@ -110,19 +101,11 @@ func NewRegistry(c media.Config, hooks Hooks) (*Registry, error) {
 		if err := k.Master.Validate(); err != nil {
 			return nil, fmt.Errorf("media: kind %q: %w", k.Name, err)
 		}
-		k.ns = cmpOr(k.Namespace, c.Namespace)
-		if !c.Scope.IsZero() {
-			if k.Namespace != "" {
-				return nil, fmt.Errorf("media: scoped kind %q cannot choose a legacy Namespace", k.Name)
-			}
-			k.scope = c.Scope
-			if k.Account {
-				k.scope.AppID = ""
-			}
-			k.ns = k.scope.Partition()
-		} else if k.Account {
-			return nil, fmt.Errorf("media: account kind %q requires Scope", k.Name)
+		scope := c.Scope
+		if k.Account {
+			scope.AppID = ""
 		}
+		k.ns = scope.Partition()
 		if err := k.levels(); err != nil {
 			return nil, fmt.Errorf("media: kind %q: %w", k.Name, err)
 		}
@@ -152,8 +135,8 @@ func (r *Registry) Config() media.Config { return r.cfg }
 // Hooks are the app's callbacks the registry was built with.
 func (r *Registry) Hooks() Hooks { return r.hooks }
 
-// Namespace is the app's own namespace.
-func (r *Registry) Namespace() string { return r.cfg.Namespace }
+// Namespace is the app's refs' namespace: its Scope's partition.
+func (r *Registry) Namespace() string { return r.cfg.Scope.Partition() }
 
 // Kind returns a registered kind.
 func (r *Registry) Kind(name string) (*RegisteredKind, error) {
@@ -167,20 +150,8 @@ func (r *Registry) Kind(name string) (*RegisteredKind, error) {
 // Kinds are the declared storage kinds; reader chapters create no kinds.
 func (r *Registry) Kinds() []*RegisteredKind { return slices.Clone(r.all) }
 
-// Namespaces are the namespaces the app's items live in: its own, then the
-// shared ones it imports.
-func (r *Registry) Namespaces() []string {
-	out := []string{r.cfg.Namespace}
-	for _, k := range r.all {
-		if !slices.Contains(out, k.ns) {
-			out = append(out, k.ns)
-		}
-	}
-	return out
-}
-
-// Ref is the ref of item id of kind, in the kind's namespace: a kind without
-// versions.
+// Ref is the ref of item id of kind, in the kind's namespace (the app's, or
+// the tenant's for an Account kind): a kind without versions.
 func (r *Registry) Ref(kind, id string) (contentref.ContentRef, error) {
 	return r.VersionRef(kind, id, "")
 }
@@ -318,7 +289,7 @@ func (r *Registry) PresetRules() []media.PresetRule {
 	for _, k := range r.all {
 		for _, p := range k.Public {
 			out = append(out, media.PresetRule{Kind: k.Name, Name: p.Name, From: p.From, Base: strings.TrimRight(r.cfg.BaseURL, "/"),
-				Namespace: k.ns, Root: k.root(), To: p.To, Widths: append([]int{}, p.Widths...), Aspect: p.Image.Aspect, MinWidth: p.Image.MinWidth,
+				Root: k.root(), To: p.To, Widths: append([]int{}, p.Widths...), Aspect: p.Image.Aspect, MinWidth: p.Image.MinWidth,
 			})
 		}
 	}
@@ -351,29 +322,30 @@ func (r *Registry) MarshalJSON() ([]byte, error) {
 	return json.Marshal(cfg)
 }
 
-// Scope identifies the registry's trusted app owner; false means legacy mode.
-func (r *Registry) Scope() (layout.Scope, bool) { return r.cfg.Scope, !r.cfg.Scope.IsZero() }
+// Scope identifies the registry's trusted app owner.
+func (r *Registry) Scope() layout.Scope { return r.cfg.Scope }
 
 func (r *Registry) IsAccount(ref contentref.ContentRef) bool {
 	k, e := r.Kind(ref.ContentKind)
 	return e == nil && k.Account && ref.TenantID == k.ns
 }
 
+// root is the bucket path before the kind's name.
 func (k *RegisteredKind) root() string {
-	if !k.scope.IsZero() {
-		return k.scope.Root()
+	if k.Account {
+		return layout.AccountRoot
 	}
-	return k.ns + "/"
+	return ""
 }
 
 func (k *RegisteredKind) prefix(id, version string) string {
 	if k.Versions && version != "" {
 		id = version
 	}
-	if !k.scope.IsZero() {
-		return k.scope.Prefix(k.Name, id)
+	if k.Account {
+		return layout.AccountPrefix(k.Name, id)
 	}
-	return layout.Prefix(k.ns, k.Name, id)
+	return layout.Prefix(k.Name, id)
 }
 
 // canonicalUUID accepts lowercase hyphenated UUID text of any version, except

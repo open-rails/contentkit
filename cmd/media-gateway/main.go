@@ -5,8 +5,8 @@
 //	-listen        MEDIA_GATEWAY_LISTEN          default :8080
 //	-s3-endpoint   MEDIA_GATEWAY_S3_ENDPOINT     path-style S3 endpoint (RGW or MinIO)
 //	-s3-region     MEDIA_GATEWAY_S3_REGION       default us-east-1
-//	-routes        MEDIA_GATEWAY_ROUTES          required: JSON list of {host, scope, bucket, origins}, one per
-//	                                            tenant account or app root a media host serves
+//	-routes        MEDIA_GATEWAY_ROUTES          required: JSON list of {host, bucket, accounts, origins}, one per
+//	                                            media host: its app's bucket and the tenant's account-media bucket
 //	               MEDIA_GATEWAY_S3_ACCESS_KEY_ID, MEDIA_GATEWAY_S3_SECRET_ACCESS_KEY   key reading only */private/* and */public/* of those buckets
 //	               MEDIA_GATEWAY_TOKEN_KEY           current signing key "{kid}:{base64 secret}"
 //	               MEDIA_GATEWAY_TOKEN_KEY_PREVIOUS  previous key, accepted during rotation; optional
@@ -44,7 +44,7 @@ func run(log *slog.Logger, args []string) error {
 	listen := fs.String("listen", env("MEDIA_GATEWAY_LISTEN", ":8080"), "listen address")
 	endpoint := fs.String("s3-endpoint", env("MEDIA_GATEWAY_S3_ENDPOINT", ""), "S3 endpoint")
 	region := fs.String("s3-region", env("MEDIA_GATEWAY_S3_REGION", "us-east-1"), "S3 region")
-	routes := fs.String("routes", env("MEDIA_GATEWAY_ROUTES", ""), "JSON scoped host, scope, bucket and origins routes")
+	routes := fs.String("routes", env("MEDIA_GATEWAY_ROUTES", ""), "JSON host, bucket, accounts and origins routes")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -68,16 +68,16 @@ func run(log *slog.Logger, args []string) error {
 	if err != nil {
 		return err
 	}
-	var scoped []gateway.Route
+	var hosts []gateway.Route
 	if *routes != "" {
-		if err := json.Unmarshal([]byte(*routes), &scoped); err != nil {
+		if err := json.Unmarshal([]byte(*routes), &hosts); err != nil {
 			return fmt.Errorf("MEDIA_GATEWAY_ROUTES: %w", err)
 		}
 	}
 	h, err := gateway.New(gateway.Config{
 		Endpoint: *endpoint, Region: *region,
 		AccessKeyID: accessKey, SecretAccessKey: secretKey,
-		Ring: ring, Routes: scoped, Logger: log,
+		Ring: ring, Routes: hosts, Logger: log,
 	})
 	if err != nil {
 		return err
@@ -97,7 +97,7 @@ func run(log *slog.Logger, args []string) error {
 	defer stop()
 	done := make(chan error, 1)
 	go func() { done <- srv.Serve(ln) }()
-	log.Info("listening", "addr", ln.Addr().String(), "routes", len(scoped))
+	log.Info("listening", "addr", ln.Addr().String(), "routes", len(hosts))
 	select {
 	case err := <-done:
 		return err

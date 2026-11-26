@@ -1,6 +1,7 @@
-// Package gateway serves the exact app/account roots declared for a media
-// host. Scoped URLs are /v1/tenant/{tenant}/app/{app}/{kind}/{id}/{area}/{sha256}
-// or /v1/tenant/{tenant}/account/{kind}/{account}/… .
+// Package gateway serves each media host's bucket: one app's, since the
+// bucket is the tenancy boundary. URLs are /v1/{kind}/{id}/{area}/{sha256},
+// and /v1/_accounts/{kind}/{account}/… for the tenant's account media, read
+// from the bucket its Route names for them (the avatar primary's).
 //
 // public/ is served to anyone; private/ needs the item's token, carried by
 // the cookie path-scoped to that item's private/ (or ?t= for applications);
@@ -41,15 +42,17 @@ const (
 	privateCacheControl = "private, max-age=31536000, immutable"
 )
 
-// Config configures a Handler.
-// Route exposes exactly one tenant account or app root on a media host.
+// Route is one media host: its app's bucket and, with Accounts, the bucket
+// holding the tenant's account media (layout.AccountRoot), the avatar
+// primary's; empty serves none.
 type Route struct {
-	Host    string       `json:"host"`
-	Scope   layout.Scope `json:"scope"`
-	Bucket  string       `json:"bucket"`
-	Origins []string     `json:"origins,omitempty"`
+	Host     string   `json:"host"`
+	Bucket   string   `json:"bucket"`
+	Accounts string   `json:"accounts,omitempty"`
+	Origins  []string `json:"origins,omitempty"`
 }
 
+// Config configures a Handler.
 type Config struct {
 	Routes []Route
 
@@ -88,11 +91,11 @@ func New(cfg Config) (*Handler, error) {
 	}
 	seen := map[string]bool{}
 	for _, r := range cfg.Routes {
-		key := r.Host + "/" + r.Scope.Partition()
-		if !r.Scope.Valid() || r.Host == "" || strings.Trim(r.Host, "abcdefghijklmnopqrstuvwxyz0123456789.-") != "" || !layout.ValidSegment(r.Bucket) || seen[key] {
-			return nil, errors.New("gateway: invalid or duplicate scoped Route")
+		if r.Host == "" || strings.Trim(r.Host, "abcdefghijklmnopqrstuvwxyz0123456789.-") != "" || !layout.ValidSegment(r.Bucket) ||
+			r.Accounts != "" && !layout.ValidSegment(r.Accounts) || seen[r.Host] {
+			return nil, errors.New("gateway: invalid or duplicate Route")
 		}
-		seen[key] = true
+		seen[r.Host] = true
 		for _, origin := range r.Origins {
 			if err := validOrigin(origin); err != nil {
 				return nil, err
@@ -147,7 +150,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	cacheControl := publicCacheControl
 	var dl *string // a private file's unsigned download name
 	if o.area != layout.AreaPublic {
-		if err := h.authorize(r, o.area, key); err != nil {
+		if err := h.authorize(r, o.bucket, key); err != nil {
 			h.cfg.Logger.Debug("media-gateway: denied", "key", key, "reason", err)
 			h.fail(w, http.StatusNotFound)
 			return
@@ -160,10 +163,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	check := r.Clone(r.Context())
 	check.Method = http.MethodHead
 	check.Header = make(http.Header)
-	fence := o
-	fence.area = layout.AreaPublic
-	fence.name = layout.FenceName
-	status, err := h.fetch(check, o.bucket, fence.key())
+	status, err := h.fetch(check, o.bucket, o.folder+layout.AreaPublic+"/"+layout.FenceName)
 	if err != nil {
 		h.fail(w, http.StatusBadGateway)
 		return
@@ -191,17 +191,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 type object struct {
-	ns, kind, id, area, name string
-	scope                    layout.Scope
-	bucket                   string
+	folder, area, name string
+	route              *Route
+	bucket             string
 }
 
-func (o object) key() string {
-	return o.scope.Prefix(o.kind, o.id) + o.area + "/" + o.name
-}
+func (o object) key() string { return o.folder + o.area + "/" + o.name }
 
-// parse accepts exactly a scoped /v1/tenant/… object path, unescaped, for a
-// Route on the request's host.
+// parse accepts exactly a served /v1/ object path, unescaped, on a Route's
+// host: account media only where the Route names their bucket.
 func (h *Handler) parse(r *http.Request) (object, bool) {
 	rest, ok := strings.CutPrefix(r.URL.Path, layout.URLPrefix)
 	if !ok || r.URL.RawPath != "" {
@@ -211,8 +209,7 @@ func (h *Handler) parse(r *http.Request) (object, bool) {
 	if !ok || k.Name == layout.FenceName || strings.HasPrefix(k.ID, "_") && !(k.ID == layout.DefaultID && k.Area == layout.AreaPublic) {
 		return object{}, false
 	}
-	o := object{ns: k.Namespace, kind: k.Kind, id: k.ID, area: k.Area, name: k.Name, scope: k.Scope}
-	if !layout.Served(o.area) {
+	if !layout.Served(k.Area) {
 		return object{}, false
 	}
 	host := r.Host
@@ -220,26 +217,22 @@ func (h *Handler) parse(r *http.Request) (object, bool) {
 		host = hh
 	}
 	host = strings.ToLower(host)
-	if k.Scope.IsZero() {
+	i := slices.IndexFunc(h.cfg.Routes, func(route Route) bool { return route.Host == host })
+	if i < 0 {
 		return object{}, false
 	}
-	for _, route := range h.cfg.Routes {
-		if route.Host == host && route.Scope == k.Scope {
-			o.bucket = route.Bucket
-			break
-		}
+	o := object{folder: k.Folder(), area: k.Area, name: k.Name, route: &h.cfg.Routes[i], bucket: h.cfg.Routes[i].Bucket}
+	if k.Account {
+		o.bucket = o.route.Accounts
 	}
-	if o.bucket == "" {
-		return object{}, false
-	}
-	return o, true
+	return o, o.bucket != ""
 }
 
 var errNoToken = errors.New("no token")
 
-// authorize accepts the item's token from the URL or an mt cookie (a
-// browser may send several).
-func (h *Handler) authorize(r *http.Request, area, key string) (err error) {
+// authorize accepts the item's token for bucket from the URL or an mt cookie
+// (a browser may send several).
+func (h *Handler) authorize(r *http.Request, bucket, key string) (err error) {
 	now := time.Now()
 	var toks []string
 	if t := r.URL.Query().Get("t"); t != "" {
@@ -249,7 +242,7 @@ func (h *Handler) authorize(r *http.Request, area, key string) (err error) {
 		toks = append(toks, c.Value)
 	}
 	for _, tok := range toks {
-		e := h.cfg.Ring.VerifyPrivate(tok, key, now)
+		e := h.cfg.Ring.VerifyPrivate(tok, bucket, key, now)
 		if e == nil {
 			return nil
 		}
@@ -336,15 +329,7 @@ func (h *Handler) cors(w http.ResponseWriter, r *http.Request) {
 	o := r.Header.Get("Origin")
 	var origins []string
 	if obj, ok := h.parse(r); ok {
-		for _, route := range h.cfg.Routes {
-			host := r.Host
-			if hh, _, err := net.SplitHostPort(host); err == nil {
-				host = hh
-			}
-			if route.Host == strings.ToLower(host) && route.Scope == obj.scope && route.Bucket == obj.bucket {
-				origins = append(origins, route.Origins...)
-			}
-		}
+		origins = obj.route.Origins
 	}
 	if o == "" || !slices.Contains(origins, o) {
 		return

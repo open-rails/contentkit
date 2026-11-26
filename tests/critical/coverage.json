@@ -1524,14 +1524,14 @@
     {
       "id": "CK-J13-S04",
       "journey": "CK-J13",
-      "behavior": "Host/tenant/app mismatch and encoded traversal cannot fetch an object",
+      "behavior": "Host or bucket mismatch, unrouted account media and encoded traversal cannot fetch an object",
       "status": "verified",
       "evidence": [
-        "Existing objects under foreign host/tenant/app roots and encoded traversal forms404 despite valid-looking signatures; the real owning-root object remains available.",
+        "An unknown host, the same item's token for another bucket or without one, a key under a tenant/app prefix, account media on a host whose Route names no account bucket and encoded traversal forms 404 despite valid-looking signatures; the owning object remains available, account media is served once the Route names its bucket, and a host routed twice is refused.",
         "Reviewed against current public behavior; exact cases passed in integrated/focused race receipts retained with this task. Full qualification still requires every selected contract and one integrated execution."
       ],
       "cases": [
-        "TestGatewayCapabilities/CK-J13-S04_host_scope_and_encoded_traversal_refuse_existing_objects"
+        "TestGatewayCapabilities/CK-J13-S04_host_bucket_and_encoded_traversal_refuse_existing_objects"
       ]
     },
     {
@@ -1610,6 +1610,21 @@
         "TestRateLimiter/CK-J13-S09_limit_admits_burst_per_window_and_refusals_do_not_count",
         "TestRateLimiter/CK-J13-S09_every_window_must_admit",
         "TestRateLimiter/CK-J13-S09_member_limit_counts_distinct_items_from_their_first_opening"
+      ]
+    },
+    {
+      "id": "CK-J13-S10",
+      "journey": "CK-J13",
+      "behavior": "The bucket is the tenancy boundary: keys name no tenant or app, account media is under _accounts/, and no kind takes a reserved top-level name",
+      "status": "verified",
+      "evidence": [
+        "A scoped registry places an app item at {kind}/{id}/ in its app partition and an account item at _accounts/{kind}/{id}/ in the tenant partition; preset roots are \"\" and _accounts/. Keys under a tenant/app or tenant/account prefix, _probe/, _accounts/_accounts/ and work/ parse as nothing.",
+        "Registries refuse kinds named _accounts, _probe and work, and a zero or app-less scope. Engine scenarios (deleted media fence, imported avatar, account resilience, purge) list the real bucket at these keys."
+      ],
+      "cases": [
+        "TestBucketKeyLayout",
+        "TestBucketKeyLayout/CK-J13-S10_items_are_kind_and_id_in_the_app_bucket",
+        "TestBucketKeyLayout/CK-J13-S10_registries_refuse_reserved_kinds_and_a_missing_scope"
       ]
     },
     {

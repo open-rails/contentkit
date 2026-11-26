@@ -62,6 +62,8 @@ Media's bucket is now the only record of an item's files (README "Media"). Migra
 
 The bucket must never have had versioning, and an existing bucket's media is not carried over: start the release on a new, empty bucket created without versioning (`MEDIA_S3_BUCKET`), run `media-worker publish-defaults`, then import the media again. Delete the old bucket once the site is verified.
 
+Keys no longer carry `tenant/{tenant}/app/{app}/` or `tenant/{tenant}/account/`: the bucket is the tenancy boundary, one per app. Items are `{kind}/{id}/` and account media `_accounts/{kind}/{id}/` in the avatar primary's bucket. `media.Config.Namespace`, `media.Kind.Namespace` and `PresetRule.namespace` are gone (`Config.Scope` is required; `avatar.User()` is an `Account` kind), `layout.Scope` keeps only `Partition`, and `MEDIA_GATEWAY_ROUTES` entries are `{host, bucket, accounts, origins}`, one per host. Item tokens are bound to the bucket (`token.ItemScope(bucket, prefix)`), so tokens signed before the upgrade stop opening files. Reading an earlier bucket is the importer's own code; ContentKit parses no other layout.
+
 A video kind's download streams its original as uploaded (its master under the identity recipe): drop MP4 presets from the registry. Manifests record each upload's `master` and each rendition's `input`; with no `master` recipe the master is the original and nothing more is stored.
 
 ## Time-ordered ids

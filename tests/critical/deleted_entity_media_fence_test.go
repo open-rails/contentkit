@@ -78,8 +78,7 @@ func TestDeletedEntityMediaFence(t *testing.T) {
 	must(t, a.engine.StartJobs(jobs))
 	admin := a.engine.Client()
 
-	root := layout.Scope{TenantID: a.cfg.Scope.TenantID.String(), AppID: a.cfg.Scope.AppID.String()}.Root()
-	folder := func(kind, id string) string { return root + kind + "/" + id + "/" }
+	folder := layout.Prefix
 	// served lists an item's public/ and private/ keys, without its fence.
 	served := func(t *testing.T, kind, id string) []string {
 		t.Helper()

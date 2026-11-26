@@ -67,7 +67,7 @@ type PartsBody struct {
 }
 
 // CopyBody stages server-side copies of keys of the item's bucket outside
-// ContentKit's namespaces (an importer's), for one commit's puts.
+// ContentKit's media layout (an importer's), for one commit's puts.
 type CopyBody struct {
 	Ref   RefBody       `json:"ref"`
 	Files []CopyRequest `json:"files"`
@@ -243,13 +243,13 @@ type UploadRule struct {
 // template: a read's Public lists an item's current image, and
 // DefaultImage is the kind's default shown while it has none.
 type PresetRule struct {
-	Kind      string `json:"kind"`
-	Name      string `json:"name"`
-	From      string `json:"from"`
-	Base      string `json:"base"`
-	Namespace string `json:"namespace"`
-	// Root is the server-selected path before Kind, including its trailing slash.
-	Root   string `json:"root,omitempty"`
+	Kind string `json:"kind"`
+	Name string `json:"name"`
+	From string `json:"from"`
+	Base string `json:"base"`
+	// Root is the path before Kind: "" for the app's media, "_accounts/"
+	// for account media.
+	Root   string `json:"root"`
 	To     string `json:"to"`
 	Widths []int  `json:"widths"`
 	// Aspect is the rendition's shape ("W:H"); absent keeps the edit's.

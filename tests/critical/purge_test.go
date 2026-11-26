@@ -154,15 +154,15 @@ func TestDeletedContentPurgeOwnsMedia(t *testing.T) {
 		})
 		return job.Job.ID
 	}
-	root := layout.Scope{TenantID: a.cfg.Scope.TenantID.String(), AppID: a.cfg.Scope.AppID.String()}.Root()
 	objectCount := func() int {
-		objects, err := m.management.ListObjectsV2(t.Context(), &awss3.ListObjectsV2Input{Bucket: &m.bucket, Prefix: aws.String(root)})
+		objects, err := m.management.ListObjectsV2(t.Context(), &awss3.ListObjectsV2Input{Bucket: &m.bucket})
 		must(t, err)
 		count := 0
 		for _, object := range objects.Contents {
 			// The permanent gateway erasure fence contains no media bytes and
 			// deliberately survives the item it prevents from reappearing.
-			if !strings.HasSuffix(aws.ToString(object.Key), "/"+layout.FenceName) && !strings.HasSuffix(aws.ToString(object.Key), "/"+layout.ManifestName) {
+			// The bucket also holds the store's _probe/ objects, no app item.
+			if k, ok := layout.Parse(aws.ToString(object.Key)); ok && !k.Account && k.Name != layout.FenceName && k.Area != layout.AreaManifest {
 				count++
 			}
 		}
@@ -227,14 +227,14 @@ func TestDeletedContentPurgeOwnsMedia(t *testing.T) {
 		rows, err := admin.GetManage(t.Context(), ck.GetManageQuery{State: "deleted", Ids: []string{ref.ID}})
 		must(t, err)
 		if len(rows) != 0 || objectCount() != 0 {
-			objects, err := m.management.ListObjectsV2(t.Context(), &awss3.ListObjectsV2Input{Bucket: &m.bucket, Prefix: aws.String(root)})
+			objects, err := m.management.ListObjectsV2(t.Context(), &awss3.ListObjectsV2Input{Bucket: &m.bucket})
 			must(t, err)
 			for _, object := range objects.Contents {
 				t.Logf("retained object after purge: %s", aws.ToString(object.Key))
 			}
 			t.Fatalf("completed purge left content=%d or media=%d", len(rows), objectCount())
 		}
-		objects, err := m.management.ListObjectsV2(t.Context(), &awss3.ListObjectsV2Input{Bucket: &m.bucket, Prefix: aws.String(root)})
+		objects, err := m.management.ListObjectsV2(t.Context(), &awss3.ListObjectsV2Input{Bucket: &m.bucket})
 		must(t, err)
 		for _, object := range objects.Contents {
 			if !strings.HasSuffix(aws.ToString(object.Key), "/"+layout.ManifestName) {
@@ -338,7 +338,7 @@ CREATE TRIGGER critical_pause_restore BEFORE UPDATE ON %s.content_versions FOR E
 			t.Fatal("purger erased media of the winning restore")
 		}
 		claimed := makeDeleted("Purge claim wins")
-		fencePath := "/" + m.bucket + "/" + root + claimed.Kind + "/" + claimed.Version + "/public/" + layout.FenceName
+		fencePath := "/" + m.bucket + "/" + layout.Prefix(claimed.Kind, claimed.Version) + "public/" + layout.FenceName
 		pauseErasure.Store(&fencePath)
 		job, err := producer.Insert(t.Context(), scheduledContentJob{kind: "contentkit_content_purge_deleted"}, &river.InsertOpts{Queue: catalogstore.QueueFor(a.cfg.Scope.AppID.String()), MaxAttempts: 1})
 		must(t, err)

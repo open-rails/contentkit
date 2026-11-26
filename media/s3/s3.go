@@ -479,6 +479,9 @@ func temporaryTagging(key string) *string {
 	return aws.String("contentkit-temp=true")
 }
 
+// Bucket is the bucket's name.
+func (s *Store) Bucket() string { return s.bucket }
+
 // Versioning reports the bucket's versioning status: "" when it was never
 // enabled.
 func (s *Store) Versioning(ctx context.Context) (string, error) {

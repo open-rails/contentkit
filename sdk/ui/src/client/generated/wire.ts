@@ -1628,8 +1628,7 @@ export interface PresetRule {
   name: string;
   from: string;
   base: string;
-  namespace: string;
-  root?: string;
+  root: string;
   to: string;
   widths: number[];
   aspect?: string;

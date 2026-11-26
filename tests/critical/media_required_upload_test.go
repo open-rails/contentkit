@@ -24,7 +24,7 @@ import (
 // upload counts only once attached (and, for pages, included); one that is
 // present but processing or failed reports that state instead.
 func TestRequiredUploadReadiness(t *testing.T) {
-	registry, err := mediastore.NewRegistry(media.Config{Namespace: "required", Kinds: []media.Kind{
+	registry, err := mediastore.NewRegistry(media.Config{Scope: newMediaScope(), Kinds: []media.Kind{
 		{Name: "clip", Uploads: []media.Upload{
 			{Path: "source", Types: []string{"video/mp4"}, MaxBytes: 1 << 20, Required: true},
 			{Path: "poster", Types: []string{"image/png"}, MaxBytes: 1 << 20},

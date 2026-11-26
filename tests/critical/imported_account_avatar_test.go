@@ -45,7 +45,7 @@ func TestImportedAccountAvatar(t *testing.T) {
 	user, token := importedPerson(t, w)
 	client := a.client(token)
 	ref := media.RefBody{Kind: "user", ID: user.ID}
-	folder := (layout.Scope{TenantID: a.cfg.Scope.TenantID.String()}).Prefix("user", user.ID)
+	folder := layout.AccountPrefix("user", user.ID)
 	files := func() int {
 		objects, err := m.management.ListObjectsV2(t.Context(), &awss3.ListObjectsV2Input{Bucket: &m.bucket, Prefix: aws.String(folder)})
 		must(t, err)
@@ -83,7 +83,7 @@ func TestImportedAccountAvatar(t *testing.T) {
 				url = p.Renditions[0].URL
 			}
 		}
-		if !strings.Contains(url, "/account/user/"+user.ID+"/public/") {
+		if !strings.Contains(url, layout.URLPrefix+layout.AccountPrefix("user", user.ID)+"public/") {
 			t.Fatalf("read has no avatar rendition in the account's folder: %+v", read.Public)
 		}
 		if status, kind := gatewayGet(t, url); status != http.StatusOK || kind != "image/webp" {

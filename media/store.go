@@ -118,6 +118,8 @@ type Store interface {
 	// Versioning is the bucket's versioning status: "" when it was never
 	// enabled, else "Enabled" or "Suspended".
 	Versioning(ctx context.Context) (string, error)
+	// Bucket is the bucket's name, which item tokens are bound to.
+	Bucket() string
 
 	// Capabilities are the backend's, probed on first use when not given; an
 	// error (ErrUnavailable) means they are not known yet.

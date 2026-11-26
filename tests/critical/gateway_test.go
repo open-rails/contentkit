@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -27,8 +28,7 @@ func TestGatewayCapabilities(t *testing.T) {
 	m := newMediaStorage(t, ck.Scope{TenantID: ck.NewTenantID(), AppID: ck.NewAppID()})
 	ring, err := token.NewRing(m.key, nil)
 	must(t, err)
-	scope := m.gatewayConfig.Routes[0].Scope
-	folder := scope.Prefix("gallery", uuid.NewString())
+	folder := layout.Prefix("gallery", uuid.NewString())
 	data := []byte("exact private bytes: 0123456789")
 	// Every stored name is a hash; the gateway serves by area, not content.
 	name := func() string { sum := sha256.Sum256([]byte(uuid.NewString())); return layout.Hash(sum[:]) }
@@ -44,7 +44,12 @@ func TestGatewayCapabilities(t *testing.T) {
 	for _, key := range []string{first, second, unreleased, public, folder + layout.ManifestName, folder + "tmp/u-" + uuid.NewString()} {
 		seed(t, key)
 	}
-	grant := func(key string) string { return ring.Sign(privateFileScope(key), time.Now().Add(time.Minute)) }
+	grant := func(key string) string {
+		return ring.Sign(privateFileScope(m.bucket, key), time.Now().Add(time.Minute))
+	}
+	itemToken := func(folder string) string {
+		return ring.Sign(token.ItemScope(m.bucket, folder), time.Now().Add(time.Minute))
+	}
 	request := func(t *testing.T, base, method, key, tok, host string, headers map[string]string) (*http.Response, []byte) {
 		t.Helper()
 		address := base + "/v1/" + key
@@ -85,7 +90,7 @@ func TestGatewayCapabilities(t *testing.T) {
 		// files and nothing of another item.
 		control(t, first, grant(first))
 		control(t, second, grant(first))
-		other := scope.Prefix("gallery", uuid.NewString()) + "private/" + name()
+		other := layout.Prefix("gallery", uuid.NewString()) + "private/" + name()
 		seed(t, other)
 		control(t, other, grant(other))
 		deny(t, other, grant(first), "")
@@ -94,14 +99,14 @@ func TestGatewayCapabilities(t *testing.T) {
 		deny(t, nested, grant(first), "")
 	})
 	t.Run("CK-J13-S02_item_token_cannot_open_internal_area", func(t *testing.T) {
-		item := ring.Sign(strings.TrimSuffix(folder, "/"), time.Now().Add(time.Minute))
+		item := itemToken(folder)
 		control(t, first, item)
 		deny(t, unreleased, item, "")
-		deny(t, unreleased, ring.Sign(unreleased, time.Now().Add(time.Minute)), "")
+		deny(t, unreleased, ring.Sign(m.bucket+"/"+unreleased, time.Now().Add(time.Minute)), "")
 	})
 	t.Run("CK-J13-S03_expiry_and_key_rotation", func(t *testing.T) {
 		control(t, first, grant(first))
-		deny(t, first, ring.Sign(privateFileScope(first), time.Now().Truncate(time.Second)), "")
+		deny(t, first, ring.Sign(privateFileScope(m.bucket, first), time.Now().Truncate(time.Second)), "")
 		newKey := token.Key{ID: "rotated", Secret: bytes.Repeat([]byte{41}, 32)}
 		for _, overlap := range []bool{true, false} {
 			t.Run(map[bool]string{true: "overlap", false: "removed"}[overlap], func(t *testing.T) {
@@ -131,20 +136,41 @@ func TestGatewayCapabilities(t *testing.T) {
 				if !overlap && (bytes.Contains(body, data) || res.Header.Get("Cache-Control") != "no-store") {
 					t.Fatal("removed rotation key leaked or cached private bytes")
 				}
-				res, body = request(t, server.URL, "GET", first, rotated.Sign(privateFileScope(first), time.Now().Add(time.Minute)), "", nil)
+				res, body = request(t, server.URL, "GET", first, rotated.Sign(privateFileScope(m.bucket, first), time.Now().Add(time.Minute)), "", nil)
 				if res.StatusCode != 200 || !bytes.Equal(body, data) {
 					t.Fatal("current rotation key failed")
 				}
 			})
 		}
 	})
-	t.Run("CK-J13-S04_host_scope_and_encoded_traversal_refuse_existing_objects", func(t *testing.T) {
+	t.Run("CK-J13-S04_host_bucket_and_encoded_traversal_refuse_existing_objects", func(t *testing.T) {
 		control(t, first, grant(first))
 		deny(t, first, grant(first), "other.invalid")
-		for _, foreign := range []layout.Scope{{TenantID: uuid.NewString(), AppID: scope.AppID}, {TenantID: scope.TenantID, AppID: uuid.NewString()}} {
-			key := strings.Replace(first, scope.Root(), foreign.Root(), 1)
-			seed(t, key)
-			deny(t, key, grant(key), "")
+		// The bucket is the boundary: the same item's token for another
+		// app's bucket, through a gateway holding one key, opens nothing.
+		deny(t, first, ring.Sign(token.ItemScope("another-app-media", folder), time.Now().Add(time.Minute)), "")
+		deny(t, first, ring.Sign(strings.TrimSuffix(folder, "/"), time.Now().Add(time.Minute)), "")
+		// A key under a tenant/app prefix is outside the layout.
+		prefixed := "tenant/" + uuid.NewString() + "/app/" + uuid.NewString() + "/" + first
+		seed(t, prefixed)
+		deny(t, prefixed, grant(first), "")
+		// Account media is served only from the bucket the Route names for it.
+		account := layout.AccountPrefix("user", uuid.NewString()) + "public/" + name()
+		seed(t, account)
+		deny(t, account, "", "")
+		cfg := m.gatewayConfig
+		cfg.Routes = slices.Clone(cfg.Routes)
+		cfg.Routes[0].Accounts = m.bucket
+		handler, err := gateway.New(cfg)
+		must(t, err)
+		accounts := httptest.NewServer(handler)
+		defer accounts.Close()
+		if res, body := request(t, accounts.URL, "GET", account, "", "", nil); res.StatusCode != 200 || !bytes.Equal(body, data) {
+			t.Fatalf("routed account media: %d", res.StatusCode)
+		}
+		if _, err := gateway.New(gateway.Config{Endpoint: cfg.Endpoint, AccessKeyID: "k", SecretAccessKey: "s", Ring: ring,
+			Routes: []gateway.Route{cfg.Routes[0], cfg.Routes[0]}}); err == nil {
+			t.Fatal("a host routed twice was accepted")
 		}
 		for _, key := range []string{strings.Replace(first, "private/", "private/%2e%2e/private/", 1), strings.Replace(first, "private/", "private%2f", 1), strings.Replace(first, "private/", "%70rivate/", 1)} {
 			deny(t, key, grant(first), "")
@@ -154,7 +180,7 @@ func TestGatewayCapabilities(t *testing.T) {
 		control(t, first, grant(first))
 		for _, key := range []string{folder + layout.ManifestName, folder + "tmp/u-" + uuid.NewString(), folder + "internal/" + name(), folder + "public/" + layout.FenceName} {
 			seed(t, key)
-			deny(t, key, ring.Sign(strings.TrimSuffix(folder, "/"), time.Now().Add(time.Minute)), "")
+			deny(t, key, itemToken(folder), "")
 		}
 		// The last seeded object is the durable erasure fence. Old signed
 		// URLs and public renditions must now fail even while bytes remain.

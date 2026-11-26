@@ -51,7 +51,6 @@ func (e *Engine) newAvatars(deps Deps) (*engineAvatars, error) {
 		return nil, nil
 	}
 	kind, preset := a.kind()
-	kind.Namespace = ""
 	kind.Account = true
 	out := &engineAvatars{images: e.media.cache, reg: e.media.reg, kind: kind.Name, preset: preset}
 	if a.Primary != "" {
@@ -59,7 +58,7 @@ func (e *Engine) newAvatars(deps Deps) (*engineAvatars, error) {
 		// The primary records avatars in the tenant's account item cache,
 		// which this site reads; the kind's defaults are read from the bucket.
 		var err error
-		if out.reg, err = mediastore.NewRegistry(media.Config{Namespace: e.media.reg.Config().Namespace, Scope: e.media.reg.Config().Scope, BaseURL: e.media.reg.Config().BaseURL,
+		if out.reg, err = mediastore.NewRegistry(media.Config{Scope: e.media.reg.Config().Scope, BaseURL: e.media.reg.Config().BaseURL,
 			Kinds: []media.Kind{kind}, Avatars: media.Avatars{Kind: kind.Name, Preset: preset}}, mediastore.Hooks{}); err != nil {
 			return nil, fmt.Errorf("contentkit: Config.Accounts.Avatars: %w", err)
 		}

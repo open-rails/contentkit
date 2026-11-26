@@ -163,8 +163,9 @@ type MediaConfig struct {
 // sites sharing an account store, one holds them: the primary. Another
 // sets Primary and keeps none: its people's avatar uploads, edits and
 // editor reads go to the primary with Key, its media host serves the
-// primary's files (the gateway maps the kind's namespace to the primary's
-// bucket), and the primary's AnonymizeAccount erases them.
+// primary's files (its gateway Route's accounts names the primary's bucket,
+// where they are under _accounts/), and the primary's AnonymizeAccount
+// erases them.
 type AvatarsConfig struct {
 	// Kind is the avatar kind; nil is avatar.User() (accounts/user).
 	Kind *media.Kind `yaml:"kind" json:"kind"`
@@ -181,8 +182,7 @@ type AvatarsConfig struct {
 	Key string `yaml:"key" json:"key"`
 }
 
-// MediaKinds is the media registry Config.Media serves, in the tenant's
-// namespace: content kinds' media are their versions', each entity kind
+// MediaKinds is the media registry Config.Media serves, scoped to the app: content kinds' media are their versions', each entity kind
 // gains cover media (media.ForContent), and the avatar primary holds the
 // avatar kind (Config.Accounts.Avatars). The media worker
 // runs it from MediaRegistry's JSON.
@@ -206,7 +206,6 @@ func (c Config) MediaKinds() (media.Config, error) {
 	}
 	if a := c.avatars; a != nil && a.Primary == "" {
 		kind, preset := a.kind()
-		kind.Namespace = ""
 		kind.Account = true
 		mc.Kinds = append(slices.Clone(mc.Kinds), kind)
 		mc.Avatars = media.Avatars{Kind: kind.Name, Preset: preset}
