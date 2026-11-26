@@ -675,14 +675,18 @@ func TestMediaMasters(t *testing.T) {
 		if master.Status != http.StatusOK || !served {
 			t.Fatalf("readers do not stream the new renditions: HTTP%d %s", master.Status, child.Body)
 		}
-		// The same recipe again: nothing is made or written.
+		// The same recipe again: nothing is made or written. The editor read
+		// above queued the new poster's editor view: settle it first.
+		settleMedia(t, f.world.pool, f.app.cfg.Media.WorkerSchema)
+		settled, _, err := manifests.Get(t.Context(), cref)
+		must(t, err)
 		_, err = f.app.engine.RegenerateMedia(t.Context(), media.Regeneration{Kind: "clip", IDs: []string{f.Ref.ID}})
 		must(t, err)
 		settleMedia(t, f.world.pool, f.app.cfg.Media.WorkerSchema)
 		again, _, err := manifests.Get(t.Context(), cref)
 		must(t, err)
-		if again.Rev != after.Rev || hook.calls.Load() != 1 {
-			t.Fatalf("a current video master was made again: revision %d -> %d, %d hook runs", after.Rev, again.Rev, hook.calls.Load())
+		if again.Rev != settled.Rev || hook.calls.Load() != 1 {
+			t.Fatalf("a current video master was made again: revision %d -> %d, %d hook runs", settled.Rev, again.Rev, hook.calls.Load())
 		}
 	})
 
