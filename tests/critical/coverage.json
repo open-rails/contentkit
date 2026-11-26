@@ -3953,6 +3953,19 @@
       "cases": [
         "TestPopularity/CK-J07-S61_rankings_are_served_stale_while_clickhouse_fails"
       ]
+    },
+    {
+      "id": "CK-J07-S62",
+      "journey": "CK-J07",
+      "behavior": "A popular list \"new to you\" (view_status=unseen) leaves out what the reader opened or hid",
+      "status": "verified",
+      "evidence": [
+        "From the reader's reading_state, a bounced article and a hidden one drop out of the ranked list while an unopened one and an unread one stay, in ranking order.",
+        "contentkit#300: written against real PostgreSQL and ClickHouse with the engine's own precompute job; not executed locally, CI runs it."
+      ],
+      "cases": [
+        "TestPopularity/CK-J07-S62_new_to_you_leaves_out_what_the_reader_opened"
+      ]
     }
   ],
   "review_notes": {

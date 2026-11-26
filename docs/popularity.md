@@ -29,7 +29,7 @@ A closed range, one whose last day has had its final (post-midnight) rebuild, ne
 
 A popular list shows everything its filters keep: the ranked entries with a positive or zero score in order, then those without activity in the window (contents newest first, entities by content count), then the negative ones. A page takes the next chunk of the cached ranking and reads it from PostgreSQL with the viewer's filters and access, so it drops only what they block: the site's hidden entities, the account's `content_filter_prefs` overrides or a signed-out visitor's browser choices. Its cursor carries the ranking's version, so a refresh never shifts a reader's pages. A selective list (entities, a channel, creators, ids, a keyword match) orders its whole selection by the ranking instead.
 
-- `GET /contents?kind=…&sort=popular&window=…` and `GET /search?…&sort=popular`.
+- `GET /contents?kind=…&sort=popular&window=…` and `GET /search?…&sort=popular`. With `view_status=unseen` ("new to you") the list leaves out what the reader opened or hid, from `reading_state`.
 - `GET /entities?kind=…` defaults to `sort=popular`; `window` applies. Cards carry `popularity` (score, polarization, read-through).
 - Responses carry `popularity`: the window, its days, when it was ranked, `ready` and `stale`.
 

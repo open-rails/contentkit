@@ -492,6 +492,21 @@ func TestPopularity(t *testing.T) {
 		}
 	})
 
+	t.Run("CK-J07-S62_new_to_you_leaves_out_what_the_reader_opened", func(t *testing.T) {
+		p.t = t
+		user, token := w.person(t, 0)
+		reader := p.reader("popular.invalid", token)
+		// The reader bounced from B and hid E; A they never opened.
+		state := p.table("reading_state")
+		_, err := w.pool.Exec(t.Context(), `INSERT INTO `+state+` (app_id,subject,content_id,first_day,last_seen_at,best_outcome) VALUES ($1,$2,$3,$4::timestamptz::date,$4::timestamptz,1)`, p.tenant(), user.ID, B, day(3))
+		must(t, err)
+		_, err = w.pool.Exec(t.Context(), `INSERT INTO `+state+` (app_id,subject,content_id,hidden) VALUES ($1,$2,$3,true)`, p.tenant(), user.ID, E)
+		must(t, err)
+		p.order(reader, ck.GetContentsQuery{Window: "30d"}, A, B)
+		if got := among(p.popular(reader, ck.GetContentsQuery{Window: "30d", ViewStatus: "unseen"}), A, B, E, D); !slices.Equal(got, []string{A, D}) {
+			t.Fatalf("new to you lists %v; want A then the unread D, without B and E", got)
+		}
+	})
 	t.Run("CK-J07-S60_cursors_keep_their_ranking_across_a_refresh", func(t *testing.T) {
 		p.t = t
 		first := p.popular(main, ck.GetContentsQuery{Window: "30d", Limit: 2})

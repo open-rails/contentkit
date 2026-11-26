@@ -1,6 +1,6 @@
 # Analytics
 
-ClickHouse takes the high-volume, append-only intake; PostgreSQL holds each reader's state and history. No product page reads ClickHouse: lists, history, continue reading, card progress and hidden galleries read PostgreSQL. Only the staff report (`GET /v1/stats/active`) and the rankings read the rollups.
+ClickHouse takes the high-volume, append-only intake; PostgreSQL holds each reader's state and history. No product page reads ClickHouse: lists, history, continue reading, card progress and hidden galleries read PostgreSQL. Only the staff report (`GET /v1/stats/active`) and the rankings ([popularity](popularity.md)) read the rollups.
 
 ## Intake
 
