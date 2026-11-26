@@ -62,7 +62,7 @@ Media's bucket is now the only record of an item's files (README "Media"). Migra
 
 The bucket must never have had versioning, and an existing bucket's media is not carried over: start the release on a new, empty bucket created without versioning (`MEDIA_S3_BUCKET`), run `media-worker publish-defaults`, then import the media again. Delete the old bucket once the site is verified.
 
-A video kind's download serves its original as uploaded: drop MP4 presets from the registry.
+A video kind's download streams its original as uploaded (its master under the identity recipe): drop MP4 presets from the registry. Manifests record each upload's `master` and each rendition's `input`; with no `master` recipe the master is the original and nothing more is stored.
 
 ## Time-ordered ids
 

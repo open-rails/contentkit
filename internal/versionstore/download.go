@@ -102,19 +102,22 @@ func (s *Service) charge(ctx context.Context, actor access.Actor) error {
 	return nil
 }
 
-// Archive is an authorized ZIP of a version's released pages, streamed from
-// their originals (or a page's oversize download rendition) in reading
-// order. Its bytes depend only on its entries: every request for the same
-// revision gets the same bytes, so an unmarked ZIP has a known Size and can
-// be cached. Marked pages are personalized: such a ZIP is never cached.
+// Archive is an authorized download: a ZIP of a version's released pages,
+// streamed from their masters (or a page's oversize download rendition) in
+// reading order, or a version's one downloadable file, its master. Its bytes
+// depend only on its entries: every request for the same revision gets the
+// same bytes, so an unmarked download has a known Size and can be resumed
+// and cached. Marked pages are personalized, marked and zipped anew on every
+// request: such a ZIP is never cached.
 type Archive struct {
 	Name     string // the attachment's file name
-	Type     string // application/zip
-	Size     int64  // the ZIP's length; 0 when pages are marked
-	Revision string // the entries' revision: the ZIP's ETag
+	Type     string // application/zip, or the file's
+	Size     int64  // the download's length; 0 when pages are marked
+	Revision string // the entries' revision: the download's ETag
 	ctx      context.Context
 	s        *Service
 	entries  []zipEntry
+	file     bool  // entries[0] as it is, not zipped
 	mark     []int // pages from 0
 	v        versions.Target
 	who      access.Actor
@@ -134,12 +137,12 @@ type zipEntry struct {
 
 // Download grants t's download to actor, what its kind's download serves
 // (kinds.Kind.Download), as the host's policy allows, and charges it to
-// actor's quota: a ZIP of the released pages the viewer may read, or the
-// version's original, released into private/ and served by the gateway
-// under the item's token, named {title}{ext}. ErrNotFound when the kind
-// serves none, an UnavailableError when the policy refuses, ErrNoDownload
-// when the version has nothing to serve, ErrNotReady before its release, a
-// QuotaError past the quota.
+// actor's quota: a ZIP of the masters of the released pages the viewer may
+// read, or the master of the version's downloadable upload (the original
+// under the identity recipe), streamed where it is stored and named
+// {title}{ext}. ErrNotFound when the kind serves none, an UnavailableError
+// when the policy refuses, ErrNoDownload when the version has nothing to
+// serve, ErrNotReady before its release, a QuotaError past the quota.
 func (s *Service) Download(ctx context.Context, actor access.Actor, t versions.Target) (*versions.FileDownload, error) {
 	v, k, err := s.downloadKind(ctx, t)
 	if err != nil {
@@ -192,6 +195,25 @@ func (s *Service) Download(ctx context.Context, actor access.Actor, t versions.T
 		u, exp := s.transferURL(actor, versions.ArchiveRequest{Target: t, Editor: d.res.Editor, Mark: joinPages(g.mark), Name: name, Revision: archiveRevision(entries), Pages: len(entries)}, ttl)
 		return &versions.FileDownload{URL: u, Name: name, Type: "application/zip", ExpiresAt: exp}, nil
 	}
+	e, err := s.fileEntry(k, t, view, m)
+	if err != nil {
+		return nil, err
+	}
+	g, err := s.ask(ctx, actor, v, title, d.res.Editor, 0)
+	if err != nil {
+		return nil, err
+	}
+	name := fileName(path.Ext(e.Name), g.name, title, v.Content)
+	if err := s.charge(ctx, actor); err != nil {
+		return nil, err
+	}
+	u, exp := s.transferURL(actor, versions.ArchiveRequest{Target: t, Editor: d.res.Editor, File: true, Name: name, Revision: archiveRevision([]zipEntry{e})}, ttl)
+	return &versions.FileDownload{URL: u, Name: name, Type: e.Type, Size: e.Size, ExpiresAt: exp}, nil
+}
+
+// fileEntry is the master of t's downloadable upload once it is released:
+// the original itself under the identity recipe, read where it is stored.
+func (s *Service) fileEntry(k *mediastore.RegisteredKind, t versions.Target, view *releaseView, m *mediastore.Manifest) (zipEntry, error) {
 	var f media.File
 	ok := false
 	for _, file := range m.Files {
@@ -201,32 +223,29 @@ func (s *Service) Download(ctx context.Context, actor access.Actor, t versions.T
 		}
 	}
 	if !ok || f.Unattached || f.Gone || f.Fail() != nil || zipUpload(f) {
-		return nil, ErrNoDownload
+		return zipEntry{}, ErrNoDownload
 	}
-	if layout.BlobArea(f.Blob) != layout.AreaPrivate {
-		return nil, ErrNotReady // released by the next move
-	}
-	g, err := s.ask(ctx, actor, v, title, d.res.Editor, 0)
-	if err != nil {
-		return nil, err
-	}
-	name := fileName(cmp.Or(path.Ext(f.Path), layout.DownloadExt(f.Type)), g.name, title, v.Content)
-	if err := s.charge(ctx, actor); err != nil {
-		return nil, err
+	if !view.Served[f.Path] || !k.MasterCurrent(f) {
+		return zipEntry{}, ErrNotReady
 	}
 	ref, err := s.ref(k.Name, t)
 	if err != nil {
-		return nil, err
+		return zipEntry{}, err
 	}
 	item, err := s.reg.Item(ref)
 	if err != nil {
-		return nil, err
+		return zipEntry{}, err
 	}
-	u, exp, err := s.m.Reader.DownloadURL(item, f, name, ttl)
+	src := mediastore.Input(f)
+	key, err := item.Blob(src.Blob)
 	if err != nil {
-		return nil, err
+		return zipEntry{}, err
 	}
-	return &versions.FileDownload{URL: u, Name: name, Type: f.Type, Size: f.Size, ExpiresAt: exp}, nil
+	ext := path.Ext(f.Path)
+	if src.Blob != f.Blob || ext == "" {
+		ext = layout.DownloadExt(src.Type)
+	}
+	return zipEntry{Name: strings.TrimSuffix(path.Base(f.Path), path.Ext(f.Path)) + ext, Key: key, Blob: src.Blob, Size: src.Size, Type: src.Type}, nil
 }
 
 func (s *Service) transferURL(actor access.Actor, r versions.ArchiveRequest, ttl time.Duration) (string, time.Time) {
@@ -240,6 +259,9 @@ func (s *Service) transferURL(actor access.Actor, r versions.ArchiveRequest, ttl
 	if len(r.Claims) > 0 {
 		encoded, _ := json.Marshal(r.Claims)
 		q.Set("claims", string(encoded))
+	}
+	if r.File {
+		q.Set("file", "true")
 	}
 	return "archive?" + q.Encode(), exp
 }
@@ -261,7 +283,7 @@ func (s *Service) Archive(ctx context.Context, request versions.ArchiveRequest) 
 	if mark == "" {
 		ok = true
 	}
-	if s.m.Reader == nil || name == "" || revision == "" || !ok || request.File {
+	if s.m.Reader == nil || name == "" || revision == "" || !ok || request.File && mark != "" {
 		return nil, ErrNotFound
 	}
 	if s.m.Reader.VerifyTicket(request.Ticket, archiveScope(s.o.Tenant, request)) != nil {
@@ -271,7 +293,8 @@ func (s *Service) Archive(ctx context.Context, request versions.ArchiveRequest) 
 	if err != nil {
 		return nil, err
 	}
-	if k.Publish == nil || k.Download != k.Publish.Pages {
+	pages := k.Publish != nil && k.Download == k.Publish.Pages
+	if pages == request.File {
 		return nil, ErrNotFound
 	}
 	view, m, err := s.releasedView(ctx, k, t)
@@ -308,6 +331,23 @@ WHERE c.tenant_id=$1 AND c.id=$2 AND v.id=$3`, s.o.Tenant, t.Content, t.Version)
 	}
 	if !d.res.Visible {
 		return nil, ErrNotFound
+	}
+	if request.File {
+		if !d.whole() {
+			return nil, ErrForbidden
+		}
+		e, err := s.fileEntry(k, t, view, m)
+		if err != nil {
+			return nil, err
+		}
+		if archiveRevision([]zipEntry{e}) != revision {
+			return nil, ErrNotFound // a new master needs a fresh grant
+		}
+		title, _ := s.title(ctx, v)
+		if _, err := s.ask(ctx, actor, v, title, d.res.Editor, 0); err != nil {
+			return nil, err
+		}
+		return &Archive{Name: name, Type: e.Type, Size: e.Size, Revision: revision, ctx: ctx, s: s, v: t, who: actor, entries: []zipEntry{e}, file: true}, nil
 	}
 	entries, err := s.zipEntries(k, t, view, m)
 	if err != nil {
@@ -347,9 +387,10 @@ WHERE c.tenant_id=$1 AND c.id=$2 AND v.id=$3`, s.o.Tenant, t.Content, t.Version)
 	return a, nil
 }
 
-// zipEntries are the ZIP's entries: each released page's original in
-// reading order, or its oversize download rendition (Publish.Download)
-// when it has one, named as uploaded.
+// zipEntries are the ZIP's entries: each released page's master in reading
+// order (its original under the identity recipe, read where it is stored),
+// or its oversize download rendition (Publish.Download) when it has one,
+// named as uploaded with its file's extension.
 func (s *Service) zipEntries(k *mediastore.RegisteredKind, t versions.Target, view *releaseView, m *mediastore.Manifest) ([]zipEntry, error) {
 	ref, err := s.ref(k.Name, t)
 	if err != nil {
@@ -365,7 +406,7 @@ func (s *Service) zipEntries(k *mediastore.RegisteredKind, t versions.Target, vi
 		if !ok || f.Blob == "" || f.Gone || f.Key() != p.Source {
 			return nil, ErrNotReady
 		}
-		src := f
+		src := mediastore.Input(f)
 		if k.Publish.Download != "" {
 			if outs := m.Outputs(f.Path, k.Publish.Download); len(outs) == 1 && outs[0].Blob != "" {
 				src = outs[0]
@@ -378,6 +419,8 @@ func (s *Service) zipEntries(k *mediastore.RegisteredKind, t versions.Target, vi
 		name := path.Base(f.Path)
 		if src.Preset != "" {
 			name = strings.TrimSuffix(name, path.Ext(name)) + path.Ext(src.Path)
+		} else if src.Blob != f.Blob {
+			name = strings.TrimSuffix(name, path.Ext(name)) + layout.DownloadExt(src.Type)
 		}
 		out = append(out, zipEntry{Name: name, Key: key, Blob: src.Blob, Size: src.Size, Type: src.Type})
 	}
@@ -440,16 +483,24 @@ func (zeros) Read(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// WriteTo streams the archive within its request's context.
+// WriteTo streams the download within its request's context.
 func (a *Archive) WriteTo(w io.Writer) (int64, error) {
 	out := &archiveWriter{ctx: a.ctx, Writer: w}
+	if a.file {
+		return out.n, a.s.streamFile(a.ctx, out, a.entries[0], "")
+	}
 	err := a.s.streamZip(a.ctx, out, a)
 	return out.n, err
 }
 
-// WriteRange streams bytes [start, end] of an unmarked archive: the ZIP is
-// produced and the bytes before start are skipped.
+// WriteRange streams bytes [start, end] of an unmarked download: a file's
+// range is read as such; a ZIP is produced and the bytes before start are
+// skipped.
 func (a *Archive) WriteRange(w io.Writer, start, end int64) (int64, error) {
+	if a.file {
+		out := &archiveWriter{ctx: a.ctx, Writer: w}
+		return out.n, a.s.streamFile(a.ctx, out, a.entries[0], fmt.Sprintf("bytes=%d-%d", start, end))
+	}
 	out := &archiveWriter{ctx: a.ctx, Writer: &rangeWriter{w: w, skip: start, left: end - start + 1}}
 	err := a.s.streamZip(a.ctx, out, a)
 	if errors.Is(err, errRangeDone) {
@@ -483,6 +534,20 @@ func (r *rangeWriter) Write(p []byte) (int, error) {
 		return n, errRangeDone
 	}
 	return n, nil
+}
+
+// streamFile copies e's object, or its byte range rng.
+func (s *Service) streamFile(ctx context.Context, w io.Writer, e zipEntry, rng string) error {
+	rc, obj, err := s.m.Manifests.Store().Get(ctx, e.Key, media.GetOptions{Range: rng})
+	if err != nil {
+		return err
+	}
+	if rng == "" && obj.Size != e.Size {
+		rc.Close()
+		return fmt.Errorf("versions: download %s holds %d bytes, its manifest %d", e.Key, obj.Size, e.Size)
+	}
+	_, err = io.Copy(w, rc)
+	return errors.Join(err, rc.Close())
 }
 
 // streamZip zips the pages one at a time, the policy marking those its

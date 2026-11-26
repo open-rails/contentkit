@@ -75,13 +75,16 @@ type Kind struct {
 	// always kept, so unhiding can render them again, as are body images,
 	// which new versions copy.
 	KeepOriginals bool `json:"keep_originals,omitempty"`
-	// Download is what a version's download serves: a literal upload (the
-	// original, released into private/ and served by the gateway) or
-	// Publish.Pages (a ZIP of the released pages, streamed by the API).
+	// Download is what a version's download serves: a literal upload (its
+	// master, streamed by the API) or Publish.Pages (a ZIP of the released
+	// pages' masters, streamed by the API).
 	// ForContent sets it from the content kind's download; "" serves none.
 	Download string    `json:"download,omitempty"`
 	Private  []Private `json:"private,omitempty"`
 	Public   []Public  `json:"public,omitempty"`
+	// Master is the recipe making each image and video upload's master
+	// (Recipe); nil is the identity: the original is the master.
+	Master *Recipe `json:"master,omitempty"`
 	// Defaults holds the images the kind's public presets name in
 	// Public.Default, so a shared kind ships its own (go:embed). A registry
 	// read from JSON (the stock worker) has none; PublishDefaults needs them.

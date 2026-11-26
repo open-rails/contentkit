@@ -175,6 +175,9 @@ func (e *Encoder) assembleHLS(ctx context.Context, w runWork, k int, chunks []en
 		outs = append(append(outs, subs...), sprite)
 	}
 	fp.set(media.PhasePublishing)
+	for i := range outs {
+		outs[i].Input = mediastore.InputHash(w.f)
+	}
 	return e.publish(ctx, w.item, outs, func(m *mediastore.Manifest) error {
 		g, err := current(m, w.f.Path, w.f.Blob)
 		if err != nil {

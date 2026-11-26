@@ -36,6 +36,7 @@ import (
 	"github.com/open-rails/contentkit/access"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/media/image"
+	"github.com/open-rails/contentkit/internal/media/master"
 	"github.com/open-rails/contentkit/internal/media/video"
 	"github.com/open-rails/contentkit/internal/media/workqueue"
 	"github.com/open-rails/contentkit/media"
@@ -57,6 +58,9 @@ type Config struct {
 	// Kinds is the host's registry. Failed and the catalog retirement barrier
 	// and optional completion callbacks run here.
 	Kinds *mediastore.Registry
+	// Masters are the hooks the kinds' master recipes name (media.Kind.Master),
+	// by name; New refuses a recipe naming one missing or at another version.
+	Masters map[string]media.MasterHook
 	// HostSchema is the host's River schema ("" is the connection's search
 	// path): the releases and garbage collection a manifest write wakes run
 	// there.
@@ -215,6 +219,10 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 			hooks = append(hooks, leader)
 		}
 	}
+	masters, err := master.New(master.Config{Manifests: manifests, Hooks: c.Masters, TempDir: c.TempDir, WebP: image.Lossless})
+	if err != nil {
+		return nil, err
+	}
 	images, err := image.New(image.Config{Store: c.Store, Manifests: manifests, Workers: c.ImageSources, MaxPixels: c.MaxPixels, MaxFrames: c.MaxFrames, MaxAnimationSeconds: c.MaxAnimationSeconds, GroupSize: c.PageGroup})
 	if err != nil {
 		return nil, err
@@ -231,7 +239,7 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 		if err := river.AddWorkerSafely(cfg.Workers, &ingestWorker{c: c, manifests: manifests, queue: queue}); err != nil {
 			return err
 		}
-		return river.AddWorkerSafely(cfg.Workers, &derivativeWorker{c: c, images: images, manifests: manifests, prepare: prepare, video: video.WorkerConfig{Encoder: enc, Pool: c.Pool, Schema: c.Schema, Slice: c.VideoSlice, Stopping: stopping, Logger: c.Logger}})
+		return river.AddWorkerSafely(cfg.Workers, &derivativeWorker{c: c, masters: masters, images: images, manifests: manifests, prepare: prepare, video: video.WorkerConfig{Encoder: enc, Pool: c.Pool, Schema: c.Schema, Slice: c.VideoSlice, Stopping: stopping, Logger: c.Logger}})
 	}, nil, nil)
 	client, err := riverhelpers.New(ctx, c.Pool, &river.Config{Schema: c.Schema, ReindexerSchedule: river.NeverSchedule(),
 		JobTimeout: time.Hour, RescueStuckJobsAfter: 2 * time.Hour,
@@ -446,6 +454,7 @@ func (w *ingestWorker) Work(ctx context.Context, job *river.Job[workqueue.Ingest
 type derivativeWorker struct {
 	river.WorkerDefaults[workqueue.DerivativeArgs]
 	c         Config
+	masters   *master.Runner
 	images    *image.Processor
 	manifests *mediastore.Manifests
 	video     video.WorkerConfig
@@ -462,6 +471,7 @@ func (w *derivativeWorker) Work(ctx context.Context, job *river.Job[workqueue.De
 	fail := func(ctx context.Context, cause error) error {
 		pending := mediastore.ProcessJob{Ref: job.Args.Ref, Preset: job.Args.Preset, Editor: job.Args.Editor}
 		return full(ctx, w.manifests, job.Args.Ref, errors.Join(
+			w.masters.FailPending(ctx, job.Args.Ref, cause),
 			w.images.FailPending(ctx, pending, cause),
 			w.video.Encoder.FailPending(ctx, pending, cause),
 		))
@@ -486,9 +496,13 @@ func (w *derivativeWorker) Work(ctx context.Context, job *river.Job[workqueue.De
 	if err := w.manifests.Sync(ctx, a.Ref); err != nil {
 		return err
 	}
+	// Masters first: renditions derive from them. A failing hook keeps its
+	// upload's previous master; the rest proceeds and the job retries it.
+	var masterErr error
 	if !a.Editor {
+		masterErr = w.masters.Process(ctx, a.Ref)
 		if err := w.prepare(ctx, a.Ref); err != nil {
-			return err
+			return errors.Join(err, masterErr)
 		}
 	}
 	var checkpoint struct {
@@ -499,7 +513,7 @@ func (w *derivativeWorker) Work(ctx context.Context, job *river.Job[workqueue.De
 	}
 	pj.Force = a.Force && !checkpoint.ImagesForced
 	if err := full(ctx, w.manifests, pj.Ref, w.images.Process(ctx, pj)); err != nil {
-		return err
+		return errors.Join(err, masterErr)
 	}
 	if pj.Force {
 		if _, err := w.c.Pool.Exec(ctx, `UPDATE `+pgx.Identifier{w.c.Schema, "river_job"}.Sanitize()+` SET metadata=jsonb_set(metadata,'{contentkit_images_forced}','true') WHERE id=$1`, job.ID); err != nil {
@@ -516,9 +530,12 @@ func (w *derivativeWorker) Work(ctx context.Context, job *river.Job[workqueue.De
 	}
 	pj.Force = false
 	if err := full(ctx, w.manifests, pj.Ref, w.images.Process(ctx, pj)); err != nil {
-		return err
+		return errors.Join(err, masterErr)
 	}
-	return full(ctx, w.manifests, pj.Ref, w.video.Run(ctx, job))
+	if err := full(ctx, w.manifests, pj.Ref, w.video.Run(ctx, job)); err != nil {
+		return errors.Join(err, masterErr)
+	}
+	return masterErr
 }
 
 // full marks the item Full when a record of its outputs did not fit

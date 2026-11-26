@@ -30,11 +30,13 @@ type File struct {
 	Pending    []string         `json:"pending,omitempty"`    // presets still producing from this upload
 	Failed     *Failure         `json:"failed,omitempty"`     // this blob and edit cannot be processed
 	Editor     *EditorImage     `json:"editor,omitempty"`     // selected immutable editor view, never listed to ordinary readers
+	Master     *Master          `json:"master,omitempty"`     // what renditions derive from and downloads serve; set once placed
 
 	// Derived files (a private or public preset's output):
 	From     string `json:"from,omitempty"`     // the upload's path
 	Preset   string `json:"preset,omitempty"`   // the Private or Public preset
 	FP       string `json:"fp,omitempty"`       // Fingerprint of its inputs
+	Input    string `json:"input,omitempty"`    // the sha256 of the master it was derived from
 	Download string `json:"download,omitempty"` // the human download name
 	Track    *Track `json:"track,omitempty"`    // HLS
 }

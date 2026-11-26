@@ -49,12 +49,12 @@ var routes = []httpapi.Route[handler]{
 		Responses: []httpapi.Reply{httpapi.NoContent}},
 		Serve: httpapi.H(handler.setMeta)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/contents/{id}/versions/{version}/download", Resource: "reader", Auth: httpapi.Public,
-		Doc:       "Grants a version's download, what its kind's download serves (the original, a rendition, its pages as a zip), as the host's download policy allows and names, charged to the viewer's download quota: a FileDownload whose short-lived URL serves it as an attachment. The URL is the media host's for an already served file, or the existing archive transfer route's for a ZIP or internal original/rendition (relative to this one). Includes only the released, download-authorized pages in manifest order. 202 while it is prepared; 403 download_unavailable with the policy's reason and available_at; 409 no_download when the version has nothing to serve.",
+		Doc:       "Grants a version's download, what its kind's download serves (its pages' masters as a ZIP, or its downloadable upload's master, the original under the identity recipe), as the host's download policy allows and names, charged to the viewer's download quota: a FileDownload whose short-lived URL, the archive transfer route relative to this one, streams it as an attachment. Includes only the released, download-authorized pages in manifest order. 202 while it is prepared; 403 download_unavailable with the policy's reason and available_at; 409 no_download when the version has nothing to serve.",
 		Responses: []httpapi.Reply{httpapi.OK(versions.FileDownload{}), httpapi.Accepted(versions.Pending{})},
 		Errors:    []string{httpapi.CodeForbidden, versions.CodeDownloadUnavailable, httpapi.CodeRateLimited, versions.CodeNoDownload}},
 		Serve: httpapi.H(handler.download)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/contents/{id}/versions/{version}/archive", Resource: "reader", Auth: httpapi.Public,
-		Doc:       "Streams the ZIP or exact configured single file a download granted after repeating access, publication, chapter and policy checks. Internal originals and HostOnly renditions never gain a gateway URL. Ordinary ZIPs are generated on demand and cached privately; personalized ZIPs are never cached. Signed editor authority and token-tier claims delegate only this transfer until ticket expiry, like a private media URL. 404 for an expired, stale or foreign ticket.",
+		Doc:       "Streams the ZIP or exact configured single file a download granted after repeating access, publication, chapter and policy checks, reading masters where they are stored: internal originals and HostOnly renditions never gain a gateway URL. An unwatermarked download is the same bytes for its revision (Content-Length, ETag, ranges) and cached privately; a watermarked ZIP is marked and zipped anew for each request and never cached (private, no-store). Signed editor authority and token-tier claims delegate only this transfer until ticket expiry, like a private media URL. 404 for an expired, stale or foreign ticket.",
 		Query:     []httpapi.Param{httpapi.Text("for", "the viewer the ticket is for"), httpapi.Text("account", "the bound account in this tenant"), httpapi.Text("account_set", "signed tenant membership presence: true or false"), httpapi.Text("kind", "the viewer subject kind"), httpapi.Text("editor", "signed exact-transfer editor capability: true or false"), httpapi.Text("claims", "signed configured token-tier claims as a JSON string array"), httpapi.Text("mark", "the pages to mark, from 1: 3,5,7"), httpapi.Text("name", "the attachment file name"), httpapi.Text("file", "true for a signed exact single-file transfer"), httpapi.Text("revision", "the exact ordered source revision"), httpapi.Text("pages", "the exact authorized ZIP page count"), httpapi.Text("ticket", "the download's ticket")},
 		Responses: []httpapi.Reply{httpapi.OK(httpapi.Stream{ContentType: "application/zip"}), httpapi.OK(httpapi.Stream{ContentType: "application/octet-stream"}), httpapi.Accepted(versions.Pending{})},
 		Errors:    []string{httpapi.CodeForbidden, versions.CodeDownloadUnavailable, versions.CodeNoDownload}},
@@ -179,11 +179,13 @@ func (h handler) archive(w http.ResponseWriter, r *http.Request) {
 	// The request is read: a server's ReadTimeout must not cut the download.
 	_ = http.NewResponseController(w).SetReadDeadline(time.Time{})
 	if a.Marked() {
-		// Personalized: never stored by a cache, no known length.
+		// Watermarked: marked and zipped anew for this request, with no
+		// length, validator or ranges; no cache, shared or private, keeps it.
+		hdr.Set("CDN-Cache-Control", "no-store")
 		w.WriteHeader(http.StatusOK)
 	} else {
-		// The same revision is the same bytes: a cache may keep it and a
-		// client may resume it.
+		// The same revision is the same bytes: the viewer's cache may keep
+		// it and a client may resume it. The URL is the viewer's ticket.
 		hdr.Set("Cache-Control", "private, max-age=31536000, immutable")
 		hdr.Set("ETag", `"`+a.Revision+`"`)
 		hdr.Set("Accept-Ranges", "bytes")

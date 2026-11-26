@@ -180,6 +180,7 @@ func (p *Processor) FailPending(ctx context.Context, job mediastore.ProcessJob, 
 // work is one upload's image outputs to render.
 type work struct {
 	src     media.File
+	in      media.File // src's master, which its outputs derive from
 	private []*media.Private
 	public  []*media.Public
 	measure bool // record its size (W×H) only
@@ -202,17 +203,17 @@ func (p *Processor) todo(ctx context.Context, item mediastore.Item, m *mediastor
 	analysisCapacity := k.PageAnalysisCapacity(m)
 	var out []work
 	for _, f := range m.Files {
-		if !f.IsUpload() || f.Blob == "" || f.Gone || f.Fail() != nil {
-			continue
+		if !f.IsUpload() || f.Blob == "" || f.Gone || f.Fail() != nil || !k.MasterCurrent(f) {
+			continue // a master its hooks have yet to make keeps its renditions
 		}
-		w := work{src: f}
+		w := work{src: f, in: mediastore.Input(f)}
 		for _, pr := range k.PrivateFor(f.Path) {
 			if pr.Image == nil || job.Preset != "" && pr.Name != job.Preset {
 				continue
 			}
 			outs := m.Outputs(f.Path, pr.Name)
 			if job.Force || slices.Contains(f.Pending, pr.Name) || len(outs) != 1 || outs[0].Path != k.OutputPath(pr, f.Path) ||
-				outs[0].FP != privateFP(f, pr.ImageFor(media.Dims{W: f.W, H: f.H})) {
+				outs[0].FP != privateFP(w.in, pr.ImageFor(media.Dims{W: w.in.W, H: w.in.H})) {
 				w.private = append(w.private, pr)
 			}
 		}
@@ -249,7 +250,7 @@ func (p *Processor) todo(ctx context.Context, item mediastore.Item, m *mediastor
 // publicStale reports a public preset whose outputs are missing, named
 // otherwise or of another fingerprint.
 func (p *Processor) publicStale(ctx context.Context, item mediastore.Item, f media.File, pu *media.Public) (bool, error) {
-	fp := publicFP(f, pu)
+	fp := publicFP(mediastore.Input(f), pu)
 	names := item.Kind().PublicNames(pu, f.Path)
 	m, _, err := p.c.Manifests.Get(ctx, item.Ref())
 	if err != nil {
@@ -384,7 +385,8 @@ func (p *Processor) record(ctx context.Context, item mediastore.Item, results []
 		analysisCapacity := k.PageAnalysisCapacity(cur)
 		for _, d := range results {
 			i := cur.Find(d.src.Path)
-			if i < 0 || cur.Files[i].Blob != d.src.Blob || cur.Files[i].Edit.Hash() != d.src.Edit.Hash() {
+			if i < 0 || cur.Files[i].Blob != d.src.Blob || cur.Files[i].Edit.Hash() != d.src.Edit.Hash() ||
+				mediastore.InputHash(cur.Files[i]) != mediastore.InputHash(d.src) {
 				continue
 			}
 			if d.analysis != nil && analysisCapacity > 0 {
@@ -460,16 +462,17 @@ func outage(err error) bool {
 // render decodes one upload once and encodes its private and public outputs.
 func (p *Processor) render(ctx context.Context, item mediastore.Item, m *mediastore.Manifest, w work) (done, error) {
 	d := done{work: w, outputs: map[string]media.File{}}
-	if !strings.HasPrefix(w.src.Type, "image/") {
-		d.err = &media.ImageError{Code: media.CodeImageUnreadable, Message: w.src.Type + " is not an image",
-			Details: media.ErrorDetails{Type: w.src.Type}}
+	in := w.in
+	if !strings.HasPrefix(in.Type, "image/") {
+		d.err = &media.ImageError{Code: media.CodeImageUnreadable, Message: in.Type + " is not an image",
+			Details: media.ErrorDetails{Type: in.Type}}
 		return d, nil
 	}
-	key, err := item.Blob(w.src.Blob)
+	key, err := item.Blob(in.Blob)
 	if err != nil {
 		return d, err
 	}
-	src, err := p.read(ctx, key, w.src, item.Kind())
+	src, err := p.read(ctx, key, in, item.Kind())
 	if err != nil {
 		if isPermanent(err) {
 			if w.analyze {
@@ -483,7 +486,7 @@ func (p *Processor) render(ctx context.Context, item mediastore.Item, m *mediast
 		return d, err
 	}
 	if w.analyze {
-		a, err := p.AnalyzePage(ctx, src, w.src.Type)
+		a, err := p.AnalyzePage(ctx, src, in.Type)
 		if err != nil {
 			return d, err
 		}
@@ -494,11 +497,11 @@ func (p *Processor) render(ctx context.Context, item mediastore.Item, m *mediast
 	d.public = map[string][]media.File{}
 	for _, pu := range w.public {
 		names := k.PublicNames(pu, w.src.Path)
-		outs, dims, err := encodePublic(src, w.src.Type, pu, names, w.src.Edit, p.rules(u, pu.Image.Animation))
+		outs, dims, err := encodePublic(src, in.Type, pu, names, in.Edit, p.rules(u, pu.Image.Animation))
 		if d.dims = dims; err != nil {
 			return p.permanent(d, err)
 		}
-		fp := publicFP(w.src, pu)
+		fp := publicFP(in, pu)
 		for _, name := range names {
 			out := outs[name]
 			blob, err := p.putBlob(ctx, item, k.Area(pu.Name), bytes.NewReader(out.webp), int64(len(out.webp)), sha(out.webp), "image/webp")
@@ -506,25 +509,28 @@ func (p *Processor) render(ctx context.Context, item mediastore.Item, m *mediast
 				return d, err
 			}
 			d.public[pu.Name] = append(d.public[pu.Name], media.File{Path: name, Blob: blob, Type: "image/webp",
-				Size: int64(len(out.webp)), W: out.dims.W, H: out.dims.H, FP: fp})
+				Size: int64(len(out.webp)), W: out.dims.W, H: out.dims.H, FP: fp, Input: mediastore.InputHash(in)})
 		}
 	}
 	for _, pr := range w.private {
 		// The probed size picks the shape, so an unmeasured upload renders
 		// its own on the first pass; shapes keep the preset's animation.
 		r := p.rules(u, pr.Image.Animation)
-		info, err := probe(src, w.src.Type, r)
+		info, err := probe(src, in.Type, r)
 		if err != nil {
 			return p.permanent(d, err)
 		}
 		s := pr.ImageFor(info.dims())
-		out, dims, err := encode(src, w.src.Type, info, s, w.src.Edit, r)
+		out, dims, err := encode(src, in.Type, info, s, in.Edit, r)
 		if err != nil {
 			return p.permanent(d, err)
 		}
-		typ := outputType(s, w.src.Type)
-		blob := w.src.Blob
+		typ := outputType(s, in.Type)
+		blob := in.Blob
 		area := k.Area(pr.Name)
+		if outs := m.Outputs(w.src.Path, pr.Name); len(outs) == 1 && layout.Served(layout.BlobArea(outs[0].Blob)) {
+			area = layout.BlobArea(outs[0].Blob) // a released page's new rendition is served at once
+		}
 		sourceArea, _, _ := layout.SplitBlobRef(blob)
 		if s.Format != media.ImageFormatSource || !bytes.Equal(out, src) || sourceArea != area {
 			blob, err = p.putBlob(ctx, item, area, bytes.NewReader(out), int64(len(out)), sha(out), typ)
@@ -533,10 +539,27 @@ func (p *Processor) render(ctx context.Context, item mediastore.Item, m *mediast
 			}
 		}
 		d.outputs[pr.Name] = media.File{Path: k.OutputPath(pr, w.src.Path), Blob: blob, Type: typ, Size: int64(len(out)),
-			W: dims.W, H: dims.H, FP: privateFP(w.src, s)}
+			W: dims.W, H: dims.H, FP: privateFP(in, s), Input: mediastore.InputHash(in)}
 	}
-	if d.dims.W == 0 {
-		s, err := probe(src, w.src.Type, p.rules(u, media.AnimationAllow))
+	if in.Blob != w.src.Blob {
+		// A master's size is not its upload's: measure the original.
+		if d.dims = (media.Dims{}); w.measure {
+			key, err := item.Blob(w.src.Blob)
+			if err != nil {
+				return d, err
+			}
+			orig, err := p.read(ctx, key, w.src, k)
+			if err != nil {
+				return p.permanent(d, err)
+			}
+			s, err := probe(orig, w.src.Type, p.rules(u, media.AnimationAllow))
+			if err != nil {
+				return p.permanent(d, err)
+			}
+			d.dims = s.dims()
+		}
+	} else if d.dims.W == 0 {
+		s, err := probe(src, in.Type, p.rules(u, media.AnimationAllow))
 		if err != nil {
 			return p.permanent(d, err)
 		}
@@ -653,8 +676,8 @@ func (p *Processor) read(ctx context.Context, key string, f media.File, k *media
 			Message: fmt.Sprintf("%s is no longer a declared upload path of kind %q", f.Path, k.Name)}}
 	}
 	limit := u.MaxBytes
-	if f.Frame != nil && f.Frame.Of != "" {
-		limit = max(limit, f.Size)
+	if f.Frame != nil && f.Frame.Of != "" || f.Master != nil && !f.Master.IsOriginal() {
+		limit = max(limit, f.Size) // a grabbed frame or a master: their recorded size
 	}
 	rc, obj, err := p.c.Store.Get(ctx, key, media.GetOptions{})
 	if errors.Is(err, mediastore.ErrNotFound) {

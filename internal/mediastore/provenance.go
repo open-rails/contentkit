@@ -22,11 +22,11 @@ func Fingerprint(parts ...string) string {
 	return hex.EncodeToString(h.Sum(nil)[:8])
 }
 
-// SpecFP is the fingerprint of a spec (any JSON value) applied to upload src
-// by a producer at recipe.
+// SpecFP is the fingerprint of a spec (any JSON value) applied to upload
+// src's master by a producer at recipe: a new master or spec re-derives.
 func SpecFP(src media.File, spec any, recipe string) string {
 	b, _ := json.Marshal(spec)
-	return Fingerprint(src.Blob, src.Edit.Hash(), string(b), recipe)
+	return Fingerprint(InputHash(src), src.Edit.Hash(), string(b), recipe)
 }
 
 // attached reports a file that is part of the item: an attached upload, or
@@ -63,7 +63,7 @@ func (k *RegisteredKind) readiness(m *Manifest, includeUnattached bool) media.Re
 		switch {
 		case f.Fail() != nil && !k.audioOriginal(f):
 			r.Failed = append(r.Failed, f.Path)
-		case f.Blob == "" || measure || slices.ContainsFunc(f.Pending, func(p string) bool { return k.private(p) != nil || public && k.public(p) != nil }):
+		case f.Blob == "" || measure || k.MasterPending(f) || slices.ContainsFunc(f.Pending, func(p string) bool { return k.private(p) != nil || public && k.public(p) != nil }):
 			r.Processing = append(r.Processing, f.Path)
 		}
 	}
@@ -112,6 +112,7 @@ func (k *RegisteredKind) Normalize(m *Manifest) {
 				f.Pending = nil
 			}
 			f.Gone = f.Gone || k.droppable(m, *f)
+			k.normalizeMaster(f)
 			continue
 		}
 		f.Download = ""

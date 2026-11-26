@@ -422,14 +422,16 @@ media:
   allows everything and marks nothing.
 - The route answers `200` JSON `FileDownload{url, name, type, size,
   expires_at}`; navigate to `url` (contentkit-ui's `useVersionDownload` and
-  `VersionDownloadButton` do). An original is the media host's, released into
-  `private/` and served under the item's token, so its bytes never pass the
-  app. A ZIP is `archive?for=&mark=&name=&ticket=`, relative to the download
-  route: `GET .../versions/{vid}/archive` streams it from the released pages'
-  originals, marking the ticket's pages; unmarked, the same revision is
-  byte-identical on every request (exact `Content-Length`, `ETag`, ranges),
-  so a CDN may cache it. Files are named by the policy's `Name`, else the
-  title, plus the file's extension.
+  `VersionDownloadButton` do). It is `archive?for=&mark=&name=&ticket=`
+  (`&file=true` for an original), relative to the download route:
+  `GET .../versions/{vid}/archive` streams the masters where they are stored
+  (the originals under the identity recipe): a ZIP of the released pages, or
+  the video's master. Unmarked, the same revision is byte-identical on every
+  request (exact `Content-Length`, `ETag`, ranges), cached privately. A ZIP
+  with marked pages is marked and zipped anew for every request, never
+  cached (`Cache-Control: private, no-store`, `CDN-Cache-Control: no-store`,
+  no length, validator or ranges). Files are named by the policy's `Name`,
+  else the title, plus the file's extension.
 - `202 Pending` while the file is placed or produced, `403` locked or
   `download_unavailable`, `404` no download for the kind, `409 no_download`
   when the version has nothing to serve, `429 rate_limited` with
@@ -1353,6 +1355,29 @@ gates (Auth). No compatibility: the old ports are gone.
   v0.240.0. Its client port takes `CheckEntitlementsParams` with `CustomerID`
   in the request. Custom wrappers must use that signature; embedded hosts
   pass the client returned by `Engine.MerchantBySlug`.
+
+## Masters (`media.Kind.Master`)
+
+Renditions derive from each upload's master, and downloads serve it. With no
+`master` recipe (the default) the master is the original: the manifest names
+its hash, and nothing more is stored. A recipe names host hooks in order:
+
+```yaml
+media:
+  kinds:
+    - name: gallery
+      master: {steps: [{hook: deskew, version: "2", params: {max_degrees: 3}}]}
+```
+
+A hook implements `media.MasterHook` (`Version`, and `Process`, which reads
+`MasterInput.Path` and writes `Out`, or answers `Unchanged`; it may hand the
+file to an external job) and is registered in the media worker's `Masters`
+under its name. A worker refuses a recipe naming a hook it lacks or at another
+version, so a hook's new behaviour is a version bump; the stock image
+registers none. A changed result must be lossless: WebP lossless (`image/webp`), PNG
+past 16,383 px, or FFV1 in Matroska. While a hook fails the upload keeps its
+previous master and renditions. After changing a recipe or a preset's spec,
+run `contentkit regenerate -kind gallery` (`Engine.RegenerateMedia`).
 
 ## Media worker schema
 

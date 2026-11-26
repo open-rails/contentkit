@@ -3296,7 +3296,7 @@
     {
       "id": "CK-J09-S45",
       "journey": "CK-J09",
-      "behavior": "A version’s ZIP is streamed from its originals, byte-identical across requests, with Content-Length, ETag and ranges",
+      "behavior": "A version’s ZIP is streamed from its masters (the originals under the identity recipe), byte-identical across requests, with Content-Length, ETag and ranges",
       "status": "verified",
       "evidence": [
         "contentkit#297: real bucket (MinIO in CI), real PostgreSQL, engine and stock worker."
@@ -3315,6 +3315,66 @@
       ],
       "cases": [
         "TestMediaCacheRebuild/CK-J09-S46_a_dropped_database_cache_rebuilt_from_the_bucket_serves_the_same_lists"
+      ]
+    },
+    {
+      "id": "CK-J09-S47",
+      "journey": "CK-J09",
+      "behavior": "Under the identity recipe each upload's master is its original's hash: the bucket holds no master object, a release never copies or moves an original, renditions record the original's hash as their input, and the ZIP serves the originals",
+      "status": "verified",
+      "evidence": [
+        "contentkit#304: real bucket (MinIO in CI), real PostgreSQL, engine and stock worker."
+      ],
+      "cases": [
+        "TestMediaMasters/CK-J09-S47_the_identity_recipe_stores_no_master_bytes"
+      ]
+    },
+    {
+      "id": "CK-J09-S48",
+      "journey": "CK-J09",
+      "behavior": "A changed rendition spec re-derives exactly the selected items' renditions (by id, then the kind): masters and other items stay unwritten, the replaced rendition is retired, and the release stays served",
+      "status": "verified",
+      "evidence": [
+        "contentkit#304: real bucket (MinIO in CI), real PostgreSQL, engine and stock worker."
+      ],
+      "cases": [
+        "TestMediaMasters/CK-J09-S48_a_changed_rendition_spec_regenerates_exactly_the_selected_items"
+      ]
+    },
+    {
+      "id": "CK-J09-S49",
+      "journey": "CK-J09",
+      "behavior": "A master recipe change makes each upload's master with the hook (a lossless WebP of its own, recording the hooks, versions, parameters and fingerprint), released to private/; renditions re-derive from it, downloads serve it, and a repeat regeneration writes nothing",
+      "status": "verified",
+      "evidence": [
+        "contentkit#304: real bucket (MinIO in CI), real PostgreSQL, engine and stock worker."
+      ],
+      "cases": [
+        "TestMediaMasters/CK-J09-S49_a_recipe_change_rederives_masters_then_renditions"
+      ]
+    },
+    {
+      "id": "CK-J09-S50",
+      "journey": "CK-J09",
+      "behavior": "A failing master hook leaves the manifest, the bucket and the release unchanged while its job retries",
+      "status": "verified",
+      "evidence": [
+        "contentkit#304: real bucket (MinIO in CI), real PostgreSQL, engine and stock worker."
+      ],
+      "cases": [
+        "TestMediaMasters/CK-J09-S50_a_failed_hook_leaves_the_release_unchanged"
+      ]
+    },
+    {
+      "id": "CK-J09-S51",
+      "journey": "CK-J09",
+      "behavior": "A watermarked ZIP is marked and zipped anew for every download and never cached (private, no-store; CDN no-store; no length, ETag or ranges); an unwatermarked one is byte-stable with Content-Length and ETag",
+      "status": "verified",
+      "evidence": [
+        "contentkit#304: real bucket (MinIO in CI), real PostgreSQL, engine and stock worker."
+      ],
+      "cases": [
+        "TestMediaMasters/CK-J09-S51_a_watermarked_zip_is_never_cached_and_differs_per_download"
       ]
     }
   ],

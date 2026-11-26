@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"path"
 	"slices"
 	"strings"
@@ -224,16 +225,18 @@ type releaseView struct {
 	Pages    pagesSnapshot
 	Preview  int
 	Playback playbackSnapshot
-	Next     *time.Time // the next deadline that releases more
+	Next     *time.Time      // the next deadline that releases more
+	Served   map[string]bool // upload paths released
 }
 
 // planRelease decides the area of every file m references. Public preset
 // outputs (covers) are always public. A live version releases each due
 // chapter's ready pages and, once anything is released, its other ready
-// uploads' outputs, its declared audio and a downloadable original; all of
-// it in private/, or public/ when the version is free (pages of a locked
-// version's preview too, but never an original: downloads keep their
-// quota). Everything else is internal.
+// uploads' outputs and its declared audio; all of it in private/, or public/
+// when the version is free (pages of a locked version's preview too). A
+// released upload's master of its own goes to private/ (downloads keep
+// their quota); an original never moves, so the identity recipe's masters
+// stay where they are. Everything else is internal.
 func (s *Service) planRelease(ctx context.Context, q querier, k *mediastore.RegisteredKind, t versions.Target, st releaseState, m *mediastore.Manifest) (*releasePlan, error) {
 	now := s.o.Now()
 	plan := &releasePlan{Want: map[string]string{}}
@@ -365,18 +368,19 @@ func (s *Service) planRelease(ctx context.Context, q querier, k *mediastore.Regi
 			plan.Want[key] = to
 		}
 	}
-	download := k.Download
 	for _, f := range m.Files {
+		if f.IsUpload() && !f.Gone && f.Master != nil && !f.Master.IsOriginal() {
+			if served[f.Path] {
+				want(wantMaster(f.Path), f.Master.Blob, layout.AreaPrivate)
+			}
+			want(wantMaster(f.Path), f.Master.Blob, layout.AreaInternal)
+		}
 		switch {
 		case f.Gone || f.Blob == "":
 		case k.Area(f.Preset) == layout.AreaPublic && !f.IsUpload():
 			want(f.Path, f.Blob, layout.AreaPublic) // a cover is always visible
-		case f.IsUpload() && served[f.Path] && (k.AudioUpload(f) || download != "" && uploadStem(f.Path) == download && !zipUpload(f)):
-			to := area
-			if download != "" && uploadStem(f.Path) == download {
-				to = layout.AreaPrivate // a download keeps its quota
-			}
-			want(f.Path, f.Blob, to)
+		case f.IsUpload() && served[f.Path] && k.AudioUpload(f):
+			want(f.Path, f.Blob, area)
 		case !f.IsUpload() && served[f.From] && f.Fail() == nil && k.ReaderOutput(m, f):
 			to := area
 			if previewed[f.Path] {
@@ -401,6 +405,7 @@ func (s *Service) planRelease(ctx context.Context, q querier, k *mediastore.Regi
 		}
 	}
 	plan.Released = initial || len(plan.View.Pages.Pages) > 0
+	plan.View.Served = served
 	return plan, nil
 }
 
@@ -501,6 +506,7 @@ func (s *Service) release(ctx context.Context, t versions.Target) (time.Time, er
 // release plan's Want.
 func wantTrack(path string) string  { return path + "\x00track" }
 func wantEditor(path string) string { return path + "\x00editor" }
+func wantMaster(path string) string { return path + "\x00master" }
 
 // move copies every file whose area differs from want into its area, then
 // writes the manifest naming the copies; a copy no file names any more is
@@ -541,6 +547,9 @@ func (s *Service) move(ctx context.Context, ref contentref.ContentRef, m *medias
 		}
 		if f.Editor != nil {
 			plan(wantEditor(f.Path), f.Editor.Blob)
+		}
+		if f.Master != nil && !f.Master.IsOriginal() {
+			plan(wantMaster(f.Path), f.Master.Blob)
 		}
 	}
 	if len(changes) == 0 {
@@ -593,6 +602,11 @@ func (s *Service) move(ctx context.Context, ref contentref.ContentRef, m *medias
 				editor := *f.Editor
 				apply(wantEditor(f.Path), &editor.Blob)
 				f.Editor = &editor
+			}
+			if f.Master != nil && !f.Master.IsOriginal() {
+				master := *f.Master
+				apply(wantMaster(f.Path), &master.Blob)
+				f.Master = &master
 			}
 		}
 		if !changed {
@@ -692,7 +706,7 @@ func (s *Service) releasedView(ctx context.Context, k *mediastore.RegisteredKind
 	// Only what the manifest already serves is shown: a page the plan wants
 	// released but has not moved yet is not readable.
 	view := plan.View
-	view.Next = plan.Next
+	view.Next, view.Served = plan.Next, maps.Clone(plan.View.Served)
 	view.Pages.Pages = slices.DeleteFunc(slices.Clone(view.Pages.Pages), func(p page) bool {
 		return slices.ContainsFunc(p.Files, func(r rendition) bool { return !layout.Served(layout.BlobArea(r.Blob)) })
 	})

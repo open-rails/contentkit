@@ -87,7 +87,7 @@ func (c WorkerConfig) planVideo(ctx context.Context, args workqueue.DerivativeAr
 		return !errors.Is(err, mediastore.ErrManifestTooLarge)
 	}
 	for _, f := range man.Files {
-		if !f.IsUpload() || f.Gone || f.Blob == "" || f.Fail() != nil {
+		if !f.IsUpload() || f.Gone || f.Blob == "" || f.Fail() != nil || !item.Kind().MasterCurrent(f) {
 			continue
 		}
 		var encode []*media.Private
@@ -145,7 +145,8 @@ func (e *Encoder) force(ctx context.Context, item mediastore.Item, preset string
 // remuxed by that run.
 func (c WorkerConfig) planUpload(ctx context.Context, item mediastore.Item, f media.File, presets []*media.Private, class media.VideoJobClass) error {
 	e := c.Encoder
-	key, _ := item.Blob(f.Blob)
+	in := mediastore.Input(f) // renditions derive from the master
+	key, _ := item.Blob(in.Blob)
 	obj, err := e.store.Head(ctx, key)
 	if errors.Is(err, mediastore.ErrNotFound) {
 		return errStale
@@ -156,7 +157,7 @@ func (c WorkerConfig) planUpload(ctx context.Context, item mediastore.Item, f me
 	if err != nil {
 		return err
 	}
-	pr, err := c.probeSource(ctx, item.Ref(), f, url.URL)
+	pr, err := c.probeSource(ctx, item.Ref(), in, url.URL)
 	if err != nil {
 		return err
 	}
@@ -297,7 +298,7 @@ func (c WorkerConfig) planRuns(ctx context.Context, item mediastore.Item, f medi
 			c.Logger.DebugContext(ctx, "media/video: no passthrough", "ref", item.Ref().String(), "path", f.Path, "codec", codec, "reason", why)
 		}
 	}
-	key, _ := item.Blob(f.Blob)
+	key, _ := item.Blob(mediastore.Input(f).Blob)
 	return c.insertRuns(ctx, item.Ref(), f.Path, f.Blob, key, obj.ETag, runSpec(p, fp), class, pr, st, bounds, done, passthrough)
 }
 

@@ -107,6 +107,9 @@ func NewRegistry(c media.Config, hooks Hooks) (*Registry, error) {
 		if err := k.validate(); err != nil {
 			return nil, fmt.Errorf("media: kind %q: %w", k.Name, err)
 		}
+		if err := k.Master.Validate(); err != nil {
+			return nil, fmt.Errorf("media: kind %q: %w", k.Name, err)
+		}
 		k.ns = cmpOr(k.Namespace, c.Namespace)
 		if !c.Scope.IsZero() {
 			if k.Namespace != "" {

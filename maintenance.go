@@ -2,6 +2,9 @@ package contentkit
 
 import (
 	"context"
+	"errors"
+
+	"github.com/open-rails/contentkit/media"
 
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverpgxv5"
@@ -48,4 +51,18 @@ func (e *Engine) Reconcile(ctx context.Context) (Reconciled, error) {
 	}
 	out.Releases, err = e.versions.WakeRequiredReleases(ctx, client)
 	return out, err
+}
+
+// RegenerateMedia asks the media worker to bring the items r selects up to
+// date after a deploy changed a kind's master recipe or a rendition's spec:
+// masters whose recipe changed are made again, then renditions whose master
+// or spec changed. Each change is published as a new manifest revision; what
+// it replaced is retired and collected. Current items write nothing, so it
+// can be repeated, and a run cut short is resumed by running it again. It
+// returns the items queued.
+func (e *Engine) RegenerateMedia(ctx context.Context, r media.Regeneration) (int, error) {
+	if e.media == nil {
+		return 0, errors.New("contentkit: media is not configured")
+	}
+	return e.media.jobs.Regenerate(ctx, r)
 }

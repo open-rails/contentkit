@@ -477,11 +477,15 @@ func (j *Jobs) Rebuild(ctx context.Context, cache *PGCache, kinds ...string) (in
 	return n, nil
 }
 
-// Regenerate visits every item of kind and asks the worker to redo its
-// stale outputs of preset ("" for all): after a deploy changed a preset's
-// spec or a producer's recipe. It returns the items visited.
-func (j *Jobs) Regenerate(ctx context.Context, kind, preset string) (int, error) {
-	k, err := j.reg.Kind(kind)
+// Regenerate visits the items r selects and asks the worker to bring each
+// up to date: masters whose recipe changed, then renditions whose master or
+// spec changed (after a deploy changed a recipe, a preset's spec or a
+// producer's recipe). Items already current write nothing, so it is
+// idempotent, and a run cut short is resumed by running it again. Each
+// write publishes a new manifest revision and retires what it replaced. It
+// returns the items visited.
+func (j *Jobs) Regenerate(ctx context.Context, r media.Regeneration) (int, error) {
+	k, err := j.reg.Kind(r.Kind)
 	if err != nil {
 		return 0, err
 	}
@@ -493,7 +497,11 @@ func (j *Jobs) Regenerate(ctx context.Context, kind, preset string) (int, error)
 		if err != nil {
 			return n, err
 		}
-		if err := j.cfg.Processes.Enqueue(ctx, ProcessJob{Ref: it.Ref, Preset: preset, Class: media.VideoBackfill}); err != nil {
+		if len(r.IDs) > 0 && !slices.Contains(r.IDs, it.Ref.ContentID) && !slices.Contains(r.IDs, it.Ref.Version()) ||
+			r.Filter != nil && !r.Filter(it.Ref) {
+			continue
+		}
+		if err := j.cfg.Processes.Enqueue(ctx, ProcessJob{Ref: it.Ref, Class: media.VideoBackfill}); err != nil {
 			return n, err
 		}
 		n++

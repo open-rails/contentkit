@@ -101,7 +101,7 @@ func (e *Encoder) subtitle(ctx context.Context, item mediastore.Item, f media.Fi
 		return err
 	}
 	fp := subtitleFP(f, p.Subtitles)
-	out := media.File{Path: item.Kind().OutputPath(p, f.Path), Blob: blob, Type: "text/vtt", Size: size, FP: fp}
+	out := media.File{Path: item.Kind().OutputPath(p, f.Path), Blob: blob, Type: "text/vtt", Size: size, FP: fp, Input: mediastore.InputHash(f)}
 	return e.publish(ctx, item, []media.File{out}, func(m *mediastore.Manifest) error {
 		g, err := current(m, f.Path, f.Blob)
 		if err != nil || subtitleFP(g, p.Subtitles) != fp {

@@ -214,7 +214,7 @@ func (e *Encoder) measure(ctx context.Context, item mediastore.Item, v media.Fil
 }
 
 func (e *Encoder) sourceURL(ctx context.Context, item mediastore.Item, v media.File) (string, error) {
-	key, err := item.Blob(v.Blob)
+	key, err := item.Blob(mediastore.Input(v).Blob)
 	if err != nil {
 		return "", err
 	}

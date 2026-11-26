@@ -46,6 +46,7 @@ type mediaWorld struct {
 	management    *awss3.Client
 	gatewayConfig gateway.Config
 	scratch       string // the worker's own TempDir
+	workerConfig  worker.Config
 }
 
 func newMediaStorage(t *testing.T, scope ck.Scope) *mediaWorld {
@@ -170,6 +171,7 @@ func attachMediaWith(t *testing.T, w *world, a *application, wrap func(media.Sto
 	if accountPrimary {
 		workerConfig.AccountSchema, workerConfig.AccountWorkerSchema = accountStorage.Schema, accountStorage.WorkerSchema
 	}
+	m.workerConfig = workerConfig
 	m.worker, err = worker.New(t.Context(), workerConfig)
 	must(t, err)
 	run, cancel := context.WithCancel(context.Background())
@@ -195,6 +197,36 @@ func attachMediaWith(t *testing.T, w *world, a *application, wrap func(media.Sto
 		}
 	})
 	return m
+}
+
+// restart rebuilds a's engine and the media worker over the same bucket and
+// database once change has changed their configuration (a deploy).
+func (m *mediaWorld) restart(t *testing.T, a *application, change func(*ck.Config, *worker.Config)) {
+	t.Helper()
+	a.server.Close()
+	must(t, a.engine.Close(t.Context()))
+	m.cancel()
+	select {
+	case err := <-m.workerDone:
+		must(t, err)
+	case <-time.After(15 * time.Second):
+		t.Fatal("media worker did not stop")
+	}
+	change(&a.cfg, &m.workerConfig)
+	var err error
+	a.engine, err = ck.New(t.Context(), a.cfg, a.deps)
+	must(t, err)
+	a.server = mountEngine(t, a.engine)
+	config, err := a.cfg.MediaKinds()
+	must(t, err)
+	m.workerConfig.Kinds, err = mediastore.NewRegistry(config, mediastore.Hooks{})
+	must(t, err)
+	m.worker, err = worker.New(t.Context(), m.workerConfig)
+	must(t, err)
+	run, cancel := context.WithCancel(context.Background())
+	m.cancel, m.workerDone = cancel, make(chan error, 1)
+	go func() { m.workerDone <- m.worker.Run(run) }()
+	must(t, a.engine.StartJobs(run))
 }
 
 func imageBytes(t testing.TB) []byte {

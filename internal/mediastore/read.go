@@ -378,34 +378,6 @@ func (g *Grant) url(blob, download string, dl, cookie bool) (string, error) {
 	return u, nil
 }
 
-// DownloadURL serves a published public/private file as an attachment named
-// name. A private download carries the item's token, signed after the
-// caller's access and quota checks. Unreleased internal objects are never
-// exposed through the reader gateway.
-func (r *Reader) DownloadURL(item Item, f media.File, name string, ttl time.Duration) (string, time.Time, error) {
-	key, err := item.Blob(f.Blob)
-	if err != nil {
-		return "", time.Time{}, err
-	}
-	area, _, valid := layout.SplitBlobRef(f.Blob)
-	if !valid || area != layout.AreaPublic && area != layout.AreaPrivate || ttl <= 0 {
-		return "", time.Time{}, fmt.Errorf("%w: %s is not a served download", ErrNotAllowed, f.Path)
-	}
-	exp := time.Unix(r.o.Now().Add(ttl).Unix(), 0)
-	q := url.Values{}
-	if area == layout.AreaPrivate {
-		q.Set("t", r.ring.Sign(token.ItemScope(item.Prefix()), exp))
-	}
-	if name != "" {
-		q.Set("dl", name)
-	}
-	address := r.base + layout.URLPrefix + key
-	if len(q) > 0 {
-		address += "?" + q.Encode()
-	}
-	return address, exp, nil
-}
-
 // SignTicket signs a host route's own scope until exp with the delivery key:
 // a short-lived ticket. Its scope must hold a ':', which no item or download
 // scope does, so a ticket opens no media.

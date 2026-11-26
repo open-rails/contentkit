@@ -144,12 +144,15 @@ func (m *Manifest) Outputs(from, preset string) []media.File {
 }
 
 // Blobs lists every object the manifest's files reference: kept uploads,
-// derived files, track indexes and editor views.
+// masters of their own, derived files, track indexes and editor views.
 func (m *Manifest) Blobs() []string {
 	var out []string
 	for _, f := range m.Files {
 		if f.Blob != "" && !f.Gone {
 			out = append(out, f.Blob)
+		}
+		if f.Master != nil && !f.Master.IsOriginal() && !f.Gone {
+			out = append(out, f.Master.Blob)
 		}
 		if f.Track != nil && f.Track.Index != "" {
 			out = append(out, f.Track.Index)
@@ -223,8 +226,12 @@ func (m *Manifest) validate() error {
 			return fmt.Errorf("media: manifest file %q: invalid editor view", f.Path)
 		case !f.IsUpload() && (f.Edit != nil || f.Frame != nil || f.Pending != nil || f.Unattached || f.Editor != nil || f.From == ""):
 			return fmt.Errorf("media: manifest file %q: a derived file has upload fields", f.Path)
-		case f.IsUpload() && (f.From != "" || f.FP != "" || f.Track != nil):
+		case f.IsUpload() && (f.From != "" || f.FP != "" || f.Track != nil || f.Input != ""):
 			return fmt.Errorf("media: manifest file %q: an upload has provenance", f.Path)
+		case !f.IsUpload() && f.Master != nil:
+			return fmt.Errorf("media: manifest file %q: a derived file has a master", f.Path)
+		case f.Master != nil && (!layout.ValidBlobRef(f.Master.Blob) || f.Master.Recipe == "" || f.Master.Of != "" && !layout.ValidHash(f.Master.Of)):
+			return fmt.Errorf("media: manifest file %q: invalid master", f.Path)
 		}
 		seen[f.Path] = true
 		// Bounds are checked at commit and by the producers (a failure, not
@@ -275,6 +282,11 @@ func cloneFile(f media.File) media.File {
 	if f.Editor != nil {
 		editor := *f.Editor
 		f.Editor = &editor
+	}
+	if f.Master != nil {
+		master := *f.Master
+		master.Steps = slices.Clone(master.Steps)
+		f.Master = &master
 	}
 	if f.Edit != nil {
 		e := *f.Edit

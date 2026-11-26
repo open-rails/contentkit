@@ -9,6 +9,7 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -36,9 +37,10 @@ func (*transferDownloadPolicy) Mark(_ context.Context, _ access.Actor, _ version
 }
 
 func TestPublishedSingleFileDownload(t *testing.T) {
-	// A player's download serves its original: released into private/ with
-	// the version, served by the gateway under the item's token, named
-	// {title}{ext}, never stored twice.
+	// A player's download streams its master, the original under the
+	// identity recipe, read in internal/ where it was placed: a release
+	// never copies or moves it. It is named {title}{ext}, has its length,
+	// ETag and ranges, and is never stored twice.
 	f := newTinyHLSConfiguredFixture(t, false, nil)
 	policy := &transferDownloadPolicy{}
 	a := f.app
@@ -61,18 +63,34 @@ func TestPublishedSingleFileDownload(t *testing.T) {
 		must(t, reply.Decode(&grant))
 		return grant.URL != ""
 	})
-	if !strings.HasPrefix(grant.URL, f.storage.gateway.URL+layout.URLPrefix) || !strings.HasSuffix(grant.Name, ".mp4") {
-		t.Fatalf("an original download is the gateway's file named {title}{ext}: %+v", grant)
+	if !strings.HasPrefix(grant.URL, "archive?") || !strings.Contains(grant.URL, "file=true") || !strings.HasSuffix(grant.Name, ".mp4") || grant.Size != int64(len(f.Source)) {
+		t.Fatalf("an original download is a ticketed transfer named {title}{ext}: %+v", grant)
 	}
-	response, err := http.Get(grant.URL)
-	must(t, err)
-	body, err := io.ReadAll(response.Body)
-	response.Body.Close()
-	must(t, err)
+	base := a.server.URL + "/content/v1/contents/" + f.Ref.ID + "/versions/" + f.Ref.Version + "/"
+	get := func(rangeHeader string) (*http.Response, []byte) {
+		t.Helper()
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, base+grant.URL, nil)
+		must(t, err)
+		if rangeHeader != "" {
+			req.Header.Set("Range", rangeHeader)
+		}
+		response, err := http.DefaultClient.Do(req)
+		must(t, err)
+		body, err := io.ReadAll(response.Body)
+		response.Body.Close()
+		must(t, err)
+		return response, body
+	}
+	response, body := get("")
 	disposition, params, err := mime.ParseMediaType(response.Header.Get("Content-Disposition"))
 	must(t, err)
-	if response.StatusCode != 200 || disposition != "attachment" || params["filename"] != grant.Name || !bytes.Equal(body, f.Source) || int64(len(body)) != grant.Size {
+	if response.StatusCode != 200 || disposition != "attachment" || params["filename"] != grant.Name || !bytes.Equal(body, f.Source) ||
+		response.Header.Get("Content-Length") != strconv.Itoa(len(f.Source)) || response.Header.Get("ETag") == "" {
 		t.Fatalf("original download: HTTP%d %v length %d grant %+v", response.StatusCode, response.Header, len(body), grant)
+	}
+	partial, slice := get("bytes=10-99")
+	if partial.StatusCode != http.StatusPartialContent || !bytes.Equal(slice, f.Source[10:100]) {
+		t.Fatalf("original download range: HTTP%d with %d bytes", partial.StatusCode, len(slice))
 	}
 	config, err := a.cfg.MediaKinds()
 	must(t, err)
@@ -83,28 +101,31 @@ func TestPublishedSingleFileDownload(t *testing.T) {
 	manifest, _, err := mustManifests(t, f.storage.store, reg).Get(t.Context(), ref)
 	must(t, err)
 	file, found := manifest.Get("source.mp4")
-	if !found || layout.BlobArea(file.Blob) != layout.AreaPrivate {
-		t.Fatalf("the released original is not in private/: %+v", file)
+	if !found || layout.BlobArea(file.Blob) != layout.AreaInternal || file.Master == nil || file.Master.Blob != file.Blob {
+		t.Fatalf("the released original moved, or is not its own master: %+v", file)
 	}
-	for _, other := range manifest.Files {
-		if other.Path != file.Path && other.Blob == layout.MoveRef(file.Blob, layout.AreaInternal) {
-			t.Fatal("the original is stored twice")
+	item, err := reg.Item(ref)
+	must(t, err)
+	_, hash, _ := layout.SplitBlobRef(file.Blob)
+	for obj, err := range f.storage.store.List(t.Context(), item.Prefix()) {
+		must(t, err)
+		if strings.HasSuffix(obj.Key, "/"+hash) && obj.Key != item.Prefix()+file.Blob {
+			t.Fatalf("the original is stored twice: %s", obj.Key)
 		}
 	}
 	policy.denied.Store(true)
 	_, err = reader.GetContentVersionDownload(t.Context(), f.Ref.ID, f.Ref.Version)
 	requireError(t, err, 403, "download_unavailable")
+	if refused, _ := get(""); refused.StatusCode == http.StatusOK {
+		t.Fatal("a granted transfer outlived the policy's refusal")
+	}
 	policy.denied.Store(false)
-	// Withdrawal moves the original back to internal/, which no token opens.
+	// Withdrawal closes the transfer: the version is no longer released.
 	_, err = a.engine.Client().PostContentUnpublish(t.Context(), f.Ref.ID)
 	must(t, err)
 	waitForWithin(t, 45*time.Second, func() bool {
-		response, err := http.Get(grant.URL)
-		if err != nil {
-			return false
-		}
-		response.Body.Close()
-		return response.StatusCode == 404
+		response, _ := get("")
+		return response.StatusCode != http.StatusOK
 	})
 }
 
@@ -183,8 +204,7 @@ func TestZIPDownloadRefusesUnreadablePagesBeforeCharging(t *testing.T) {
 // under its previous one: a ticket from before a rotation still transfers,
 // and stops once the previous key is dropped.
 func TestDeliveryRotationKeepsTickets(t *testing.T) {
-	// A gallery's pages ZIP is a ticketed transfer (a video's original is a
-	// gateway URL under the item's token).
+	// A gallery's pages ZIP is a ticketed transfer, as a video's original is.
 	g := newReleasedGallery(t, nil, chapterImage(t, 21))
 	g.publish(t)
 	g.awaitReleased(t)

@@ -45,9 +45,9 @@ Withdrawal and public/private changes use the same reconciliation; files moved
 out of a served area are retired and deleted at once. Existing public caches and already downloaded bytes cannot be
 retracted by a database visibility change.
 
-A video's original download is released into `private/` and served by the
-gateway under the item's token. `HostOnly` outputs stay in `internal` and reach
-readers only inside the ZIP. Uploaded source ZIPs are never reader downloads:
+A video's download streams its master (the original, by default) through the
+API from where it is stored; originals never move. `HostOnly` outputs stay in
+`internal` and reach readers only inside the ZIP. Uploaded source ZIPs are never reader downloads:
 they can contain future chapters. Reader ZIPs are assembled only from the
 released set; editors use their separate original-file interface.
 

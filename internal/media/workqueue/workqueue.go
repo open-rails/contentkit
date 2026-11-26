@@ -199,7 +199,7 @@ func (q *Queue) enqueue(ctx context.Context, insert mediastore.InsertFunc, job m
 			river.InsertOpts{Queue: IngestQueue, MaxAttempts: riverMaxAttempts})
 	}
 	f := FamiliesOf(item.Kind(), job.Preset)
-	if !f.Image && !f.Video && !job.Editor {
+	if !f.Image && !f.Video && !job.Editor && item.Kind().Master.Identity() {
 		return nil
 	}
 	return mediastore.InsertOnce(ctx, insert, DerivativeArgs{Ref: job.Ref, Preset: job.Preset, Force: job.Force, Editor: job.Editor, Class: job.Class}, *DerivativeInsertOpts(job.Class))
