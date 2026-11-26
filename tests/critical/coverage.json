@@ -800,6 +800,20 @@
       ]
     },
     {
+      "id": "CK-J07-S35",
+      "journey": "CK-J07",
+      "behavior": "Watching a video's encoded rendition to its end records a completion even where the rendition outlasts the stored duration_ms; a watched range past that duration plus its two-second tolerance is refused with 400",
+      "status": "verified",
+      "evidence": [
+        "A real H.264 video whose audio outlasts its video stream is encoded by the media worker and published; the watched range ends where the longest media playlist of its HLS ladder ends, read through the public HLS route, and the completed history lists it.",
+        "contentkit#302: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ],
+      "cases": [
+        "TestVideoCompletion/CK-J07-S35_watching_the_rendition_to_its_end_records_a_completion",
+        "TestVideoCompletion/CK-J07-S35_a_range_past_the_duration_and_its_tolerance_is_refused"
+      ]
+    },
+    {
       "id": "CK-J07-S20",
       "journey": "CK-J07",
       "behavior": "The shipped popularity grid uses host choices and prepared whole-day ranges",
