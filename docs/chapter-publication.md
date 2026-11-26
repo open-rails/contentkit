@@ -42,7 +42,7 @@ can be fetched directly while the rest of an operation is still copying:
 folder access does not imply atomic multi-object S3 exposure.
 
 Withdrawal and public/private changes use the same reconciliation; files moved
-out of a served area are retired and deleted at once. Existing public caches and already downloaded bytes cannot be
+to `internal`, or out of `public`, are retired and deleted at once. A file moved from `private` to `public` keeps its private copy for an hour, so readers mid-read finish. Existing public caches and already downloaded bytes cannot be
 retracted by a database visibility change.
 
 A video's download streams its master (the original, by default) through the

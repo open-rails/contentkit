@@ -3426,6 +3426,102 @@
       ]
     },
     {
+      "id": "CK-J09-S60",
+      "journey": "CK-J09",
+      "behavior": "Garbage collection never deletes a hash referenced again after its settle period, even when the run read the manifest before the re-reference",
+      "status": "verified",
+      "evidence": [
+        "fix/media-gc-safety: real bucket (MinIO in CI), real PostgreSQL; collector and lifecycle steps interleaved at exact bucket operations."
+      ],
+      "cases": [
+        "TestMediaGCSafety/CK-J09-S60_gc_never_deletes_a_hash_referenced_again_after_its_settle"
+      ]
+    },
+    {
+      "id": "CK-J09-S61",
+      "journey": "CK-J09",
+      "behavior": "Garbage collection sends each DELETE while the hash's fence holds, however slowly the bucket lists and answers, and drains a long retired list across runs",
+      "status": "verified",
+      "evidence": [
+        "fix/media-gc-safety: real bucket (MinIO in CI), real PostgreSQL; collector and lifecycle steps interleaved at exact bucket operations."
+      ],
+      "cases": [
+        "TestMediaGCSafety/CK-J09-S61_gc_sends_every_delete_while_its_fence_holds"
+      ]
+    },
+    {
+      "id": "CK-J09-S62",
+      "journey": "CK-J09",
+      "behavior": "An object no manifest names, written after the item's last write, is collected once it is a day old",
+      "status": "verified",
+      "evidence": [
+        "fix/media-gc-safety: real bucket (MinIO in CI), real PostgreSQL; collector and lifecycle steps interleaved at exact bucket operations."
+      ],
+      "cases": [
+        "TestMediaGCSafety/CK-J09-S62_an_object_left_after_the_items_last_write_is_collected"
+      ]
+    },
+    {
+      "id": "CK-J09-S63",
+      "journey": "CK-J09",
+      "behavior": "A deletion racing a restore leaves the gateway fence the manifest records: a deleted item is never served",
+      "status": "verified",
+      "evidence": [
+        "fix/media-gc-safety: real bucket (MinIO in CI), real PostgreSQL; collector and lifecycle steps interleaved at exact bucket operations."
+      ],
+      "cases": [
+        "TestMediaGCSafety/CK-J09-S63_a_deletion_racing_a_restore_leaves_the_fence_its_manifest_records"
+      ]
+    },
+    {
+      "id": "CK-J09-S64",
+      "journey": "CK-J09",
+      "behavior": "A restore racing an erasure never removes the erasure's permanent fence",
+      "status": "verified",
+      "evidence": [
+        "fix/media-gc-safety: real bucket (MinIO in CI), real PostgreSQL; collector and lifecycle steps interleaved at exact bucket operations."
+      ],
+      "cases": [
+        "TestMediaGCSafety/CK-J09-S64_a_restore_racing_an_erasure_keeps_its_permanent_fence"
+      ]
+    },
+    {
+      "id": "CK-J09-S65",
+      "journey": "CK-J09",
+      "behavior": "A page moved from private/ to public/ keeps its private copy readable for an hour; a page leaving public/ stops being served at once",
+      "status": "verified",
+      "evidence": [
+        "fix/media-gc-safety: real bucket (MinIO in CI), real PostgreSQL; collector and lifecycle steps interleaved at exact bucket operations."
+      ],
+      "cases": [
+        "TestLockedPreviewPages/CK-J09-S65_a_page_made_free_keeps_its_private_copy_readable_for_an_hour"
+      ]
+    },
+    {
+      "id": "CK-J09-S66",
+      "journey": "CK-J09",
+      "behavior": "Edits of one manifest within one process queue rather than conflict through refused conditional writes",
+      "status": "verified",
+      "evidence": [
+        "fix/media-gc-safety: real bucket (MinIO in CI), real PostgreSQL; collector and lifecycle steps interleaved at exact bucket operations."
+      ],
+      "cases": [
+        "TestMediaGCSafety/CK-J09-S66_edits_of_one_manifest_in_one_process_queue_instead_of_conflicting"
+      ]
+    },
+    {
+      "id": "CK-J09-S67",
+      "journey": "CK-J09",
+      "behavior": "Garbage collection drains the retired files of a manifest at its size limit",
+      "status": "verified",
+      "evidence": [
+        "fix/media-gc-safety: real bucket (MinIO in CI), real PostgreSQL; collector and lifecycle steps interleaved at exact bucket operations."
+      ],
+      "cases": [
+        "TestMediaGCSafety/CK-J09-S67_gc_drains_the_retired_files_of_a_manifest_at_its_size_limit"
+      ]
+    },
+    {
       "id": "CK-J32-S01",
       "journey": "CK-J32",
       "behavior": "Opens, progress and searches land in the activity log stamped with subject, site, access, UTC offset and their list",

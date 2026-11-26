@@ -388,7 +388,9 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 	if err != nil {
 		return nil, err
 	}
-	edit := EditOptions{Op: id.String(), Sum: sum}
+	// A commit is refused when the item, processed and released, would not
+	// fit: later writes could not record its outputs or move its files.
+	edit := EditOptions{Op: id.String(), Sum: sum, Reserve: item.Kind().Unwritten}
 	if takedown {
 		edit.Grace = -1
 	}

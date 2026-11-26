@@ -100,6 +100,14 @@ const maxFailureBytes = 300
 // MaxManifestBytes for the outputs and failures still to be recorded.
 const editHeadroom = 4 << 10
 
+// lifecycleSlack is how far past MaxManifestBytes lifecycle edits (GC's
+// stamps and retired orphans) may grow a manifest; maxStoredBytes is the
+// largest manifest stored or read.
+const (
+	lifecycleSlack = 512 << 10
+	maxStoredBytes = media.MaxManifestBytes + lifecycleSlack
+)
+
 // Find returns the index of the file at path, or -1.
 func (m *Manifest) Find(path string) int {
 	i, ok := m.index[path]
@@ -405,8 +413,8 @@ var (
 )
 
 var (
-	// ErrManifestUnreadable: a stored manifest over MaxManifestBytes; it does
-	// not decode.
+	// ErrManifestUnreadable: a stored manifest over MaxManifestBytes and its
+	// lifecycle slack; it does not decode.
 	ErrManifestUnreadable = errors.New("media: stored manifest over its size limit")
 )
 
@@ -450,8 +458,8 @@ func EncodeManifest(m *Manifest) ([]byte, error) { return encodeManifest(m) }
 // DecodeManifest reads a stored manifest (gzip JSON, or plain JSON).
 func DecodeManifest(b []byte) (*Manifest, error) { return decodeManifest(b) }
 
-// decodeManifest reads gzip JSON (or plain JSON), at most MaxManifestBytes
-// of it (ErrManifestUnreadable past that), indexes it and records its JSON
+// decodeManifest reads gzip JSON (or plain JSON), at most maxStoredBytes of
+// it (ErrManifestUnreadable past that), indexes it and records its JSON
 // length. Only the current version decodes.
 func decodeManifest(b []byte) (*Manifest, error) {
 	r := io.Reader(bytes.NewReader(b))
@@ -463,7 +471,7 @@ func decodeManifest(b []byte) (*Manifest, error) {
 		defer zr.Close()
 		r = zr
 	}
-	lr := &io.LimitedReader{R: r, N: media.MaxManifestBytes + 1}
+	lr := &io.LimitedReader{R: r, N: maxStoredBytes + 1}
 	var m Manifest
 	err := json.NewDecoder(lr).Decode(&m)
 	if lr.N <= 0 {
@@ -475,7 +483,7 @@ func decodeManifest(b []byte) (*Manifest, error) {
 		return nil, fmt.Errorf("%w: version %d, want %d", ErrInvalidManifest, m.V, media.ManifestVersion)
 	}
 	m.reindex()
-	m.size = media.MaxManifestBytes + 1 - lr.N
+	m.size = maxStoredBytes + 1 - lr.N
 	return &m, nil
 }
 

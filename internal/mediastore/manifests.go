@@ -30,10 +30,11 @@ type ManifestOptions struct {
 	// Grace is how long a file an edit stops referencing stays retired
 	// before GC may delete it: the undo window. Default 7 days.
 	Grace time.Duration
-	// Settle bounds how late a DELETE may still execute after GC sent it
-	// (each DELETE is one attempt; a proxy may still be running one whose
-	// answer timed out): a hash being deleted is not referenced again until
-	// it has passed. Default 2 minutes.
+	// Settle is how long a hash GC stamped deleting stays fenced against
+	// re-reference. GC sends its DELETEs only in the first half (each one
+	// attempt; a proxy may still run one whose answer timed out), so the
+	// other half must exceed the bucket's worst-case op latency. Default
+	// 15 minutes.
 	Settle time.Duration
 	// Written runs after every write that lands, and after an edit finds its
 	// own write landed or nothing to change, with the stored manifest: the
@@ -64,6 +65,7 @@ type Manifests struct {
 	current func(ctx context.Context, item Item) (string, error)
 	now     func() time.Time
 	cache   *manifestCache
+	locks   keyLocks
 }
 
 var (
@@ -149,7 +151,7 @@ func (m *Manifests) Registry() *Registry { return m.reg }
 func (m *Manifests) Store() media.Store { return m.store }
 
 // DefaultSettle is ManifestOptions.Settle's default.
-const DefaultSettle = 2 * time.Minute
+const DefaultSettle = 15 * time.Minute
 
 // Settle is how long a hash being deleted stays fenced.
 func (m *Manifests) Settle() time.Duration { return m.settle }
@@ -241,6 +243,11 @@ type EditOptions struct {
 	// Grace overrides how long what this edit stops referencing stays
 	// retired; negative is due at once.
 	Grace time.Duration
+	// GraceOf overrides Grace for one blob when it returns non-zero.
+	GraceOf func(blob string) time.Duration
+	// Reserve is what the manifest may still grow by (Kind.Unwritten): an
+	// edit that grows the projected size past MaxManifestBytes is refused.
+	Reserve func(*Manifest) int64
 }
 
 // Edit applies fn to ref's manifest (empty if none) and writes it. fn may
@@ -274,6 +281,12 @@ func (m *Manifests) EditItem(ctx context.Context, item Item, o EditOptions, fn f
 	if o.Op == "" {
 		o.Op = uuidv7.NewString()
 	}
+	// One process's edits of a manifest would only meet each other's 412s.
+	unlock, err := m.locks.lock(ctx, item.ManifestKey())
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
 	var last error // the store's answer to the last attempt, when it had one
 	for attempt := 0; attempt < m.retries; attempt++ {
 		if attempt > 0 {
@@ -363,8 +376,25 @@ func (m *Manifests) try(ctx context.Context, item Item, o EditOptions, fn func(*
 	if err != nil {
 		return nil, "", false, err
 	}
-	if next.size > media.MaxManifestBytes {
-		return nil, "", false, fmt.Errorf("%w: %d bytes, at most %d", ErrManifestTooLarge, next.size, media.MaxManifestBytes)
+	limit := int64(media.MaxManifestBytes)
+	if o.Lifecycle {
+		limit = maxStoredBytes // GC's stamps and drops may use the slack
+	}
+	for range 3 {
+		if next.size <= limit || !spill(next, next.size-limit) {
+			break
+		}
+		if body, err = encodeManifest(next); err != nil {
+			return nil, "", false, err
+		}
+	}
+	if next.size > limit {
+		return nil, "", false, fmt.Errorf("%w: %d bytes, at most %d", ErrManifestTooLarge, next.size, limit)
+	}
+	if o.Reserve != nil {
+		if projected := next.size + o.Reserve(next); projected > media.MaxManifestBytes && projected > cur.size+o.Reserve(cur) {
+			return nil, "", false, fmt.Errorf("%w: %d bytes once processed and released, at most %d", ErrManifestTooLarge, projected, media.MaxManifestBytes)
+		}
 	}
 	if err := m.present(ctx, item, fresh); err != nil {
 		return nil, "", false, err
@@ -402,32 +432,75 @@ func (m *Manifests) retire(cur, next *Manifest, o EditOptions, now time.Time) ([
 	for _, f := range cur.Files {
 		paths[f.Blob] = f.Path
 	}
+	retiredAt := make(map[string]int, len(next.Retired))
+	for i, r := range next.Retired {
+		retiredAt[r.Blob] = i
+	}
 	var fresh []string
+	unretired := map[string]bool{}
 	for _, blob := range slices.Sorted(maps.Keys(after)) {
-		r, retired := next.Retiring(blob)
-		if retired && r.Deleting != nil {
+		i, retired := retiredAt[blob]
+		if !retired {
+			if !before[blob] {
+				fresh = append(fresh, blob)
+			}
+			continue
+		}
+		r := next.Retired[i]
+		if r.Deleting != nil {
 			if until := r.Deleting.Add(m.settle); now.Before(until) {
 				return nil, &SettlingError{Blob: blob, Until: until}
 			}
 		}
-		if retired {
-			next.Retired = slices.DeleteFunc(next.Retired, func(x Retired) bool { return x.Blob == blob })
-		}
-		if !before[blob] || retired && r.Deleting != nil {
+		unretired[blob] = true
+		if !before[blob] || r.Deleting != nil {
 			fresh = append(fresh, blob)
 		}
 	}
+	if len(unretired) > 0 {
+		next.Retired = slices.DeleteFunc(next.Retired, func(x Retired) bool { return unretired[x.Blob] })
+	}
 	grace := cmpDuration(o.Grace, m.grace)
 	for _, blob := range slices.Sorted(maps.Keys(before)) {
-		if after[blob] {
+		if _, retired := retiredAt[blob]; after[blob] || retired {
 			continue
 		}
-		if _, ok := next.Retiring(blob); ok {
-			continue
+		g := grace
+		if o.GraceOf != nil {
+			g = cmpDuration(o.GraceOf(blob), grace)
 		}
-		next.Retired = append(next.Retired, Retired{Blob: blob, Path: paths[blob], At: now, Due: now.Add(max(grace, 0))})
+		next.Retired = append(next.Retired, Retired{Blob: blob, Path: paths[blob], At: now, Due: now.Add(max(g, 0))})
 	}
 	return fresh, nil
+}
+
+// spill drops at least excess bytes of retired entries GC has not stamped,
+// soonest due first, and reports whether it dropped any. Their objects
+// become orphans: the collection a day after this write retires them again
+// (no DELETE of theirs is in flight). Their undo window is lost, so the
+// files an edit stops referencing never stop it.
+func spill(m *Manifest, excess int64) bool {
+	order := make([]int, 0, len(m.Retired))
+	for i, r := range m.Retired {
+		if r.Deleting == nil {
+			order = append(order, i)
+		}
+	}
+	slices.SortStableFunc(order, func(a, b int) int { return m.Retired[a].Due.Compare(m.Retired[b].Due) })
+	drop := map[int]bool{}
+	for _, i := range order {
+		if excess <= 0 {
+			break
+		}
+		drop[i] = true
+		excess -= int64(retiredBytes - stampBytes + len(m.Retired[i].Blob) + jsonLen(m.Retired[i].Path) - 64)
+	}
+	if len(drop) == 0 {
+		return false
+	}
+	i := 0
+	m.Retired = slices.DeleteFunc(m.Retired, func(Retired) bool { i++; return drop[i-1] })
+	return true
 }
 
 func cmpDuration(a, b time.Duration) time.Duration {
@@ -501,7 +574,7 @@ func (m *Manifests) get(ctx context.Context, key string) (*Manifest, string, err
 	case err != nil:
 		return nil, "", err
 	}
-	body, err := io.ReadAll(io.LimitReader(rc, media.MaxManifestBytes+1))
+	body, err := io.ReadAll(io.LimitReader(rc, maxStoredBytes+1))
 	rc.Close()
 	if err != nil {
 		return nil, "", err
@@ -538,6 +611,45 @@ func (r *Registry) RefOf(id *ItemIdentity) (contentref.ContentRef, error) {
 func keyOf(item Item, blob string) string {
 	key, _ := item.Blob(blob)
 	return key
+}
+
+// keyLocks queues one process's edits of a manifest, by key.
+type keyLocks struct {
+	mu   sync.Mutex
+	held map[string]*keyLock
+}
+
+type keyLock struct {
+	turn    chan struct{}
+	waiters int
+}
+
+func (l *keyLocks) lock(ctx context.Context, key string) (func(), error) {
+	l.mu.Lock()
+	if l.held == nil {
+		l.held = map[string]*keyLock{}
+	}
+	k := l.held[key]
+	if k == nil {
+		k = &keyLock{turn: make(chan struct{}, 1)}
+		l.held[key] = k
+	}
+	k.waiters++
+	l.mu.Unlock()
+	leave := func() {
+		l.mu.Lock()
+		if k.waiters--; k.waiters == 0 {
+			delete(l.held, key)
+		}
+		l.mu.Unlock()
+	}
+	select {
+	case k.turn <- struct{}{}:
+		return func() { <-k.turn; leave() }, nil
+	case <-ctx.Done():
+		leave()
+		return nil, ctx.Err()
+	}
 }
 
 // manifestCache keeps decoded manifests by key, bounded by their JSON size
