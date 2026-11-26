@@ -11,12 +11,13 @@ import (
 	"github.com/open-rails/contentkit/access"
 	content "github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/internal/clientaddr"
+	"github.com/open-rails/contentkit/internal/gate"
 	"github.com/open-rails/contentkit/internal/ratelimit"
 	"github.com/redis/go-redis/v9"
 )
 
 // Limits are per-actor interaction limits: an actor is its user id, or its
-// IP when anonymous. Every attempt spends one, so undoing (unfavorite,
+// IP when anonymous; the engine's in-process client has none. Every attempt spends one, so undoing (unfavorite,
 // neutral) costs the same as doing. A comment spends only once it passes
 // the local refusals; every comment request is also capped at 30 a minute,
 // or at Comment's own rate per minute when that is higher. A nil field takes its default; an action
@@ -109,9 +110,13 @@ func attemptRates(comment []content.Rate) []content.Rate {
 
 // limit spends one of actor's a allowance: per subject, and per invoker
 // within it when someone acts on its behalf. An actor with neither a subject
-// nor an IP has no key and is not limited here.
+// nor an IP has no key, and the engine's in-process client is no viewer:
+// neither is limited here.
 func (rt *Runtime) limit(ctx context.Context, a content.Action, actor access.Actor) error {
 	l := rt.limiters[a]
+	if gate.IsHost(actor) {
+		return nil
+	}
 	key := ""
 	switch {
 	case actor.ID != "" && !actor.Anonymous && actor.Invoker.ID != "":

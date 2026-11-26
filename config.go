@@ -100,7 +100,8 @@ type InteractionsConfig struct {
 	CommentMaxLength int `yaml:"comment_max_length" json:"comment_max_length"`
 	// DuplicateWindow refuses identical comments within this duration; zero disables it.
 	DuplicateWindow time.Duration `yaml:"duplicate_window" json:"duplicate_window"`
-	// Limits are the per-actor rate limits, shared through Deps.Redis.
+	// Limits are the per-actor rate limits, shared through Deps.Redis;
+	// Engine.Client has none.
 	Limits LimitsConfig `yaml:"limits" json:"limits"`
 	// ModeratorTimeout bounds one moderation call (default 5s);
 	// ModeratorCooldown is how long writes are held after it failed
@@ -137,7 +138,8 @@ type MediaConfig struct {
 	// ProcessOnUpload has the SDK commit each upload as soon as it lands.
 	ProcessOnUpload bool `yaml:"process_on_upload" json:"process_on_upload"`
 	// CommitLimit limits each uploader's commits; ReadLimit each viewer's
-	// reads. Zero takes media's defaults; Deps.Redis shares them.
+	// reads, never Engine.Client's. Zero takes media's defaults; Deps.Redis
+	// shares them.
 	CommitLimit RateLimitConfig `yaml:"commit_limit" json:"commit_limit"`
 	ReadLimit   RateLimitConfig `yaml:"read_limit" json:"read_limit"`
 	// Issuance limits the items each viewer opens per hour.

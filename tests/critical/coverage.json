@@ -2714,6 +2714,19 @@
       ]
     },
     {
+      "id": "CK-J03-S74",
+      "journey": "CK-J03",
+      "behavior": "Engine.Client is held to no per-viewer media read or interaction limit; every credential, a staff key included, stays limited",
+      "status": "verified",
+      "evidence": [
+        "Over real PostgreSQL/MinIO the in-process host reads a published gallery past a burst of two and edits a person's comment past a two-per-hour comment limit; a staff application key with owner authority is refused 429 rate_limited on its third read and the person on its third comment. Not executed locally; CI's critical run is its first execution."
+      ],
+      "cases": [
+        "TestHostClientSkipsViewerLimits/CK-J03-S74_host_reads_past_the_media_read_limit",
+        "TestHostClientSkipsViewerLimits/CK-J03-S74_host_edits_past_the_comment_limit"
+      ]
+    },
+    {
       "id": "CK-J30-S01",
       "journey": "CK-J30",
       "behavior": "Only predefined-choice polls accept creation, import and votes; choices lock after voting while scope, closure, final-vote and erasure counts remain correct; a deleted poll keeps no votes",
