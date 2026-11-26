@@ -39,10 +39,24 @@ type Engagement struct {
 	RRFK int
 }
 
-// Similar has no candidates yet: co-engagement read ClickHouse's dropped
-// engagement tables.
-func (e Engagement) Similar(context.Context, contentref.ContentRef, query) ([]candidate, error) {
-	return nil, nil
+// Similar are the works sharing the anchor's most specific entities and its
+// artist, of q's kinds (the anchor's by default), best first.
+func (e Engagement) Similar(ctx context.Context, anchor contentref.ContentRef, q query) ([]candidate, error) {
+	kinds := q.ContentKinds
+	if len(kinds) == 0 {
+		kinds = []string{anchor.ContentKind}
+	}
+	var out []candidate
+	for _, kind := range kinds {
+		ids, err := e.s.o.Rankings.Similar(ctx, kind, anchor.ContentID)
+		if err != nil {
+			return nil, err
+		}
+		for i, id := range ids {
+			out = append(out, candidate{Ref: contentref.New(anchor.TenantID, kind, id), Score: float64(len(ids) - i)})
+		}
+	}
+	return out, nil
 }
 
 // ForSubject never returns its seeds.

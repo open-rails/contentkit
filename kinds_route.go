@@ -80,24 +80,6 @@ var kindsRoutes = []httpapi.Route[*kindsServer]{
 
 func (s *kindsServer) handle(w http.ResponseWriter, r *http.Request) {
 	model := publicModel(s.content, s.signals(), s.avatars(r.Context()))
-	domain, _ := s.content.DomainFor(r.Host)
-	for name, kind := range model.Kinds {
-		buckets := make([]kinds.PopularityBucket, 0, len(kind.Popularity))
-		for _, bucket := range kind.Popularity {
-			scopes := make([]kinds.PopularityScope, 0, len(bucket.Scopes))
-			for _, scope := range bucket.ActivityScopes() {
-				if scope.Domain == "" || scope.Domain == domain.Name {
-					scopes = append(scopes, scope)
-				}
-			}
-			if len(scopes) > 0 {
-				bucket.Scopes = scopes
-				buckets = append(buckets, bucket)
-			}
-		}
-		kind.Popularity = buckets
-		model.Kinds[name] = kind
-	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(model)
 }

@@ -8,10 +8,10 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/open-rails/authkit/auth"
 	"github.com/open-rails/contentkit/access"
+	"github.com/open-rails/contentkit/contenturl"
 	discovery "github.com/open-rails/contentkit/discovery"
 	entitlement "github.com/open-rails/contentkit/internal/entitlement"
 	"github.com/open-rails/contentkit/internal/gate"
@@ -94,13 +94,12 @@ var (
 )
 
 var (
-	sortParam = httpapi.Text("sort", "newest, oldest, title, popular[:bucket], top_rated, most_favorited, position or random; the kind's default, else newest")
+	sortParam = httpapi.Text("sort", "newest, oldest, title, popular (needs kind; pages by cursor), top_rated, most_favorited, position or random; the kind's default, else newest")
 )
 
 var (
 	activityParams = []httpapi.Param{
-		httpapi.Text("activity_from", "inclusive UTC date; requires activity_until, kind and sort=popular; reads prepared daily activity only"),
-		httpapi.Text("activity_until", "exclusive UTC date; requires activity_from, kind and sort=popular"),
+		httpapi.Text("window", "the popular sort's window of activity days: week (the default), 30d, 90d, year, all, month:YYYY-MM, year:YYYY or YYYY-MM-DD..YYYY-MM-DD (last day included)"),
 	}
 )
 
@@ -162,7 +161,7 @@ var routes = []httpapi.Route[handler]{
 		Doc: "Keyword search over contents, grouped per content item, personalized for a reader with reading state unless sorted otherwise. A first page's request_id names the search in the activity log.",
 		Query: params([]httpapi.Param{httpapi.Text("q", "the query")}, filterParams, readerParams,
 			[]httpapi.Param{httpapi.Text("sort", "relevance (the default) or a list sort of every match"), cardEntities, httpapi.Bool("summary", "selection-wide total, filtered and locked counts on the first page or every numbered page"),
-				httpapi.Bool("personalize", "false ranks the reader's results as anyone's")}, pageParams, []httpapi.Param{numberedPage}),
+				httpapi.Bool("personalize", "false ranks the reader's results as anyone's")}, activityParams, pageParams, []httpapi.Param{numberedPage}),
 		Responses: []httpapi.Reply{httpapi.OK(discovery.SearchPage{})}, Errors: signals}, Serve: httpapi.H(handler.search)},
 	{Spec: httpapi.Spec{Method: httpapi.GET, Path: "/typeahead", Resource: "discovery", Auth: httpapi.Public,
 		Doc: "Completes literal own title and entity-name/alias substrings while the reader types (name prefixes only under three characters), with prefixes first and common fillers ignored; excludes contextual keywords and typos.",
@@ -253,6 +252,12 @@ func optionalFlag(r *http.Request, name string) (bool, error) {
 	return v, nil
 }
 
+// siteLanguage is the request's Accept-Language among the configured ones:
+// the popular sort's site without an explicit language.
+func (h handler) siteLanguage(r *http.Request) string {
+	return contenturl.AcceptLanguage(h.s.o.Kinds.Languages, r.Header.Get("Accept-Language"))
+}
+
 func readerOf(r *http.Request) discovery.Reader {
 	q := r.URL.Query()
 	return discovery.Reader{Actor: gate.Actor(r.Context()), Host: r.Host, Language: q.Get("language"), DisplayLanguage: q.Get("display_language"),
@@ -309,15 +314,8 @@ func (h handler) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query()
-	for _, name := range []string{"activity_from", "activity_until"} {
-		if len(q[name]) > 1 || len(q[name]) == 1 && q.Get(name) == "" {
-			h.fail(w, r, fmt.Errorf("%w: %s must occur once with a UTC date", ErrInvalid, name))
-			return
-		}
-	}
 	page, err := h.s.List(r.Context(), ListOptions{Reader: readerOf(r), Filter: filterOf(r), Sort: q.Get("sort"), CardEntities: list(q.Get("card_entities")),
-		ActivityFrom: q.Get("activity_from"), ActivityUntil: q.Get("activity_until"),
-		Cursor: q.Get("cursor"), Page: pageNumber, Limit: limit, Summary: summary})
+		Window: q.Get("window"), SiteLanguage: h.siteLanguage(r), Cursor: q.Get("cursor"), Page: pageNumber, Limit: limit, Summary: summary})
 	h.reply(w, r, page, err)
 }
 
@@ -339,7 +337,7 @@ func (h handler) search(w http.ResponseWriter, r *http.Request) {
 	}
 	q := r.URL.Query()
 	o := SearchOptions{Reader: readerOf(r), Filter: filterOf(r), Query: q.Get("q"), Sort: q.Get("sort"), CardEntities: list(q.Get("card_entities")),
-		Cursor: q.Get("cursor"), Page: pageNumber, Limit: limit, Summary: summary}
+		Window: q.Get("window"), SiteLanguage: h.siteLanguage(r), Cursor: q.Get("cursor"), Page: pageNumber, Limit: limit, Summary: summary}
 	if v := q.Get("personalize"); v != "" {
 		p, err := strconv.ParseBool(v)
 		if err != nil {
@@ -583,16 +581,5 @@ func (h handler) fail(w http.ResponseWriter, r *http.Request, err error) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(c.Status)
 	body := map[string]any{"error": msg, "code": code}
-	var rangeError *popularityRangeError
-	if errors.As(err, &rangeError) {
-		details := map[string]string{}
-		if rangeError.From != nil {
-			details["available_from"] = rangeError.From.UTC().Format(time.DateOnly)
-		}
-		if rangeError.Until != nil {
-			details["available_until"] = rangeError.Until.UTC().Format(time.DateOnly)
-		}
-		body["details"] = details
-	}
 	_ = json.NewEncoder(w).Encode(body)
 }

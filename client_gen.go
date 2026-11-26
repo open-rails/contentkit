@@ -1769,8 +1769,10 @@ type GetEntitiesQuery struct {
 	Language string
 	// count contents of this kind; every kind by default
 	ContentKind string
-	// name (the default), count, newest or popular (one kind with popularity; its hourly ranking, then count)
+	// popular (the default with kind: its popularity on this site over window, then the entities without activity by count), name (the default without kind), count or newest
 	Sort string
+	// the popular sort's window: week (the default), 30d, 90d, year, all, month:YYYY-MM, year:YYYY or YYYY-MM-DD..YYYY-MM-DD
+	Window string
 	// the previous page's next_cursor
 	Cursor string
 	// a numbered page from 1 instead of cursor, with the total; page × limit is at most 10,000
@@ -1804,6 +1806,9 @@ func (q GetEntitiesQuery) values() url.Values {
 	}
 	if q.Sort != "" {
 		v.Set("sort", q.Sort)
+	}
+	if q.Window != "" {
+		v.Set("window", q.Window)
 	}
 	if q.Cursor != "" {
 		v.Set("cursor", q.Cursor)
@@ -1867,8 +1872,10 @@ type GetManageEntitiesQuery struct {
 	Language string
 	// count contents of this kind
 	ContentKind string
-	// name, count, newest or popular
+	// name (the default), count, newest or popular
 	Sort string
+	// the popular sort's window, as for the public listing
+	Window string
 	// the previous page's next_cursor
 	Cursor string
 	// page size: at most 200
@@ -1909,6 +1916,9 @@ func (q GetManageEntitiesQuery) values() url.Values {
 	}
 	if q.Sort != "" {
 		v.Set("sort", q.Sort)
+	}
+	if q.Window != "" {
+		v.Set("window", q.Window)
 	}
 	if q.Cursor != "" {
 		v.Set("cursor", q.Cursor)
@@ -2782,16 +2792,14 @@ type GetContentsQuery struct {
 	DisplayLanguage string
 	// lock (the default: everything listed, locked cards marked) or hide (only what the reader opens)
 	Mode string
-	// newest, oldest, title, popular[:bucket], top_rated, most_favorited, position or random; the kind's default, else newest
+	// newest, oldest, title, popular (needs kind; pages by cursor), top_rated, most_favorited, position or random; the kind's default, else newest
 	Sort string
 	// the group kinds cards name; every kind with a page by default
 	CardEntities []string
 	// selection-wide total, filtered and locked counts on the first page or every numbered page
 	Summary *bool
-	// inclusive UTC date; requires activity_until, kind and sort=popular; reads prepared daily activity only
-	ActivityFrom string
-	// exclusive UTC date; requires activity_from, kind and sort=popular
-	ActivityUntil string
+	// the popular sort's window of activity days: week (the default), 30d, 90d, year, all, month:YYYY-MM, year:YYYY or YYYY-MM-DD..YYYY-MM-DD (last day included)
+	Window string
 	// the previous page's next_cursor
 	Cursor string
 	// page size: 24 by default, at most 100
@@ -2856,11 +2864,8 @@ func (q GetContentsQuery) values() url.Values {
 	if q.Summary != nil {
 		v.Set("summary", fmt.Sprint(*q.Summary))
 	}
-	if q.ActivityFrom != "" {
-		v.Set("activity_from", q.ActivityFrom)
-	}
-	if q.ActivityUntil != "" {
-		v.Set("activity_until", q.ActivityUntil)
+	if q.Window != "" {
+		v.Set("window", q.Window)
 	}
 	if q.Cursor != "" {
 		v.Set("cursor", q.Cursor)
@@ -2923,6 +2928,8 @@ type GetSearchQuery struct {
 	Summary *bool
 	// false ranks the reader's results as anyone's
 	Personalize *bool
+	// the popular sort's window of activity days: week (the default), 30d, 90d, year, all, month:YYYY-MM, year:YYYY or YYYY-MM-DD..YYYY-MM-DD (last day included)
+	Window string
 	// the previous page's next_cursor
 	Cursor string
 	// page size: 24 by default, at most 100
@@ -2992,6 +2999,9 @@ func (q GetSearchQuery) values() url.Values {
 	}
 	if q.Personalize != nil {
 		v.Set("personalize", fmt.Sprint(*q.Personalize))
+	}
+	if q.Window != "" {
+		v.Set("window", q.Window)
 	}
 	if q.Cursor != "" {
 		v.Set("cursor", q.Cursor)

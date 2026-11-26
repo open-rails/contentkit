@@ -145,12 +145,6 @@ func (s *Service) summaryRows(ctx context.Context, q *sel, sort order, counted [
 	}
 	pickSQL := fmt.Sprintf(`SELECT DISTINCT ON (f.content_id) f.content_id, f.version_id FROM %s f WHERE %s ORDER BY f.content_id, %s`,
 		s.t.facets, q.predicate(), preference)
-	if name, _, _ := strings.Cut(sort.raw, ":"); name == discovery.SortPopular {
-		// Popularity is per content: score each content's chosen edition once.
-		pickSQL = fmt.Sprintf(`SELECT f.content_id, f.version_id FROM (
- SELECT DISTINCT ON (f.content_id) f.tenant_id, f.kind, f.content_id, f.version_id FROM %s f WHERE %s ORDER BY f.content_id, %s) f %s
-WHERE (%s) > 0 ORDER BY f.content_id`, s.t.facets, q.predicate(), preference, sort.join, sort.expr)
-	}
 	if limit > 0 {
 		pickSQL += " LIMIT @summary_limit"
 		args["summary_limit"] = limit + 1

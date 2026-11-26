@@ -19,6 +19,7 @@ import (
 	"github.com/riverqueue/river/rivertype"
 
 	"github.com/open-rails/contentkit/internal/jobhook"
+	"github.com/open-rails/contentkit/internal/rankings"
 	"github.com/open-rails/contentkit/internal/worker"
 	"github.com/open-rails/contentkit/media"
 )
@@ -81,7 +82,7 @@ func (j *jobs) contribution() riverhelpers.Contribution {
 			func() error { return river.AddWorkerSafely(cfg.Workers, &analyticsWorker{e: e}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &searchPruneWorker{e: e}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &anonymousExpiryWorker{e: e}) },
-			func() error { return river.AddWorkerSafely(cfg.Workers, &entityPopularRefreshWorker{e: e}) },
+			func() error { return river.AddWorkerSafely(cfg.Workers, &rankingsWorker{e: e}) },
 		} {
 			if err := add(); err != nil {
 				return err
@@ -97,10 +98,6 @@ func (j *jobs) contribution() riverhelpers.Contribution {
 		periodic("contentkit_search_sync", searchSyncEvery, searchSyncArgs{})
 		periodic("contentkit_search_prune", searchPruneEvery, searchPruneArgs{})
 		periodic("contentkit_anonymous_expiry", anonymousExpiryEvery, anonymousExpiryArgs{})
-		cfg.PeriodicJobs = append(cfg.PeriodicJobs, riverhelpers.NewPeriodicJob(cfg, time.Hour,
-			func() (river.JobArgs, *river.InsertOpts) {
-				return entityPopularRefreshArgs{}, &river.InsertOpts{Queue: queueContentKit, MaxAttempts: 3, UniqueOpts: mediastore.PendingOnce}
-			}, &river.PeriodicJobOpts{ID: "contentkit_entity_popular_refresh", RunOnStart: true}))
 		if e.hub.SignalsConfigured() {
 			// One run at a time; a run can outlast its period.
 			cfg.PeriodicJobs = append(cfg.PeriodicJobs, riverhelpers.NewPeriodicJob(cfg, analytics.FoldEvery,
@@ -267,24 +264,40 @@ func (e *Engine) analyticsJob() *analytics.Job {
 		Surface: func(name string) readingstore.Surface {
 			return readingstore.SurfaceOf(name, func(kind string) bool { _, ok := e.cfg.Content.EntityKinds[kind]; return ok })
 		},
-		Now: e.now, Log: e.log}
+		Rebuilt: e.rebuilt,
+		Now:     e.now, Log: e.log}
 }
 
-type entityPopularRefreshArgs struct{}
+// rebuilt precomputes the featured rankings after the analytics job rebuilt
+// day: a past day's rebuild is its last, so ranges through it close.
+func (e *Engine) rebuilt(ctx context.Context, day time.Time) error {
+	now := e.now().UTC()
+	r := rankings.Rebuild{Generation: now}
+	if today := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC); day.Before(today) {
+		r.Final = day
+	}
+	return e.rankings.Precompute(ctx, r)
+}
 
-func (entityPopularRefreshArgs) Kind() string { return "contentkit_entity_popular_refresh" }
+// rankingsArgs precompute the featured rankings after a rebuild of
+// content_daily: the analytics job's hourly run enqueues it.
+type rankingsArgs struct {
+	Generation time.Time `json:"generation"`
+	// Final is the day whose last rebuild this followed; zero hourly.
+	Final time.Time `json:"final,omitzero"`
+}
 
-type entityPopularRefreshWorker struct {
-	river.WorkerDefaults[entityPopularRefreshArgs]
+func (rankingsArgs) Kind() string { return "contentkit_rankings" }
+
+type rankingsWorker struct {
+	river.WorkerDefaults[rankingsArgs]
 	e *Engine
 }
 
-func (w *entityPopularRefreshWorker) Timeout(*river.Job[entityPopularRefreshArgs]) time.Duration {
-	return time.Hour
-}
+func (w *rankingsWorker) Timeout(*river.Job[rankingsArgs]) time.Duration { return 30 * time.Minute }
 
-func (w *entityPopularRefreshWorker) Work(ctx context.Context, _ *river.Job[entityPopularRefreshArgs]) error {
-	return w.e.discover.RefreshEntityPopularRankings(ctx)
+func (w *rankingsWorker) Work(ctx context.Context, job *river.Job[rankingsArgs]) error {
+	return w.e.rankings.Precompute(ctx, rankings.Rebuild{Generation: job.Args.Generation, Final: job.Args.Final})
 }
 
 func init() {

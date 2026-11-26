@@ -3,6 +3,7 @@ import { cn } from "cn";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { ContentKitUiAppearance } from "../../appearance.js";
 import type { ContentKitClient } from "../../client/client.js";
+import type { PopularWindow } from "../../client/discovery.js";
 import { LETTERS } from "../../client/entity-fields.js";
 import type { EntityCard } from "../../client/generated/wire.js";
 import { useMessages } from "../../i18n/context.js";
@@ -37,8 +38,10 @@ export interface EntityDirectoryProps {
   onLetterChange?: (letter: string | null) => void;
   /** Hide the A-Z bar. */
   letters?: boolean;
-  /** The first button reads "Popular" instead of "All" and lists every entity by popularity; a letter keeps sort. The kind needs popular configured. */
+  /** The first button reads "Popular" instead of "All" and lists every entity by popularity on the site over window; a letter keeps sort. Needs the site to record signals. */
   popular?: boolean;
+  /** The popular window; the week by default. */
+  window?: PopularWindow;
   /** "list" (names with counts, default) or "grid" (covers). */
   layout?: "list" | "grid";
   /** The cover grid's columns, as on CardGrid, so covers can match the host's content cards. Default about 9rem per cover. */
@@ -83,7 +86,7 @@ export function EntityDirectory(p: EntityDirectoryProps) {
     if (c.left < n.left || c.right > n.right) nav.scrollLeft += c.left - n.left - (n.width - c.width) / 2;
   }, [letter]);
   const ranked = !!p.popular && letter === null;
-  const filter: EntityFilter = { kind: p.kind, language: p.language, contentKind: p.contentKind, parent: p.parent, scope: p.scope, sort: ranked ? "popular" : sort, letter: letter ?? undefined, pageSize: p.pageSize };
+  const filter: EntityFilter = { kind: p.kind, language: p.language, contentKind: p.contentKind, parent: p.parent, scope: p.scope, sort: ranked ? "popular" : sort, window: ranked ? p.window : undefined, letter: letter ?? undefined, pageSize: p.pageSize };
   return (
     <ContentKitUiRoot appearance={p.appearance} className={cn("grid gap-4 text-sm", p.className)} data-ckui="entity-directory" data-kind={p.kind}>
       {(p.letters !== false || !!p.sorts?.length) && (

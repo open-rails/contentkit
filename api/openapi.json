@@ -5694,7 +5694,7 @@
           {
             "name": "sort",
             "in": "query",
-            "description": "newest, oldest, title, popular[:bucket], top_rated, most_favorited, position or random; the kind's default, else newest",
+            "description": "newest, oldest, title, popular (needs kind; pages by cursor), top_rated, most_favorited, position or random; the kind's default, else newest",
             "schema": {
               "type": "string"
             }
@@ -5721,17 +5721,9 @@
             }
           },
           {
-            "name": "activity_from",
+            "name": "window",
             "in": "query",
-            "description": "inclusive UTC date; requires activity_until, kind and sort=popular; reads prepared daily activity only",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "activity_until",
-            "in": "query",
-            "description": "exclusive UTC date; requires activity_from, kind and sort=popular",
+            "description": "the popular sort's window of activity days: week (the default), 30d, 90d, year, all, month:YYYY-MM, year:YYYY or YYYY-MM-DD..YYYY-MM-DD (last day included)",
             "schema": {
               "type": "string"
             }
@@ -7496,7 +7488,15 @@
           {
             "name": "sort",
             "in": "query",
-            "description": "name (the default), count, newest or popular (one kind with popularity; its hourly ranking, then count)",
+            "description": "popular (the default with kind: its popularity on this site over window, then the entities without activity by count), name (the default without kind), count or newest",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "window",
+            "in": "query",
+            "description": "the popular sort's window: week (the default), 30d, 90d, year, all, month:YYYY-MM, year:YYYY or YYYY-MM-DD..YYYY-MM-DD",
             "schema": {
               "type": "string"
             }
@@ -7890,7 +7890,15 @@
           {
             "name": "sort",
             "in": "query",
-            "description": "name, count, newest or popular",
+            "description": "name (the default), count, newest or popular",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "window",
+            "in": "query",
+            "description": "the popular sort's window, as for the public listing",
             "schema": {
               "type": "string"
             }
@@ -10975,6 +10983,14 @@
             "description": "false ranks the reader's results as anyone's",
             "schema": {
               "type": "boolean"
+            }
+          },
+          {
+            "name": "window",
+            "in": "query",
+            "description": "the popular sort's window of activity days: week (the default), 30d, 90d, year, all, month:YYYY-MM, year:YYYY or YYYY-MM-DD..YYYY-MM-DD (last day included)",
+            "schema": {
+              "type": "string"
             }
           },
           {
@@ -15538,6 +15554,9 @@
           "created_at": {
             "type": "string",
             "format": "date-time"
+          },
+          "popularity": {
+            "$ref": "#/components/schemas/EntityPopularity"
           }
         },
         "required": [
@@ -15759,8 +15778,8 @@
               "$ref": "#/components/schemas/Attribute"
             }
           },
-          "popular": {
-            "$ref": "#/components/schemas/EntityPopularity"
+          "artist": {
+            "type": "boolean"
           }
         }
       },
@@ -15778,6 +15797,9 @@
           },
           "total": {
             "type": "integer"
+          },
+          "popularity": {
+            "$ref": "#/components/schemas/PopularWindow"
           }
         },
         "required": [
@@ -15787,12 +15809,19 @@
       "EntityPopularity": {
         "type": "object",
         "properties": {
-          "content_kind": {
-            "type": "string"
+          "score": {
+            "type": "number"
+          },
+          "polarization": {
+            "type": "number"
+          },
+          "read_through": {
+            "$ref": "#/components/schemas/ReadThrough"
           }
         },
         "required": [
-          "content_kind"
+          "score",
+          "polarization"
         ]
       },
       "EntityRecord": {
@@ -16911,12 +16940,6 @@
           },
           "sort": {
             "type": "string"
-          },
-          "popularity": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/PopularityBucket"
-            }
           },
           "locked": {
             "$ref": "#/components/schemas/Locked"
@@ -18470,78 +18493,17 @@
           }
         }
       },
-      "PopularityBucket": {
+      "PopularWindow": {
         "type": "object",
         "properties": {
-          "id": {
+          "window": {
             "type": "string"
-          },
-          "label": {
-            "type": "string"
-          },
-          "days": {
-            "type": "integer"
-          },
-          "from": {
-            "type": "string"
-          },
-          "until": {
-            "type": "string"
-          },
-          "all": {
-            "type": "boolean"
-          },
-          "scopes": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/PopularityScope"
-            }
-          },
-          "refresh_every": {
-            "type": "integer"
-          }
-        },
-        "required": [
-          "id"
-        ]
-      },
-      "PopularityScope": {
-        "type": "object",
-        "properties": {
-          "domain": {
-            "type": "string"
-          },
-          "language": {
-            "type": "string"
-          }
-        }
-      },
-      "PopularitySnapshot": {
-        "type": "object",
-        "properties": {
-          "bucket": {
-            "type": "string"
-          },
-          "ready": {
-            "type": "boolean"
-          },
-          "window_from": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "window_until": {
-            "type": "string",
-            "format": "date-time"
           },
           "from": {
             "type": "string",
             "format": "date-time"
           },
           "until": {
-            "type": "string",
-            "format": "date-time"
-          },
-          "available_from": {
             "type": "string",
             "format": "date-time"
           },
@@ -18549,12 +18511,49 @@
             "type": "string",
             "format": "date-time"
           },
-          "provisional": {
+          "ready": {
+            "type": "boolean"
+          },
+          "stale": {
             "type": "boolean"
           }
         },
         "required": [
-          "bucket",
+          "window",
+          "from",
+          "until",
+          "ready"
+        ]
+      },
+      "PopularitySnapshot": {
+        "type": "object",
+        "properties": {
+          "window": {
+            "type": "string"
+          },
+          "from": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "until": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "computed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "ready": {
+            "type": "boolean"
+          },
+          "stale": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "window",
+          "from",
+          "until",
           "ready"
         ]
       },
@@ -19056,6 +19055,21 @@
           "offset",
           "limit",
           "files"
+        ]
+      },
+      "ReadThrough": {
+        "type": "object",
+        "properties": {
+          "rate": {
+            "type": "number"
+          },
+          "readers": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "rate",
+          "readers"
         ]
       },
       "ReaderDefaults": {

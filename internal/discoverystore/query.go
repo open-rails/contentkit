@@ -70,6 +70,12 @@ type Filter struct {
 	Tiers []string
 }
 
+// selective reports a filter that keeps few contents: entities, a channel,
+// creators or ids.
+func (f Filter) selective() bool {
+	return len(f.Entities) > 0 || len(f.ChannelIDs) > 0 || len(f.Creators) > 0 || f.IDs != nil
+}
+
 // sel is one compiled request: the reader's predicate over content_facets
 // row f, with its args.
 type sel struct {
@@ -411,8 +417,8 @@ func (s *Service) parseSort(ctx context.Context, raw string, f Filter) (order, e
 	raw = s.sortName(raw, f.Kind)
 	name, _, hasPeriod := strings.Cut(raw, ":")
 	o := order{raw: raw, desc: true, cast: "float8", args: pgx.NamedArgs{}}
-	if hasPeriod && name != discovery.SortPopular {
-		return o, fmt.Errorf("%w: sort %q takes no period", ErrInvalid, raw)
+	if hasPeriod {
+		return o, fmt.Errorf("%w: sort %q takes no period; popular takes window", ErrInvalid, raw)
 	}
 	switch name {
 	case discovery.SortNewest, discovery.SortOldest:
@@ -427,7 +433,7 @@ func (s *Service) parseSort(ctx context.Context, raw string, f Filter) (order, e
 		}
 		o.args["d_sort_title_kinds"] = titleKinds
 	case discovery.SortPopular:
-		return o, fmt.Errorf("%w: popular requires an explicit kind and configured bucket", ErrInvalid)
+		return o, fmt.Errorf("%w: popular pages its ranking, not an order", ErrInvalid)
 	case discovery.SortTopRated:
 		o.expr = contentstore.RatingSQL("coalesce(counts.likes, 0)", "coalesce(counts.dislikes, 0)")
 		o.join = s.countsJoin()
@@ -605,9 +611,6 @@ func (s *Service) page(ctx context.Context, q *sel, o order, after string, limit
 	case o.join != "":
 		// A joined score is per content: take each content once, then score it.
 		where := "true"
-		if name, _, _ := strings.Cut(o.raw, ":"); name == discovery.SortPopular {
-			where = "(" + o.expr + ") > 0"
-		}
 		if cur.ID != "" {
 			where += fmt.Sprintf(" AND ((%s), f.content_id) %s (@d_cv::%s, @d_cid::text)", o.expr, cmp, o.cast)
 		}

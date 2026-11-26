@@ -154,8 +154,6 @@ type Kind struct {
 	Channel *ChannelPolicy `json:"channel,omitempty" yaml:"channel"`
 	// Sort is the default list order.
 	Sort string `json:"sort,omitempty" yaml:"sort"`
-	// Popularity declares the prepared ranking choices, in display/default order.
-	Popularity []PopularityBucket `json:"popularity,omitempty" yaml:"popularity"`
 	// Locked is what a viewer who does not open its content sees of it;
 	// nil is DefaultLocked.
 	Locked *Locked `json:"locked,omitempty" yaml:"locked"`
@@ -359,13 +357,10 @@ type EntityKind struct {
 	// Roles are membership roles (publisher on an artist entity).
 	Roles      []string             `json:"roles,omitempty" yaml:"roles"`
 	Attributes map[string]Attribute `json:"attributes,omitempty" yaml:"attributes"`
-	// Popular lets the kind's listings sort by popularity.
-	Popular *EntityPopularity `json:"popular,omitempty" yaml:"popular"`
-}
-
-// EntityPopularity ranks a kind's entities by recent account favourites.
-type EntityPopularity struct {
-	ContentKind string `json:"content_kind" yaml:"content_kind"`
+	// Artist kinds name who made the content (artists, circles): similar
+	// lists weigh a shared artist and popular listings show its read-through
+	// rate.
+	Artist bool `json:"artist,omitempty" yaml:"artist"`
 }
 
 // HasAvatar reports whether the kind's entities take an avatar.
@@ -479,12 +474,6 @@ func (c Config) Validate() error {
 		if err := validateAttributes("group kind "+name, gk.Attributes); err != nil {
 			return err
 		}
-		if p := gk.Popular; p != nil {
-			content, ok := c.Kinds[p.ContentKind]
-			if !ok || !slices.Contains(content.Entities, name) {
-				return fmt.Errorf("%w: group kind %s: popular names a content kind that groups it", ErrInvalid, name)
-			}
-		}
 	}
 	if ch := c.Channels; ch != nil {
 		if ch.Creation != "staff" && ch.Creation != "users" {
@@ -507,9 +496,6 @@ func (c Config) Validate() error {
 	for name, k := range c.Kinds {
 		if name == "channel" {
 			return fmt.Errorf("%w: channel is reserved for authoring channels", ErrInvalid)
-		}
-		if err := c.validatePopularity(name, k.Popularity); err != nil {
-			return err
 		}
 		if k.AccessScope != "" && k.AccessScope != AccessContent && k.AccessScope != AccessVersion {
 			return fmt.Errorf("%w: kind %s has invalid access_scope %q", ErrInvalid, name, k.AccessScope)

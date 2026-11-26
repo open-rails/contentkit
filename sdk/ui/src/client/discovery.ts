@@ -15,10 +15,12 @@ import type { Http } from "./http.js";
 import { call, routeURL } from "./route.js";
 import { browserSearchHistory, type BrowserSearchHistory } from "./browser-search-history.js";
 
-/** A popularity period. */
-export type Period = "7d" | "30d" | "90d" | "365d" | "all";
-/** A list's order; position orders by the first of `groups` (an ordered group). */
-export type ListSort = "newest" | "oldest" | "title" | "popular" | `popular:${string}` | "top_rated" | "most_favorited" | "position" | "random";
+/** A featured popularity window: rolling, today included so far. */
+export type FeaturedWindow = "week" | "30d" | "90d" | "year" | "all";
+/** A popularity window: featured, a calendar month (`month:2026-10`) or year (`year:2025`), or days `from..last` (YYYY-MM-DD, last included). */
+export type PopularWindow = FeaturedWindow | `month:${string}` | `year:${string}` | `${string}..${string}`;
+/** A list's order; position orders by the first of `groups` (an ordered group). Popular ranks by `window` and needs `kind`. */
+export type ListSort = "newest" | "oldest" | "title" | "popular" | "top_rated" | "most_favorited" | "position" | "random";
 /** How locked contents list: marked (lock, the default) or left out (hide). */
 export type AccessMode = "lock" | "hide";
 
@@ -77,26 +79,20 @@ export type ContentQuery = ContentFilterQuery & ReaderQuery & CardQuery & PageQu
   /** Selection-wide metadata; requested only on the first page. */
   summary?: boolean;
   sort?: ListSort;
-  /** Inclusive UTC date (YYYY-MM-DD); requires activity_until, kind and sort=popular. */
-  activity_from?: string;
-  /** Exclusive UTC date (YYYY-MM-DD); requires activity_from, kind and sort=popular. */
-  activity_until?: string;
+  /** The popular sort's window; week by default. */
+  window?: PopularWindow;
 };
 
-/** A host-declared popularity bucket ID. */
-export type PopularPeriod = string;
-/** Explicit whole UTC dates, from inclusive and until exclusive. */
-export interface PopularDateRange {from:string;until:string}
-export type PopularQuery = Omit<ContentQuery,"sort"|"activity_from"|"activity_until">;
+export type PopularQuery = Omit<ContentQuery,"sort"|"window">;
 
-/** Read a prepared bucket; omitted ID selects the kind's first configured bucket. */
-export function popularQuery(bucket: string | PopularDateRange = "", filters: PopularQuery = {}): ContentQuery {
- return typeof bucket === "string" ? {...filters,sort: bucket ? `popular:${bucket}` : "popular"} : {...filters,sort:"popular",activity_from:bucket.from,activity_until:bucket.until};
+/** A popular list over a window; the week by default. */
+export function popularQuery(window?: PopularWindow, filters: PopularQuery = {}): ContentQuery {
+  return window ? { ...filters, sort: "popular", window } : { ...filters, sort: "popular" };
 }
 
-/** Rank a whole-day range using prepared counts, never raw processing. */
-export function popularBetween(from:string,until:string,filters:PopularQuery & {kind:string}):ContentQuery {
- return popularQuery({from,until},filters);
+/** A popular list over UTC days from through last, both included. */
+export function popularBetween(from: string, last: string, filters: PopularQuery & { kind: string }): ContentQuery {
+  return popularQuery(`${from}..${last}`, filters);
 }
 
 export type SearchQuery = ContentFilterQuery &
@@ -106,6 +102,8 @@ export type SearchQuery = ContentFilterQuery &
   NumberedPageQuery & {
     q: string;
     sort?: "relevance" | ListSort;
+    /** The popular sort's window. */
+    window?: PopularWindow;
     personalize?: boolean;
     summary?: boolean;
   };

@@ -60,6 +60,7 @@ import (
 	"github.com/open-rails/contentkit/internal/locationpolicy"
 	"github.com/open-rails/contentkit/internal/media/workqueue"
 	"github.com/open-rails/contentkit/internal/migrations"
+	"github.com/open-rails/contentkit/internal/rankings"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/token"
 )
@@ -98,6 +99,7 @@ type Engine struct {
 	catalog  *catalogstore.Store
 	versions *versionstore.Service
 	discover *discoverystore.Service
+	rankings *rankings.Engine
 	importer *importstore.Service
 	media    *engineMedia
 	avatars  *engineAvatars
@@ -179,6 +181,11 @@ func newEngine(ctx context.Context, cfg Config, deps Deps, recovery bool) (_ *En
 	e.signals = e.newSignals(deps)
 	if e.hub, err = hub.New(hub.Config{PG: e.pool, PGSchema: e.schema, Tenant: cfg.Scope.AppID.String(), DefaultLanguage: cfg.Content.Languages[0],
 		SignalPlane: e.signals != nil}); err != nil {
+		return nil, err
+	}
+	// Similar lists need only Postgres; rankings fill from the signal plane.
+	if e.rankings, err = rankings.New(rankings.Options{Pool: e.pool, Schema: e.schema, Tenant: cfg.Scope.AppID.String(), Kinds: cfg.Content,
+		Source: e.hub, Redis: deps.Redis, Logger: e.log, Now: now}); err != nil {
 		return nil, err
 	}
 	if e.gate, err = entitlement.NewGate(entitlement.GateConfig{Tenant: cfg.Scope.AppID.String(), Kinds: cfg.Content, Billing: deps.Billing, Logger: e.log, Now: now}); err != nil {
@@ -406,9 +413,15 @@ func (e *Engine) newCatalog(ctx context.Context, deps Deps, now func() time.Time
 		EntitiesChanged: func(ctx context.Context, q entitystore.Querier, changes []entities.Change) error {
 			return e.catalog.EntitiesChanged(ctx, q, changes)
 		},
-		Owned: ownedContent{e}}
+		Owned: ownedContent{e},
+		Hidden: func(ctx context.Context) ([]string, error) {
+			return e.catalog.HiddenEntities(ctx, gate.Actor(ctx), gate.Domain(ctx))
+		}}
 	if e.cfg.Media != nil {
 		opts.Covers, opts.Folders = entityCovers{e}, entityFolders{e}
+	}
+	if e.hub.SignalsConfigured() {
+		opts.Rankings = e.rankings
 	}
 	var err error
 	opts.Gate = e.gate
@@ -649,7 +662,7 @@ func (e *Engine) mount(deps Deps) error {
 func (e *Engine) mountDiscovery(deps Deps) error {
 	o := discoverystore.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Scope.AppID.String(), Kinds: e.cfg.Content, Resolver: e.catalog.Resolver(), Gate: e.gate,
 		Entities: e.entities, Channels: e.channels, Hub: e.hub, Logger: e.log, Now: deps.Clock, Visibility: e.catalog, Reading: e.reading, Activity: e.alog,
-		Feedback: e.cfg.Interactions.Feedback}
+		Feedback: e.cfg.Interactions.Feedback, Rankings: e.rankings}
 	o.Tenure, _ = deps.Billing.(access.TenureReader)
 	if e.media != nil {
 		o.Media = e.media.versions

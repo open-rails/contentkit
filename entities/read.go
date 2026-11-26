@@ -23,7 +23,11 @@ const (
 )
 
 const (
-	// SortPopular orders one kind by its stored ranking, then content count and id.
+	// SortPopular orders one kind by its popularity on the request's site
+	// over a window: the sum of its contents' (see the rankings), the
+	// entities without activity in the window by count, then the ones
+	// whose readers were mostly dissatisfied. The default of a public
+	// listing of one kind.
 	SortPopular Sort = "popular"
 )
 
@@ -54,6 +58,29 @@ type EntityCard struct {
 	// viewer's standing.
 	Access    *EntityAccess `json:"access,omitempty"`
 	CreatedAt time.Time     `json:"created_at"`
+	// Popularity is the entity's standing in a popular listing's window;
+	// absent elsewhere and for an entity without activity in it.
+	Popularity *EntityPopularity `json:"popularity,omitempty"`
+}
+
+// EntityPopularity is an entity's standing over a ranking window.
+type EntityPopularity struct {
+	// Score is the sum of its contents' popularity: quality-weighted
+	// person-days, per live day for the week.
+	Score float64 `json:"score"`
+	// Polarization, from 0 to 1, is how split its readers are between
+	// strong positives and strong negatives.
+	Polarization float64 `json:"polarization"`
+	// ReadThrough is an artist's read-through rate; absent for other kinds
+	// and before it can be measured.
+	ReadThrough *ReadThrough `json:"read_through,omitempty"`
+}
+
+// ReadThrough is the share of an artist's readers who read its next work
+// within 30 days of that work's release.
+type ReadThrough struct {
+	Rate    float64 `json:"rate"`
+	Readers int     `json:"readers"`
 }
 
 // EntityPage is one page of a listing.
@@ -63,6 +90,25 @@ type EntityPage struct {
 	NextCursor string `json:"next_cursor,omitempty"`
 	// Total is every matching entity, on numbered pages only.
 	Total *int `json:"total,omitempty"`
+	// Popularity is the ranking a popular listing served.
+	Popularity *PopularWindow `json:"popularity,omitempty"`
+}
+
+// PopularWindow is the ranking a popular list served.
+type PopularWindow struct {
+	// Window is the ranking window as requested, canonical: week, 30d, 90d,
+	// year, all, month:YYYY-MM, year:YYYY or a range of days.
+	Window string `json:"window"`
+	// From and Until are its UTC days [From, Until).
+	From  time.Time `json:"from"`
+	Until time.Time `json:"until"`
+	// ComputedAt is when it was ranked; absent while it is not Ready.
+	ComputedAt *time.Time `json:"computed_at,omitempty"`
+	// Ready is false while the window has not been ranked: the list is in
+	// the order of entries without activity.
+	Ready bool `json:"ready"`
+	// Stale is a featured ranking whose hourly refresh has since failed.
+	Stale bool `json:"stale,omitempty"`
 }
 
 // EntityDetail is one entity with everything its page shows.

@@ -17,6 +17,7 @@ import (
 	entitlement "github.com/open-rails/contentkit/internal/entitlement"
 	entitystore "github.com/open-rails/contentkit/internal/entitystore"
 	"github.com/open-rails/contentkit/internal/hub"
+	"github.com/open-rails/contentkit/internal/rankings"
 	"github.com/open-rails/contentkit/internal/readingstore"
 	"github.com/open-rails/contentkit/internal/resolve"
 	"github.com/open-rails/contentkit/internal/subject"
@@ -70,6 +71,9 @@ type Options struct {
 	// Hub is the keyword search client and the signal plane: ClickHouse's
 	// activity log, which the reading state is folded from.
 	Hub *hub.Hub
+	// Rankings serve the popular sort, search's popularity, the "for you"
+	// fill and similar lists. Required.
+	Rankings *rankings.Engine
 	// Tenure supplies elapsed access to configured tiers; nil omits it from
 	// account statistics. Billing adapters may implement access.TenureReader.
 	Tenure access.TenureReader
@@ -88,7 +92,7 @@ type Service struct {
 }
 
 type tables struct {
-	facets, items, versions, versionText, codes, memberships, entities, prefs, favorites, reactions, counts, searches, erased, creators, comments, entityNames, normalize, rankings, entityRankings, reposts, reading, feedback string
+	facets, items, versions, versionText, codes, memberships, entities, prefs, favorites, reactions, counts, searches, erased, creators, comments, entityNames, normalize, reposts, reading, feedback string
 }
 
 // New validates o.
@@ -96,8 +100,8 @@ func New(o Options) (*Service, error) {
 	if o.Pool == nil || strings.TrimSpace(o.Schema) == "" || strings.TrimSpace(o.Tenant) == "" {
 		return nil, errors.New("discovery: Pool, Schema and Tenant are required")
 	}
-	if o.Visibility == nil || o.Resolver == nil || o.Gate == nil || o.Entities == nil || o.Hub == nil || o.Reading == nil {
-		return nil, errors.New("discovery: Visibility, Resolver, Gate, Groups, Hub and Reading are required")
+	if o.Visibility == nil || o.Resolver == nil || o.Gate == nil || o.Entities == nil || o.Hub == nil || o.Reading == nil || o.Rankings == nil {
+		return nil, errors.New("discovery: Visibility, Resolver, Gate, Groups, Hub, Reading and Rankings are required")
 	}
 	if err := o.Kinds.Validate(); err != nil {
 		return nil, fmt.Errorf("discovery: Kinds: %w", err)
@@ -125,8 +129,7 @@ func New(o Options) (*Service, error) {
 		entities: q("content_entities"), prefs: q("content_filter_prefs"), favorites: q("content_favorites"), reactions: q("content_reactions"), counts: q("content_interaction_counts"),
 		searches: q("content_searches"), erased: q("content_erased_subjects"), creators: q("content_creators"),
 		comments:    q("content_comments"),
-		entityNames: q("content_entity_names"), normalize: q("contentkit_keyword_normalize"), rankings: q("content_popular_rankings"),
-		entityRankings: q("content_entity_popular_rankings"), reposts: q("content_channel_reposts"), reading: q("reading_state"), feedback: q("content_reaction_feedback")}}
+		entityNames: q("content_entity_names"), normalize: q("contentkit_keyword_normalize"), reposts: q("content_channel_reposts"), reading: q("reading_state"), feedback: q("content_reaction_feedback")}}
 	return s, nil
 }
 
