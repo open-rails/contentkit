@@ -502,6 +502,7 @@ func (e *Engine) newMedia(ctx context.Context, deps Deps, now func() time.Time) 
 			return nil, err
 		}
 	}
+	m.reg.ReadAccountDefaults(m.cache)
 	manifests, err := mediastore.NewManifests(deps.Store, m.reg, mediastore.ManifestOptions{Written: m.cache.Record, Current: m.cache.ETag, Now: now})
 	if err != nil {
 		return nil, err

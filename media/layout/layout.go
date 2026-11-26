@@ -13,8 +13,9 @@
 //	           /tmp/u-{uuid}          staged uploads; never served
 //	           /tmp/w-{run}-{name}    a worker run's scratch (video chunks); never served
 //	{kind}/_default/                  a kind's default images, an item like any other
-//	_accounts/{kind}/{id}/…           a tenant's account media (avatars), the same folders,
-//	                                  in the avatar primary's bucket
+//	_accounts/{kind}/{id}/…           a tenant's account media (avatars) and, as
+//	                                  _accounts/{kind}/_default/, their kind's defaults:
+//	                                  the same folders, in the avatar primary's bucket
 //
 // The store tags everything in tmp/ temporary when it writes it, so the
 // bucket's lifecycle expires what nothing deletes.

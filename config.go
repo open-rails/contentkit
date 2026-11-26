@@ -158,19 +158,18 @@ type MediaConfig struct {
 }
 
 // AvatarsConfig is people's avatars, keyed by the auth subject and shown
-// beside comment authors and in moderation lists at URLs built from the
-// person's id (the kind's Stable preset), so nothing looks one up. Of the
-// sites sharing an account store, one holds them: the primary. Another
-// sets Primary and keeps none: its people's avatar uploads, edits and
-// editor reads go to the primary with Key, its media host serves the
-// primary's files (its gateway Route's accounts names the primary's bucket,
-// where they are under _accounts/), and the primary's AnonymizeAccount
-// erases them.
+// beside comment authors and in moderation lists from the tenant account
+// item cache, else the kind's default. Of the sites sharing an account
+// store, one holds them and the defaults: the primary. Another sets Primary
+// and keeps none: its people's avatar uploads, edits and editor reads go to
+// the primary with Key, its media host serves the primary's files (its
+// gateway Route's accounts names the primary's bucket, where they are under
+// _accounts/), and the primary's AnonymizeAccount erases them.
 type AvatarsConfig struct {
 	// Kind is the avatar kind; nil is avatar.User() (accounts/user).
 	Kind *media.Kind `yaml:"kind" json:"kind"`
-	// Preset is the kind's Stable public preset people are shown with;
-	// empty is "avatar".
+	// Preset is the kind's public preset people are shown with; empty is
+	// "avatar".
 	Preset string `yaml:"preset" json:"preset"`
 	// Primary is the primary's ContentKit API base, as its routes are
 	// mounted ("https://doujins.dev/api/v1/contentkit"); empty: this engine
@@ -203,6 +202,11 @@ func (c Config) MediaKinds() (media.Config, error) {
 	mc := c.Media.Config
 	if mc.Avatars != (media.Avatars{}) {
 		return media.Config{}, errors.New("contentkit: people's avatars are Config.Accounts.Avatars, not Config.Media.Avatars")
+	}
+	for _, k := range mc.Kinds {
+		if k.Account {
+			return media.Config{}, fmt.Errorf("contentkit: kind %q: account media is Config.Accounts.Avatars', held by the avatar primary", k.Name)
+		}
 	}
 	if a := c.avatars; a != nil && a.Primary == "" {
 		kind, preset := a.kind()

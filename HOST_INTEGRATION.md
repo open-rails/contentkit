@@ -1161,10 +1161,13 @@ cfg.Accounts.Avatars = &contentkit.AvatarsConfig{
 
 - Every author is listed with the avatar's current image, read from the
   tenant's account item cache (`content_media_items` in the account schema,
-  which every site of the tenant reads), else the kind's default; the
-  content model's `avatars` (`GET /v1/kinds`) is the preset rule with its
-  `default_image`. URLs are at the site's own media host,
-  `{media}/v1/_accounts/user/{id}/public/{sha256}`. The
+  which every site of the tenant reads), else the kind's default, read from
+  the same cache; the content model's `avatars` (`GET /v1/kinds`) is the
+  preset rule with its `default_image`. The primary publishes the default
+  (`media-worker publish-defaults` with `DATABASE_URL` and
+  `MEDIA_ACCOUNT_SCHEMA`) into `_accounts/user/_default/` in its bucket
+  and that cache; other sites publish no account defaults. URLs are at the
+  site's own media host, `{media}/v1/_accounts/user/{id}/public/{sha256}`. The
   gateway's resource policy is same-site, so each site's host serves them:
   every media host's `MEDIA_GATEWAY_ROUTES` entry names the primary's bucket
   in `accounts`.
@@ -1276,10 +1279,13 @@ Every item's current public images are cached in Postgres (`content_media_items`
   Publication and billing change only database access policy, private token
   issuance and which files a release moves into `private/`.
 - Render the defaults from the deploy step with the worker image:
-  `media-worker publish-defaults` (`MEDIA_KINDS_FILE`, `MEDIA_S3_*`, no
-  database) writes each kind's `Public.Default` images into its `_default`
-  item, from `MEDIA_DEFAULTS_DIR` over ContentKit's own (the avatar
-  silhouette). Repeating it writes nothing.
+  `media-worker publish-defaults` (`MEDIA_KINDS_FILE`, `MEDIA_S3_*`)
+  writes each kind's `Public.Default` images into its `_default` item, from
+  `MEDIA_DEFAULTS_DIR` over ContentKit's own (the avatar silhouette). App
+  kinds need no database. The avatar primary's account kind also needs
+  `DATABASE_URL` and `MEDIA_ACCOUNT_SCHEMA`: its defaults are recorded in
+  the tenant account cache, where every site reads them. Repeating it writes
+  nothing (and records what a restored database lost).
 
 ### Processing and readiness
 

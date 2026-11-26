@@ -32,8 +32,10 @@ type Registry struct {
 	declared int // cfg.Kinds[:declared] are c's
 	kinds    map[string]*RegisteredKind
 	all      []*RegisteredKind // declared storage kinds
-	// defaults reads a kind's default images (Manifests sets it).
-	defaults func(ctx context.Context, k *RegisteredKind, p *media.Public) (media.PublicImage, bool)
+	// defaults reads an app kind's default images from its bucket
+	// (NewManifests sets it); accountDefaults an account kind's from the
+	// tenant account cache every site reads (ReadAccountDefaults).
+	defaults, accountDefaults func(ctx context.Context, k *RegisteredKind, p *media.Public) (media.PublicImage, bool)
 	// shown memoizes defaults for defaultTTL: they change only when
 	// publish-defaults runs.
 	shown sync.Map // kind/preset -> shownDefault
@@ -49,19 +51,28 @@ type shownDefault struct {
 
 // defaultImage is preset p's default image of k, memoized.
 func (r *Registry) defaultImage(ctx context.Context, k *RegisteredKind, p *media.Public) (media.PublicImage, bool) {
-	if r.defaults == nil || !hasDefault(p) {
+	read := r.defaults
+	if k.Account {
+		read = r.accountDefaults
+	}
+	if read == nil || !hasDefault(p) {
 		return media.PublicImage{}, false
 	}
 	key := k.Name + "/" + p.Name
 	if v, ok := r.shown.Load(key); ok && time.Now().Before(v.(shownDefault).until) {
 		return v.(shownDefault).image, v.(shownDefault).ok
 	}
-	image, ok := r.defaults(ctx, k, p)
+	image, ok := read(ctx, k, p)
 	if ctx.Err() == nil {
 		r.shown.Store(key, shownDefault{image: image, ok: ok, until: time.Now().Add(defaultTTL)})
 	}
 	return image, ok
 }
+
+// ReadAccountDefaults has r read its account kinds' default images from c,
+// the cache their items are recorded in: no site but the avatar primary
+// reads the primary's bucket.
+func (r *Registry) ReadAccountDefaults(c *PGCache) { r.accountDefaults = c.defaultImage }
 
 // NewRegistry validates c and its version reader configuration.
 func NewRegistry(c media.Config, hooks Hooks) (*Registry, error) {

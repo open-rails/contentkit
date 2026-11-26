@@ -613,15 +613,29 @@ type ItemManifest struct {
 
 // Rebuild records every item of kinds in the cache from the bucket: what a
 // database restored from a backup, or dropped, needs. Each recorded item
-// wakes its processing, release and collection again. Rows already at a
-// manifest's revision are left alone. It returns the items recorded and
-// stops at the first error.
+// wakes its processing, release and collection again; an account kind's
+// defaults are recorded too. Rows already at a manifest's revision are left
+// alone. It returns the items recorded and stops at the first error.
 func (j *Jobs) Rebuild(ctx context.Context, cache *PGCache, kinds ...string) (int, error) {
 	n := 0
 	for _, name := range kinds {
 		k, err := j.reg.Kind(name)
 		if err != nil {
 			return n, err
+		}
+		if k.Account {
+			item := k.DefaultsItem()
+			m, etag, err := j.manifests.get(ctx, item.ManifestKey())
+			switch {
+			case errors.Is(err, ErrNotFound):
+			case err != nil:
+				return n, err
+			default:
+				if err := cache.Record(ctx, item, m, etag); err != nil {
+					return n, err
+				}
+				n++
+			}
 		}
 		for it, err := range j.Items(ctx, k) {
 			if err != nil {
