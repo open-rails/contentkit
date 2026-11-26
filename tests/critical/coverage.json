@@ -3565,6 +3565,20 @@
       ]
     },
     {
+      "id": "CK-J09-S68",
+      "journey": "CK-J09",
+      "behavior": "A version is live from the later of its completed release and its scheduled publication: re-scheduling a released item hides its page, edition, card and media at once, before the withdrawal of its earlier release runs; re-accepting an open publication keeps its live_from; a first scheduled publication and a plain unpublish are unchanged",
+      "status": "verified",
+      "evidence": [
+        "fix/309-reschedule-visibility: real PostgreSQL, bucket and media worker; publication jobs run only when the case runs them, so the re-schedule lands while the withdrawal is still queued behind the first release."
+      ],
+      "cases": [
+        "TestRescheduledPublication/CK-J09-S68_rescheduling_a_released_item_hides_it_before_its_withdrawal_runs",
+        "TestRescheduledPublication/CK-J09-S68_a_first_scheduled_publication_opens_once_released_at_its_date",
+        "TestRescheduledPublication/CK-J09-S68_unpublishing_hides_at_once_and_after_its_withdrawal"
+      ]
+    },
+    {
       "id": "CK-J32-S01",
       "journey": "CK-J32",
       "behavior": "Opens, progress and searches land in the activity log stamped with subject, site, access, UTC offset and their list",
