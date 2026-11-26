@@ -60,12 +60,7 @@ At 15.1M rows (2.7 GB of heap, 9.7 GB of indexes) expect about 30–60 s for the
 
 Media's bucket is now the only record of an item's files (README "Media"). Migrations `postgres/0076_bucket_media_model` and `accounts/0004_bucket_media_model` drop the media journal, allocations, cleanup, processing, publication, publication-request, quota, lock and delivery tables and create the cache `content_media_items`. Stable avatar names, MP4 download renditions, ZIP presets, upload quotas (`UploadLimits`, `Channels.Uploads`) and media restore are gone; `MEDIA_GATEWAY_DEFAULTS` is no longer read.
 
-The bucket must never have had versioning. Move a host's media into a new one, with the old workers and engine stopped:
-
-1. Create the new bucket without versioning, and point the worker's `MEDIA_S3_BUCKET` at it.
-2. Run `media-worker move` with `MEDIA_MOVE_SOURCE_BUCKET` naming the old bucket (same endpoint and key), `MEDIA_KINDS_FILE` and `MEDIA_CONTENT_SCHEMA`. It copies each item's live files server-side under their hash names, writes its new manifest, verifies every size and fills the cache. It only reads the old bucket, and re-running it skips moved items.
-3. Run `media-worker publish-defaults`, then start the release's engine, worker and gateway on the new bucket. Releases re-run from the cache.
-4. Delete the old bucket once the site is verified.
+The bucket must never have had versioning, and an existing bucket's media is not carried over: start the release on a new, empty bucket created without versioning (`MEDIA_S3_BUCKET`), run `media-worker publish-defaults`, then import the media again. Delete the old bucket once the site is verified.
 
 A video kind's download serves its original as uploaded: drop MP4 presets from the registry.
 

@@ -70,7 +70,6 @@ type Store struct {
 	probing  chan struct{}                      // held while probing
 	probe    string
 	part     int64
-	cfg      Config
 }
 
 var _ media.Store = (*Store)(nil)
@@ -120,7 +119,7 @@ func New(cfg Config) (*Store, error) {
 	})
 	st := &Store{client: client, creds: creds, signer: v4.NewSigner(), bucket: cfg.Bucket, region: cfg.Region,
 		internal: internal, public: pub, pathSty: cfg.UsePathStyle, part: cfg.CopyPartSize, probing: make(chan struct{}, 1),
-		probe: cfg.ProbePrefix, cfg: cfg}
+		probe: cfg.ProbePrefix}
 	if cfg.Capabilities != nil {
 		caps := *cfg.Capabilities
 		st.caps.Store(&caps)
@@ -257,25 +256,6 @@ func (s *Store) Folders(ctx context.Context, prefix string) iter.Seq2[string, er
 			}
 		}
 	}
-}
-
-// CopyFrom copies the object head describes (Head of another bucket on the
-// same endpoint, readable with this store's key) to dst, server-side and in
-// parts past the copy part size: the data move between buckets.
-func (s *Store) CopyFrom(ctx context.Context, bucket string, head media.Object, dst string) (media.Object, error) {
-	return s.copy(ctx, bucket+"/"+head.Key, dst, head, "")
-}
-
-// Bucket is the store's bucket.
-func (s *Store) Bucket() string { return s.bucket }
-
-// Config is the store's configuration for bucket: another bucket on the
-// same endpoint with the same key.
-func (s *Store) Config(bucket string) Config {
-	c := s.cfg
-	c.Bucket = bucket
-	c.Capabilities = nil
-	return c
 }
 
 // Copy copies src to dst in the bucket: one CopyObject up to the copy part

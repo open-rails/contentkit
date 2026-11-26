@@ -21,10 +21,6 @@
 //
 // `media-worker rebuild` refills the database's item cache from the
 // bucket's manifests (the same environment as the worker).
-//
-// `media-worker move` copies a pre-v4 bucket into a new never-versioned one
-// (internal/mediamove): MEDIA_MOVE_SOURCE_BUCKET on the same endpoint and
-// key, the worker's environment for the destination.
 package main
 
 import (
@@ -65,12 +61,8 @@ func main() {
 		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 		err = rebuild(ctx, log)
 		stop()
-	case "move":
-		ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-		err = move(ctx, log)
-		stop()
 	default:
-		err = fmt.Errorf("unknown command %q: run without arguments, or publish-defaults, rebuild or move", strings.Join(args, " "))
+		err = fmt.Errorf("unknown command %q: run without arguments, publish-defaults or rebuild", strings.Join(args, " "))
 	}
 	if err != nil {
 		log.Error("media-worker", "error", err)
