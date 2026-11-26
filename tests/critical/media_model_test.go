@@ -744,7 +744,13 @@ func TestMediaCacheRebuild(t *testing.T) {
 			must(t, err)
 			return cached, v
 		}
-		cached, before := snapshot()
+		// The release is recorded in the catalog after its move.
+		var cached string
+		var before catalog.Version
+		waitForWithin(t, 30*time.Second, func() bool {
+			cached, before = snapshot()
+			return before.Live
+		})
 		q := func(table string) string { return pgx.Identifier{g.world.schema, table}.Sanitize() }
 		_, err := g.world.pool.Exec(t.Context(), `DELETE FROM `+q("content_media_items"))
 		must(t, err)
