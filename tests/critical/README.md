@@ -46,6 +46,7 @@ browser screenshots even when the run fails.
 Provide disposable services through:
 
 - `CONTENTKIT_CRITICAL_PG`: PostgreSQL 18 with PGroonga 4.1+ and pg_trgm.
+- `CONTENTKIT_CRITICAL_PGBOUNCER`: PgBouncer in transaction mode in front of that database, with `max_prepared_statements = 0` and a `critical_one` alias holding one server connection ([`.github/pgbouncer/pgbouncer.ini`](../../.github/pgbouncer/pgbouncer.ini)).
 - `CONTENTKIT_CRITICAL_S3_ENDPOINT`, `CONTENTKIT_CRITICAL_S3_USER`,
   `CONTENTKIT_CRITICAL_S3_PASSWORD`: S3-compatible storage supporting signed
   checksums, multipart and conditional writes. Browser uploads also need CORS.

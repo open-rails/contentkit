@@ -2975,6 +2975,22 @@
       ]
     },
     {
+      "id": "CK-J01-S18",
+      "journey": "CK-J01",
+      "behavior": "Behind a transaction-mode PgBouncer with Deps.PostgresSession direct, the engine migrates, works its jobs and hears their notifications, its source locks exclude another process on a direct session, and nothing relies on a server-side prepared statement; a pooled Postgres with named statements is refused",
+      "status": "verified",
+      "cases": [
+        "TestTransactionPooler/CK-J01-S18_named_statements_break_behind_the_pooler_and_are_refused",
+        "TestTransactionPooler/CK-J01-S18_jobs_work_through_the_pooler_and_hear_their_notifications",
+        "TestTransactionPooler/CK-J01-S18_source_locks_hold_a_direct_session_and_exclude_another_process",
+        "TestTransactionPooler/CK-J01-S18_concurrent_writes_through_the_pooler_prepare_no_statement"
+      ],
+      "evidence": [
+        "A real PgBouncer (transaction mode, max_prepared_statements=0) fronts the job's PostgreSQL. Two clients of a one-connection alias share its backend, so a second client's named statement fails 42P05 while cache_describe clients run there; New refuses a pooled Postgres in cache_statement mode. An engine on the pooler migrates through its session, a probe job behind a 30 s poll starts within 5 s of its insert, a segments write queues for a source lock another process holds on a backend named by the session, and 16 concurrent writes and the start-up jobs record no prepared-statement error.",
+        "contentkit#307: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
       "id": "CK-J31-S05",
       "journey": "CK-J31",
       "behavior": "A remote host delivers account deletion, restore and purge over HTTP",

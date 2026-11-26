@@ -4,18 +4,18 @@ import (
 	"context"
 	"slices"
 
-	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/open-rails/contentkit/internal/pglock"
 )
 
 // LockSources serializes source selection and catalog segment writes before
-// either takes row locks. The locks live on the shared lock session, leaving
-// the caller's pool available for manifest commits and catalog notifications.
-func LockSources(ctx context.Context, pool *pgxpool.Pool, tenant string, vers []string) (func(), error) {
+// either takes row locks. The locks live on a direct session of their own,
+// leaving the caller's pool available for manifest commits and catalog
+// notifications.
+func LockSources(ctx context.Context, locks *pglock.Locks, tenant string, vers []string) (func(), error) {
 	if len(vers) == 0 {
 		return func() {}, nil
 	}
-	if pool == nil || tenant == "" {
+	if locks == nil || tenant == "" {
 		return nil, ErrInvalid
 	}
 	ids := slices.Clone(vers)
@@ -41,7 +41,7 @@ func LockSources(ctx context.Context, pool *pgxpool.Pool, tenant string, vers []
 	for _, id := range ids {
 		// Keep the original media.PGLocker namespace so existing publishers and
 		// upgraded catalog writers contend on exactly the same advisory key.
-		r, _, err := pglock.Acquire(ctx, pool, "contentkit:media:contentkit:versions:"+tenant+":"+id, true)
+		r, _, err := locks.Acquire(ctx, "contentkit:media:contentkit:versions:"+tenant+":"+id, true)
 		if err != nil {
 			return nil, err
 		}

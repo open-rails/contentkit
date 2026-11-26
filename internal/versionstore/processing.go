@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/open-rails/contentkit/contentref"
 	mediastore "github.com/open-rails/contentkit/internal/mediastore"
+	"github.com/open-rails/contentkit/internal/pglock"
 	versions "github.com/open-rails/contentkit/media/versions"
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverpgxv5"
@@ -20,9 +21,9 @@ import (
 // Recorded writes its media facts and wakes its release. A deleted manifest
 // (a soft delete, a tombstone) needs neither, and its writer may hold those
 // rows itself.
-func Recorded(pool *pgxpool.Pool, riverSchema, contentSchema string, registry *mediastore.Registry) (mediastore.CatalogHook, error) {
-	if pool == nil || contentSchema == "" || registry == nil {
-		return mediastore.CatalogHook{}, errors.New("versions: the recorded hook needs pool, content schema and registry")
+func Recorded(pool *pgxpool.Pool, locks *pglock.Locks, riverSchema, contentSchema string, registry *mediastore.Registry) (mediastore.CatalogHook, error) {
+	if pool == nil || locks == nil || contentSchema == "" || registry == nil {
+		return mediastore.CatalogHook{}, errors.New("versions: the recorded hook needs pool, locks, content schema and registry")
 	}
 	client, err := river.NewClient(riverpgxv5.New(pool), &river.Config{Schema: riverSchema})
 	if err != nil {
@@ -40,7 +41,7 @@ func Recorded(pool *pgxpool.Pool, riverSchema, contentSchema string, registry *m
 				return nil, versions.Target{}, false, err
 			}
 		}
-		s := publicationService(pool, contentSchema, catalog, registry)
+		s := publicationService(pool, locks, contentSchema, catalog, registry)
 		s.client = client
 		return s, versions.Target{Content: ref.ContentID, Version: ref.Version()}, true, nil
 	}
@@ -80,15 +81,15 @@ func Recorded(pool *pgxpool.Pool, riverSchema, contentSchema string, registry *m
 
 // publicationService is the narrow storage/scheduling subset used by stock
 // processors. It creates no authentication runtime or separate job handler.
-func publicationService(pool *pgxpool.Pool, schema, tenant string, reg *mediastore.Registry) *Service {
+func publicationService(pool *pgxpool.Pool, locks *pglock.Locks, schema, tenant string, reg *mediastore.Registry) *Service {
 	q := func(name string) string { return pgxIdent(schema, name) }
-	return &Service{o: Options{Pool: pool, Schema: schema, Tenant: tenant, Now: time.Now}, reg: reg,
+	return &Service{o: Options{Pool: pool, Locks: locks, Schema: schema, Tenant: tenant, Now: time.Now}, reg: reg,
 		t: tables{items: q("content_items"), versions: q("content_versions"), segments: q("content_segments"), entities: q("content_entities"), facets: q("content_facets")}}
 }
 
 // PrepareDerivatives prepares page order and automatic cover inputs inside the
 // existing derivative attempt. Drafts get the same preparation without publishing.
-func PrepareDerivatives(pool *pgxpool.Pool, schema string, manifests *mediastore.Manifests, uploads *mediastore.Uploads) func(context.Context, contentref.ContentRef) error {
+func PrepareDerivatives(pool *pgxpool.Pool, locks *pglock.Locks, schema string, manifests *mediastore.Manifests, uploads *mediastore.Uploads) func(context.Context, contentref.ContentRef) error {
 	return func(ctx context.Context, ref contentref.ContentRef) error {
 		reg := manifests.Registry()
 		k, err := reg.Kind(ref.ContentKind)
@@ -104,7 +105,7 @@ func PrepareDerivatives(pool *pgxpool.Pool, schema string, manifests *mediastore
 				return err
 			}
 		}
-		s := publicationService(pool, schema, tenant, reg)
+		s := publicationService(pool, locks, schema, tenant, reg)
 		s.o.Logger = slog.Default()
 		s.m = Media{Manifests: manifests, Uploads: uploads}
 		t := versions.Target{Content: ref.ContentID, Version: ref.Version()}

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/open-rails/contentkit/media"
@@ -18,7 +19,8 @@ import (
 // environment, with TuningFromEnv; the host then sets Kinds. Neither is
 // dialed. Close the Pool when done.
 //
-//	DATABASE_URL                 host Postgres (holds MEDIA_WORKER_SCHEMA)
+//	DATABASE_URL                 host Postgres (holds MEDIA_WORKER_SCHEMA); may be a transaction-pooling PgBouncer with DATABASE_SESSION_URL
+//	DATABASE_SESSION_URL         the same database without the pooler, for session locks and River's LISTEN (optional)
 func FromEnv(ctx context.Context) (Config, error) {
 	var c Config
 	if err := c.TuningFromEnv(); err != nil {
@@ -29,7 +31,19 @@ func FromEnv(ctx context.Context) (Config, error) {
 		return c, err
 	}
 	c.Store = store
-	if c.Pool, err = pgxpool.New(ctx, os.Getenv("DATABASE_URL")); err != nil {
+	if url := os.Getenv("DATABASE_SESSION_URL"); url != "" {
+		if c.Session, err = pgxpool.ParseConfig(url); err != nil {
+			return c, fmt.Errorf("DATABASE_SESSION_URL: %w", err)
+		}
+	}
+	pooled, err := pgxpool.ParseConfig(os.Getenv("DATABASE_URL"))
+	if err != nil {
+		return c, fmt.Errorf("DATABASE_URL: %w", err)
+	}
+	if c.Session != nil && pooled.ConnConfig.DefaultQueryExecMode == pgx.QueryExecModeCacheStatement {
+		pooled.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeCacheDescribe // no named statements through the pooler
+	}
+	if c.Pool, err = pgxpool.NewWithConfig(ctx, pooled); err != nil {
 		return c, fmt.Errorf("DATABASE_URL: %w", err)
 	}
 	return c, nil

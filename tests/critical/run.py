@@ -130,7 +130,7 @@ def main():
     else:
         # Pure public-value selections need no database. Every integration
         # fixture independently refuses an empty DSN before opening a pool.
-        required = [] if args.focus else ["CONTENTKIT_CRITICAL_PG"]
+        required = [] if args.focus else ["CONTENTKIT_CRITICAL_PG", "CONTENTKIT_CRITICAL_PGBOUNCER"]
         if not args.focus or re.search("Media|Upload|Multipart|Gateway|Browser", args.focus):
             required += ["CONTENTKIT_CRITICAL_S3_ENDPOINT", "CONTENTKIT_CRITICAL_S3_USER", "CONTENTKIT_CRITICAL_S3_PASSWORD"]
         if not args.focus:

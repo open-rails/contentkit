@@ -304,7 +304,7 @@ func init() {
 		if e.started || e.closed || e.erasureRecovery {
 			return nil, errors.New("contentkit: the engine cannot start")
 		}
-		fleet, err := riverhelpers.New(ctx, e.pool, cfg, append([]riverhelpers.Contribution{e.jobs.contribution()}, extra...)...)
+		fleet, err := riverhelpers.NewWithSession(ctx, e.pool, e.session, cfg, append([]riverhelpers.Contribution{e.jobs.contribution()}, extra...)...)
 		if err != nil {
 			return nil, err
 		}

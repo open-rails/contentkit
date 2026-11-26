@@ -1,8 +1,9 @@
-// Package pglock holds Postgres session advisory locks outside the holder's
-// pool, so the holder's work may use every connection of it. A free key is
-// taken on one session shared by every lock the process holds through a pool;
-// only a key someone already holds is waited for on a connection of its own,
-// so extra connections follow contention, not the number of locks held.
+// Package pglock holds Postgres session advisory locks on direct sessions of
+// their own, outside the holder's pool: the work may use every connection of
+// that pool, which may be a transaction pooler. A free key is taken on one
+// session shared by every lock a Locks holds; only a key someone already holds
+// is waited for on a connection of its own, so extra connections follow
+// contention, not the number of locks held.
 package pglock
 
 import (
@@ -31,14 +32,13 @@ const (
 	connectTimeout = 15 * time.Second
 )
 
-var sessions sync.Map // *pgxpool.Pool -> *session
-
 // ErrContended asks callers to retry through their existing request or job path.
 var ErrContended = errors.New("pglock: acquisition budget expired; retry")
 
-// session is the shared session of one pool's locks.
-type session struct {
-	cfg *pgx.ConnConfig
+// Locks takes one process's advisory locks on sessions dialed from a direct
+// (unpooled) configuration.
+type Locks struct {
+	cfg *pgxpool.Config
 
 	mu   sync.Mutex
 	conn *pgx.Conn
@@ -47,28 +47,41 @@ type session struct {
 	held map[string]bool
 }
 
-func sessionFor(pool *pgxpool.Pool) *session {
-	if s, ok := sessions.Load(pool); ok {
-		return s.(*session)
+// New dials lock sessions from cfg, which must reach Postgres directly: a
+// transaction pooler would end a lock's session with its first statement.
+func New(cfg *pgxpool.Config) *Locks {
+	cfg = cfg.Copy()
+	if cfg.ConnConfig.RuntimeParams == nil {
+		cfg.ConnConfig.RuntimeParams = map[string]string{}
 	}
-	s, _ := sessions.LoadOrStore(pool, &session{cfg: lockConfig(pool), held: map[string]bool{}})
-	return s.(*session)
+	cfg.ConnConfig.RuntimeParams["idle_session_timeout"] = strconv.FormatInt(idleLimit.Milliseconds(), 10)
+	return &Locks{cfg: cfg, held: map[string]bool{}}
 }
 
-func lockConfig(pool *pgxpool.Pool) *pgx.ConnConfig {
-	cfg := pool.Config().ConnConfig.Copy()
-	if cfg.RuntimeParams == nil {
-		cfg.RuntimeParams = map[string]string{}
+func (s *Locks) dial(ctx context.Context) (*pgx.Conn, error) {
+	cc := s.cfg.ConnConfig.Copy()
+	if s.cfg.BeforeConnect != nil {
+		if err := s.cfg.BeforeConnect(ctx, cc); err != nil {
+			return nil, err
+		}
 	}
-	cfg.RuntimeParams["idle_session_timeout"] = strconv.FormatInt(idleLimit.Milliseconds(), 10)
-	return cfg
+	conn, err := pgx.ConnectConfig(ctx, cc)
+	if err != nil {
+		return nil, err
+	}
+	if s.cfg.AfterConnect != nil {
+		if err := s.cfg.AfterConnect(ctx, conn); err != nil {
+			_ = conn.Close(context.WithoutCancel(ctx))
+			return nil, err
+		}
+	}
+	return conn, nil
 }
 
 // Acquire locks key against every other holder, in this process or another.
 // Without wait it returns ok=false while anyone else holds key; with it, it
 // waits in Postgres's queue for key, where Postgres detects deadlocks.
-func Acquire(ctx context.Context, pool *pgxpool.Pool, key string, wait bool) (release func(), ok bool, err error) {
-	s := sessionFor(pool)
+func (s *Locks) Acquire(ctx context.Context, key string, wait bool) (release func(), ok bool, err error) {
 	conn, ok, err := s.try(key)
 	if err != nil {
 		return nil, false, err
@@ -80,7 +93,7 @@ func Acquire(ctx context.Context, pool *pgxpool.Pool, key string, wait bool) (re
 	if !wait {
 		return nil, false, nil
 	}
-	return waitFor(ctx, s.cfg, key)
+	return s.waitFor(ctx, key)
 }
 
 // try takes key on the shared session unless this process already holds it
@@ -88,7 +101,7 @@ func Acquire(ctx context.Context, pool *pgxpool.Pool, key string, wait bool) (re
 // that took the lock. Its queries ignore the caller's context: pgx closes a
 // connection whose query is cancelled, which would end every other holder's
 // lock.
-func (s *session) try(key string) (*pgx.Conn, bool, error) {
+func (s *Locks) try(key string) (*pgx.Conn, bool, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), queryTimeout)
 	defer cancel()
 	s.mu.Lock()
@@ -98,7 +111,7 @@ func (s *session) try(key string) (*pgx.Conn, bool, error) {
 	}
 	if s.conn == nil {
 		connectCtx, cancel := context.WithTimeout(ctx, connectTimeout)
-		conn, err := pgx.ConnectConfig(connectCtx, s.cfg)
+		conn, err := s.dial(connectCtx)
 		cancel()
 		if err != nil {
 			return nil, false, connectError(err)
@@ -117,7 +130,7 @@ func (s *session) try(key string) (*pgx.Conn, bool, error) {
 	return s.conn, ok, nil
 }
 
-func (s *session) release(key string, conn *pgx.Conn) {
+func (s *Locks) release(key string, conn *pgx.Conn) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	// A lock taken on a session that has since closed already ended with it.
@@ -134,7 +147,7 @@ func (s *session) release(key string, conn *pgx.Conn) {
 	}
 }
 
-func (s *session) keepAlive(conn *pgx.Conn) {
+func (s *Locks) keepAlive(conn *pgx.Conn) {
 	t := time.NewTicker(pingEvery)
 	defer t.Stop()
 	for range t.C {
@@ -162,7 +175,7 @@ func (s *session) keepAlive(conn *pgx.Conn) {
 // forgetClosed drops the session's connection if an error closed it, with
 // every lock it held. A failed query on a live connection leaves its locks
 // held, and closing it would end every one of them.
-func (s *session) forgetClosed() bool {
+func (s *Locks) forgetClosed() bool {
 	if !s.conn.IsClosed() {
 		return false
 	}
@@ -171,7 +184,7 @@ func (s *session) forgetClosed() bool {
 	return true
 }
 
-func (s *session) closeLocked() {
+func (s *Locks) closeLocked() {
 	ctx, cancel := context.WithTimeout(context.Background(), connectTimeout)
 	defer cancel()
 	_ = s.conn.Close(ctx)
@@ -181,12 +194,12 @@ func (s *session) closeLocked() {
 
 // waitFor waits for key on a connection of its own, which then holds it;
 // release closes the connection, which ends the lock.
-func waitFor(ctx context.Context, cfg *pgx.ConnConfig, key string) (release func(), ok bool, err error) {
+func (s *Locks) waitFor(ctx context.Context, key string) (release func(), ok bool, err error) {
 	// Reuse the 15-second connect budget for connect plus queueing, well below
 	// media's one-minute settlement and 30-minute publication deadlines.
 	waitCtx, cancel := context.WithTimeout(ctx, connectTimeout)
 	defer cancel()
-	conn, err := pgx.ConnectConfig(waitCtx, cfg)
+	conn, err := s.dial(waitCtx)
 	if err != nil {
 		if errors.Is(waitCtx.Err(), context.DeadlineExceeded) {
 			err = errors.Join(ErrContended, err)

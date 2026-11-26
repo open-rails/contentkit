@@ -32,6 +32,7 @@ import (
 	entitystore "github.com/open-rails/contentkit/internal/entitystore"
 	importstore "github.com/open-rails/contentkit/internal/importstore"
 	mediastore "github.com/open-rails/contentkit/internal/mediastore"
+	"github.com/open-rails/contentkit/internal/pglock"
 	"github.com/open-rails/contentkit/internal/readingstore"
 	signalstore "github.com/open-rails/contentkit/internal/signalstore"
 	urlstore "github.com/open-rails/contentkit/internal/urlstore"
@@ -76,6 +77,8 @@ type Engine struct {
 	schema          string
 	riverSchema     string
 	pool            *pgxpool.Pool
+	session         *pgxpool.Config // Deps.PostgresSession; nil when pool is direct
+	locks           *pglock.Locks
 	log             *slog.Logger
 	auth            auth.Authenticator
 	gate            *entitlement.Gate
@@ -264,6 +267,20 @@ func (e *Engine) validate(deps Deps) error {
 	if deps.Postgres == nil {
 		return errors.New("contentkit: Deps.Postgres is required")
 	}
+	if s := deps.PostgresSession; s != nil {
+		if s.ConnConfig == nil {
+			return errors.New("contentkit: Deps.PostgresSession has no connection settings")
+		}
+		switch mode := deps.Postgres.Config().ConnConfig.DefaultQueryExecMode; mode {
+		case pgx.QueryExecModeCacheDescribe, pgx.QueryExecModeExec, pgx.QueryExecModeSimpleProtocol:
+		default:
+			// A transaction pooler may run a statement's prepare and execute
+			// on different server connections.
+			return fmt.Errorf("contentkit: Deps.Postgres goes through a transaction pooler (Deps.PostgresSession is set) and needs DefaultQueryExecMode cache_describe, exec or simple_protocol, not %s", mode)
+		}
+		e.session = s.Copy()
+	}
+	e.locks = pglock.New(e.sessionConfig())
 	e.auth, err = e.authorization(deps.Auth, deps.Authorization)
 	if err != nil {
 		return err
@@ -308,8 +325,27 @@ func (e *Engine) migrate(ctx context.Context) error {
 	return e.migratePostgres(ctx, MigrationOptions{})
 }
 
+// sessionConfig dials what needs a session of its own: Deps.PostgresSession,
+// else the pool's configuration.
+func (e *Engine) sessionConfig() *pgxpool.Config {
+	if e.session != nil {
+		return e.session
+	}
+	return e.pool.Config()
+}
+
 func (e *Engine) migratePostgres(ctx context.Context, options MigrationOptions) error {
-	db := stdlib.OpenDBFromPool(e.pool)
+	// The migrators hold session locks and pin connections: behind a pooler
+	// they run on a direct pool of their own.
+	direct := e.pool
+	if e.session != nil {
+		var err error
+		if direct, err = pgxpool.NewWithConfig(ctx, e.session.Copy()); err != nil {
+			return fmt.Errorf("contentkit: migration session: %w", err)
+		}
+		defer direct.Close()
+	}
+	db := stdlib.OpenDBFromPool(direct)
 	defer db.Close()
 	if err := migrations.ApplyPostgres(ctx, db, e.schema); err != nil {
 		return err
@@ -337,11 +373,11 @@ func (e *Engine) migratePostgres(ctx context.Context, options MigrationOptions) 
 	if options.SkipQueues {
 		return nil
 	}
-	if err := riverhelpers.ApplyMigrations(ctx, e.pool, riverhelpers.MigrationOptions{Schema: e.riverSchema, Logger: e.log}); err != nil {
+	if err := riverhelpers.ApplyMigrations(ctx, direct, riverhelpers.MigrationOptions{Schema: e.riverSchema, Logger: e.log}); err != nil {
 		return fmt.Errorf("contentkit: River migrations: %w", err)
 	}
 	if account, ok := e.accountMediaStorage(); ok {
-		if err := workqueue.Migrate(ctx, e.pool, account.WorkerSchema); err != nil {
+		if err := workqueue.Migrate(ctx, direct, account.WorkerSchema); err != nil {
 			return fmt.Errorf("contentkit: account media queue migrations: %w", err)
 		}
 	}
@@ -349,7 +385,7 @@ func (e *Engine) migratePostgres(ctx context.Context, options MigrationOptions) 
 		if m.WorkerSchema == "" {
 			m.WorkerSchema = e.schema + "_media_worker"
 		}
-		if err := workqueue.Migrate(ctx, e.pool, m.WorkerSchema); err != nil {
+		if err := workqueue.Migrate(ctx, direct, m.WorkerSchema); err != nil {
 			return fmt.Errorf("contentkit: media worker queue migrations: %w", err)
 		}
 	}
@@ -380,7 +416,7 @@ func (e *Engine) newCatalog(ctx context.Context, deps Deps, now func() time.Time
 		return err
 	}
 	e.channels = channelstore.FromStore(e.entities)
-	co := catalogstore.Options{Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Scope.AppID.String(), Kinds: c, Auth: e.auth, Gate: e.gate, Entities: e.entities, Channels: e.channels,
+	co := catalogstore.Options{Pool: e.pool, Locks: e.locks, Schema: e.schema, Tenant: e.cfg.Scope.AppID.String(), Kinds: c, Auth: e.auth, Gate: e.gate, Entities: e.entities, Channels: e.channels,
 		Body: deps.BodySanitizer, Now: now, Logger: e.log,
 		EventRetention: e.cfg.EventRetention, OnPurge: e.forgetPurgedTx, AfterPurge: e.purgeSignals,
 		DocumentsChanged: func(ctx context.Context, q catalogstore.Querier) error { return e.syncDocuments(ctx, q) }}
@@ -392,7 +428,7 @@ func (e *Engine) newCatalog(ctx context.Context, deps Deps, now func() time.Time
 
 // newVersions binds the one publication service before optional media storage.
 func (e *Engine) newVersions(deps Deps, now func() time.Time) error {
-	opts := versionstore.Options{Tenant: e.cfg.Scope.AppID.String(), Schema: e.schema, Pool: e.pool,
+	opts := versionstore.Options{Tenant: e.cfg.Scope.AppID.String(), Schema: e.schema, Pool: e.pool, Locks: e.locks,
 		Kinds: e.cfg.Content, Auth: e.auth, AccountExists: e.accountExists(deps),
 		Resolver: e.catalog.Resolver(), Gate: e.gate, Facets: e.catalog, Others: siteMedia{e},
 		Policy: deps.Downloads, Logger: e.log, Now: now, MediaConfigured: e.cfg.Media != nil}
@@ -435,7 +471,7 @@ func (e *Engine) newMedia(ctx context.Context, deps Deps, now func() time.Time) 
 	if err != nil {
 		return nil, err
 	}
-	recorded, err := versionstore.Recorded(e.pool, e.riverSchema, e.schema, m.reg)
+	recorded, err := versionstore.Recorded(e.pool, e.locks, e.riverSchema, e.schema, m.reg)
 	if err != nil {
 		return nil, err
 	}
@@ -650,7 +686,7 @@ func (e *Engine) start(ctx context.Context) error {
 	case e.started:
 		return errors.New("contentkit: Start called twice")
 	}
-	client, err := riverhelpers.New(ctx, e.pool, &river.Config{Schema: e.riverSchema, Queues: map[string]river.QueueConfig{}, Logger: e.log, ReindexerSchedule: river.NeverSchedule()},
+	client, err := riverhelpers.NewWithSession(ctx, e.pool, e.session, &river.Config{Schema: e.riverSchema, Queues: map[string]river.QueueConfig{}, Logger: e.log, ReindexerSchedule: river.NeverSchedule()},
 		e.jobs.contribution())
 	if err != nil {
 		return err

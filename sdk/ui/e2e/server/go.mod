@@ -14,7 +14,7 @@ require (
 	github.com/open-rails/authkit v1.57.0
 	github.com/open-rails/contentkit v0.131.0
 	github.com/open-rails/contentkit/adapters/authkit v0.14.0
-	github.com/open-rails/helpers v1.22.1
+	github.com/open-rails/helpers v1.23.1
 )
 
 require (

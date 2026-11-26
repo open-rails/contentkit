@@ -312,8 +312,16 @@ type JobsConfig struct {
 // Deps is everything the engine reaches outside its process: connections and
 // providers. The host owns each; Close leaves them open.
 type Deps struct {
-	// Postgres is the pool ContentKit's schemas live in. Required.
+	// Postgres is the pool ContentKit's schemas live in. Required. With
+	// PostgresSession it may be a transaction-pooling PgBouncer; its
+	// DefaultQueryExecMode is then cache_describe, exec or simple_protocol.
 	Postgres *pgxpool.Pool
+	// PostgresSession is a direct configuration of the same database and
+	// role, without the pooler, for what needs a session: advisory locks held
+	// across transactions, River's LISTEN and migrations. ContentKit dials and
+	// closes those connections itself. Nil dials them with Postgres's
+	// configuration, which must then be direct.
+	PostgresSession *pgxpool.Config
 	// ClickHouse is the signal plane's connection; nil opens one from
 	// Config.ClickHouse.Addr, or runs without the signal plane.
 	ClickHouse signal.Conn

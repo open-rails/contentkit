@@ -21,6 +21,7 @@ import (
 	entitlement "github.com/open-rails/contentkit/internal/entitlement"
 	entitystore "github.com/open-rails/contentkit/internal/entitystore"
 	"github.com/open-rails/contentkit/internal/gate"
+	"github.com/open-rails/contentkit/internal/pglock"
 	"github.com/open-rails/contentkit/kinds"
 	"github.com/open-rails/helpers/cache"
 )
@@ -42,7 +43,9 @@ type Entities interface {
 
 // Options configures a Store.
 type Options struct {
-	Pool   *pgxpool.Pool
+	Pool *pgxpool.Pool
+	// Locks takes the source locks; nil dials them with Pool's configuration.
+	Locks  *pglock.Locks
 	Schema string
 	Tenant string
 	// Kinds is the site's content model. Required.
@@ -78,6 +81,7 @@ type Options struct {
 // Store is one tenant's catalog.
 type Store struct {
 	pool           *pgxpool.Pool
+	locks          *pglock.Locks
 	schema         string
 	qs             string
 	tenant         string
@@ -130,11 +134,14 @@ func New(ctx context.Context, opts Options) (*Store, error) {
 		return nil, err
 	}
 	opts.Kinds = opts.Kinds.StorageModel()
+	if opts.Locks == nil {
+		opts.Locks = pglock.New(opts.Pool.Config())
+	}
 	if err := gate.Check(opts.Auth, access.ContentWrite, access.ContentViewRestricted); err != nil {
 		return nil, fmt.Errorf("catalog: Auth: %w", err)
 	}
 	s := &Store{
-		pool: opts.Pool, schema: opts.Schema, qs: pgx.Identifier{opts.Schema}.Sanitize(), tenant: opts.Tenant, cfg: opts.Kinds,
+		pool: opts.Pool, locks: opts.Locks, schema: opts.Schema, qs: pgx.Identifier{opts.Schema}.Sanitize(), tenant: opts.Tenant, cfg: opts.Kinds,
 		t:     catalogTables(opts.Schema),
 		guard: &gate.Gate{Auth: opts.Auth, Log: opts.Logger}, accessG: opts.Gate, entities: opts.Entities, channels: opts.Channels,
 		body: opts.Body, retention: opts.DeletedRetention, eventRetention: opts.EventRetention, onPurge: opts.OnPurge, afterPurge: opts.AfterPurge, documents: opts.DocumentsChanged,
