@@ -1613,6 +1613,21 @@
       ]
     },
     {
+      "id": "CK-J13-S10",
+      "journey": "CK-J13",
+      "behavior": "The bucket is the tenancy boundary: keys name no tenant or app, account media is under _accounts/, and no kind takes a reserved top-level name",
+      "status": "verified",
+      "evidence": [
+        "A scoped registry places an app item at {kind}/{id}/ in its app partition and an account item at _accounts/{kind}/{id}/ in the tenant partition; preset roots are \"\" and _accounts/. Keys under a tenant/app or tenant/account prefix, _probe/, _accounts/_accounts/ and work/ parse as nothing.",
+        "Registries refuse kinds named _accounts, _probe and work, and a zero or app-less scope. Engine scenarios (deleted media fence, imported avatar, account resilience, purge) list the real bucket at these keys."
+      ],
+      "cases": [
+        "TestBucketKeyLayout",
+        "TestBucketKeyLayout/CK-J13-S10_items_are_kind_and_id_in_the_app_bucket",
+        "TestBucketKeyLayout/CK-J13-S10_registries_refuse_reserved_kinds_and_a_missing_scope"
+      ]
+    },
+    {
       "id": "CK-J16-S01",
       "journey": "CK-J16",
       "behavior": "Owned entity creates only the expected tenant/app authorization scope",
