@@ -28,8 +28,8 @@ func (s Scope) Root() string {
 	}
 	return "tenant/" + s.TenantID + "/app/" + s.AppID + "/"
 }
-func (s Scope) Prefix(kind, id, version string) string {
-	return s.Root() + strings.TrimPrefix(Prefix("", kind, id, version), "/")
+func (s Scope) Prefix(kind, id string) string {
+	return s.Root() + kind + "/" + id + "/"
 }
 func ScopeFromPartition(p string) (Scope, bool) {
 	t, ok := strings.CutPrefix(p, "tenant_")

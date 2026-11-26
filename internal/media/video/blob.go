@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -26,22 +25,7 @@ var (
 
 const blobCacheControl = "max-age=31536000, immutable"
 
-// checkOutputs runs under the manifest lock, which also fences sweep deletion.
-func (e *Encoder) checkOutputs(ctx context.Context, item mediastore.Item, blobs ...string) error {
-	for _, name := range blobs {
-		key, err := item.Blob(name)
-		if err != nil {
-			return err
-		}
-		if _, err := e.store.Head(ctx, key); err != nil {
-			return fmt.Errorf("media/video: publish output %s: %w", key, err)
-		}
-	}
-	return nil
-}
-
-// put hashes a file and writes a fresh private allocation. Already published
-// outputs are reused by their producers, not by sharing an unowned object key.
+// put hashes a file and writes it under its hash in area.
 func (e *Encoder) put(ctx context.Context, item mediastore.Item, area, path, contentType string, fp *fileProgress) (string, int64, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -63,16 +47,24 @@ func (e *Encoder) putJSON(ctx context.Context, item mediastore.Item, v any) (str
 		return "", err
 	}
 	sum := sha256.Sum256(b)
-	name, _, err := e.putBlob(ctx, item, layout.AreaPrivate, bytes.NewReader(b), int64(len(b)), sum[:], "application/json", nil)
+	name, _, err := e.putBlob(ctx, item, outputArea(item), bytes.NewReader(b), int64(len(b)), sum[:], "application/json", nil)
 	return name, err
 }
 
-func (e *Encoder) putBlob(ctx context.Context, item mediastore.Item, area string, body io.ReaderAt, size int64, sum []byte, contentType string, fp *fileProgress) (string, int64, error) {
-	names, err := e.ms.NewBlobs(ctx, item.Ref(), area, [][]byte{sum})
-	if err != nil {
-		return "", 0, err
+// outputArea is where video outputs and their indexes are written:
+// internal/ for a version, until its release moves them; private/ for
+// another kind.
+func outputArea(item mediastore.Item) string {
+	if item.Kind().Versions {
+		return layout.AreaInternal
 	}
-	name := names[0]
+	return layout.AreaPrivate
+}
+
+// putBlob writes bytes under their hash: identical bytes have the same name,
+// so writing them again is harmless.
+func (e *Encoder) putBlob(ctx context.Context, item mediastore.Item, area string, body io.ReaderAt, size int64, sum []byte, contentType string, fp *fileProgress) (string, int64, error) {
+	name := layout.BlobRef(area, sum)
 	key, _ := item.Blob(name)
 	start := time.Now()
 	if size > multipartAbove {
@@ -83,15 +75,7 @@ func (e *Encoder) putBlob(ctx context.Context, item mediastore.Item, area string
 		return name, size, nil
 	}
 	opts := media.PutOptions{ContentType: contentType, CacheControl: blobCacheControl, ChecksumSHA256: sum}
-	caps, err := e.store.Capabilities(ctx)
-	if err != nil {
-		return "", 0, err
-	}
-	if caps.ConditionalPut {
-		opts.IfNoneMatch = "*"
-	}
-	_, err = e.store.Put(ctx, key, fp.reader(io.NewSectionReader(body, 0, size)), size, opts)
-	if err != nil && !errors.Is(err, mediastore.ErrPreconditionFailed) {
+	if _, err := e.store.Put(ctx, key, fp.reader(io.NewSectionReader(body, 0, size)), size, opts); err != nil {
 		return "", 0, err
 	}
 	fp.transferred(size, time.Since(start))

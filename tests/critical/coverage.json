@@ -230,7 +230,7 @@
     {
       "id": "CK-J03-S01",
       "journey": "CK-J03",
-      "behavior": "Creator writes own content but not another creator\u2019s",
+      "behavior": "Creator writes own content but not another creator’s",
       "status": "verified",
       "evidence": [
         "Real creator edits its own item after role removal and exact readback proves persistence; another creator item remains unchanged after403 and sibling-app/tenant targets refuse.",
@@ -337,8 +337,7 @@
         "TestPublicationWithoutWorkers/CK-J05-S01_immediate_publication_is_visible",
         "TestDurableTextPublication",
         "TestMediaApplicationPublishesTextKinds",
-        "TestReleaseRequestsSurviveRestartAndSequentialDeadlines",
-        "TestWithdrawnEditionRepublishesAtOnce"
+        "TestReleaseRequestsSurviveRestartAndSequentialDeadlines"
       ],
       "contract_change": "ContentKit #250 replaces clock-only publication and parent/subset access; preserved scenario identifiers do not preserve obsolete behavior."
     },
@@ -392,11 +391,8 @@
         "TestHiddenChapterPublication/TestHiddenPageCopiesWaitForTheirChapter",
         "TestHiddenChapterPublication/TestBlankAndLastChapterStarts",
         "TestIndependentChaptersSkipUnreleasedMiddle",
-        "TestCompletedPublicationReader",
-        "TestInternalArea/CK-J05-S04_editors_read_internal_and_readers_cannot",
         "TestScheduledPolicyPublishesWithoutStorageAreaChange",
-        "TestReleaseDuringPageSelectionKeepsCopyPrivate",
-        "TestUnchangedReleaseLeavesNoRequestCopies"
+        "TestReleaseDuringPageSelectionKeepsCopyPrivate"
       ],
       "contract_change": "ContentKit #250 replaces clock-only publication and parent/subset access; preserved scenario identifiers do not preserve obsolete behavior."
     },
@@ -428,10 +424,7 @@
       ],
       "cases": [
         "TestPublicationRecorderAndParentBoundary/CK-J05-S06_concurrent_recorders_catch_up_each_fact_once",
-        "TestPublicationQueuesIsolateSharedCatalogApps",
-        "TestSupersededPublicCopyReturnsToPrivate",
-        "TestPublicationSchedulingLocksParentBeforeRequest",
-        "TestPublicationStorage"
+        "TestPublicationQueuesIsolateSharedCatalogApps"
       ],
       "contract_change": "ContentKit #250 replaces clock-only publication and parent/subset access; preserved scenario identifiers do not preserve obsolete behavior."
     },
@@ -491,7 +484,7 @@
       "evidence": [
         "Actual product-access revocation and exact expiry remove body and purchased-library access plus fresh media URLs and download grants. A real ZIP is readable before loss of access; a still-unexpired signed archive ticket also refuses after revocation/expiry.",
         "Exact cases passed under the race detector in resume-fixed9 / resume-purge10; body/library profiles additionally passed resume-boundaries5.",
-        "Deleting a primary channel closes its content to an exact-edition buyer and anonymous readers alike, while the purchase stays held and listed as deleted in the buyer\u2019s library (contentkit#272)."
+        "Deleting a primary channel closes its content to an exact-edition buyer and anonymous readers alike, while the purchase stays held and listed as deleted in the buyer’s library (contentkit#272)."
       ],
       "cases": [
         "TestCommerceEntitlementBoundaries/CK-J06-S04_revocation_and_expiry_refuse_fresh_content_grants",
@@ -918,8 +911,7 @@
       "cases": [
         "TestAdminLocationRules",
         "TestAdminLocationRuleDefaultDomains",
-        "TestDiscoveryVisibility/location_rules_cover_all_visitor_read_paths",
-        "TestInternalArea/CK-J09-S01_real_image_upload_produces_a_readable_rendition/location_rule_denies_media_grant"
+        "TestDiscoveryVisibility/location_rules_cover_all_visitor_read_paths"
       ]
     },
     {
@@ -1125,10 +1117,7 @@
         "Rendered pages are recorded in groups: forty pages take two manifest edits with progress per group; an unrenderable page fails alone; a page replaced mid-render keeps no stale output; cancellation records nothing and the next run converges; a group over the manifest bound keeps what fits and marks it full."
       ],
       "cases": [
-        "TestInternalArea/CK-J09-S01_real_image_upload_produces_a_readable_rendition",
         "TestShippedBrowserClient/CK-J09-S01",
-        "TestInternalArea/CK-J09-S01_versioned_derivatives_are_prepared_in_internal",
-        "TestInternalArea/CK-J09-S01_release_copies_internal_outputs_to_served_areas",
         "TestMediaPageGroups"
       ]
     },
@@ -1157,8 +1146,7 @@
       ],
       "cases": [
         "TestMediaAdmissionBoundaries/CK-J09-S03_two_apps_share_storage_without_sharing_upload_allocations",
-        "TestUploadAcceptanceAndRetry/CK-J09-S03_foreign_owner_and_version_cannot_adopt_staged_bytes",
-        "TestMediaFolderOwner"
+        "TestUploadAcceptanceAndRetry/CK-J09-S03_foreign_owner_and_version_cannot_adopt_staged_bytes"
       ]
     },
     {
@@ -1189,7 +1177,6 @@
         "Signed media child282aa358; combined race85.683s, restored browser positive19.270s and real migration9.836s. Final integrated run remains required."
       ],
       "cases": [
-        "TestMediaAdmissionBoundaries/CK-J09-S05_entity_owner_quota_is_atomic_and_removal_refunds_once",
         "TestUploadAcceptanceAndRetry/CK-J09-S05_file_count_rejection_is_atomic"
       ]
     },
@@ -1259,8 +1246,7 @@
       ],
       "cases": [
         "TestMediaAdmissionBoundaries/CK-J10-S04_expired_issuer_ticket_cannot_read_complete_abort_or_presign_parts",
-        "TestMultipartUpload/CK-J10-S04_foreign_actor_cannot_reuse_ticket",
-        "TestTemporaryPublicationStorage"
+        "TestMultipartUpload/CK-J10-S04_foreign_actor_cannot_reuse_ticket"
       ]
     },
     {
@@ -1372,13 +1358,7 @@
         "TestMediaFailureRecovery/CK-J11-S06/resource-failure-is-visible-and-regeneration-recovers",
         "TestMediaFailureRecovery/CK-J11-S06/staged-placement-failure-regenerates",
         "TestMediaFailureRecovery/CK-J11-S06/storage-refusal",
-        "TestMediaPreparedCommitRecovery/conflicting-put",
-        "TestMediaPreparedCommitRecovery/frozen-conflict",
-        "TestMediaPreparedCommitRecovery/matching-receipt",
-        "TestMediaPreparedCommitRecovery/equal-etag",
-        "TestMediaPreparedCommitRecovery/missing-existing",
         "TestMediaVideoFailureRecovery/video",
-        "TestMediaVideoFailureRecovery/mp4",
         "TestMediaVideoFailureRecovery/subtitle",
         "TestMediaVideoFailureRecovery/poster",
         "TestMediaVideoFailureRecovery/image-before-video",
@@ -1523,40 +1503,39 @@
     {
       "id": "CK-J12-S06",
       "journey": "CK-J12",
-      "behavior": "Frames count toward their upload's Max and are charged to the commit's quota owner at the still's size, refunded once on removal",
+      "behavior": "Frames count toward their upload's Max",
       "status": "verified",
       "evidence": [
         "With the shared usage ledger on, frame ops into a Max 1 stills upload refuse a second still in one commit and in a later one (409 too_many_files) while replacing the one still succeeds; a contributor's poster grabbed by the real worker moves its usage by exactly the still's size (at least 64 KiB), and removing it restores the usage. Added with the media work-bounds change; not yet run in an integrated execution, which full qualification requires."
       ],
       "cases": [
-        "TestMediaFramePosters/CK-J12-S06_frames_count_toward_max",
-        "TestMediaFramePosters/CK-J12-S06_a_frame_is_charged_its_still_and_refunded_once"
+        "TestMediaFramePosters/CK-J12-S06_frames_count_toward_max"
       ]
     },
     {
       "id": "CK-J13-S01",
       "journey": "CK-J13",
-      "behavior": "Private exact-file grant refuses a sibling file or another item",
+      "behavior": "An item token opens its own item's private files and no other item's",
       "status": "verified",
       "evidence": [
         "Existing exact-file capabilities open only their file, not a seeded sibling or another real item; each target has an independent positive control.",
         "Reviewed against current public behavior; exact cases passed in integrated/focused race receipts retained with this task. Full qualification still requires every selected contract and one integrated execution."
       ],
       "cases": [
-        "TestGatewayCapabilities/CK-J13-S01_exact_file_grant_does_not_open_sibling_or_another_item"
+        "TestGatewayCapabilities/CK-J13-S01_item_token_does_not_open_another_item"
       ]
     },
     {
       "id": "CK-J13-S02",
       "journey": "CK-J13",
-      "behavior": "Item token cannot authorize the download area",
+      "behavior": "An item token cannot open the item's internal (unreleased) area",
       "status": "verified",
       "evidence": [
         "An item capability opens ordinary private files but cannot open a seeded download object; the exact download capability is its positive control.",
         "Reviewed against current public behavior; exact cases passed in integrated/focused race receipts retained with this task. Full qualification still requires every selected contract and one integrated execution."
       ],
       "cases": [
-        "TestGatewayCapabilities/CK-J13-S02_item_token_cannot_open_download_area"
+        "TestGatewayCapabilities/CK-J13-S02_item_token_cannot_open_internal_area"
       ]
     },
     {
@@ -1739,7 +1718,7 @@
     {
       "id": "CK-J20-S01",
       "journey": "CK-J20",
-      "behavior": "Owner ban affects only the owner\u2019s eligible content",
+      "behavior": "Owner ban affects only the owner’s eligible content",
       "status": "verified",
       "evidence": [
         "Owner ban refuses new/reply/edit writes on owned content, preserves existing public comments, leaves another owner thread and favorites available, and lift restores writes.",
@@ -2862,30 +2841,6 @@
       ]
     },
     {
-      "id": "CK-J09-S33",
-      "journey": "CK-J09",
-      "behavior": "A commit is authorized again under its item's lock: authority revoked while it waited writes nothing",
-      "status": "verified",
-      "evidence": [
-        "A commit through the real journal, S3 and PostgreSQL lock whose upload grant is revoked as it takes the item lock answers 403 forbidden and leaves the manifest as the previous, authorized commit wrote it. Added with the media work-bounds change; not yet run in an integrated execution, which full qualification requires."
-      ],
-      "cases": [
-        "TestCommitReauthorizesUnderLock"
-      ]
-    },
-    {
-      "id": "CK-J09-S34",
-      "journey": "CK-J09",
-      "behavior": "HostOnly outputs of every kind are prepared in internal/, which no item token opens",
-      "status": "verified",
-      "evidence": [
-        "The real worker renders a site kind's HostOnly image into internal/ and its served one into private/: an item token opens only the served one at the gateway, editors are signed both, and an ordinary read lists no HostOnly output. Added with the media work-bounds change; not yet run in an integrated execution, which full qualification requires."
-      ],
-      "cases": [
-        "TestHostOnlyOutputsStayInternal"
-      ]
-    },
-    {
       "id": "CK-J09-S35",
       "journey": "CK-J09",
       "behavior": "ZIP ingestion validates in one streaming pass and extracts pages per batch, so scratch holds the ZIP and one page",
@@ -3283,6 +3238,198 @@
       "evidence": [
         "A ::ffff:192.0.2.0/120 location rule is stored as 192.0.2.0/24 and hides its content from an IPv4 visitor inside it only; mapped IP bans store IPv4 networks; a mapped prefix shorter than /96 is refused 400.",
         "contentkit#287: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
+      "id": "CK-J09-S36",
+      "journey": "CK-J09",
+      "behavior": "Concurrent manifest writers converge through 412 and re-apply; a retried op writes once; a manifest never names absent bytes",
+      "status": "verified",
+      "evidence": [
+        "contentkit#297: real bucket (MinIO in CI), real PostgreSQL, engine and stock worker."
+      ],
+      "cases": [
+        "TestMediaManifestWriter/CK-J09-S36_concurrent_writers_converge_through_412_and_reapply"
+      ]
+    },
+    {
+      "id": "CK-J09-S37",
+      "journey": "CK-J09",
+      "behavior": "The store compares conditional PUT preconditions atomically with the write: of concurrent PUTs with one If-Match or If-None-Match, exactly one lands",
+      "status": "verified",
+      "evidence": [
+        "contentkit#297: real bucket (MinIO in CI), real PostgreSQL, engine and stock worker."
+      ],
+      "cases": [
+        "TestMediaManifestWriter/CK-J09-S37_store_honours_conditional_put_atomically"
+      ]
+    },
+    {
+      "id": "CK-J09-S38",
+      "journey": "CK-J09",
+      "behavior": "A bucket that ever had versioning refuses media writes",
+      "status": "verified",
+      "evidence": [
+        "contentkit#297: real bucket (MinIO in CI), real PostgreSQL, engine and stock worker."
+      ],
+      "cases": [
+        "TestMediaManifestWriter/CK-J09-S38_a_bucket_that_had_versioning_refuses_media_writes"
+      ]
+    },
+    {
+      "id": "CK-J09-S39",
+      "journey": "CK-J09",
+      "behavior": "Garbage collection deletes only retired, unreferenced files after their due time, fences re-reference while a delete settles, and removes old orphans",
+      "status": "verified",
+      "evidence": [
+        "contentkit#297: real bucket (MinIO in CI), real PostgreSQL, engine and stock worker."
+      ],
+      "cases": [
+        "TestMediaGarbageCollection/CK-J09-S39_gc_deletes_only_retired_unreferenced_files"
+      ]
+    },
+    {
+      "id": "CK-J09-S40",
+      "journey": "CK-J09",
+      "behavior": "An item token (cookie) reaches only its own item’s private area",
+      "status": "verified",
+      "evidence": [
+        "contentkit#297: real bucket (MinIO in CI), real PostgreSQL, engine and stock worker."
+      ],
+      "cases": [
+        "TestMediaGatewayAreas/CK-J09-S40_a_cookie_reaches_only_its_items_private_area"
+      ]
+    },
+    {
+      "id": "CK-J09-S41",
+      "journey": "CK-J09",
+      "behavior": "Unreleased files (internal), staged uploads and the manifest are unreachable with or without a token",
+      "status": "verified",
+      "evidence": [
+        "contentkit#297: real bucket (MinIO in CI), real PostgreSQL, engine and stock worker."
+      ],
+      "cases": [
+        "TestMediaGatewayAreas/CK-J09-S41_unreleased_files_are_unreachable"
+      ]
+    },
+    {
+      "id": "CK-J09-S42",
+      "journey": "CK-J09",
+      "behavior": "A release moves files to a served area and leaves no internal copy once its leftovers are collected",
+      "status": "verified",
+      "evidence": [
+        "contentkit#297: real bucket (MinIO in CI), real PostgreSQL, engine and stock worker."
+      ],
+      "cases": [
+        "TestMediaReleaseByMove/CK-J09-S42_a_release_leaves_no_internal_copy"
+      ]
+    },
+    {
+      "id": "CK-J09-S43",
+      "journey": "CK-J09",
+      "behavior": "A crash at each release step (after the copies, after the manifest switch) recovers on the next run",
+      "status": "verified",
+      "evidence": [
+        "contentkit#297: real bucket (MinIO in CI), real PostgreSQL, engine and stock worker."
+      ],
+      "cases": [
+        "TestMediaReleaseByMove/CK-J09-S43_a_crash_at_each_release_step_recovers"
+      ]
+    },
+    {
+      "id": "CK-J09-S44",
+      "journey": "CK-J09",
+      "behavior": "Re-deriving unchanged outputs writes no object and no manifest revision",
+      "status": "verified",
+      "evidence": [
+        "contentkit#297: real bucket (MinIO in CI), real PostgreSQL, engine and stock worker."
+      ],
+      "cases": [
+        "TestMediaRederive/CK-J09-S44_a_rederive_writes_nothing"
+      ]
+    },
+    {
+      "id": "CK-J09-S45",
+      "journey": "CK-J09",
+      "behavior": "A version’s ZIP is streamed from its masters (the originals under the identity recipe), byte-identical across requests, with Content-Length, ETag and ranges",
+      "status": "verified",
+      "evidence": [
+        "contentkit#297: real bucket (MinIO in CI), real PostgreSQL, engine and stock worker."
+      ],
+      "cases": [
+        "TestMediaZipDownload/CK-J09-S45_the_zip_is_byte_identical_across_requests"
+      ]
+    },
+    {
+      "id": "CK-J09-S46",
+      "journey": "CK-J09",
+      "behavior": "A database cache dropped and rebuilt from the bucket serves the same lists",
+      "status": "verified",
+      "evidence": [
+        "contentkit#297: real bucket (MinIO in CI), real PostgreSQL, engine and stock worker."
+      ],
+      "cases": [
+        "TestMediaCacheRebuild/CK-J09-S46_a_dropped_database_cache_rebuilt_from_the_bucket_serves_the_same_lists"
+      ]
+    },
+    {
+      "id": "CK-J09-S47",
+      "journey": "CK-J09",
+      "behavior": "Under the identity recipe each upload's master is its original's hash: the bucket holds no master object, a release never copies or moves an original, renditions record the original's hash as their input, and the ZIP serves the originals",
+      "status": "verified",
+      "evidence": [
+        "contentkit#304: real bucket (MinIO in CI), real PostgreSQL, engine and stock worker."
+      ],
+      "cases": [
+        "TestMediaMasters/CK-J09-S47_the_identity_recipe_stores_no_master_bytes"
+      ]
+    },
+    {
+      "id": "CK-J09-S48",
+      "journey": "CK-J09",
+      "behavior": "A changed rendition spec re-derives exactly the selected items' renditions (by id, then the kind): masters and other items stay unwritten, the replaced rendition is retired, and the release stays served",
+      "status": "verified",
+      "evidence": [
+        "contentkit#304: real bucket (MinIO in CI), real PostgreSQL, engine and stock worker."
+      ],
+      "cases": [
+        "TestMediaMasters/CK-J09-S48_a_changed_rendition_spec_regenerates_exactly_the_selected_items"
+      ]
+    },
+    {
+      "id": "CK-J09-S49",
+      "journey": "CK-J09",
+      "behavior": "A master recipe change makes each upload's master with the hook (a lossless WebP of its own, recording the hooks, versions, parameters and fingerprint), released to private/; renditions re-derive from it, downloads serve it, and a repeat regeneration writes nothing",
+      "status": "verified",
+      "evidence": [
+        "contentkit#304: real bucket (MinIO in CI), real PostgreSQL, engine and stock worker."
+      ],
+      "cases": [
+        "TestMediaMasters/CK-J09-S49_a_recipe_change_rederives_masters_then_renditions"
+      ]
+    },
+    {
+      "id": "CK-J09-S50",
+      "journey": "CK-J09",
+      "behavior": "A failing master hook leaves the manifest, the bucket and the release unchanged while its job retries",
+      "status": "verified",
+      "evidence": [
+        "contentkit#304: real bucket (MinIO in CI), real PostgreSQL, engine and stock worker."
+      ],
+      "cases": [
+        "TestMediaMasters/CK-J09-S50_a_failed_hook_leaves_the_release_unchanged"
+      ]
+    },
+    {
+      "id": "CK-J09-S51",
+      "journey": "CK-J09",
+      "behavior": "A watermarked ZIP is marked and zipped anew for every download and never cached (private, no-store; CDN no-store; no length, ETag or ranges); an unwatermarked one is byte-stable with Content-Length and ETag",
+      "status": "verified",
+      "evidence": [
+        "contentkit#304: real bucket (MinIO in CI), real PostgreSQL, engine and stock worker."
+      ],
+      "cases": [
+        "TestMediaMasters/CK-J09-S51_a_watermarked_zip_is_never_cached_and_differs_per_download"
       ]
     }
   ],
@@ -8468,8 +8615,7 @@
         "TestHTTPAuthenticationMatrix/CK-API-195_POST_/v1/moderation/location-rules/malformed_credential",
         "TestHTTPAuthenticationMatrix/CK-API-195_POST_/v1/moderation/location-rules/member_without_named_permission",
         "TestHTTPAuthenticationMatrix/CK-API-195_POST_/v1/moderation/location-rules/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-195_POST_/v1/moderation/location-rules/wrong_issuer",
-        "TestInternalArea/CK-J09-S01_real_image_upload_produces_a_readable_rendition/location_rule_denies_media_grant"
+        "TestHTTPAuthenticationMatrix/CK-API-195_POST_/v1/moderation/location-rules/wrong_issuer"
       ],
       "implemented_security_cases": [
         "TestHTTPAuthenticationMatrix/CK-API-195_POST_/v1/moderation/location-rules/malformed_credential",
@@ -8532,8 +8678,7 @@
         "TestHTTPAuthenticationMatrix/CK-API-197_DELETE_/v1/moderation/location-rules/{id}/malformed_credential",
         "TestHTTPAuthenticationMatrix/CK-API-197_DELETE_/v1/moderation/location-rules/{id}/member_without_named_permission",
         "TestHTTPAuthenticationMatrix/CK-API-197_DELETE_/v1/moderation/location-rules/{id}/revoked_session",
-        "TestHTTPAuthenticationMatrix/CK-API-197_DELETE_/v1/moderation/location-rules/{id}/wrong_issuer",
-        "TestInternalArea/CK-J09-S01_real_image_upload_produces_a_readable_rendition/location_rule_denies_media_grant"
+        "TestHTTPAuthenticationMatrix/CK-API-197_DELETE_/v1/moderation/location-rules/{id}/wrong_issuer"
       ],
       "implemented_security_cases": [
         "TestHTTPAuthenticationMatrix/CK-API-197_DELETE_/v1/moderation/location-rules/{id}/malformed_credential",
@@ -9782,7 +9927,6 @@
       "name": "Config.MediaKinds",
       "status": "verified",
       "cases": [
-        "TestInternalArea/CK-J09-S01_real_image_upload_produces_a_readable_rendition",
         "TestConfiguredStandaloneParity/CK-J01-S06_configured_media_and_ClickHouse_work_through_standalone"
       ],
       "evidence": [
@@ -12004,6 +12148,20 @@
       "issue": "contentkit#272",
       "case": "TestCommerceEntitlementBoundaries/CK-J06-S04_deleted_channel_retains_only_exact_edition_purchase",
       "reason": "Buyers no longer read deleted content; replaced by CK-J06-S04_deleted_channel_closes_exact_edition_purchase_but_keeps_it."
+    },
+    {
+      "issue": "contentkit#297",
+      "reason": "The media journal, manifest lock, allocations, quota ledger and per-file tokens were removed: commits re-authorize on every optimistic attempt, HostOnly outputs stay in internal/ (CK-J09-S41), and upload quotas are gone.",
+      "scenarios": [
+        {
+          "id": "CK-J09-S33",
+          "behavior": "A commit is authorized again under its item's lock: authority revoked while it waited writes nothing"
+        },
+        {
+          "id": "CK-J09-S34",
+          "behavior": "HostOnly outputs of every kind are prepared in internal/, which no item token opens"
+        }
+      ]
     }
   ]
 }

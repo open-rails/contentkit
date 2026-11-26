@@ -34,8 +34,6 @@ func (f *fixture) seedHistory() {
 	must(t, e)
 	_, e = f.pool.Exec(ctx, "UPDATE "+f.schema+".content_facets SET live_from=$2,published_at=$2 WHERE tenant_id=$1", f.tenant, from)
 	must(t, e)
-	_, e = f.pool.Exec(ctx, "UPDATE "+f.schema+".content_publication_requests SET scheduled_at=$2,completed_at=$2 WHERE tenant_id=$1", f.tenant, from)
-	must(t, e)
 	_, e = f.pool.Exec(ctx, "UPDATE "+f.schema+".content_access_history SET occurred_at=$2,snapshot=jsonb_set(snapshot,'{live_from}',to_jsonb($2::timestamptz)) WHERE tenant_id=$1", f.tenant, from)
 	must(t, e)
 	_, e = f.pool.Exec(ctx, "UPDATE "+f.schema+".content_access_history_start SET started_at=$2 WHERE tenant_id=$1", f.tenant, from)

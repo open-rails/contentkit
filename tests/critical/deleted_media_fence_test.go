@@ -261,13 +261,11 @@ func TestDeletedMediaFence(t *testing.T) {
 		must(t, err)
 		registry, err := mediastore.NewRegistry(config, mediastore.Hooks{})
 		must(t, err)
-		journal, err := mediastore.NewPGJournal(w.pool, w.schema, nil)
-		must(t, err)
-		jobs, err := mediastore.NewJobs(mediastore.JobsConfig{Store: m.store, Registry: registry, Locker: mediastore.PGLocker(w.pool), Journal: journal})
+		jobs, err := mediastore.NewJobs(mediastore.JobsConfig{Manifests: mustManifests(t, m.store, registry)})
 		must(t, err)
 		ref, err := registry.VersionRef("gallery", item.ID, second)
 		must(t, err)
-		must(t, jobs.FenceDeleted(t.Context(), ref, false))
+		must(t, jobs.SetDeleted(t.Context(), ref, false))
 		if kind, ok := fence(second); !ok || kind != layout.FenceErased {
 			t.Fatalf("a restore sync lifted the erasure fence: %q (present %v)", kind, ok)
 		}

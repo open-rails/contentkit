@@ -15,8 +15,6 @@ import (
 func (f *fixture) cloneCatalog() {
 	t, ctx, s := f.t, f.t.Context(), f.schema
 	i, v := f.template.ID, f.template.Versions[0].ID
-	var r string
-	must(t, f.pool.QueryRow(ctx, "SELECT release_id::text FROM "+s+".content_versions WHERE id=$1 AND tenant_id=$2", v, f.tenant).Scan(&r))
 	langs := []string{}
 	for _, l := range f.model.Languages {
 		langs = append(langs, "'"+l+"'")
@@ -45,7 +43,7 @@ func (f *fixture) cloneCatalog() {
 		}
 		rows.Close()
 		must(t, rows.Err())
-		replaced := fmt.Sprintf("replace(replace(replace(to_jsonb(t)::text,'%s',b.id),'%s',b.version),'%s',b.request)::jsonb", i, v, r)
+		replaced := fmt.Sprintf("replace(replace(to_jsonb(t)::text,'%s',b.id),'%s',b.version)::jsonb", i, v)
 		q := fmt.Sprintf("INSERT INTO %s.%s (%s) SELECT x.%s FROM %s.%s t CROSS JOIN %s.benchmark_items b CROSS JOIN LATERAL jsonb_populate_record(NULL::%s.%s,%s || jsonb_build_object(%s)) x WHERE %s", s, table, strings.Join(cols, ","), strings.Join(cols, ",x."), s, table, s, s, table, replaced, override, where)
 		_, e = f.pool.Exec(ctx, q)
 		must(t, e)
@@ -53,10 +51,7 @@ func (f *fixture) cloneCatalog() {
 	day := "'" + f.day.Format(time.RFC3339) + "'::timestamptz"
 	rule := "jsonb_build_object('level',b.level,'tiers',CASE WHEN b.level='tier' THEN jsonb_build_array('premium') ELSE '[]'::jsonb END)"
 	clone("content_items", "t.id='"+i+"'", "'access',"+rule+",'created_at',"+day+",'published_at',"+day+",'first_published_at',"+day)
-	clone("content_versions", "t.id='"+v+"'", "'release_id',NULL,'languages',jsonb_build_array(b.language),'access',"+rule+",'released_access',"+rule+",'published_at',"+day+",'created_at',"+day)
-	clone("content_publication_requests", "t.id='"+r+"'", "'completed_at',"+day+",'scheduled_at',"+day)
-	_, e = f.pool.Exec(ctx, "UPDATE "+s+".content_versions v SET release_id=b.request::uuid FROM "+s+".benchmark_items b WHERE v.id=b.version AND v.tenant_id=$1", f.tenant)
-	must(t, e)
+	clone("content_versions", "t.id='"+v+"'", "'languages',jsonb_build_array(b.language),'access',"+rule+",'released_access',"+rule+",'published_at',"+day+",'created_at',"+day)
 	clone("content_version_text", "t.version_id='"+v+"'", "'language',b.language,'title','Benchmark work '||b.item,'slug','benchmark-'||b.item,'body','Synthetic benchmark body '||b.item")
 	clone("content_codes", "t.content_id='"+i+"'", "'code',b.code,'slug','benchmark-'||b.item,'slugs',jsonb_build_object(b.language,'benchmark-'||b.item)")
 	clone("content_facets", "t.version_id='"+v+"'", "'languages',jsonb_build_array(b.language),'access_level',b.level,'access_tiers',CASE WHEN b.level='tier' THEN jsonb_build_array('premium') ELSE '[]'::jsonb END,'entity_ids',to_jsonb("+ent+"),'live_from',"+day+",'published_at',"+day)

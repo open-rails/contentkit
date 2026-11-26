@@ -18,9 +18,6 @@ func (e *Encoder) FailPending(ctx context.Context, job mediastore.ProcessJob, ca
 		return err
 	}
 	_, err = e.ms.EditExisting(ctx, job.Ref, func(m *mediastore.Manifest) error {
-		if m.Full {
-			return nil
-		}
 		for _, f := range m.Files {
 			if !f.IsUpload() || f.Gone || f.Fail() != nil {
 				continue

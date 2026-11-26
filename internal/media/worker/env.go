@@ -61,7 +61,6 @@ func StoreFromEnv() (*mediaS3.Store, error) {
 //	MEDIA_WORKER_SCHEMA          the host's worker River schema (required, one per host, e.g. doujins_media_worker)
 //	MEDIA_CONTENT_SCHEMA         the shared ContentKit schema (required; same as the uploader's journal)
 //	MEDIA_HOST_RIVER_SCHEMA      the host's River schema (default: the connection's search path)
-//	MEDIA_HOST_GRACE             the host's sweep grace (default 24h)
 //	MEDIA_WORKER_TMP             scratch dir (default os.TempDir()), on disk, not tmpfs; size for each running job's largest source: a video source plus outputs, or a ZIP plus one page (docs/media-jobs.md)
 //	MEDIA_WORKER_THREADS         ffmpeg threads (default: CPU limit)
 //	MEDIA_WORKER_PRESET          x264 preset of rungs up to 1080 (default fast)
@@ -95,8 +94,7 @@ func (c *Config) TuningFromEnv() error {
 		}
 		*p = n
 	}
-	for k, p := range map[string]*time.Duration{"MEDIA_HOST_GRACE": &c.Grace,
-		"MEDIA_WORKER_SHUTDOWN_GRACE": &c.ShutdownGrace} {
+	for k, p := range map[string]*time.Duration{"MEDIA_WORKER_SHUTDOWN_GRACE": &c.ShutdownGrace} {
 		d, err := durationEnv(k, *p)
 		if err != nil {
 			return err

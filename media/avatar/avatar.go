@@ -41,7 +41,6 @@ func User() media.Kind {
 			Widths:  []int{64, 128, 256, 512},
 			Image:   media.Image{Aspect: media.Square, Quality: 85, Animation: media.AnimationReject},
 			Default: "avatar.png",
-			Stable:  true,
 		}},
 		Defaults: defaults,
 	}

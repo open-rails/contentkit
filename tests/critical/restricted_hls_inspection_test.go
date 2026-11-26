@@ -13,17 +13,10 @@ import (
 	"github.com/open-rails/authkit/authtest"
 	"github.com/open-rails/authkit/iam"
 	ck "github.com/open-rails/contentkit"
-	"github.com/open-rails/contentkit/media"
 )
 
 func TestRestrictedDraftHLSInspection(t *testing.T) {
-	f := newTinyHLSConfiguredFixture(t, false, func(c *ck.Config) {
-		for i := range c.Media.Kinds {
-			if c.Media.Kinds[i].Name == "clip" {
-				c.Media.Kinds[i].Private = append(c.Media.Kinds[i].Private, media.Private{Name: "export", From: "source", To: "export/{name}.mp4", HostOnly: true, MP4: media.Rung(144)})
-			}
-		}
-	})
+	f := newTinyHLSConfiguredFixture(t, false, func(c *ck.Config) {})
 	ref := f.addClip(t, "Auditor prepared HLS", false)
 	auditor, credential := f.person(t, 0)
 	authtest.GrantRole(t, f.tenant[0], f.app.group, iam.UserSubject(auditor.ID), f.viewer)
@@ -32,9 +25,8 @@ func TestRestrictedDraftHLSInspection(t *testing.T) {
 	requireError(t, err, 404, "not_found")
 	_, err = reader.GetMediaVersionHls(t.Context(), ref.Kind, ref.ID, ref.Version, f.MasterPath, ck.GetMediaVersionHlsQuery{})
 	requireError(t, err, 404, "not_found")
-	// Compare request identities: a new request plus a delete keeps a count flat.
-	before := ""
-	must(t, f.pool.QueryRow(t.Context(), `SELECT coalesce(string_agg(id::text||'@'||scheduled_at::text,',' ORDER BY id),'') FROM `+f.schema+`.content_publication_requests WHERE tenant_id=$1 AND version_id=$2`, f.app.cfg.Scope.AppID.String(), ref.Version).Scan(&before))
+	// Compare the version's release jobs: an inspection wakes nothing.
+	before := publicationJobs(t, f.app, ref.Version)
 	read, err := reader.GetMediaVersion(t.Context(), ref.Kind, ref.ID, ref.Version, ck.GetMediaVersionQuery{Editor: true})
 	must(t, err)
 	if !read.Inspection || read.Cookie != nil || len(read.HLS) != 1 || len(read.Uploads) != 0 {
@@ -76,9 +68,8 @@ func TestRestrictedDraftHLSInspection(t *testing.T) {
 	}
 	_, err = reader.GetMediaVersionHls(t.Context(), ref.Kind, ref.ID, ref.Version, childPath, ck.GetMediaVersionHlsQuery{})
 	requireError(t, err, 404, "not_found")
-	after := ""
+	after := publicationJobs(t, f.app, ref.Version)
 	var released bool
-	must(t, f.pool.QueryRow(t.Context(), `SELECT coalesce(string_agg(id::text||'@'||scheduled_at::text,',' ORDER BY id),'') FROM `+f.schema+`.content_publication_requests WHERE tenant_id=$1 AND version_id=$2`, f.app.cfg.Scope.AppID.String(), ref.Version).Scan(&after))
 	must(t, f.pool.QueryRow(t.Context(), `SELECT released FROM `+f.schema+`.content_versions WHERE tenant_id=$1 AND id=$2`, f.app.cfg.Scope.AppID.String(), ref.Version).Scan(&released))
 	if before != after || released {
 		t.Fatal("auditor HLS inspection changed publication state")

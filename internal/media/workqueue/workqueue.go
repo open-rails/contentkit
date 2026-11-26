@@ -92,7 +92,6 @@ func jobs(schema string) string { return pgx.Identifier{schema, "river_job"}.San
 // IngestArgs places an item's staged uploads (media.Manifests.Place), then
 // enqueues its processing: media.ProcessJob's fields.
 type IngestArgs struct {
-	Commit string                `json:"commit,omitempty"`
 	Ref    contentref.ContentRef `json:"ref"`
 	Preset string                `json:"preset,omitempty"`
 	Force  bool                  `json:"force,omitempty"`
@@ -175,8 +174,8 @@ func FamiliesOf(k *mediastore.RegisteredKind, preset string) Families {
 		if preset != "" && p.Name != preset {
 			continue
 		}
-		f.Image = f.Image || p.Image != nil || p.Zip != ""
-		f.Video = f.Video || p.HLS != nil || p.MP4 != nil || p.Subtitles != nil
+		f.Image = f.Image || p.Image != nil
+		f.Video = f.Video || p.HLS != nil || p.Subtitles != nil
 	}
 	for _, p := range k.Public {
 		f.Image = f.Image || preset == "" || p.Name == preset
@@ -195,12 +194,12 @@ func (q *Queue) enqueue(ctx context.Context, insert mediastore.InsertFunc, job m
 	if err != nil {
 		return err
 	}
-	if job.Place || job.Commit != "" {
-		return mediastore.InsertOnce(ctx, insert, IngestArgs{Ref: job.Ref, Commit: job.Commit, Preset: job.Preset, Force: job.Force},
+	if job.Place {
+		return mediastore.InsertOnce(ctx, insert, IngestArgs{Ref: job.Ref, Preset: job.Preset, Force: job.Force},
 			river.InsertOpts{Queue: IngestQueue, MaxAttempts: riverMaxAttempts})
 	}
 	f := FamiliesOf(item.Kind(), job.Preset)
-	if !f.Image && !f.Video && !job.Editor {
+	if !f.Image && !f.Video && !job.Editor && item.Kind().Master.Identity() {
 		return nil
 	}
 	return mediastore.InsertOnce(ctx, insert, DerivativeArgs{Ref: job.Ref, Preset: job.Preset, Force: job.Force, Editor: job.Editor, Class: job.Class}, *DerivativeInsertOpts(job.Class))

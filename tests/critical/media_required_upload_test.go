@@ -173,43 +173,9 @@ func TestRequiredUploadHoldsRelease(t *testing.T) {
 	waitForWithin(t, 20*time.Second, func() bool {
 		return slices.Equal(listed("clip"), ids(kept, legacy)) && slices.Equal(listed("gallery"), ids(paged, pageless))
 	})
-	// A release that fails while copying keeps its frozen plan for its retry.
-	stale := draft("Release interrupted before the rule", poster())
-	awaitMediaReady(t, admin, stale)
-	m.wire.mu.Lock()
-	m.wire.refuseOutput = func(r *http.Request) bool {
-		return r.Method == http.MethodPut && r.Header.Get("X-Amz-Copy-Source") != "" && strings.Contains(r.URL.Path, stale.Version)
-	}
-	m.wire.mu.Unlock()
-	publish(stale)
-	requests := pgx.Identifier{m.schema, "content_publication_requests"}.Sanitize()
-	// Processing settling after publication wakes a newer request; the frozen
-	// one must be the last left before the rule changes.
-	frozenID := ""
-	waitForWithin(t, 60*time.Second, func() bool {
-		var id, state string
-		var frozen bool
-		var processing int
-		err := m.pool.QueryRow(t.Context(), `SELECT id::text,state,plan IS NOT NULL FROM `+requests+` WHERE tenant_id=$1 AND version_id=$2 AND current`, publicationTenant(m.app), stale.Version).Scan(&id, &state, &frozen)
-		must(t, m.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+pgx.Identifier{m.config.Schema, "river_job"}.Sanitize()+` WHERE state IN ('available','running','retryable','scheduled')`).Scan(&processing))
-		if err != nil || state != "failed" || !frozen || processing != 0 {
-			frozenID = ""
-			return false
-		}
-		if id == frozenID {
-			return true
-		}
-		frozenID = id
-		time.Sleep(time.Second)
-		return false
-	})
-
 	stopWorker()
 	m.app.server.Close()
 	must(t, m.app.engine.Close(t.Context()))
-	m.wire.mu.Lock()
-	m.wire.refuseOutput = nil
-	m.wire.mu.Unlock()
 	for i := range m.app.cfg.Media.Kinds {
 		if name := m.app.cfg.Media.Kinds[i].Name; name == "clip" || name == "gallery" {
 			m.app.cfg.Media.Kinds[i].Uploads[0].Required = true
@@ -233,20 +199,8 @@ func TestRequiredUploadHoldsRelease(t *testing.T) {
 
 	waitForWithin(t, 45*time.Second, func() bool {
 		wakeDuePublicationJobs(t, m.app)
-		return !version(legacy).Live && publication(legacy) == "waiting" && !version(pageless).Live && publication(pageless) == "waiting"
+		return !version(legacy).Live && publication(legacy) == "pending" && !version(pageless).Live && publication(pageless) == "pending"
 	})
-	for deadline := time.Now().Add(45 * time.Second); publication(stale) != "waiting"; time.Sleep(50 * time.Millisecond) {
-		if version(stale).Live {
-			t.Fatal("a release planned before its source was required went live on retry")
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("the interrupted release never waited for its source: %q", publication(stale))
-		}
-		wakeDuePublicationJobs(t, m.app)
-	}
-	if version(stale).Live {
-		t.Fatal("a release planned before its source was required went live on retry")
-	}
 	waitForWithin(t, 20*time.Second, func() bool {
 		return slices.Equal(listed("clip"), ids(kept)) && slices.Equal(listed("gallery"), ids(paged))
 	})
@@ -255,7 +209,7 @@ func TestRequiredUploadHoldsRelease(t *testing.T) {
 	if !version(kept).Live || !version(paged).Live {
 		t.Fatal("Reconcile withdrew a release that holds its required upload")
 	}
-	for _, ref := range []media.RefBody{legacy, pageless, stale} {
+	for _, ref := range []media.RefBody{legacy, pageless} {
 		if state := itemState(ref); state != media.StateMissing {
 			t.Fatalf("editors read a %s without its required upload as %q, want missing", ref.Kind, state)
 		}
@@ -265,19 +219,19 @@ func TestRequiredUploadHoldsRelease(t *testing.T) {
 	fresh := clip("Published without a source", poster())
 	waitForWithin(t, 45*time.Second, func() bool {
 		wakeDuePublicationJobs(t, m.app)
-		return publication(fresh) == "waiting" && itemState(fresh) == media.StateMissing
+		return publication(fresh) == "pending" && itemState(fresh) == media.StateMissing
 	})
-	var released, activated bool
-	must(t, m.pool.QueryRow(t.Context(), `SELECT released,release_id IS NOT NULL FROM `+pgx.Identifier{m.schema, "content_versions"}.Sanitize()+` WHERE tenant_id=$1 AND id=$2`,
-		publicationTenant(m.app), fresh.Version).Scan(&released, &activated))
-	if v := version(fresh); released || activated || v.Live || v.PublishedAt != nil {
-		t.Fatalf("a version without its source was released: released=%v activated=%v live=%v published_at=%v", released, activated, v.Live, v.PublishedAt)
+	var released bool
+	must(t, m.pool.QueryRow(t.Context(), `SELECT released FROM `+pgx.Identifier{m.schema, "content_versions"}.Sanitize()+` WHERE tenant_id=$1 AND id=$2`,
+		publicationTenant(m.app), fresh.Version).Scan(&released))
+	if v := version(fresh); released || v.Live || v.PublishedAt != nil {
+		t.Fatalf("a version without its source was released: released=%v live=%v published_at=%v", released, v.Live, v.PublishedAt)
 	}
 
 	// The withdrawn version's source arrives: it stays unreleased while its
 	// stream encodes, then releases.
 	hold := m.wire.pause(t, func(r *http.Request) bool {
-		return r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/internal/") && strings.HasPrefix(r.Header.Get("Content-Type"), "video/mp4")
+		return r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/internal/") && strings.HasPrefix(r.Header.Get("Content-Type"), "video/mp4") && !strings.HasSuffix(r.URL.Path, digestBytes(video))
 	})
 	_, err = admin.IngestMedia(t.Context(), http.DefaultClient, legacy, uuid.NewString(), []ck.MediaFile{source()})
 	must(t, err)

@@ -397,8 +397,8 @@ download charged once to `media.downloads`:
 content:
   content_kinds:
     video:
-      download: {serve: original}   # default of players; or an MP4 preset ("mp4-1080"); {off: true} for none
-    gallery: {}                     # readers serve pages: the media kind's Publish.Download zip
+      download: {serve: original}   # default of players: the video as uploaded; {off: true} for none
+    gallery: {}                     # readers serve pages: a ZIP of the released pages
 media:
   downloads:
     anonymous: [{limit: 5, per: 1h}]   # by address
@@ -422,12 +422,16 @@ media:
   allows everything and marks nothing.
 - The route answers `200` JSON `FileDownload{url, name, type, size,
   expires_at}`; navigate to `url` (contentkit-ui's `useVersionDownload` and
-  `VersionDownloadButton` do). Public and private files are the media host's,
-  a private one with an exact-file token, so bytes never pass the app;
-  without the policy's `Name`, files are named `{title} [{version code}].{ext}`,
-  zips by the zip preset's `Download` template. Zips and retained originals are
-  `archive?for=&mark=&name=&ticket=`, relative to the download route:
-  `GET .../versions/{vid}/archive` streams them, marking the ticket's pages.
+  `VersionDownloadButton` do). It is `archive?for=&mark=&name=&ticket=`
+  (`&file=true` for an original), relative to the download route:
+  `GET .../versions/{vid}/archive` streams the masters where they are stored
+  (the originals under the identity recipe): a ZIP of the released pages, or
+  the video's master. Unmarked, the same revision is byte-identical on every
+  request (exact `Content-Length`, `ETag`, ranges), cached privately. A ZIP
+  with marked pages is marked and zipped anew for every request, never
+  cached (`Cache-Control: private, no-store`, `CDN-Cache-Control: no-store`,
+  no length, validator or ranges). Files are named by the policy's `Name`,
+  else the title, plus the file's extension.
 - `202 Pending` while the file is placed or produced, `403` locked or
   `download_unavailable`, `404` no download for the kind, `409 no_download`
   when the version has nothing to serve, `429 rate_limited` with
@@ -473,8 +477,9 @@ Ports (in `content` unless qualified):
 **Authors.** Comments, replies, the latest-comments feed, held items and
 bans show each author as `{id, name, username, avatar, avatar_srcset}`:
 `name` and `username` from `UserInfo.Get` (never the email), with one `Get`
-per response, never per author, and the avatar at its stable URL, built
-from the id (`Config.Accounts.Avatars`, Avatars below). An id the directory does not
+per response, never per author, and the avatar's current image, read from
+the item cache in one query per response (`Config.Accounts.Avatars`, Avatars
+below), else the kind's default. An id the directory does not
 hold (a deleted account) has no author; a directory failure is logged and
 leaves bare ids, never failing the response. Without `UserInfo` authors are
 bare ids.
@@ -817,7 +822,7 @@ Content anonymization commits atomically:
   they set stay, without their id);
 - location rules and their history keep what changed and when, without the subject as creator, updater or actor.
 
-After the avatar erasure, the subject leaves the media journal and quota ledger: commits keep no actor or quota owner of theirs, and their usage, reservations, releases and upload rates go. An avatar's folder path keeps the account id: it is the permanent storage fence that keeps a purged id's avatar unwritable, and its rows are folder bookkeeping, not attribution.
+After the avatar erasure, the subject's upload rates go; manifests record no uploader. An avatar's folder path keeps the account id: it is the permanent storage fence that keeps a purged id's avatar unwritable, and its cache row is folder bookkeeping, not attribution.
 
 Every writer that stores an account id takes the subject fence and refuses an erased one: comments, reactions, favorites, votes, reposts, content creation (`created_by`) and creators, channel owners, imports naming them (`erased`) and media upload grants. A purged id is never reactivated.
 
@@ -998,22 +1003,19 @@ layouts.
   kind's reader (its page segments, a locked version's previews (its rule's,
   else its kind's `preview`) and its playback) is planned by
   `GET /v1/contents/{id}/versions/{vid}/reader`. Page-archive
-  imports, reader metadata and downloads (a host watermark, quota buckets)
+  imports, reader metadata and downloads (a host watermark, download quotas)
   complete it. A reader version with no cover of its own gets its leading
   released page as its cover (an upload marked `auto_cover`); a cover an
   editor uploads replaces it for good.
-- **Manifest.** An ordered virtual file system over the item's private
-  blobs: each Upload's files in natural order unless an op reorders them,
-  then each private preset's outputs in their uploads' order. A derived file
-  records `from`, `preset` and `fp` (its inputs' fingerprint); it is stale
-  exactly when the fingerprint no longer matches. Each upload records its
-  public publications: the current generation of each preset and, while
-  the worker writes one, its successor.
-- **URLs.** `https://media.<site>/v1/tenant/{tenant}/app/{app}/{kind}/{id}/{public|private|download}/{name}`.
-  Public names carry a generation that changes on every render, so a URL
-  built from a preset's `to` template is never valid: it serves the kind's
-  default image, or 404 when the preset declares no `Default`. Build public
-  URLs with the lookup in "Public image URLs".
+- **Manifest.** An ordered virtual file system over the item's blobs, each
+  named `{area}/{sha256}`: each Upload's files in natural order unless an op
+  reorders them, then each preset's outputs in their uploads' order. A
+  derived file records `from`, `preset` and `fp` (its inputs' fingerprint);
+  it is stale exactly when the fingerprint no longer matches.
+- **URLs.** `https://media.<site>/v1/tenant/{tenant}/app/{app}/{kind}/{id}/{public|private}/{sha256}`.
+  Names are hashes, so no URL is built from a preset's `to` template: reads
+  and listings carry them (see "Public image URLs"), and a preset's default
+  image is in `GET /v1/media/presets`.
 
 ### Registry
 
@@ -1026,7 +1028,6 @@ var Gallery = media.Kind{Name: "gallery", KeepOriginals: true,
 	Private: []media.Private{
 		{Name: "thumb", From: "originals/{name}", To: "thumb/{name}.webp", Image: &media.Image{Width: 460, Height: 650, Fit: media.FitCover}},
 		{Name: "high", From: "originals/{name}", To: "high/{name}.webp", Image: &media.Image{Quality: 90}},
-		{Name: "zip", To: "download/pages.zip", Download: "{title}.zip", Zip: "high/"},
 	},
 	Public: []media.Public{
 		{Name: "cover", From: "cover", To: "cover-{w}.webp", Widths: []int{230, 460, 920},
@@ -1043,7 +1044,6 @@ var Video = media.Kind{Name: "video", KeepOriginals: true,
 	},
 	Private: []media.Private{
 		{Name: "hls", From: "source", To: "hls/", HLS: &media.HLS{Ladder: []int{2160, 1080, 480}}},
-		{Name: "mp4-1080", From: "source", To: "video/source-1080p.mp4", Download: "{title} (1080p).mp4", MP4: media.Rung(1080)},
 		{Name: "vtt", From: "subs/{name}", To: "vtt/{name}.vtt", Subtitles: &media.Subtitles{}},
 	},
 	Public: []media.Public{{Name: "poster", From: "poster", To: "poster-{w}.webp", Widths: []int{640, 1280, 1920}, Default: "poster.png"}},
@@ -1064,22 +1064,19 @@ worker, _ := cfg.MediaRegistry() // the stock worker's MEDIA_KINDS_FILE
   `avatar.User()` (`github.com/open-rails/contentkit/media/avatar`) is the
   standard kind: JPEG, PNG and WebP up to 10 MiB, square WebP at 64, 128,
   256 and 512 pixels, a default silhouette (publish it with the other
-  defaults: `media-worker publish-defaults`). Its preset is `Stable`:
-  besides its generations, the current image is kept at the logical names
-  (`avatar-128.webp`), so its URL is built from the person's id and the
-  gateway serves the default there until one is uploaded.
-  `Registry.Avatars(ids...)` builds them without a lookup. A host building
+  defaults: `media-worker publish-defaults`). An avatar's URL names its
+  hash, so listings read it from the item cache (one query per response)
+  and show the default until one is uploaded. A host building
   its own media without the engine authorizes the kind in `CanUpload`: a
   person their own, staff anyone's (exempt).
 
 - **Uploads** are paths: a literal (`cover`) or a pattern (`originals/{name}`); a file's path adds its extension (`cover.png`), and a put to the same stem replaces it. `Max` caps an Upload's files, frames included, `MaxPixels` lowers the image processor's decoded-pixel bound for its images (avatars: 25 MP), `Frames` lets the `frame` op grab the upload from a video upload (it must accept `image/png`; no other upload takes frames), `Named` lets the server name it (`i-{uuid}`, inline images; it needs a `Max`). `Required` holds a version back until it has an attached upload there: its media state reads `missing` and its publication waits, and a live release without one is withdrawn when it is re-planned.
 - **Private presets** have one producer: `Image` (with `Shapes`, below),
   `HLS` (byte-range fMP4 ladder, audio and subtitle tracks, seek sprite; each
-  track's segment table is its own private blob), `MP4` (one rung, H.264),
-  `Zip` (the files under a prefix, in manifest order), `Audio` (an HLS track
-  and an M4A) or `Subtitles` (clean WebVTT; a video lists them after its own
-  tracks). Nothing is upscaled.
-  Image presets default to WebP. A private preset with `Image.Format: media.ImageFormatSource` must end its `To` with `{ext}` (the upload's original extension), such as `download-pages/{name}{ext}`. With an inside fit and no edit, a source within its width/height box passes through with its pixels byte-for-byte and its metadata (EXIF, XMP, IPTC, comments, trailing data) dropped, orientation and colour profile kept; `Image.KeepMetadata` keeps all of it and is required for AVIF, HEIF and TIFF uploads. `Width: 6000, Height: 6000` bounds either edge proportionally; zero leaves an edge unbounded. Oversized or edited JPEG, PNG, WebP and GIF files retain their codec, including animation; other accepted codecs support unchanged passthrough only. Keep archival uploads with `KeepOriginals: true`; a ZIP preset over `download-pages/` packs the resulting original-format pages in reading order. Upgrade the worker/gateway cohort before declaring this registry, then regenerate existing items to replace an old download rendition. `Shapes` give an image preset another `Image` for uploads of another aspect (width:height), wider than `WiderThan` and no wider than `NoWiderThan` (unset is open). They are data, so the stock worker runs them; they never overlap and keep the preset's format and animation; an upload in none renders `Image`. Tall pages keep more height, wide pages more width:
+  track's segment table is its own blob) or `Subtitles` (clean WebVTT; a
+  video lists them after its own tracks). A video's original is kept as
+  uploaded and is what its download serves. Nothing is upscaled.
+  Image presets default to WebP. A private preset with `Image.Format: media.ImageFormatSource` must end its `To` with `{ext}` (the upload's original extension), such as `download-pages/{name}{ext}`. With an inside fit and no edit, a source within its width/height box passes through with its pixels byte-for-byte and its metadata (EXIF, XMP, IPTC, comments, trailing data) dropped, orientation and colour profile kept; `Image.KeepMetadata` keeps all of it and is required for AVIF, HEIF and TIFF uploads. `Width: 6000, Height: 6000` bounds either edge proportionally; zero leaves an edge unbounded. Oversized or edited JPEG, PNG, WebP and GIF files retain their codec, including animation; other accepted codecs support unchanged passthrough only. Keep archival uploads with `KeepOriginals: true`. A reader kind's `Publish.Download` names such a `HostOnly` preset: the pages ZIP then carries a page's bounded rendition in place of an oversized original. `Shapes` give an image preset another `Image` for uploads of another aspect (width:height), wider than `WiderThan` and no wider than `NoWiderThan` (unset is open). They are data, so the stock worker runs them; they never overlap and keep the preset's format and animation; an upload in none renders `Image`. Tall pages keep more height, wide pages more width:
 
   ```json
   {"name": "low", "from": "originals/{name}", "to": "low-res/{name}.webp",
@@ -1102,13 +1099,13 @@ worker, _ := cfg.MediaRegistry() // the stock worker's MEDIA_KINDS_FILE
   presets' sources are always kept). Except a version's declared audio
   (`Publish.Playback`), the read API never returns an upload's path or URL
   to viewers.
-- **Host-only presets.** `Private.HostOnly` keeps an Image, MP4 or Zip output out of generic reads, downloads and playlists.
+- **Host-only presets.** `Private.HostOnly` keeps an Image output out of generic reads and playlists.
 - **`private/` is all or nothing.** One token per item opens every private file of it; a version's `private/` holds only released files. `HostOnly` outputs, of every kind, stay in `internal/`, which no token reaches.
 - **Defaults.** A kind's `Defaults` (an `fs.FS`, e.g. `go:embed`) holds the
   images its public presets name in `Public.Default`; the registry checks
   they exist. A shared kind ships its own, so importing apps merge nothing.
 - **Shared kinds.** Account avatars use `tenant/{tenant}/account/{kind}/{id}/`.
-  One app owns the shared avatar journal and worker; other sites reach it
+  One app (the primary) writes them; other sites reach it
   through its API (Avatars below) and serve its files from their media hosts
   (a `MEDIA_GATEWAY_ROUTES` entry for the tenant account root). The root is
   derived from `Config.Scope`.
@@ -1129,12 +1126,15 @@ cfg.Accounts.Avatars = &contentkit.AvatarsConfig{
 }
 ```
 
-- Every author and the content model's `avatars` (`GET /v1/kinds`, a
-  `Stable` preset rule) name avatars at the site's own media host,
-  `{media}/v1/tenant/{tenant}/account/user/{id}/public/avatar-{w}.webp`:
-  nothing is looked up. The gateway's resource policy is same-site, so each
-  site's host serves them: every media host has a `MEDIA_GATEWAY_ROUTES`
-  entry for the tenant account root, pointing at the primary's bucket.
+- Every author is listed with the avatar's current image, read from the
+  tenant's account item cache (`content_media_items` in the account schema,
+  which every site of the tenant reads), else the kind's default; the
+  content model's `avatars` (`GET /v1/kinds`) is the preset rule with its
+  `default_image`. URLs are at the site's own media host,
+  `{media}/v1/tenant/{tenant}/account/user/{id}/public/{sha256}`. The
+  gateway's resource policy is same-site, so each site's host serves them:
+  every media host has a `MEDIA_GATEWAY_ROUTES` entry for the tenant
+  account root, pointing at the primary's bucket.
 - On the other site, a person's avatar presigns, commits and editor reads
   (`/v1/media/upload/{presign,commit}`, `/v1/media/{kind}/{id}`) go through
   its own routes, which forward them to the primary's with `Key`: only
@@ -1148,8 +1148,9 @@ cfg.Accounts.Avatars = &contentkit.AvatarsConfig{
   keys (AuthKit API keys in the root group, a role with that permission
   alone), which it answers with token URLs rather than cookies.
 - contentkit-ui's `AvatarUpload` defaults to the viewer's avatar from the
-  content model, `useAvatar(id)` builds an image, and both work unchanged
-  on either site.
+  content model, `useAvatar(id)` shows the viewer's own (anyone else's
+  comes with what they wrote) or the default, and both work unchanged on
+  either site.
 - `AnonymizeAccount` erases avatars on the primary only; people are shared,
   so the primary's deletion (the account deletion every site shares) removes
   them.
@@ -1217,8 +1218,7 @@ The media route group serves the read API at `/v1/media`
   file's type. With `editor` (editors only), the
   uploads come with `edit`, `frame`, `meta`, `pending`, `failed`, encode
   `progress` and an `editor_url`: the editor view, rendered on demand by the
-  worker (`ReaderOptions.Queue`) into `private/` under the hash of its source
-  and `Config.Editor`, and swept a grace period later. An editor read also
+  worker (`ReaderOptions.Queue`) from its source and `Config.Editor`. An editor read also
   carries the kind's `uploads`: each upload path's types, `max_bytes`,
   `max` files, crop `aspect` and `min_width`, and for video its limits in
   effect and the `min_aspect`/`max_aspect` its HLS presets accept, so
@@ -1226,43 +1226,27 @@ The media route group serves the read API at `/v1/media`
   fields, even for served originals.
 - `GET /presets` lists every kind's public preset rules (`base`,
   `namespace`, `kind`, `name`, `from`, `to`, `widths`, `aspect`, `min_width`,
-  `first`): crop bounds and widths without a read. Published files carry a
-  generation suffix, so a URL built from `to` is not an item's image; its
-  current images come from a read's `public` (or, server-side, the lookup
-  below).
+  `default_image`): crop bounds, widths and the preset's default without a
+  read. Files are named by their hash: an item's current images come from a
+  read's `public` (or, server-side, the cache below).
 - `GET /{kind}/{id}/hls/{dir}master.m3u8` (a ladder in `hls`), `{path}.m3u8`
   (a track) and `{dir}sprite.vtt` are built per request from the manifest's
   tracks and their index blobs (cached per item and hash, 16 MiB per process).
 
 ### Public image URLs
 
-Every item's current publications are projected into Postgres
-(`content_media_publications`) in the same journal transaction that makes
-them current, so server-side rendering resolves a whole page with one
-indexed query and no bucket read. `*media.Manifests` (`jobs.Manifests()`):
-
-- `Images(ctx, media.ImageQuery{Ref, Preset, Name}...)` answers many queries in
-  one read: an item's images, one preset's, or one upload's by its `{name}`
-  (an inline image's `i-{uuid}`). Store names, not URLs, and resolve them
-  when rendering; post bodies store references (Interactions).
-  `image.URL(width)` picks a rendition, `image.SrcSet()` gives `srcset`.
-- `Registry.DefaultImage` is a preset's default.
-
-A republish keeps the current files published until their successor is
-ready, and cleanup retires a generation only after the projection names the
-next one. Browsers keep using a read's `public` or `usePublicImage`.
+Every item's current public images are cached in Postgres (`content_media_items`) after each manifest write, so server-side rendering resolves a whole page with one indexed query and no bucket read: listings, authors, covers and post bodies carry their URLs. Store names, not URLs; post bodies store references (Interactions). `image.URL(width)` picks a rendition, `image.SrcSet()` gives `srcset`. Browsers use a read's `public` or `usePublicImage`.
 
 ### Public storage classes
 
-- Declared public presets remain public before release and after unpublishing.
-  Publication and billing changes only change database access policy and private
-  token issuance. There is no exposure method or worker.
+- Declared public presets are public before release and after unpublishing.
+  Publication and billing change only database access policy, private token
+  issuance and which files a release moves into `private/`.
 - Render the defaults from the deploy step with the worker image:
   `media-worker publish-defaults` (`MEDIA_KINDS_FILE`, `MEDIA_S3_*`, no
-  database) writes each `Public.Default` to
-  `{ns}/{kind}/_default/public/sha256-{digest}.webp` and prints the
-  gateway's `MEDIA_GATEWAY_DEFAULTS`. The images come from
-  `MEDIA_DEFAULTS_DIR`, over ContentKit's own (the avatar silhouette).
+  database) writes each kind's `Public.Default` images into its `_default`
+  item, from `MEDIA_DEFAULTS_DIR` over ContentKit's own (the avatar
+  silhouette). Repeating it writes nothing.
 
 ### Processing and readiness
 
@@ -1271,21 +1255,12 @@ next one. Browsers keep using a read's `public` or `usePublicImage`.
   itself (a changed spec or recipe after a deploy) and visits every item of
   the kind; the `regenerate` op does one item. A `meta` change rewrites download names only.
 - An item is ready when no attached upload is pending (including declared
-  public presets) and every zip packs its inputs; failed once
-  nothing is pending and an upload failed for its current blob and edit.
-  Processor completion appends a retained processing fact and queues real
-  version metadata work in one transaction; hosts follow it through the event
-  log, never inside the transaction.
-- Manifests stop at `media.MaxManifestBytes` (16 MiB of JSON). A commit is
-  refused (413 `too_large`) when the item, processed, would pass that. If
-  outputs still overrun it, the worker marks the item `full` instead of
-  recording them: producers write no private output for it (public files
-  still render), readiness is `full` and editor reads say `full: true`,
-  until a commit frees the bytes the refused record was short of (the
-  manifest's `deficit`, counting what removed uploads would still have
-  added); a smaller shrink or removal re-runs nothing.
-  The SDK's `waitFor` rejects with `too_large` while an item is full.
-  Failure messages are capped at 300 bytes.
+  public presets); failed once nothing is pending and an upload failed for
+  its current blob and edit. The item cache appends a retained processing
+  fact when an item's status changes, in the transaction that records the
+  manifest write; hosts follow it through the event log.
+- Manifests stop at `media.MaxManifestBytes` (16 MiB of JSON); a write past
+  it fails. Failure messages are capped at 300 bytes.
 - Each process keeps a fixed 128 MiB cache of decoded manifests, each about
   three times its JSON: the largest costs 48 MiB, and a read that misses
   decodes it again (about 0.5 s and 120 MiB at 16 MiB, anonymous reads
@@ -1301,7 +1276,7 @@ next one. Browsers keep using a read's `public` or `usePublicImage`.
   container's declared duration and rate. `Upload.Video`
   (`media.VideoLimits`) caps an upload's running time, frame area, output
   frame rate and planned encode work (output pixels × output frames over
-  its HLS and MP4 rungs and codecs); zero fields take
+  its HLS rungs and codecs); zero fields take
   `media.DefaultVideoLimits` (4 h, 60 fps, 8192×4320 px, 4e13). An upload
   past them, or a video averaging under one frame a second, fails before
   any encode with `video_too_long`, `video_too_large` or
@@ -1313,32 +1288,10 @@ next one. Browsers keep using a read's `public` or `usePublicImage`.
 
 ### File retirement, deletion and erasure
 
-- Manifest edits admit their exact next manifest and ingest job in PostgreSQL
-  before the conditional S3 write. Ingest retries that admitted operation.
-  Removed keys remain durable intents for the existing content purge. A file shared by retained entries stays live;
-  reordering entries does not delete or rename it.
-- The existing content-deletion sweep calls `jobs.PurgeRetired(ctx, limit)`
-  for database-recorded allocation and deletion deadlines. It does not search the bucket for unreferenced files. Unfinished
-  private allocations retain `JobsConfig.Grace` (24 h by default); temporary
-  uploads and caches expire after seven days and must then be uploaded again.
-  Known retired keys receive a bounded retry to catch already-issued writes.
-  Unknown objects require an explicit integrity investigation.
-- Configure the S3 adapter's lifecycle policy and allow `x-amz-tagging` in
-  upload CORS. Worker credentials also need `s3:PutObjectTagging` and
-  `s3:DeleteObjectTagging`. Canonical temp objects receive an expiry tag; copies into
-  permanent storage clear it. `Store.Configure` preserves unrelated lifecycle
-  rules, expires temp objects and aborts multipart uploads after seven days.
-  Use equivalent server settings where multipart lifecycle is unsupported.
-- `jobs.RetireItemsTx(ctx, tx, media.Deletion{Ref, Owner})` records an
-  incarnation-bound deletion with the owning tombstone; executing it makes a
-  soft-deleted item's fence permanent. `RetirementStartedTx`
-  prevents restoration after the claim; `RetirementComplete` permits the owner
-  to mark completion only after physical deletion succeeds. The content purge
-  retains exact late-write targets after the owning row is finalized.
-  `Jobs.Erase` is synchronous permanent erasure; `Jobs.Purge` is an explicit
-  reset with a stable operation ID. Neither needs a media host queue.
-- Restore: `s3.Store.Restore(ctx, prefix, t)` brings back manifests and
-  their referenced blobs. Normal processing rebuilds declared public presets.
+- A manifest edit that stops referencing a file moves it to the manifest's `retired` list with a due time: 7 days for a replaced file, an hour for a release's leftovers, at once for withdrawn, taken-down or erased files. A file shared by retained entries stays live; reordering entries does not delete or rename it.
+- Garbage collection (`contentkit_media_gc`, one job per item) deletes retired files once due, and after a write lists the item's folder once for orphans older than a day. Nothing lists the bucket otherwise.
+- Configure the S3 adapter's lifecycle policy and allow `x-amz-tagging` in upload CORS. Worker credentials also need `s3:PutObjectTagging` and `s3:DeleteObjectTagging`. `Store.Configure` preserves unrelated lifecycle rules, expires staged uploads and aborts multipart uploads after seven days. Use equivalent server settings where multipart lifecycle is unsupported.
+- Soft deletion records the deletion in the manifest and writes the item's gateway fence; restoring removes it. Erasure (`Jobs.Erase`) writes the permanent fence and an empty manifest whose files are all retired and due, then deletes them; restoring is refused from the tombstone on.
 
 ## Upgrading from v0.69
 
@@ -1360,7 +1313,7 @@ public URLs: a body that names one keeps naming a file that goes stale.
   (`editorBody`, `imageSrc(name)`, `coverSrc`); `media.uploadInline` adds
   `ref`, and its `url` is a preview (null while none exists);
   `posts.imageURL` is `posts.inlineImage`. `defaultImage` and `usePublicImage` give no image for
-  a preset without a default (`PresetRule.default`).
+  a preset without a default (`PresetRule.default_image`).
 
 ## Upgrading from v0.70
 
@@ -1404,6 +1357,29 @@ gates (Auth). No compatibility: the old ports are gone.
   in the request. Custom wrappers must use that signature; embedded hosts
   pass the client returned by `Engine.MerchantBySlug`.
 
+## Masters (`media.Kind.Master`)
+
+Renditions derive from each upload's master, and downloads serve it. With no
+`master` recipe (the default) the master is the original: the manifest names
+its hash, and nothing more is stored. A recipe names host hooks in order:
+
+```yaml
+media:
+  kinds:
+    - name: gallery
+      master: {steps: [{hook: deskew, version: "2", params: {max_degrees: 3}}]}
+```
+
+A hook implements `media.MasterHook` (`Version`, and `Process`, which reads
+`MasterInput.Path` and writes `Out`, or answers `Unchanged`; it may hand the
+file to an external job) and is registered in the media worker's `Masters`
+under its name. A worker refuses a recipe naming a hook it lacks or at another
+version, so a hook's new behaviour is a version bump; the stock image
+registers none. A changed result must be lossless: WebP lossless (`image/webp`), PNG
+past 16,383 px, or FFV1 in Matroska. While a hook fails the upload keeps its
+previous master and renditions. After changing a recipe or a preset's spec,
+run `contentkit regenerate -kind gallery` (`Engine.RegenerateMedia`).
+
 ## Media worker schema
 
 Each host names its own media worker River schema, e.g. `doujins_media_worker`
@@ -1438,11 +1414,9 @@ the host's periodic jobs. The worker migrates its schema itself.
   whose bucket is the avatar primary's. URL paths use the tenant/app or
   tenant/account roots above. `origins` are exactly your sites' origins
   (`https://<domain>`, `https://www.<domain>`; no wildcards, no third
-  parties); `MEDIA_GATEWAY_DEFAULTS` the public names that fall back to a kind's
-  `_default` item. `Cross-Origin-Resource-Policy` is always `same-site`.
-- **Bucket**: one per app, private (no public ACL or policy); the gateway's
-  key reads only `*/private/*` and `*/public/*` of each; only the hosts write.
-- **CDN**: may cache `public/` in a shared cache. Generation-named URLs answer `public, max-age=31536000, immutable`; stable names and default images answer `public, max-age=300, stale-while-revalidate=86400` with ETag revalidation. ContentKit does not enqueue CDN invalidation jobs. Never cache `private/` in a shared cache: the token is not part of a cache key the CDN checks, so a cached object would be served without one. Private blobs are hash-named and answer `private, max-age=31536000, immutable` with `CDN-Cache-Control: no-store`, so a CDN that ignores `private` still stores none: tokens guard new reads, not copies a browser already holds, so expiry, key rotation and deletion don't reach those. Every media answer carries `Referrer-Policy: no-referrer`, so a page a media file links to never sees its tokened URL. The gateway sets these headers itself and ignores any `Cache-Control` stored on the object. A CDN hit skips the deletion fence, so a deleted `public/` file can stay served until that copy expires.
+  parties). `Cross-Origin-Resource-Policy` is always `same-site`.
+- **Bucket**: one per app, private (no public ACL or policy), and never versioned: media writes refuse a bucket that ever had versioning. The gateway's key reads only `*/private/*` and `*/public/*` of each; only the hosts write.
+- **CDN**: may cache `public/` in a shared cache. Every name is a hash, so public files answer `public, max-age=31536000, immutable`. ContentKit does not enqueue CDN invalidation jobs. Never cache `private/` in a shared cache: the token is not part of a cache key the CDN checks, so a cached object would be served without one. Private blobs are hash-named and answer `private, max-age=31536000, immutable` with `CDN-Cache-Control: no-store`, so a CDN that ignores `private` still stores none: tokens guard new reads, not copies a browser already holds, so expiry, key rotation and deletion don't reach those. Every media answer carries `Referrer-Policy: no-referrer`, so a page a media file links to never sees its tokened URL. The gateway sets these headers itself and ignores any `Cache-Control` stored on the object. A CDN hit skips the deletion fence, so a deleted `public/` file can stay served until that copy expires.
 - **Denials are 404 by design**: a missing, malformed, expired, wrong-scope
   or unknown-key token on `private/` gets the same response as a
   missing object (status, headers, body; `Cache-Control: no-store`), decided

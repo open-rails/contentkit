@@ -37,6 +37,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
+	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/server"
 )
 
@@ -55,6 +56,14 @@ func run(log *slog.Logger, args []string, stdout io.Writer) error {
 	}
 	flags := flag.NewFlagSet("contentkit "+cmd, flag.ContinueOnError)
 	path := flags.String("config", "contentkit.yaml", "config file (server.Config as YAML)")
+	var regen media.Regeneration
+	if cmd == "regenerate" {
+		flags.StringVar(&regen.Kind, "kind", "", "the media kind to regenerate (required)")
+		flags.Func("id", "a content or version id to regenerate (repeatable; none: every item of the kind)", func(id string) error {
+			regen.IDs = append(regen.IDs, id)
+			return nil
+		})
+	}
 	if err := flags.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return nil
@@ -82,8 +91,19 @@ func run(log *slog.Logger, args []string, stdout io.Writer) error {
 			}
 			return err
 		})
+	case "regenerate":
+		if regen.Kind == "" {
+			return errors.New("regenerate needs -kind")
+		}
+		return serve(log, cfg, func(ctx context.Context, srv *server.Server) error {
+			n, err := srv.RegenerateMedia(ctx, regen)
+			if err == nil {
+				_, err = fmt.Fprintf(stdout, "queued %d %s items; the media worker regenerates what changed\n", n, regen.Kind)
+			}
+			return err
+		})
 	}
-	return fmt.Errorf("unknown command %q: serve, media-config or reconcile", cmd)
+	return fmt.Errorf("unknown command %q: serve, media-config, reconcile or regenerate", cmd)
 }
 
 // mediaConfig writes the engine's media registry as cmd/media-worker reads it.

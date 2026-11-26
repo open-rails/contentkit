@@ -6427,7 +6427,6 @@
           "conflict",
           "forbidden",
           "not_found",
-          "quota_exceeded",
           "rate_limited",
           "too_large",
           "too_many_files",
@@ -6482,7 +6481,6 @@
         "x-contentkit-errors": [
           "forbidden",
           "not_found",
-          "quota_exceeded",
           "rate_limited",
           "too_large",
           "type_not_allowed"
@@ -6734,7 +6732,6 @@
           "image_too_small",
           "not_found",
           "not_uploaded",
-          "quota_exceeded",
           "rate_limited",
           "too_large",
           "too_many_files",
@@ -9844,7 +9841,7 @@
         "tags": [
           "reader"
         ],
-        "summary": "Grants a version's download, what its kind's download serves (the original, a rendition, its pages as a zip), as the host's download policy allows and names, charged to the viewer's download quota: a FileDownload whose short-lived URL serves it as an attachment. The URL is the media host's for an already served file, or the existing archive transfer route's for a ZIP or internal original/rendition (relative to this one). Includes only the released, download-authorized pages in manifest order. 202 while it is prepared; 403 download_unavailable with the policy's reason and available_at; 409 no_download when the version has nothing to serve.",
+        "summary": "Grants a version's download, what its kind's download serves (its pages' masters as a ZIP, or its downloadable upload's master, the original under the identity recipe), as the host's download policy allows and names, charged to the viewer's download quota: a FileDownload whose short-lived URL, the archive transfer route relative to this one, streams it as an attachment. Includes only the released, download-authorized pages in manifest order. 202 while it is prepared; 403 download_unavailable with the policy's reason and available_at; 409 no_download when the version has nothing to serve.",
         "parameters": [
           {
             "name": "id",
@@ -9924,7 +9921,7 @@
         "tags": [
           "reader"
         ],
-        "summary": "Streams the ZIP or exact configured single file a download granted after repeating access, publication, chapter and policy checks. Internal originals and HostOnly renditions never gain a gateway URL. Ordinary ZIPs are generated on demand and cached privately; personalized ZIPs are never cached. Signed editor authority and token-tier claims delegate only this transfer until ticket expiry, like a private media URL. 404 for an expired, stale or foreign ticket.",
+        "summary": "Streams the ZIP or exact configured single file a download granted after repeating access, publication, chapter and policy checks, reading masters where they are stored: internal originals and HostOnly renditions never gain a gateway URL. An unwatermarked download is the same bytes for its revision (Content-Length, ETag, ranges) and cached privately; a watermarked ZIP is marked and zipped anew for each request and never cached (private, no-store). Signed editor authority and token-tier claims delegate only this transfer until ticket expiry, like a private media URL. 404 for an expired, stale or foreign ticket.",
         "parameters": [
           {
             "name": "id",
@@ -14056,9 +14053,6 @@
           },
           "max_per_owner": {
             "type": "integer"
-          },
-          "uploads": {
-            "$ref": "#/components/schemas/UploadLimits"
           }
         },
         "required": [
@@ -18439,11 +18433,8 @@
           "min_width": {
             "type": "integer"
           },
-          "default": {
-            "type": "boolean"
-          },
-          "stable": {
-            "type": "boolean"
+          "default_image": {
+            "$ref": "#/components/schemas/PublicImage"
           }
         },
         "required": [
@@ -18453,8 +18444,7 @@
           "base",
           "namespace",
           "to",
-          "widths",
-          "default"
+          "widths"
         ]
       },
       "PresetStatus": {
@@ -18770,9 +18760,6 @@
           },
           "status": {
             "$ref": "#/components/schemas/MediaStatus"
-          },
-          "full": {
-            "type": "boolean"
           },
           "uploads": {
             "type": "array",
@@ -19667,20 +19654,6 @@
           "external_id"
         ]
       },
-      "UploadLimits": {
-        "type": "object",
-        "properties": {
-          "files_per_hour": {
-            "type": "integer"
-          },
-          "bytes_per_day": {
-            "type": "integer"
-          },
-          "quota_bytes": {
-            "type": "integer"
-          }
-        }
-      },
       "UploadRule": {
         "type": "object",
         "properties": {
@@ -20258,7 +20231,6 @@
           "not_joinable",
           "not_ready",
           "not_uploaded",
-          "quota_exceeded",
           "rate_limited",
           "tenant_mismatch",
           "too_large",
@@ -20557,10 +20529,6 @@
     "not_uploaded": {
       "status": 409,
       "meaning": "A commit names an upload that has not landed; `blobs` lists the ones to upload again."
-    },
-    "quota_exceeded": {
-      "status": 413,
-      "meaning": "The uploader's storage quota is used up."
     },
     "rate_limited": {
       "status": 429,

@@ -21,9 +21,8 @@ func typeScriptMediaWorld(t *testing.T) (*world, *application) {
 		kind := &c.Media.Config.Kinds[0]
 
 		kind.Private = append(kind.Private,
-			media.Private{Name: "archive-pages", From: "pages/{name}", To: "download-pages/{name}{ext}", HostOnly: true, Image: &media.Image{Format: media.ImageFormatSource}},
-			media.Private{Name: "archive", To: "pages.zip", Zip: "download-pages/", HostOnly: true})
-		kind.Publish = &media.Publish{Pages: "pages/{name}", Renditions: []string{"reader"}, Download: "archive"}
+			media.Private{Name: "archive-pages", From: "pages/{name}", To: "download-pages/{name}{ext}", HostOnly: true, Image: &media.Image{Format: media.ImageFormatSource}})
+		kind.Publish = &media.Publish{Pages: "pages/{name}", Renditions: []string{"reader"}}
 		c.Media.Config.Kinds = append(c.Media.Config.Kinds, media.Kind{Name: "article", KeepOriginals: true,
 			Uploads: []media.Upload{{Path: "named/{name}", Named: true, Max: 4, Types: []string{"image/png"}, MaxBytes: 1 << 20}, {Path: "body/{name}", Named: true, Body: true, Max: 4, Types: []string{"image/png"}, MaxBytes: 1 << 20}},
 			Private: []media.Private{{Name: "named-reader", From: "named/{name}", To: "named-reader/{name}.webp", Image: media.Fit(48)}, {Name: "body-reader", From: "body/{name}", To: "body-reader/{name}.webp", Image: media.Fit(48)}},

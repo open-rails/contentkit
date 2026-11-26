@@ -225,19 +225,18 @@ func newHarness(ctx context.Context, c config, mediaOrigin string) (_ *harness, 
 	if err != nil {
 		return nil, err
 	}
-	journal, err := mediastore.NewPGJournal(h.pool, schema, queue)
+	cache, err := mediastore.NewPGCache(h.pool, schema, h.reg, mediastore.CacheOptions{Processes: queue})
 	if err != nil {
 		return nil, err
 	}
-	accountJournal, err := mediastore.NewPGJournal(h.pool, accountStorage.Schema, queue)
+	account, err := mediastore.NewPGCache(h.pool, accountStorage.Schema, h.reg, mediastore.CacheOptions{Processes: queue})
 	if err != nil {
 		return nil, err
 	}
-	journal, err = mediastore.RouteJournal(journal, accountJournal, (layout.Scope{TenantID: accountTenantID}).Partition())
-	if err != nil {
+	if cache, err = mediastore.RouteCache(cache, account, (layout.Scope{TenantID: accountTenantID}).Partition()); err != nil {
 		return nil, err
 	}
-	if h.manifests, err = mediastore.NewManifests(h.store, h.reg, mediastore.ManifestOptions{Locker: mediastore.PGLocker(h.pool), Journal: journal}); err != nil {
+	if h.manifests, err = mediastore.NewManifests(h.store, h.reg, mediastore.ManifestOptions{Written: cache.Record}); err != nil {
 		return nil, err
 	}
 	signing, err := token.ParseKey(c.tokenKey)

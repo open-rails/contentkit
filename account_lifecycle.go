@@ -8,8 +8,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/internal/hub"
-	mediastore "github.com/open-rails/contentkit/internal/mediastore"
-	"github.com/open-rails/contentkit/internal/subjectfence"
 	"github.com/open-rails/contentkit/signal"
 )
 
@@ -101,27 +99,9 @@ func (e *Engine) anonymizeSignals(ctx context.Context, accountID, anonymous stri
 	return nil
 }
 
-// eraseMediaBookkeeping removes the account from this app's media journal and
-// quota ledger, and from the tenant's account media when this app holds it.
-// Media rows are keyed by the media namespace (the scope's partition), not the
-// catalog's tenant.
-func (e *Engine) eraseMediaBookkeeping(ctx context.Context, accountID string) error {
-	if e.cfg.Media == nil {
-		return nil
-	}
-	return pgx.BeginFunc(ctx, e.pool, func(tx pgx.Tx) error {
-		if _, err := subjectfence.Lock(ctx, tx, e.schema, e.cfg.Scope.AppID.String(), accountID); err != nil {
-			return err
-		}
-		if err := mediastore.EraseAccountTx(ctx, tx, e.schema, e.cfg.Media.Scope.Partition(), accountID); err != nil {
-			return err
-		}
-		if account, ok := e.accountMediaStorage(); ok {
-			return mediastore.EraseAccountTx(ctx, tx, account.Schema, e.accountMediaPartition(), accountID)
-		}
-		return nil
-	})
-}
+// eraseMediaBookkeeping has nothing to remove: no media bookkeeping keeps an
+// account's id (its avatar item's folder is its fence).
+func (e *Engine) eraseMediaBookkeeping(context.Context, string) error { return nil }
 
 // AccountErasure is one account's lifecycle in this app: its state, when its
 // erasure was requested and when it completed.

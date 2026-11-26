@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/access"
@@ -368,12 +367,5 @@ func awaitEditionPublication(t *testing.T, app *application, client *ck.Client, 
 
 func awaitPublicationJobsIdle(t *testing.T, w *world, app *application) {
 	t.Helper()
-	waitForWithin(t, 45*time.Second, func() bool {
-		wakeDuePublicationJobs(t, app)
-		var pending int
-		err := w.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+pgx.Identifier{w.schema + "_river", "river_job"}.Sanitize()+`
- WHERE kind='contentkit_publication' AND state IN ('available','running','retryable')`).Scan(&pending)
-		must(t, err)
-		return pending == 0
-	})
+	awaitDuePublications(t, app)
 }

@@ -41,9 +41,7 @@ func TestLockedPreviewPages(t *testing.T) {
 	must(t, err)
 	registry, err := mediastore.NewRegistry(config, mediastore.Hooks{})
 	must(t, err)
-	journal, err := mediastore.NewPGJournal(w.pool, w.schema, nil)
-	must(t, err)
-	manifests, err := mediastore.NewManifests(m.store, registry, mediastore.ManifestOptions{Locker: mediastore.PGLocker(w.pool), Journal: journal})
+	manifests, err := mediastore.NewManifests(m.store, registry, mediastore.ManifestOptions{})
 	must(t, err)
 	paid := func(pages int) *access.Rule {
 		rule := &access.Rule{Level: access.PPV}
@@ -105,11 +103,7 @@ func TestLockedPreviewPages(t *testing.T) {
 		must(t, err)
 		areas, public := map[string]string{}, []string{}
 		for _, f := range manifest.Files {
-			blobs := []string{f.Blob}
-			for _, pub := range f.Public {
-				blobs = append(blobs, pub.Blobs...)
-			}
-			for _, blob := range blobs {
+			for _, blob := range []string{f.Blob} {
 				if area, name, valid := layout.SplitBlobRef(blob); valid && area == layout.AreaPublic {
 					public = append(public, name)
 				}
@@ -188,7 +182,7 @@ func TestLockedPreviewPages(t *testing.T) {
 		must(t, err)
 		ring, err := token.NewRing(m.key, nil)
 		must(t, err)
-		signed := m.gateway.URL + layout.URLPrefix + key + "?t=" + url.QueryEscape(ring.Sign(token.PrivateFileScope(key), time.Now().Add(time.Minute)))
+		signed := m.gateway.URL + layout.URLPrefix + key + "?t=" + url.QueryEscape(ring.Sign(privateFileScope(key), time.Now().Add(time.Minute)))
 		if got := status(signed); got != http.StatusOK {
 			t.Fatalf("a page past the preview is not served with its exact-file token: %d", got)
 		}

@@ -12,7 +12,6 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/authkit/authtest"
 	"github.com/open-rails/authkit/iam"
 	ck "github.com/open-rails/contentkit"
@@ -52,15 +51,8 @@ func TestPostAttachmentPolicies(t *testing.T) {
 		if draft.Editor || draft.Body != "A mixed-media post" {
 			t.Fatalf("draft read privilege became edit authority: %+v", draft)
 		}
-		allocations := pgx.Identifier{w.schema, "content_media_allocations"}.Sanitize()
-		var before, after int
-		must(t, w.pool.QueryRow(t.Context(), "SELECT count(*) FROM "+allocations).Scan(&before))
 		_, err = auditor.PostMediaUploadPresign(t.Context(), media.PresignBody{Ref: ref, Path: "images/auditor.png", Type: "image/png", Size: int64(len(payload)), SHA256: digestBytes(payload)})
 		requireError(t, err, 403, "forbidden")
-		must(t, w.pool.QueryRow(t.Context(), "SELECT count(*) FROM "+allocations).Scan(&after))
-		if after != before {
-			t.Fatal("refused auditor upload allocated media state")
-		}
 	})
 	ops := make([]media.Op, 6)
 	for i := range ops {
@@ -69,7 +61,7 @@ func TestPostAttachmentPolicies(t *testing.T) {
 	_, err = client.PostMediaUploadCommit(t.Context(), media.CommitBody{Ref: ref, OperationID: uuid.NewString(), Ops: ops[:4]})
 	must(t, err)
 	awaitMediaReady(t, client, ref)
-	// A second application instance shares storage and the admission journal.
+	// A second application instance shares the bucket and the item cache.
 	cfg := a.cfg
 	cfg.Database.SkipMigrations = true
 	reopened, err := ck.New(t.Context(), cfg, a.deps)
@@ -170,26 +162,18 @@ func TestPostAttachmentPolicies(t *testing.T) {
 		t.Fatalf("attachment limits changed: images=%d videos=%d", images, videos)
 	}
 	// Preparing both attachment families still leaves a draft. Publish the same
-	// post and prove its real reader uses a completed request-ID release.
+	// post and prove its real reader uses the completed release.
 	reader := a.client("")
 	_, err = reader.GetContent(t.Context(), item.ID, ck.GetContentQuery{})
 	requireError(t, err, 404, "not_found")
 	_, err = client.PostContentPublish(t.Context(), item.ID, catalog.PublishInput{})
 	must(t, err)
-	var releaseID string
 	waitForChapterPublication(t, func() bool {
-		var complete bool
-		must(t, w.pool.QueryRow(t.Context(), `SELECT coalesce(v.release_id::text,''),
- coalesce(v.released AND r.state='completed' AND EXISTS(SELECT 1 FROM `+w.schema+`_river.river_job j
- WHERE j.kind='contentkit_publication' AND j.args->>'id'=r.id::text AND j.state='completed'),false)
- FROM `+w.schema+`.content_versions v LEFT JOIN `+w.schema+`.content_publication_requests r
- ON r.tenant_id=v.tenant_id AND r.id=v.release_id WHERE v.tenant_id=$1 AND v.id=$2`,
-			publicationTenant(a), ref.Version).Scan(&releaseID, &complete))
-		return complete
+		var released bool
+		must(t, w.pool.QueryRow(t.Context(), `SELECT released FROM `+w.schema+`.content_versions WHERE tenant_id=$1 AND id=$2`,
+			publicationTenant(a), ref.Version).Scan(&released))
+		return released
 	})
-	if releaseID == "" {
-		t.Fatal("published attachments have no shared release identity")
-	}
 	published, err := reader.GetVersion(t.Context(), ref.Version, ck.GetVersionQuery{})
 	must(t, err)
 	if !published.Live || !published.Decision.Allowed || published.Body != "A mixed-media post" {

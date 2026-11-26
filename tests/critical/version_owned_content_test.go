@@ -35,7 +35,7 @@ func TestVersionOwnedContent(t *testing.T) {
 	must(engine.StartJobs(ctx))
 	diagnose := func(id string) {
 		t.Helper()
-		for _, table := range []string{"content_versions", "content_publication_requests", "content_search_documents", "content_search_dirty", "content_search_invalid"} {
+		for _, table := range []string{"content_versions", "content_search_documents", "content_search_dirty", "content_search_invalid"} {
 			var rows string
 			err := pool.QueryRow(ctx, "SELECT coalesce(jsonb_agg(to_jsonb(t)),'[]'::jsonb)::text FROM "+pgx.Identifier{schema, table}.Sanitize()+" t WHERE content_id=$1", id).Scan(&rows)
 			t.Logf("%s: %s (%v)", table, rows, err)

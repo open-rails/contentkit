@@ -37,10 +37,9 @@ export function mergeReads(reads: readonly (ReadResult | null | undefined)[]): R
 /** An upload the worker has not finished: staged, or with work pending, and not failed. */
 export const isProcessing = (f: FileInfo) => !!f.upload && !f.failed && (!!f.staged || (f.pending?.length ?? 0) > 0);
 
-/** An editor read with uploads still processing (not stalled because the item is full). */
+/** An editor read with uploads still processing. */
 export function processing(read: ReadResult | null | undefined): boolean {
-  if (!read || read.full) return false;
-  if (read.status?.state === "full") return false;
+  if (!read) return false;
   if (read.status) return read.status.state === "processing";
   return read.state === "processing" || read.files.some(isProcessing);
 }

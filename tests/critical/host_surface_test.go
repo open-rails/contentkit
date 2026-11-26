@@ -29,12 +29,11 @@ func TestServingAndWorkingProcesses(t *testing.T) {
 		must(t, err)
 		_, err = admin.PostContentPublish(t.Context(), item.ID, catalog.PublishInput{})
 		must(t, err)
-		release := currentPublicationJob(t, a, item.Versions[0].ID)
 		jobs := pgx.Identifier{publicationRiverSchema(a), "river_job"}.Sanitize()
 		pending := func() int {
 			var n int
-			must(t, w.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+jobs+` WHERE kind='contentkit_publication' AND args->>'id'=$1
- AND state IN ('available','scheduled','retryable')`, release.ID).Scan(&n))
+			must(t, w.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+jobs+` WHERE kind='contentkit_publication' AND args->>'version'=$1
+ AND state IN ('available','scheduled','retryable')`, item.Versions[0].ID).Scan(&n))
 			return n
 		}
 		// No process works jobs: the release waits, durable, in ContentKit's River.

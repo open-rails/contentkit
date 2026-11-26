@@ -31,10 +31,9 @@ func TestCommerceMediaGrantRevocation(t *testing.T) {
 	b := attachBilling(t, w, a)
 	storage := attachMedia(t, w, a, func(c *ck.Config) {
 		kind := &c.Media.Config.Kinds[0]
-		kind.Publish = &media.Publish{Pages: "pages/{name}", Renditions: []string{"reader"}, Download: "archive"}
+		kind.Publish = &media.Publish{Pages: "pages/{name}", Renditions: []string{"reader"}}
 		kind.Private = append(kind.Private,
-			media.Private{Name: "archive-pages", From: "pages/{name}", To: "download-pages/{name}{ext}", Image: &media.Image{Format: media.ImageFormatSource}},
-			media.Private{Name: "archive", To: "pages.zip", Zip: "download-pages/", HostOnly: true})
+			media.Private{Name: "archive-pages", From: "pages/{name}", To: "download-pages/{name}{ext}", Image: &media.Image{Format: media.ImageFormatSource}})
 	})
 	admin := a.engine.Client()
 	ref := galleryRef(t, admin, "Paid gallery")
@@ -60,9 +59,7 @@ func TestCommerceMediaGrantRevocation(t *testing.T) {
 		must(t, err)
 		item, err := registry.Item(target)
 		must(t, err)
-		journal, err := mediastore.NewPGJournal(w.pool, w.schema, nil)
-		must(t, err)
-		manifests, err := mediastore.NewManifests(storage.store, registry, mediastore.ManifestOptions{Locker: mediastore.PGLocker(w.pool), Journal: journal})
+		manifests, err := mediastore.NewManifests(storage.store, registry, mediastore.ManifestOptions{})
 		must(t, err)
 		manifest, _, err := manifests.Get(t.Context(), target)
 		must(t, err)

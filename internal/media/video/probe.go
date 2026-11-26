@@ -285,15 +285,6 @@ func (pl plan) ladder(h *media.HLS) ([]rung, error) {
 	return rs, nil
 }
 
-// rung is an MP4 preset's rung; false above the source (no upscaling).
-func (pl plan) rung(m *media.MP4) (rung, bool) {
-	if m.Rung > min(pl.width, pl.height) {
-		return rung{}, false
-	}
-	w, h := frame(pl.width, pl.height, m.Rung)
-	return rung{n: m.Rung, w: w, h: h, level: level(w, h, pl.fps)}, true
-}
-
 // defaultAudio is the source's default audio track, if any.
 func (pl plan) defaultAudio() (track, int, bool) {
 	for i, a := range pl.audio {

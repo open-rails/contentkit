@@ -6,7 +6,6 @@ import (
 	"slices"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	catalog "github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/media/versions"
@@ -124,30 +123,17 @@ func missing(err error) error {
 	return err
 }
 
-// PublicationCompletedTx records a meaningful publication after its
-// final copy/retirement work. The caller owns the locked retiring->completed
-// transition and calls this once in that transaction, never for a no-op or an
-// already completed retry. Request history supplies deduplication provenance;
-// no consumer receipt or second operation table is created.
-func (s *Store) PublicationCompletedTx(ctx context.Context, tx pgx.Tx, target versions.Target, requestID string, chapters []string, released bool, at time.Time) error {
-	id, err := uuid.Parse(requestID)
-	if tx == nil || err != nil || id == uuid.Nil || id.String() != requestID || at.IsZero() || at.After(s.now()) {
-		return invalid("publication fact requires the completed request transaction and actual time")
+// PublicationCompletedTx records a meaningful release in its own
+// transaction: id is the release's manifest write (or a fresh id when the
+// release moved no file), at its actual time.
+func (s *Store) PublicationCompletedTx(ctx context.Context, tx pgx.Tx, target versions.Target, id string, chapters []string, released bool, at time.Time) error {
+	if tx == nil || id == "" || at.IsZero() || at.After(s.now()) {
+		return invalid("publication fact requires the release transaction and actual time")
 	}
 	var kind string
-	var actual time.Time
-	var available bool
-	err = tx.QueryRow(ctx, `SELECT c.kind,r.completed_at,coalesce((r.result->>'released')::boolean,false)
- FROM `+s.qs+`.content_publication_requests r JOIN `+s.t.items+` c ON c.tenant_id=r.tenant_id AND c.id=r.content_id
- WHERE r.tenant_id=$1 AND r.id=$2 AND r.content_id=$3 AND r.version_id=$4
- AND r.state='completed' AND r.completed_at IS NOT NULL AND r.result IS NOT NULL FOR UPDATE OF r`,
-		s.tenant, id, target.Content, target.Version).Scan(&kind, &actual, &available)
-	if err != nil {
+	if err := tx.QueryRow(ctx, `SELECT kind FROM `+s.t.items+` WHERE tenant_id=$1 AND id=$2`, s.tenant, target.Content).Scan(&kind); err != nil {
 		return missing(err)
 	}
-	if available != released {
-		return ErrConflict
-	}
 	return s.emit(ctx, tx, catalog.Event{Type: catalog.EventPublicationCompleted, Kind: kind, ContentID: target.Content,
-		VersionID: target.Version, OccurredAt: actual, PublicationID: requestID, ChapterIDs: slices.Clone(chapters), Released: &released})
+		VersionID: target.Version, OccurredAt: at, PublicationID: id, ChapterIDs: slices.Clone(chapters), Released: &released})
 }

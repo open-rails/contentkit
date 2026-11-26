@@ -4,292 +4,183 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"slices"
 	"strings"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/contentkit/contentref"
 	media "github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/layout"
 )
 
-// Images answers every query with one indexed Postgres read: per query, in
-// order, the matching images in the item's order. Hosts build card, avatar
-// and inline image URLs from it, never from a preset's template.
-func (m *Manifests) Images(ctx context.Context, qs ...media.ImageQuery) ([][]media.PublicImage, error) {
-	out := make([][]media.PublicImage, len(qs))
-	if len(qs) == 0 {
-		return out, nil
+// cachedImage is one upload's public preset as the item cache stores it.
+type cachedImage struct {
+	Name       string            `json:"name"` // the upload's {name}
+	Path       string            `json:"path"`
+	Preset     string            `json:"preset"`
+	Renditions []cachedRendition `json:"renditions"`
+}
+
+type cachedRendition struct {
+	Hash string `json:"hash"` // its name in public/
+	W    int    `json:"w"`
+	H    int    `json:"h"`
+}
+
+// publicImages lists m's current public images in reading order: uploads in
+// manifest order, each one's presets in declaration order. Only outputs
+// already in public/ count.
+func (k *RegisteredKind) publicImages(m *Manifest) []cachedImage {
+	out := []cachedImage{}
+	if m.Deleted != nil {
+		return out
 	}
-	at := make([]int, len(qs))
+	for _, f := range m.Files {
+		if !f.IsUpload() {
+			continue
+		}
+		for _, p := range k.PublicFor(f.Path) {
+			img := cachedImage{Name: k.NameOf(f.Path), Path: f.Path, Preset: p.Name}
+			for _, o := range k.PublicOutputs(m, f, p) {
+				if area, hash, ok := layout.SplitBlobRef(o.Blob); ok && area == layout.AreaPublic {
+					img.Renditions = append(img.Renditions, cachedRendition{Hash: hash, W: o.W, H: o.H})
+				}
+			}
+			if len(img.Renditions) > 0 {
+				out = append(out, img)
+			}
+		}
+	}
+	return out
+}
+
+// PublicImages are m's current public images with their URLs.
+func (r *Registry) PublicImages(item Item, m *Manifest) []media.PublicImage {
+	return r.images(item.Ref(), item.Kind().publicImages(m))
+}
+
+func (r *Registry) images(ref contentref.ContentRef, rows []cachedImage) []media.PublicImage {
+	var out []media.PublicImage
+	for _, row := range rows {
+		image := media.PublicImage{From: row.Path, Preset: row.Preset}
+		for _, rend := range row.Renditions {
+			image.Renditions = append(image.Renditions, media.PublicRendition{URL: r.PublicURL(ref, rend.Hash), W: rend.W, H: rend.H})
+		}
+		out = append(out, image)
+	}
+	return out
+}
+
+// Images answers every query from the item cache in one read per schema:
+// per query, in order, the matching images in the item's order. Hosts build
+// card, avatar and inline image URLs from it.
+func (c *PGCache) Images(ctx context.Context, qs ...media.ImageQuery) ([][]media.PublicImage, error) {
+	out := make([][]media.PublicImage, len(qs))
+	refs := make([]contentref.ContentRef, len(qs))
 	for i, q := range qs {
-		item, err := m.reg.Item(q.Ref)
+		item, err := c.reg.Item(q.Ref)
 		if err != nil {
 			return nil, err
 		}
 		if q.Preset != "" && item.Kind().public(q.Preset) == nil {
 			return nil, fmt.Errorf("media: kind %q has no public preset %q", item.Kind().Name, q.Preset)
 		}
-		at[i] = i
+		refs[i] = q.Ref
 	}
-	groups := map[*PGJournal][]int{}
-	for _, i := range at {
-		j := m.journal.forTenant(qs[i].Ref.TenantID)
-		groups[j] = append(groups[j], i)
+	rows, err := c.read(ctx, refs)
+	if err != nil {
+		return nil, err
 	}
-	for j, ids := range groups {
-		if err := m.images(ctx, j, qs, ids, out); err != nil {
-			return nil, err
+	for i, q := range qs {
+		row, ok := rows[q.Ref.Key()]
+		if !ok || row.Deleted {
+			continue
+		}
+		var match []cachedImage
+		for _, img := range row.Images {
+			if (q.Name == "" || img.Name == q.Name) && (q.Preset == "" || img.Preset == q.Preset) {
+				match = append(match, img)
+			}
+		}
+		out[i] = c.reg.images(q.Ref, match)
+	}
+	return out, nil
+}
+
+// Avatars returns, per id in order, the person's current avatar
+// (Config.Avatars), else the kind's default image; none without
+// Config.Avatars or for an invalid id.
+func (c *PGCache) Avatars(ctx context.Context, ids ...string) ([]media.PublicImage, error) {
+	a := c.reg.cfg.Avatars
+	if a == (media.Avatars{}) {
+		return nil, nil
+	}
+	qs := make([]media.ImageQuery, 0, len(ids))
+	at := make([]int, 0, len(ids))
+	for i, id := range ids {
+		if ref, err := c.reg.Ref(a.Kind, id); err == nil {
+			qs = append(qs, media.ImageQuery{Ref: ref, Preset: a.Preset})
+			at = append(at, i)
+		}
+	}
+	found, err := c.Images(ctx, qs...)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]media.PublicImage, len(ids))
+	for i := range out {
+		out[i] = media.PublicImage{Preset: a.Preset}
+	}
+	for n, i := range at {
+		if len(found[n]) > 0 {
+			out[i] = found[n][0]
+		} else if d, ok := c.reg.DefaultImage(ctx, qs[n].Ref, a.Preset); ok {
+			out[i] = d
 		}
 	}
 	return out, nil
 }
 
-// images fills out[at[n]] from j's projection.
-func (m *Manifests) images(ctx context.Context, j *PGJournal, qs []media.ImageQuery, at []int, out [][]media.PublicImage) error {
-	cols := make([][]string, 5)
-	var versions []*string
-	for _, i := range at {
-		q := qs[i]
-		for c, v := range []string{q.Ref.TenantID, q.Ref.ContentKind, q.Ref.ContentID, q.Name, q.Preset} {
-			cols[c] = append(cols[c], v)
-		}
-		versions = append(versions, q.Ref.ContentVersionID)
-	}
-	// Two arms keep a named lookup on the key's prefix.
-	const pick = `SELECT q.n, p.ordinal, p.upload_path, p.preset, p.renditions FROM q JOIN %[1]s p
-ON p.tenant_id = q.tenant_id AND p.content_kind = q.content_kind AND p.content_id = q.content_id
-AND p.content_version_id IS NOT DISTINCT FROM q.content_version_id`
-	t := j.publications
-	rows, err := j.pool.Query(ctx, `WITH q AS (SELECT * FROM unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::text[], $6::text[])
-WITH ORDINALITY AS q(tenant_id, content_kind, content_id, content_version_id, upload_name, preset, n))
-`+fmt.Sprintf(pick, t)+` AND p.upload_name = q.upload_name WHERE q.upload_name <> '' AND (q.preset = '' OR p.preset = q.preset)
-UNION ALL
-`+fmt.Sprintf(pick, t)+` WHERE q.upload_name = '' AND (q.preset = '' OR p.preset = q.preset)
-ORDER BY 1, 2, 3, 4`, cols[0], cols[1], cols[2], versions, cols[3], cols[4])
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var (
-			n, ordinal  int
-			path, pset  string
-			renditions  []byte
-			projections []projectedRendition
-		)
-		if err := rows.Scan(&n, &ordinal, &path, &pset, &renditions); err != nil {
-			return err
-		}
-		if err := json.Unmarshal(renditions, &projections); err != nil {
-			return fmt.Errorf("media: decode projected renditions: %w", err)
-		}
-		i := at[n-1]
-		image := media.PublicImage{From: path, Preset: pset}
-		for _, r := range projections {
-			image.Renditions = append(image.Renditions, media.PublicRendition{URL: m.reg.PublicURL(qs[i].Ref, r.Name), W: r.W, H: r.H})
-		}
-		out[i] = append(out[i], image)
-	}
-	return rows.Err()
-}
-
-// Avatars returns, per id in order, the person's avatar (Config.Accounts.Avatars) at
-// its Stable preset's logical names: their current image, else the
-// gateway's default. Built from the ids, never looked up; none without
-// Config.Accounts.Avatars or for an invalid id.
-func (r *Registry) Avatars(ids ...string) []media.PublicImage {
-	a := r.cfg.Avatars
-	if a == (media.Avatars{}) {
-		return nil
-	}
-	out := make([]media.PublicImage, len(ids))
-	for i, id := range ids {
-		out[i] = media.PublicImage{Preset: a.Preset}
-		if ref, err := r.Ref(a.Kind, id); err == nil {
-			out[i], _ = r.logicalImage(ref, a.Preset)
-		}
-	}
-	return out
-}
-
-// DefaultImage is preset's default image for ref, which the media gateway
-// serves while the item has no publication (hasDefault). From is empty and
-// heights follow the preset's aspect (0 without one).
-func (r *Registry) DefaultImage(ref contentref.ContentRef, preset string) (media.PublicImage, bool) {
+// DefaultImage is preset's default image for ref's kind, rendered into the
+// kind's _default item (image.PublishDefaults). From is empty.
+func (r *Registry) DefaultImage(ctx context.Context, ref contentref.ContentRef, preset string) (media.PublicImage, bool) {
 	item, err := r.Item(ref)
 	if err != nil {
 		return media.PublicImage{}, false
-	}
-	if p := item.Kind().public(preset); p == nil || !hasDefault(p) {
-		return media.PublicImage{}, false
-	}
-	return r.logicalImage(ref, preset)
-}
-
-// logicalImage is preset's image of ref at its logical names, heights
-// following the preset's aspect (0 without one).
-func (r *Registry) logicalImage(ref contentref.ContentRef, preset string) (media.PublicImage, bool) {
-	item, err := r.Item(ref)
-	if err != nil {
-		return media.PublicImage{Preset: preset}, false
 	}
 	p := item.Kind().public(preset)
 	if p == nil {
-		return media.PublicImage{Preset: preset}, false
+		return media.PublicImage{}, false
 	}
-	image := media.PublicImage{Preset: preset}
-	names := item.Kind().PublicNames(p, "")
-	for i, name := range names {
-		w := p.Image.Width
-		if len(p.Widths) > 0 {
-			w = p.Widths[i]
-		}
-		h := 0
-		if a := p.Image.Aspect; !a.Native() && w > 0 {
-			h = a.Height(w)
-		}
-		image.Renditions = append(image.Renditions, media.PublicRendition{URL: r.PublicURL(ref, name), W: w, H: h})
-	}
-	return image, true
+	return r.defaultImage(ctx, item.Kind(), p)
 }
 
-// hasDefault reports a default image at the preset's names: a preset
-// declaring Default, not per upload ({name}).
+// hasDefault reports a default image for the preset: one declaring Default,
+// not per upload ({name}).
 func hasDefault(p *media.Public) bool {
 	return p.Default != "" && !strings.Contains(p.To, "{name}")
 }
 
-// publication is one current publication as the projection stores it.
-type publication struct {
-	Name       string               `json:"name"` // the upload's {name}
-	Path       string               `json:"path"`
-	Preset     string               `json:"preset"`
-	Ordinal    int                  `json:"ordinal"`
-	Generation *string              `json:"generation"` // null: legacy files at logical names
-	Renditions []projectedRendition `json:"renditions"`
-}
-
-type projectedRendition struct {
-	Name string `json:"name"` // the physical name in public/
-	W    int    `json:"w"`
-	H    int    `json:"h"`
-}
-
-// publications lists m's current publications in reading order: uploads in
-// manifest order, each one's presets in declaration order.
-func (k *RegisteredKind) publications(m *Manifest) []publication {
-	var out []publication
-	for _, f := range m.Files {
-		if !f.IsUpload() {
-			continue
-		}
-		for _, p := range k.PublicFor(f.Path) {
-			pub, ok := k.Current(f, p)
-			if !ok {
-				continue
-			}
-			row := publication{Name: k.NameOf(f.Path), Path: f.Path, Preset: p.Name, Ordinal: len(out)}
-			if pub.Generation != "" {
-				row.Generation = &pub.Generation
-			}
-			for i, name := range pub.NamesOnDisk() {
-				if k.Versions {
-					name = ""
-					if len(pub.Blobs) == len(pub.Names) {
-						if area, actual, valid := layout.SplitBlobRef(pub.Blobs[i]); valid && area == layout.AreaPublic {
-							name = actual
-						} else if blob, ok := m.Delivered(pub.Blobs[i], layout.AreaPublic); ok {
-							_, name, _ = layout.SplitBlobRef(blob)
-						}
-					}
-					if name == "" {
-						continue
-					}
-				}
-				row.Renditions = append(row.Renditions, projectedRendition{Name: name, W: pub.Dims[i].W, H: pub.Dims[i].H})
-			}
-			if len(row.Renditions) > 0 {
-				out = append(out, row)
-			}
-		}
-	}
-	return out
-}
-
-func (r *Registry) publicImages(item Item, m *Manifest) []media.PublicImage {
-	var images []media.PublicImage
-	for _, row := range item.Kind().publications(m) {
-		image := media.PublicImage{From: row.Path, Preset: row.Preset}
-		for _, rend := range row.Renditions {
-			image.Renditions = append(image.Renditions, media.PublicRendition{URL: r.PublicURL(item.Ref(), rend.Name), W: rend.W, H: rend.H})
-		}
-		images = append(images, image)
-	}
-	return images
-}
-
-// projection is an item's publications as a journal outcome writes them.
-type projection struct {
-	ref  contentref.ContentRef
-	rows []publication
-}
-
-// projectionOf projects m, the item's authoritative manifest (nil: no
-// projection). A deleted or hidden item projects nothing.
-func projectionOf(item Item, m *Manifest) *projection {
-	if m == nil {
-		return nil
-	}
-	return &projection{ref: item.Ref(), rows: item.Kind().publications(m)}
-}
-
-// without drops the publications with a file among retired keys.
-func (p *projection) without(item Item, retired []string) *projection {
-	if p == nil || len(retired) == 0 {
-		return p
-	}
-	rows := slices.DeleteFunc(slices.Clone(p.rows), func(row publication) bool {
-		return slices.ContainsFunc(row.Renditions, func(r projectedRendition) bool {
-			return slices.Contains(retired, item.PublicPrefix()+r.Name)
-		})
-	})
-	return &projection{ref: p.ref, rows: rows}
-}
-
-// project writes p in its own transaction.
-func (j *PGJournal) project(ctx context.Context, p *projection) error {
-	if p == nil {
-		return nil
-	}
-	return pgx.BeginFunc(ctx, j.pool, func(tx pgx.Tx) error { return j.projectTx(ctx, tx, p) })
-}
-
-// projectTx replaces the item's projected publications in tx, leaving
-// unchanged rows untouched.
-func (j *PGJournal) projectTx(ctx context.Context, tx pgx.Tx, p *projection) error {
-	if p == nil {
-		return nil
-	}
-	j = j.forTenant(p.ref.TenantID)
-	rows := p.rows
-	if rows == nil {
-		rows = []publication{}
-	}
-	body, err := json.Marshal(rows)
+// defaultImage reads the kind's defaults manifest: the preset's outputs of
+// its Default path.
+func (m *Manifests) defaultImage(ctx context.Context, k *RegisteredKind, p *media.Public) (media.PublicImage, bool) {
+	item := k.DefaultsItem()
+	cur, _, err := m.get(ctx, item.ManifestKey())
 	if err != nil {
-		return err
+		return media.PublicImage{}, false
 	}
-	t := j.publications
-	_, err = tx.Exec(ctx, `WITH r AS (SELECT * FROM jsonb_to_recordset($4::jsonb)
-AS r(name text, path text, preset text, ordinal integer, generation uuid, renditions jsonb)),
-gone AS (DELETE FROM `+t+` p WHERE p.tenant_id = $1 AND p.content_kind = $2 AND p.content_id = $3 AND p.content_version_id IS NOT DISTINCT FROM $5::text
-AND NOT EXISTS (SELECT 1 FROM r WHERE r.name = p.upload_name AND r.path = p.upload_path AND r.preset = p.preset))
-INSERT INTO `+t+` AS p (tenant_id, content_kind, content_id, content_version_id, upload_name, upload_path, preset, ordinal, generation, renditions)
-SELECT $1, $2, $3, $5, r.name, r.path, r.preset, r.ordinal, r.generation, r.renditions FROM r
-ON CONFLICT (tenant_id, content_kind, content_id, content_version_id, upload_name, upload_path, preset) DO UPDATE
-SET ordinal = EXCLUDED.ordinal, generation = EXCLUDED.generation, renditions = EXCLUDED.renditions, updated_at = now()
-WHERE (p.ordinal, p.generation, p.renditions) IS DISTINCT FROM (EXCLUDED.ordinal, EXCLUDED.generation, EXCLUDED.renditions)`,
-		p.ref.TenantID, p.ref.ContentKind, p.ref.ContentID, body, p.ref.ContentVersionID)
-	return err
+	image := media.PublicImage{Preset: p.Name}
+	for _, o := range cur.Outputs(p.Default, p.Name) {
+		if area, hash, ok := layout.SplitBlobRef(o.Blob); ok && area == layout.AreaPublic {
+			image.Renditions = append(image.Renditions, media.PublicRendition{URL: m.reg.publicURL(item, hash), W: o.W, H: o.H})
+		}
+	}
+	return image, len(image.Renditions) > 0
+}
+
+func decodeImages(b []byte) ([]cachedImage, error) {
+	var out []cachedImage
+	if len(b) == 0 {
+		return out, nil
+	}
+	err := json.Unmarshal(b, &out)
+	return out, err
 }

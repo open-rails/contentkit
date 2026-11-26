@@ -46,7 +46,8 @@ type EditorReadStore interface {
 }
 
 // Probe measures the backend's capabilities with scratch objects under prefix,
-// which it removes. Results depend on the backend release (RGW vs MinIO).
+// which it removes, and reads the bucket's versioning status. Results depend
+// on the backend release (RGW vs MinIO).
 // Every step must succeed or be refused cleanly (412, a checksum mismatch,
 // 501); anything else (throttling, timeouts, a proxy's 403, cancellation) is
 // an error and nothing is recorded, so a transient failure never reads as a
@@ -91,5 +92,10 @@ func Probe(ctx context.Context, s media.Store, prefix string) (media.Capabilitie
 	}
 	c.ConditionalPut = errors.Is(createErr, ErrPreconditionFailed) && errors.Is(staleErr, ErrPreconditionFailed) && matchErr == nil
 	c.ChecksumSHA256 = errors.Is(badErr, ErrChecksumMismatch)
+	versioning, err := s.Versioning(ctx)
+	if err != nil {
+		return media.Capabilities{}, fmt.Errorf("media: probe versioning: %w", err)
+	}
+	c.NeverVersioned = versioning == ""
 	return c, nil
 }

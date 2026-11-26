@@ -2,6 +2,7 @@ package versionstore
 
 import (
 	"context"
+	"errors"
 
 	"github.com/open-rails/contentkit/access"
 	mediastore "github.com/open-rails/contentkit/internal/mediastore"
@@ -41,8 +42,10 @@ func (s *Service) inspectionPlan(ctx context.Context, actor access.Actor, k *med
 	if err != nil {
 		return nil, err
 	}
-	active, err := s.activeRelease(ctx, s.o.Pool, target)
-	if err != nil {
+	released := false
+	if view, _, err := s.releasedView(ctx, k, target); err == nil {
+		released = len(view.Pages.Pages) > 0
+	} else if !errors.Is(err, ErrNotReady) {
 		return nil, err
 	}
 	byPosition := map[int]segment{}
@@ -58,9 +61,9 @@ func (s *Service) inspectionPlan(ctx context.Context, actor access.Actor, k *med
 		if span.Segment != nil {
 			chapter := byPosition[*span.Segment]
 			part.Title, part.ReleaseAt = chapter.Title, chapter.ReleaseAt
-			part.Released = active != nil && active.Released && chapter.ReleasedAt != nil
+			part.Released = released && chapter.ReleasedAt != nil
 		} else {
-			part.Released = active != nil && active.Released
+			part.Released = released
 		}
 		for _, source := range pages[span.Start:span.End] {
 			page := versions.PlanPage{ID: sourcePageHash(source), Name: source.Name, Span: source.Span, Files: map[string]string{}}

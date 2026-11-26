@@ -68,9 +68,9 @@ export class ContentKitError extends Error {
     return (this.status >= 400 && this.status < 500 && this.code !== "storage") || this.code.startsWith("image_") || this.code === "decode";
   }
 
-  /** Rate or quota refusals: stop starting new requests until the limit frees. */
+  /** Rate refusals: stop starting new requests until the limit frees. */
   get isLimit(): boolean {
-    return this.code === "rate_limited" || this.code === "quota_exceeded";
+    return this.code === "rate_limited";
   }
 
   /** The commit would exceed the kind's file caps (too_many_files, 409): remove files first. */

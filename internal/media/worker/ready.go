@@ -15,20 +15,16 @@ import (
 	"github.com/riverqueue/river"
 	"github.com/riverqueue/river/rivertype"
 
-	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/media/workqueue"
 	"github.com/open-rails/contentkit/internal/pglock"
-	"github.com/open-rails/contentkit/media"
 )
 
-// completionHook is part of the processing attempt. It records observable
-// progress/completion and, once processing settles, the release wakeup before
-// River completes the job.
-// A failed transaction retries this same attempt; there is no delivery job.
+// completionHook ends each processing attempt: it snoozes through storage
+// outages and retries transient failures. Progress, completion facts and
+// release wakeups follow each manifest write (the item cache's hook).
 type completionHook struct {
 	river.HookDefaults
 	manifests *mediastore.Manifests
-	publish   func(context.Context, pgx.Tx, contentref.ContentRef) error
 }
 
 func (h *completionHook) WorkEnd(ctx context.Context, job *rivertype.JobRow, err error) (result error) {
@@ -52,23 +48,6 @@ func (h *completionHook) WorkEnd(ctx context.Context, job *rivertype.JobRow, err
 			result = retryTransientAttempt(ctx, job, result)
 		}
 	}()
-	var args struct {
-		Ref contentref.ContentRef `json:"ref"`
-	}
-	if err := json.Unmarshal(job.EncodedArgs, &args); err != nil {
-		return workErr
-	}
-	err = mediastore.CompleteProcessing(ctx, h.manifests, args.Ref, func(ctx context.Context, tx pgx.Tx, r media.Readiness) error {
-		// A live edition releases only fully processed media, so a release woken
-		// mid-processing can only wait. The job that settles the item wakes it.
-		if r.State == media.StateProcessing {
-			return nil
-		}
-		return h.publish(ctx, tx, args.Ref)
-	})
-	if err != nil {
-		return err
-	}
 	return workErr
 }
 

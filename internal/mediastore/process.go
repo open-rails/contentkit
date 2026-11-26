@@ -2,6 +2,7 @@ package mediastore
 
 import (
 	"context"
+	"time"
 
 	"github.com/open-rails/contentkit/contentref"
 	media "github.com/open-rails/contentkit/media"
@@ -13,7 +14,6 @@ import (
 // the worker first places the item's staged uploads (Manifests.Place).
 type ProcessJob struct {
 	Ref    contentref.ContentRef `json:"ref"`
-	Commit string                `json:"commit,omitempty"` // admitted manifest operation completed by ingest
 	Place  bool                  `json:"place,omitempty"`
 	Preset string                `json:"preset,omitempty"` // only this preset; "" for all
 	Force  bool                  `json:"force,omitempty"`  // redo current outputs too
@@ -27,4 +27,10 @@ type ProcessJob struct {
 // ProcessQueue enqueues processing in the media worker (workqueue.Queue).
 type ProcessQueue interface {
 	Enqueue(ctx context.Context, job ProcessJob) error
+}
+
+// GCQueue schedules an item's garbage collection (Jobs.Collect) no later
+// than at: an earlier schedule wins.
+type GCQueue interface {
+	ScheduleGC(ctx context.Context, ref contentref.ContentRef, at time.Time) error
 }

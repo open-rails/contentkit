@@ -46,9 +46,6 @@ func (c WorkerConfig) Run(ctx context.Context, job *river.Job[workqueue.Derivati
 	c = c.defaults()
 	start := time.Now()
 	defer c.clearProgress(ctx, job.ID)
-	if err := c.Encoder.ms.Recover(ctx, job.Args.Ref); err != nil {
-		return err
-	}
 	// The shared derivative worker owns retry exhaustion, outage snoozes, and
 	// crash recovery for both image and video work.
 	return c.convert(ctx, job, start)

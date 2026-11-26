@@ -52,12 +52,12 @@ func AsUploadError(err error) (*media.UploadError, bool) {
 		return &media.UploadError{Code: media.CodeInvalid, Message: "the id must be a canonical lowercase UUIDv7"}, true
 	case errors.Is(err, ErrInvalidAccountID):
 		return &media.UploadError{Code: media.CodeInvalid, Message: "the account id must be a canonical lowercase UUID"}, true
-	case errors.Is(err, media.ErrFolderNotEmpty):
-		return &media.UploadError{Code: media.CodeConflict, Message: "the item's folder already holds files"}, true
-	case errors.Is(err, ErrAllocationRetired):
-		return &media.UploadError{Code: media.CodeConflict, Message: "the file allocation changed or expired; upload or copy again"}, true
-	case errors.Is(err, ErrCommitIdentity):
-		return &media.UploadError{Code: media.CodeConflict, Message: "operation_id already identifies another commit"}, true
+	case errors.As(err, new(*MissingObjectError)):
+		return &media.UploadError{Code: media.CodeNotUploaded, Message: "a referenced file is gone; upload or copy again"}, true
+	case errors.As(err, new(*SettlingError)):
+		return &media.UploadError{Code: media.CodeConflict, Message: "the file is being deleted; upload it again later"}, true
+	case errors.Is(err, ErrManifestConflict):
+		return &media.UploadError{Code: media.CodeConflict, Message: "the item kept changing; try again"}, true
 	}
 	return nil, false
 }

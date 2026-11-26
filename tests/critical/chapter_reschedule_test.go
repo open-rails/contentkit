@@ -9,10 +9,7 @@ import (
 	"testing"
 	"time"
 
-	versionstore "github.com/open-rails/contentkit/internal/versionstore"
-
 	"github.com/google/uuid"
-	"github.com/jackc/pgx/v5"
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/media"
@@ -107,55 +104,31 @@ func TestReleasedChapterFutureDateWithdrawsItsFiles(t *testing.T) {
 		return response.StatusCode == http.StatusNotFound
 	})
 	// Repeating the same intent does not create a new chapter or undo its
-	// future boundary. Once due, the normal reconciliation publishes it again.
+	// future boundary: the version's release waits for the date.
 	_, err = admin.PutContentVersionSegments(t.Context(), ref.ID, ref.Version, input)
 	must(t, err)
-	var jobID int64
-	var requestID string
+	var job publicationJob
 	waitFor(t, func() bool {
-		return w.pool.QueryRow(t.Context(), `SELECT j.id,r.id::text
- FROM `+w.schema+`_river.river_job j JOIN `+w.schema+`.content_publication_requests r ON j.args->>'id'=r.id::text
- WHERE j.kind='contentkit_publication' AND r.tenant_id=$1 AND r.version_id=$2 AND r.current
- AND r.scheduled_at=$3 AND j.state='scheduled' ORDER BY j.id DESC LIMIT 1`, a.cfg.Scope.AppID.String(), ref.Version, future).Scan(&jobID, &requestID) == nil
+		job = currentPublicationJob(t, a, ref.Version)
+		return job.State == "scheduled" && job.Due.After(time.Now().Add(30*time.Minute))
 	})
 	wake := func() {
 		_, err := w.pool.Exec(t.Context(), `UPDATE `+w.schema+`_river.river_job
- SET scheduled_at=clock_timestamp(),state='available' WHERE id=$1 AND state IN ('scheduled','retryable')`, jobID)
+ SET scheduled_at=clock_timestamp(),state='available' WHERE id=$1 AND state IN ('scheduled','retryable')`, job.ID)
 		must(t, err)
 	}
-	// Pass the queue's due check, then rewind the controlled clock while the
-	// release waits for its source lock, exercising the second due check.
-	unlock, err := versionstore.LockSource(t.Context(), w.pool, a.cfg.Scope.AppID.String(), ref.Version)
-	must(t, err)
-	t.Cleanup(unlock)
-	beforeDue := w.clock.now()
-	w.clock.set(future.Add(time.Second))
+	// Woken early, the release plans again and waits again, without error.
 	wake()
 	waitFor(t, func() bool {
-		var waiting bool
-		must(t, w.pool.QueryRow(t.Context(), `SELECT EXISTS (
- SELECT 1 FROM pg_locks WHERE locktype='advisory' AND NOT granted
- AND ((classid::bigint << 32) | objid::bigint)=hashtextextended($1,0))
- AND EXISTS (SELECT 1 FROM `+w.schema+`_river.river_job WHERE id=$2 AND state='running')`,
-			"contentkit:media:contentkit:versions:"+a.cfg.Scope.AppID.String()+":"+ref.Version, jobID).Scan(&waiting))
-		return waiting
-	})
-	w.clock.set(beforeDue)
-	unlock()
-	waitFor(t, func() bool {
 		var state string
-		must(t, w.pool.QueryRow(t.Context(), `SELECT state FROM `+w.schema+`_river.river_job WHERE id=$1`, jobID).Scan(&state))
-		if state == "completed" || state == "discarded" || state == "cancelled" {
-			t.Fatalf("early release job ended instead of snoozing: %s", state)
+		var errs int
+		must(t, w.pool.QueryRow(t.Context(), `SELECT state,coalesce(array_length(errors,1),0) FROM `+w.schema+`_river.river_job WHERE id=$1`, job.ID).Scan(&state, &errs))
+		if state == "completed" || state == "discarded" || state == "cancelled" || errs > 0 {
+			t.Fatalf("an early release ended or failed instead of waiting: %s with %d errors", state, errs)
 		}
 		return state == "scheduled"
 	})
-	var state, failure string
-	must(t, w.pool.QueryRow(t.Context(), `SELECT state,coalesce(error,'') FROM `+w.schema+`.content_publication_requests WHERE id=$1`, requestID).Scan(&state, &failure))
-	if state == "failed" || failure != "" {
-		t.Fatalf("early wake failed the publication request: %s %s", state, failure)
-	}
-	// River uses wall time; wake the same snoozed job at the catalog deadline.
+	// River uses wall time; wake the same job at the catalog deadline.
 	w.clock.set(future.Add(time.Second))
 	wake()
 	waitForChapterPublication(t, func() bool {
@@ -224,16 +197,15 @@ func TestIndependentChaptersSkipUnreleasedMiddle(t *testing.T) {
 	}
 }
 
-// A release held at the source lock runs after processing saved the page
-// analysis but before it saved the page selection. It must still keep a pixel
-// copy of chapter two private, and chapter two keeps its date.
+// A release woken while a pixel copy of chapter two is still processing
+// changes nothing; once processing saved the page selection, the copy stays
+// private and chapter two keeps its date.
 func TestReleaseDuringPageSelectionKeepsCopyPrivate(t *testing.T) {
 	m := newResilientMedia(t, func(c *ck.Config) {
 		c.Media.Kinds[0].Publish = &media.Publish{Pages: "pages/{name}", Renditions: []string{"reader"}}
 	})
 	m.start(t)
 	admin, reader := m.app.engine.Client(), m.app.client("")
-	tenant := publicationTenant(m.app)
 	ref := galleryRef(t, admin, "Processing after release")
 	_, err := admin.IngestMedia(t.Context(), http.DefaultClient, ref, uuid.NewString(), []ck.MediaFile{
 		{Path: "pages/01.png", Type: "image/png", Body: bytes.NewReader(chapterImage(t, 31))},
@@ -262,7 +234,14 @@ func TestReleaseDuringPageSelectionKeepsCopyPrivate(t *testing.T) {
 		return paths
 	}
 	waitForChapterPublication(t, func() bool { return slices.Equal(served(), []string{"reader/01.webp"}) })
-	waitFor(t, func() bool { return currentPublicationJob(t, m.app, ref.Version).Due.Equal(future) })
+	waiting := func() {
+		t.Helper()
+		waitFor(t, func() bool {
+			job := currentPublicationJob(t, m.app, ref.Version)
+			return job.State == "scheduled" && job.Due.After(time.Now().Add(30*time.Minute))
+		})
+	}
+	waiting()
 
 	// Different bytes with the same pixels: only page analysis finds the copy.
 	decoded, err := png.Decode(bytes.NewReader(chapterImage(t, 97)))
@@ -282,66 +261,20 @@ func TestReleaseDuringPageSelectionKeepsCopyPrivate(t *testing.T) {
 	case <-time.After(60 * time.Second):
 		t.Fatal("the copy's reader image never reached the held storage write")
 	}
-	waitForWithin(t, 45*time.Second, func() bool {
-		var busy int
-		must(t, m.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+pgx.Identifier{m.schema + "_river", "river_job"}.Sanitize()+`
- WHERE kind='contentkit_publication' AND state IN ('available','pending','running','retryable','scheduled') AND scheduled_at<=clock_timestamp()`).Scan(&busy))
-		return busy == 0
-	})
-	unlock, err := versionstore.LockSource(t.Context(), m.pool, tenant, ref.Version)
-	must(t, err)
-	t.Cleanup(unlock)
-	queued := func(want int) {
-		t.Helper()
-		waitFor(t, func() bool {
-			var n int
-			must(t, m.pool.QueryRow(t.Context(), `SELECT count(*) FROM pg_locks WHERE locktype='advisory' AND NOT granted
- AND ((classid::bigint << 32) | objid::bigint)=hashtextextended($1,0)`, "contentkit:media:contentkit:versions:"+tenant+":"+ref.Version).Scan(&n))
-			return n == want
-		})
-	}
-	// A newer release deletes the request rows it supersedes, so record every
-	// release result naming the copy as it is written.
-	leaks, record := pgx.Identifier{m.schema, "critical_leaked_releases"}.Sanitize(), pgx.Identifier{m.schema, "critical_record_leak"}.Sanitize()
-	_, err = m.pool.Exec(t.Context(), `CREATE TABLE `+leaks+` (id uuid NOT NULL);
-CREATE FUNCTION `+record+`() RETURNS trigger LANGUAGE plpgsql AS $$
-BEGIN
-  IF NEW.result->'pages'->'pages' @> '[{"path":"pages/30.png"}]' THEN INSERT INTO `+leaks+` VALUES (NEW.id); END IF;
-  RETURN NEW;
-END $$;
-CREATE TRIGGER critical_record_leak AFTER INSERT OR UPDATE OF result ON `+pgx.Identifier{m.schema, "content_publication_requests"}.Sanitize()+`
- FOR EACH ROW EXECUTE FUNCTION `+record+`()`)
-	must(t, err)
-	completed := func() (live string, leaked bool) {
-		must(t, m.pool.QueryRow(t.Context(), `SELECT coalesce((SELECT release_id::text FROM `+pgx.Identifier{m.schema, "content_versions"}.Sanitize()+`
- WHERE tenant_id=$1 AND id=$2),''),EXISTS(SELECT 1 FROM `+leaks+`)`, tenant, ref.Version).Scan(&live, &leaked))
-		return live, leaked
-	}
-	before, _ := completed()
-	// Publishing again queues a release ahead of the derivative job's page selection.
+	// Publishing again runs the release while the copy processes.
 	_, err = admin.PostContentPublish(t.Context(), ref.ID, catalog.PublishInput{})
 	must(t, err)
-	queued(1)
+	awaitDuePublications(t, m.app)
+	if paths := served(); !slices.Equal(paths, []string{"reader/01.webp"}) {
+		t.Fatalf("a release during processing changed what is served: %v", paths)
+	}
 	hold.unblock()
-	queued(2)
-	unlock()
-	waitForWithin(t, 45*time.Second, func() bool {
-		live, leaked := completed()
-		if leaked {
-			t.Fatal("a release planned before the page selection was saved published the copy of chapter two")
-		}
-		return live != before
-	})
+	awaitMediaReady(t, admin, ref)
+	awaitDuePublications(t, m.app)
 	for stable := time.Now().Add(2 * time.Second); time.Now().Before(stable); time.Sleep(50 * time.Millisecond) {
 		if paths := served(); !slices.Equal(paths, []string{"reader/01.webp"}) {
 			t.Fatalf("copy of chapter two became readable before its date: %v", paths)
 		}
 	}
-	deadline := time.Now().Add(15 * time.Second)
-	for due := currentPublicationJob(t, m.app, ref.Version).Due; !due.Equal(future); due = currentPublicationJob(t, m.app, ref.Version).Due {
-		if time.Now().After(deadline) {
-			t.Fatalf("chapter two moved from its date after the correction: %s, want %s", due, future)
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
+	waiting()
 }

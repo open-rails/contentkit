@@ -226,7 +226,7 @@ func TestAccountAnonymizationRecoveryAcrossStores(t *testing.T) {
 	must(t, err)
 	a.server = mountEngine(t, a.engine)
 	accountObjects := func() int {
-		prefix := (layout.Scope{TenantID: a.cfg.Scope.TenantID.String()}).Prefix("user", user.ID, "")
+		prefix := (layout.Scope{TenantID: a.cfg.Scope.TenantID.String()}).Prefix("user", user.ID)
 		objects, err := m.management.ListObjectsV2(t.Context(), &awss3.ListObjectsV2Input{Bucket: &m.bucket, Prefix: aws.String(prefix)})
 		must(t, err)
 		count := 0

@@ -65,7 +65,7 @@ func TestImageShapePresets(t *testing.T) {
 			"other format":      kind(reader(media.Shape{NoWiderThan: media.Ratio("1:2"), Image: source})),
 			"other animation":   kind(reader(media.Shape{NoWiderThan: media.Ratio("1:2"), Image: still})),
 			"invalid image":     kind(reader(media.Shape{NoWiderThan: media.Ratio("1:2"), Image: media.Image{Width: -1}})),
-			"no image producer": kind(media.Private{Name: "pages", Zip: "reader/", To: "pages.zip", Shapes: readerShapes}),
+			"no image producer": kind(media.Private{Name: "pages", From: "pages/{name}", To: "pages/{name}.vtt", Subtitles: &media.Subtitles{}, Shapes: readerShapes}),
 		}
 		for name, config := range invalid {
 			if _, err := mediastore.NewRegistry(config, mediastore.Hooks{}); err == nil {
@@ -168,9 +168,7 @@ func TestImageShapePresets(t *testing.T) {
 		must(t, err)
 		item, err := registry.Item(logical)
 		must(t, err)
-		journal, err := mediastore.NewPGJournal(m.pool, m.schema, nil)
-		must(t, err)
-		manifests, err := mediastore.NewManifests(m.storage.store, registry, mediastore.ManifestOptions{Locker: mediastore.PGLocker(m.pool), Journal: journal})
+		manifests, err := mediastore.NewManifests(m.storage.store, registry, mediastore.ManifestOptions{})
 		must(t, err)
 		manifest, _, err := manifests.Get(t.Context(), logical)
 		must(t, err)

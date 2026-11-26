@@ -19,7 +19,6 @@ import (
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/media/workqueue"
 	"github.com/open-rails/contentkit/media"
-	"github.com/open-rails/contentkit/media/layout"
 )
 
 const (
@@ -74,9 +73,6 @@ func (c WorkerConfig) planVideo(ctx context.Context, args workqueue.DerivativeAr
 	if err != nil {
 		return river.JobCancel(err)
 	}
-	if e.full(ctx, item) {
-		return nil
-	}
 	man, _, err := e.ms.Get(ctx, args.Ref)
 	if errors.Is(err, mediastore.ErrNotFound) {
 		return nil
@@ -91,7 +87,7 @@ func (c WorkerConfig) planVideo(ctx context.Context, args workqueue.DerivativeAr
 		return !errors.Is(err, mediastore.ErrManifestTooLarge)
 	}
 	for _, f := range man.Files {
-		if !f.IsUpload() || f.Gone || f.Blob == "" || f.Fail() != nil {
+		if !f.IsUpload() || f.Gone || f.Blob == "" || f.Fail() != nil || !item.Kind().MasterCurrent(f) {
 			continue
 		}
 		var encode []*media.Private
@@ -149,7 +145,8 @@ func (e *Encoder) force(ctx context.Context, item mediastore.Item, preset string
 // remuxed by that run.
 func (c WorkerConfig) planUpload(ctx context.Context, item mediastore.Item, f media.File, presets []*media.Private, class media.VideoJobClass) error {
 	e := c.Encoder
-	key, _ := item.Blob(f.Blob)
+	in := mediastore.Input(f) // renditions derive from the master
+	key, _ := item.Blob(in.Blob)
 	obj, err := e.store.Head(ctx, key)
 	if errors.Is(err, mediastore.ErrNotFound) {
 		return errStale
@@ -160,7 +157,7 @@ func (c WorkerConfig) planUpload(ctx context.Context, item mediastore.Item, f me
 	if err != nil {
 		return err
 	}
-	pr, err := c.probeSource(ctx, item.Ref(), f, url.URL)
+	pr, err := c.probeSource(ctx, item.Ref(), in, url.URL)
 	if err != nil {
 		return err
 	}
@@ -182,7 +179,6 @@ func (c WorkerConfig) planUpload(ctx context.Context, item mediastore.Item, f me
 	if err := checkLimits(pl, k.PrivateFor(f.Path), e.c.Codecs, limits); err != nil {
 		return &PermanentError{err}
 	}
-	remuxed := map[string]bool{}
 	for _, p := range presets {
 		if p.HLS == nil {
 			continue
@@ -199,38 +195,7 @@ func (c WorkerConfig) planUpload(ctx context.Context, item mediastore.Item, f me
 			}
 			continue
 		}
-		for _, q := range presets {
-			if q.MP4 != nil && slices.Contains(e.c.Codecs, media.CodecH264) &&
-				slices.IndexFunc(st, func(r rung) bool { return r.n == q.MP4.Rung }) >= done {
-				remuxed[q.Name] = true
-			}
-		}
 		if err := c.planRuns(ctx, item, f, p, fp, obj, pr, pl, st, done, class); err != nil {
-			return err
-		}
-	}
-	for _, p := range presets {
-		if p.MP4 == nil || remuxed[p.Name] || !e.todo(fresh, f, p) {
-			continue
-		}
-		// Regeneration re-marks a failed upload's presets pending. An MP4
-		// already completed before the failure remains current; force has
-		// invalidated its fingerprint when it really needs encoding again.
-		w := runWork{item: item, f: f, p: p, fp: e.fp(p, f)}
-		if w.settled(e, fresh) {
-			if err := e.clearSettled(ctx, w); err != nil {
-				return err
-			}
-			continue
-		}
-		st, _ := stages(p, pl)
-		if len(st) == 0 {
-			if err := e.noOutput(ctx, item, f, p); err != nil {
-				return err
-			}
-			continue
-		}
-		if err := c.planRuns(ctx, item, f, p, e.fp(p, f), obj, pr, pl, st, 0, class); err != nil {
 			return err
 		}
 	}
@@ -294,8 +259,7 @@ func checkLimits(pl plan, presets []*media.Private, codecs []media.Codec, l medi
 }
 
 // work is the encode presets plan for a source: the sum over their rungs
-// and codecs of output pixels × output frames (an MP4 counted as its own
-// H.264 run).
+// and codecs of output pixels × output frames.
 func work(pl plan, presets []*media.Private, codecs []media.Codec) float64 {
 	var px float64
 	for _, p := range presets {
@@ -303,9 +267,6 @@ func work(pl plan, presets []*media.Private, codecs []media.Codec) float64 {
 			continue
 		}
 		n := len(codecs)
-		if p.MP4 != nil {
-			n = 1
-		}
 		st, _ := stages(p, pl) // an aspect refusal is the plan's
 		for _, r := range st {
 			px += float64(r.w * r.h * n)
@@ -337,7 +298,7 @@ func (c WorkerConfig) planRuns(ctx context.Context, item mediastore.Item, f medi
 			c.Logger.DebugContext(ctx, "media/video: no passthrough", "ref", item.Ref().String(), "path", f.Path, "codec", codec, "reason", why)
 		}
 	}
-	key, _ := item.Blob(f.Blob)
+	key, _ := item.Blob(mediastore.Input(f).Blob)
 	return c.insertRuns(ctx, item.Ref(), f.Path, f.Blob, key, obj.ETag, runSpec(p, fp), class, pr, st, bounds, done, passthrough)
 }
 
@@ -430,7 +391,7 @@ func (e *Encoder) refreshSubs(ctx context.Context, item mediastore.Item, f media
 func (e *Encoder) subsOutputs(ctx context.Context, item mediastore.Item, dir, to, fp string, subs []track) ([]media.File, error) {
 	var out []media.File
 	for i, s := range subs {
-		blob, size, err := e.put(ctx, item, layout.AreaPrivate, filepath.Join(dir, fmt.Sprintf("s%d.vtt", i)), "text/vtt", nil)
+		blob, size, err := e.put(ctx, item, outputArea(item), filepath.Join(dir, fmt.Sprintf("s%d.vtt", i)), "text/vtt", nil)
 		if err != nil {
 			return nil, err
 		}

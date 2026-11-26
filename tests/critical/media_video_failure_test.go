@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -28,14 +29,12 @@ import (
 // Refuse actual object writes after successful work, then regenerate through
 // the public API. Both queue exhaustion and persisted media state are observed.
 func TestMediaVideoFailureRecovery(t *testing.T) {
-	for _, mode := range []string{"video", "mp4", "subtitle", "poster", "image-before-video", "shutdown"} {
+	for _, mode := range []string{"video", "subtitle", "poster", "image-before-video", "shutdown"} {
 		t.Run(mode, func(t *testing.T) {
 			m := newResilientMedia(t, func(c *ck.Config) {
 				k := &c.Media.Config.Kinds[0]
 				k.Uploads = append(k.Uploads, media.Upload{Path: "source", Types: []string{"video/mp4"}, MaxBytes: 10 << 20})
 				switch mode {
-				case "mp4":
-					k.Private = append(k.Private, media.Private{Name: "download", From: "source", To: "download.mp4", MP4: media.Rung(144)})
 				case "subtitle":
 					k.Uploads = append(k.Uploads, media.Upload{Path: "subs/{name}", Types: []string{"application/x-subrip"}, MaxBytes: 1 << 20})
 					k.Private = append(k.Private, media.Private{Name: "captions", From: "subs/{name}", To: "captions/{name}.vtt", Subtitles: &media.Subtitles{}})
@@ -44,8 +43,7 @@ func TestMediaVideoFailureRecovery(t *testing.T) {
 					k.Private = append(k.Private, media.Private{Name: "poster", From: "poster", To: "posters/preview.webp", Image: &media.Image{Width: 48, Height: 48}})
 				default:
 					k.Private = append(k.Private,
-						media.Private{Name: "stream", From: "source", To: "streams/", HLS: &media.HLS{Ladder: []int{240, 144}}},
-						media.Private{Name: "download", From: "source", To: "download.mp4", MP4: media.Rung(144)})
+						media.Private{Name: "stream", From: "source", To: "streams/", HLS: &media.HLS{Ladder: []int{240, 144}}})
 				}
 			})
 			client := m.app.engine.Client()
@@ -57,9 +55,10 @@ func TestMediaVideoFailureRecovery(t *testing.T) {
 			}
 			video, err := os.ReadFile(source)
 			must(t, err)
+			const subtitle = "1\n00:00:00,000 --> 00:00:00,900\nHello\n"
 			files := []ck.MediaFile{{Path: "pages/one.png", Type: "image/png", Body: bytes.NewReader(imageBytes(t))}, {Path: "source.mp4", Type: "video/mp4", Body: bytes.NewReader(video)}}
 			if mode == "subtitle" {
-				files = append(files, ck.MediaFile{Path: "subs/en.srt", Type: "application/x-subrip", Body: strings.NewReader("1\n00:00:00,000 --> 00:00:00,900\nHello\n")})
+				files = append(files, ck.MediaFile{Path: "subs/en.srt", Type: "application/x-subrip", Body: strings.NewReader(subtitle)})
 			}
 			_, err = client.IngestMedia(t.Context(), nil, ref, uuid.NewString(), files)
 			must(t, err)
@@ -69,7 +68,7 @@ func TestMediaVideoFailureRecovery(t *testing.T) {
 			}
 			if mode == "shutdown" {
 				hold := m.wire.pause(t, func(r *http.Request) bool {
-					return r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/internal/") && strings.HasPrefix(r.Header.Get("Content-Type"), "video/mp4")
+					return r.Method == http.MethodPut && strings.Contains(r.URL.Path, "/internal/") && strings.HasPrefix(r.Header.Get("Content-Type"), "video/mp4") && !strings.HasSuffix(r.URL.Path, digestBytes(video))
 				})
 				stop := startVideoFailureWorker(t, m)
 				select {
@@ -98,8 +97,11 @@ func TestMediaVideoFailureRecovery(t *testing.T) {
 
 			var videoPuts int
 			m.wire.mu.Lock()
+			// Placing an upload writes its own hash: never refused, as only
+			// processing outputs are.
+			placed := map[string]bool{digestBytes(imageBytes(t)): true, digestBytes(video): true, digestBytes([]byte(subtitle)): true}
 			m.wire.refuseOutput = func(r *http.Request) bool {
-				if r.Method != http.MethodPut || !strings.Contains(r.URL.Path, "/internal/") {
+				if r.Method != http.MethodPut || !strings.Contains(r.URL.Path, "/internal/") || placed[path.Base(r.URL.Path)] {
 					return false
 				}
 				kind := r.Header.Get("Content-Type")
@@ -107,9 +109,8 @@ func TestMediaVideoFailureRecovery(t *testing.T) {
 				case "video":
 					if strings.HasPrefix(kind, "video/mp4") {
 						videoPuts++
-						return videoPuts > 2
+						return videoPuts > 1 // the first rung lands, the rest fail
 					}
-				case "mp4":
 					return strings.HasPrefix(kind, "video/mp4")
 				case "subtitle":
 					return strings.HasPrefix(kind, "text/vtt")
@@ -187,7 +188,7 @@ func TestMediaVideoFailureRecovery(t *testing.T) {
 			}
 			var checkpoints string
 			if mode == "video" {
-				if outputs["streams/144-h264.mp4"] == "" || outputs["download.mp4"] == "" {
+				if outputs["streams/144-h264.mp4"] == "" {
 					t.Fatalf("partial video outputs were lost: %+v", outputs)
 				}
 				checkpoints = videoFailureCheckpoints(t, m)
@@ -251,9 +252,7 @@ func failureManifests(t *testing.T, m *resilientMedia, ref media.RefBody) (*medi
 	t.Helper()
 	logical, err := m.config.Kinds.VersionRef(ref.Kind, ref.ID, ref.Version)
 	must(t, err)
-	journal, err := mediastore.NewPGJournal(m.pool, m.schema, nil)
-	must(t, err)
-	manifests, err := mediastore.NewManifests(m.storage.store, m.config.Kinds, mediastore.ManifestOptions{Locker: mediastore.PGLocker(m.pool), Journal: journal})
+	manifests, err := mediastore.NewManifests(m.storage.store, m.config.Kinds, mediastore.ManifestOptions{})
 	must(t, err)
 	return manifests, logical
 }

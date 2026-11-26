@@ -1,13 +1,15 @@
 // Package gateway serves the exact app/account roots declared for a media
-// host. Scoped URLs are /v1/tenant/{tenant}/app/{app}/{kind}/{id}[/{version}]/…
+// host. Scoped URLs are /v1/tenant/{tenant}/app/{app}/{kind}/{id}/{area}/{sha256}
 // or /v1/tenant/{tenant}/account/{kind}/{account}/… .
 //
-// Public renditions are anonymous; private files require an exact-file or item token and
-// download files require a token for that exact key. Denials use a uniform
-// no-store 404 and token denials precede S3 access. Before serving a scoped
-// item, one HEAD of its reserved fence (layout.FenceName) rejects a soft-deleted
-// or permanently erased item, including late uploads reached through old
-// tokens. Forbidden fence reads fail closed. The gateway reads no manifests or
+// public/ is served to anyone; private/ needs the item's token, carried by
+// the cookie path-scoped to that item's private/ (or ?t= for applications);
+// internal/, tmp/ and the manifest are never served. Every stored name is
+// the hash of its bytes, so a served file never changes: browsers and CDNs
+// keep it. Denials use a uniform no-store 404 and token denials precede S3
+// access. Before serving, one HEAD of the item's fence (layout.FenceName)
+// rejects a soft-deleted or erased item, including through old tokens.
+// Forbidden fence reads fail closed. The gateway reads no manifests or
 // databases.
 package gateway
 
@@ -33,14 +35,10 @@ import (
 )
 
 const (
-	// Generation-named public files and content-hashed private blobs never
-	// change, so a browser keeps its copy. Tokens and the deletion fence guard
-	// new reads, not bytes a browser already holds.
-	immutablePublicCacheControl = "public, max-age=31536000, immutable"
-	privateCacheControl         = "private, max-age=31536000, immutable"
-	// Any other public name may serve new bytes: a Stable preset is overwritten
-	// in place, and a kind's default stands in for a missing file.
-	publicCacheControl = "public, max-age=300, stale-while-revalidate=86400"
+	// Hash-named files never change, so a browser keeps its copy. Tokens and
+	// the deletion fence guard new reads, not bytes a browser already holds.
+	publicCacheControl  = "public, max-age=31536000, immutable"
+	privateCacheControl = "private, max-age=31536000, immutable"
 )
 
 // Config configures a Handler.
@@ -58,18 +56,16 @@ type Config struct {
 	Endpoint, Region             string // path-style S3 endpoint; Region default us-east-1
 	AccessKeyID, SecretAccessKey string // read key for served private/public objects, including the fence HEAD; scoped prefixes need missing-object 404s
 	Ring                         token.Ring
-	Defaults                     []layout.Default // deployment selection from image.PublishDefaults
-	Client                       *http.Client     // default: a tuned transport without compression
+	Client                       *http.Client // default: a tuned transport without compression
 	Logger                       *slog.Logger
 }
 
 // Handler serves media objects.
 type Handler struct {
-	cfg      Config
-	base     *url.URL
-	creds    aws.Credentials
-	signer   *v4.Signer
-	defaults map[string]map[string]string // "{ns}/{kind}" -> logical name -> immutable object
+	cfg    Config
+	base   *url.URL
+	creds  aws.Credentials
+	signer *v4.Signer
 }
 
 var emptySHA256 = hex.EncodeToString(func() []byte { s := sha256.Sum256(nil); return s[:] }())
@@ -103,10 +99,6 @@ func New(cfg Config) (*Handler, error) {
 			}
 		}
 	}
-	defaults, err := layout.CompileDefaults(cfg.Defaults)
-	if err != nil {
-		return nil, err
-	}
 	cfg.Region = cmp.Or(cfg.Region, "us-east-1")
 	if cfg.Client == nil {
 		cfg.Client = &http.Client{Transport: &http.Transport{
@@ -121,11 +113,10 @@ func New(cfg Config) (*Handler, error) {
 	}
 	cfg.Logger = cmp.Or(cfg.Logger, slog.Default())
 	return &Handler{
-		cfg:      cfg,
-		base:     base,
-		creds:    aws.Credentials{AccessKeyID: cfg.AccessKeyID, SecretAccessKey: cfg.SecretAccessKey},
-		signer:   v4.NewSigner(),
-		defaults: defaults,
+		cfg:    cfg,
+		base:   base,
+		creds:  aws.Credentials{AccessKeyID: cfg.AccessKeyID, SecretAccessKey: cfg.SecretAccessKey},
+		signer: v4.NewSigner(),
 	}, nil
 }
 
@@ -154,9 +145,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	key := o.key()
 	cacheControl := publicCacheControl
-	if _, generated := layout.SplitGeneration(o.name); generated {
-		cacheControl = immutablePublicCacheControl
-	}
 	var dl *string // a private file's unsigned download name
 	if o.area != layout.AreaPublic {
 		if err := h.authorize(r, o.area, key); err != nil {
@@ -191,15 +179,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	resp, err := h.fetch(r, o.bucket, key)
-	if err == nil && missing(resp.StatusCode) && o.area == "public" {
-		if name := h.defaultName(o); name != "" {
-			_ = resp.Body.Close()
-			o.name, o.id, o.version = name, layout.DefaultID, ""
-			key = o.key()
-			cacheControl = publicCacheControl
-			resp, err = h.fetch(r, o.bucket, key)
-		}
-	}
 	if err != nil {
 		if r.Context().Err() == nil {
 			h.cfg.Logger.Error("media-gateway: upstream", "key", key, "err", err)
@@ -212,13 +191,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 type object struct {
-	ns, kind, id, version, area, name string
-	scope                             layout.Scope
-	bucket                            string
+	ns, kind, id, area, name string
+	scope                    layout.Scope
+	bucket                   string
 }
 
 func (o object) key() string {
-	return o.scope.Prefix(o.kind, o.id, o.version) + o.area + "/" + o.name
+	return o.scope.Prefix(o.kind, o.id) + o.area + "/" + o.name
 }
 
 // parse accepts exactly a scoped /v1/tenant/… object path, unescaped, for a
@@ -229,11 +208,11 @@ func (h *Handler) parse(r *http.Request) (object, bool) {
 		return object{}, false
 	}
 	k, ok := layout.Parse(rest)
-	if !ok || strings.HasPrefix(k.ID, "_") || k.Version != "" {
+	if !ok || k.Name == layout.FenceName || strings.HasPrefix(k.ID, "_") && !(k.ID == layout.DefaultID && k.Area == layout.AreaPublic) {
 		return object{}, false
 	}
-	o := object{ns: k.Namespace, kind: k.Kind, id: k.ID, version: k.Version, area: k.Area, name: k.Name, scope: k.Scope}
-	if o.area != layout.AreaPublic && o.area != layout.AreaPrivate {
+	o := object{ns: k.Namespace, kind: k.Kind, id: k.ID, area: k.Area, name: k.Name, scope: k.Scope}
+	if !layout.Served(o.area) {
 		return object{}, false
 	}
 	host := r.Host
@@ -258,8 +237,8 @@ func (h *Handler) parse(r *http.Request) (object, bool) {
 
 var errNoToken = errors.New("no token")
 
-// authorize accepts exact-file or whole-item private tokens from the URL or
-// an mt cookie (a browser may send several).
+// authorize accepts the item's token from the URL or an mt cookie (a
+// browser may send several).
 func (h *Handler) authorize(r *http.Request, area, key string) (err error) {
 	now := time.Now()
 	var toks []string
@@ -278,21 +257,6 @@ func (h *Handler) authorize(r *http.Request, area, key string) (err error) {
 	}
 	return cmp.Or(err, errNoToken)
 }
-
-func (h *Handler) defaultName(o object) string {
-	files := h.defaults[o.ns+"/"+o.kind]
-	if target := files[o.name]; target != "" {
-		return target
-	}
-	// A retired publication still has the logical name before its generation.
-	if logical, ok := layout.SplitGeneration(o.name); ok {
-		return files[logical]
-	}
-	return ""
-}
-
-// missing is a bucket's answer for an absent key: 404, or 403 without ListBucket.
-func missing(status int) bool { return status == http.StatusNotFound || status == http.StatusForbidden }
 
 var (
 	forwardRequest  = []string{"Range", "If-Range", "If-None-Match", "If-Modified-Since"}

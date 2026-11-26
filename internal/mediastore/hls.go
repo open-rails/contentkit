@@ -290,42 +290,13 @@ func (g *Grant) trackIndex(ctx context.Context, blob string) (*media.TrackIndex,
 	return g.r.index(ctx, g.Item, blob)
 }
 
+// deliveredBlob is blob when a reader may fetch it: released into a
+// served area.
 func (g *Grant) deliveredBlob(blob string) (string, error) {
-	seen := map[string]bool{}
-	for {
-		if seen[blob] {
-			return "", ErrNotAllowed
-		}
-		seen[blob] = true
-		next := ""
-		for _, delivery := range slices.Backward(g.Manifest.Deliveries) {
-			if !delivery.Ready || delivery.Withdrawn {
-				continue
-			}
-			for _, file := range delivery.Files {
-				if file.Source == blob {
-					next = file.Blob
-					break
-				}
-			}
-			if next != "" {
-				break
-			}
-		}
-		if next == "" || next == blob {
-			area, _, valid := layout.SplitBlobRef(blob)
-			if !valid || area != layout.AreaPublic && area != layout.AreaPrivate {
-				return "", ErrNotAllowed
-			}
-			if g.Item.Kind().Versions && !slices.ContainsFunc(g.Manifest.Deliveries, func(delivery PublicationDelivery) bool {
-				return delivery.Ready && !delivery.Withdrawn && slices.ContainsFunc(delivery.Files, func(file DeliveryFile) bool { return file.Blob == blob })
-			}) {
-				return "", ErrNotAllowed
-			}
-			return blob, nil
-		}
-		blob = next
+	if !layout.Served(layout.BlobArea(blob)) {
+		return "", ErrNotAllowed
 	}
+	return blob, nil
 }
 
 // index reads a track index blob through an item-scoped cache. Two editions

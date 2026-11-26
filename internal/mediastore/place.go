@@ -7,10 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"sync"
 
 	"github.com/open-rails/contentkit/contentref"
 	media "github.com/open-rails/contentkit/media"
+	"github.com/open-rails/contentkit/media/layout"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -18,24 +20,22 @@ import (
 // single-PUT upload is held in memory (at most MaxSinglePut).
 const placeConcurrency = 4
 
-// Place moves ref's staged uploads (temp/u-{uuid}) to their content
-// allocations, {area}/sha256-{hex}-{uuid} (Kind.Area) of the bytes the server
-// read, and returns
-// how many files it placed. The media worker runs it before processing:
+// Place moves ref's staged uploads (tmp/u-{uuid}) to their hash names,
+// {area}/{sha256} (Kind.Area) of the bytes the server read, and returns how
+// many files it placed. The media worker runs it before processing:
 //
-//  1. read each staged upload, hashing it. A single PUT (at most
-//     MaxSinglePut, the only kind a client can send again while its URL
-//     lives) is written from the bytes that were hashed; a multipart upload,
-//     fixed once completed, is copied server-side while its ETag is the one
-//     read. Each write has a new allocation, so no existing file is overwritten;
-//  2. point the files at their blobs in one edit, which checks under the
-//     folder lock (the sweep holds it too) that each blob still exists;
-//  3. delete the staged objects no manifest references, and, in that
-//     edit, the blobs of uploads removed meanwhile (a takedown's stay gone).
+//  1. read each staged upload, hashing it (the bucket does not verify a
+//     client's checksum). A single PUT (at most MaxSinglePut) is written from
+//     the bytes that were hashed; a multipart upload, fixed once completed,
+//     is copied server-side while its ETag is the one read. Identical bytes
+//     land on the same name, so a repeated write is harmless;
+//  2. point the files still staged there at their blobs in one edit;
+//  3. delete the staged objects the manifest no longer names.
 //
 // A staged upload that is gone or not the size committed fails its file
 // (CodeNotUploaded: upload it again). Every step is idempotent, so a crash
-// converges on the next run.
+// converges on the next run; a blob a crash leaves unnamed is an orphan GC
+// removes.
 func (m *Manifests) Place(ctx context.Context, ref contentref.ContentRef) (int, error) {
 	item, err := m.reg.Item(ref)
 	if err != nil {
@@ -47,25 +47,23 @@ func (m *Manifests) Place(ctx context.Context, ref contentref.ContentRef) (int, 
 	} else if err != nil {
 		return 0, err
 	}
-	if man.Full {
-		return 0, nil // placing would grow it: wait for a commit that shrinks it
-	}
-	sizes, areas := map[string]int64{}, map[string]string{}
+	sizes := map[string]int64{}
 	for _, f := range man.Files {
 		if f.Staged != "" && f.Fail() == nil {
-			sizes[f.Staged], areas[f.Staged] = f.Size, item.Kind().Area("")
+			sizes[f.Staged] = f.Size
 		}
 	}
 	if len(sizes) == 0 {
 		return 0, nil
 	}
+	area := item.Kind().Area("")
 	var mu sync.Mutex
 	blobs := make(map[string]string, len(sizes)) // staged name → blob, "" when gone or changed
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(placeConcurrency)
 	for name, size := range sizes {
 		g.Go(func() error {
-			blob, err := m.placeOne(gctx, item, areas[name], name, size)
+			blob, err := m.placeOne(gctx, item, area, name, size)
 			if err != nil {
 				return fmt.Errorf("media: place %s%s: %w", item.TempPrefix(), name, err)
 			}
@@ -80,13 +78,11 @@ func (m *Manifests) Place(ctx context.Context, ref contentref.ContentRef) (int, 
 	}
 	var placed int
 	var failed []string
-	_, err = m.EditExisting(ctx, ref, func(cur *Manifest) error {
+	cur, err := m.EditExisting(ctx, ref, func(cur *Manifest) error {
 		placed, failed = 0, failed[:0]
-		live := map[string]bool{}
 		for i := range cur.Files {
 			f := &cur.Files[i]
 			blob, ok := blobs[f.Staged]
-			live[f.Staged] = true
 			switch {
 			case f.Staged == "" || !ok || f.Fail() != nil:
 				continue
@@ -96,33 +92,16 @@ func (m *Manifests) Place(ctx context.Context, ref contentref.ContentRef) (int, 
 				failed = append(failed, f.Path)
 				continue
 			}
-			// A sweep since the write may have retired the allocation; the
-			// next run writes a fresh one.
-			key, _ := item.Blob(blob)
-			if _, err := m.store.Head(ctx, key); err != nil {
-				return fmt.Errorf("media: place %s: %w", key, err)
-			}
 			f.Blob, f.Staged = blob, ""
 			placed++
 		}
-		var gone []string
-		for name, blob := range blobs {
-			if blob != "" && !live[name] {
-				gone = append(gone, blob)
-			}
+		if placed == 0 && len(failed) == 0 {
+			return ErrUnchanged
 		}
-		return m.DeleteUnreferenced(ctx, item, cur, gone)
+		return nil
 	})
 	if errors.Is(err, ErrNotFound) {
-		// Deleted meanwhile: drop what this run wrote, as a folder deletion
-		// that ran before it could not.
-		var written []string
-		for _, b := range blobs {
-			if b != "" {
-				written = append(written, b)
-			}
-		}
-		return 0, errors.Join(m.DropIfDeleted(ctx, ref, written), m.dropStaged(ctx, item, blobs))
+		return 0, nil // deleted meanwhile: GC takes what this run wrote
 	} else if err != nil {
 		return 0, err
 	}
@@ -131,11 +110,20 @@ func (m *Manifests) Place(ctx context.Context, ref contentref.ContentRef) (int, 
 			h(ctx, ref, p, errors.New("media: the staged upload is gone or changed"))
 		}
 	}
-	return placed, m.dropStaged(ctx, item, blobs)
+	staged := cur.StagedNames()
+	for name := range blobs {
+		if !slices.Contains(staged, name) {
+			key, _ := item.Staged(name)
+			if err := m.store.Delete(ctx, key); err != nil && !errors.Is(err, ErrNotFound) {
+				return placed, err
+			}
+		}
+	}
+	return placed, nil
 }
 
-// placeOne hashes the staged upload and writes its blob unless it exists.
-// It returns the blob, or "" when the upload is gone or not size bytes.
+// placeOne hashes the staged upload and writes it under its hash. It
+// returns the blob, or "" when the upload is gone or not size bytes.
 func (m *Manifests) placeOne(ctx context.Context, item Item, area, name string, size int64) (string, error) {
 	src, _ := item.Staged(name)
 	rc, obj, err := m.store.Get(ctx, src, media.GetOptions{})
@@ -163,41 +151,12 @@ func (m *Manifests) placeOne(ctx context.Context, item Item, area, name string, 
 		return "", err
 	}
 	sum := h.Sum(nil)
-	blobs, err := m.NewBlobs(ctx, item.Ref(), area, [][]byte{sum})
-	if err != nil {
-		return "", err
-	}
-	blob := blobs[0]
+	blob := layout.BlobRef(area, sum)
 	dst, _ := item.Blob(blob)
 	if body != nil {
-		opts := media.PutOptions{ContentType: obj.ContentType, ChecksumSHA256: sum}
-		var caps media.Capabilities
-		if caps, err = m.store.Capabilities(ctx); err != nil {
-			return "", err
-		}
-		if caps.ConditionalPut {
-			opts.IfNoneMatch = "*"
-		}
-		_, err = m.store.Put(ctx, dst, bytes.NewReader(body), size, opts)
+		_, err = m.store.Put(ctx, dst, bytes.NewReader(body), size, media.PutOptions{ContentType: obj.ContentType, ChecksumSHA256: sum})
 	} else {
 		_, err = m.store.Copy(ctx, src, dst, media.CopyOptions{IfMatch: obj.ETag})
 	}
-	if body != nil && errors.Is(err, ErrPreconditionFailed) {
-		err = nil // placed meanwhile, from the same bytes
-	}
 	return blob, err
-}
-
-// dropStaged deletes the staged objects of names that the manifest no longer
-// references, under the folder lock, so a commit naming one either sees it
-// gone or keeps it.
-func (m *Manifests) dropStaged(ctx context.Context, item Item, names map[string]string) error {
-	return m.cleanup(ctx, item, false, func(cur *Manifest, _ bool) (journalEffects, error) {
-		staged := make([]string, 0, len(names))
-		for name := range names {
-			staged = append(staged, name)
-		}
-		keys, err := m.unreferenced(ctx, item, cur, Unreferenced{Staged: staged})
-		return journalEffects{Private: keys}, err
-	})
 }

@@ -1,21 +1,19 @@
 // Package layout defines media object keys, dependency-free so the media
-// gateway can classify paths without importing the media runtime. Areas are
-// named for who may read them: public/ everyone, private/ signed readers,
-// internal/ and originals/ editors only (never served by the gateway).
+// gateway can classify paths without importing the media runtime. Every
+// stored file is named by the SHA-256 of its bytes, in the area that decides
+// who may read it: public/ everyone, private/ the item's signed readers,
+// internal/ nobody (never served).
 //
-//	{namespace}/{kind}/{id}/manifest.json         gzip JSON; never served
-//	                       /private/sha256-{hex}-{uuid}  uploads, derived files, editor views
-//	                       /private/sha256-{hex}  a pre-v0.68 item's blob, kept by the upgrade
-//	                       /public/{name}         app-declared names, e.g. cover-460.webp
-//	                       /temp/{name}           in-flight writes and staged uploads (u-{uuid}); never served
-//	{namespace}/{kind}/{version}/...              a versioned kind's item, owned by its version:
-//	                       /originals/sha256-{hex}-{uuid} retained uploads
-//	                       /internal/sha256-{hex}-{uuid}  every derived file, editor view and track index
-//	                       /private/, /public/    released copies, written only by publication
-//	                       /tmp/{name}            staged uploads
-//	{namespace}/{kind}/_default/public/{name}     a public preset's default image
+//	{root}/{kind}/{id}/manifest.json         gzip JSON, the item's only record of its files; never served
+//	                  /internal/{sha256}     unreleased uploads and outputs
+//	                  /private/{sha256}      released files, behind the item's path-scoped token
+//	                  /public/{sha256}       always-visible files (covers), served to anyone
+//	                  /public/_contentkit_erased  fence: while it exists the gateway serves nothing of the item
+//	                  /tmp/u-{uuid}          staged uploads (tag-expired); never served
+//	{root}/{kind}/_default/                  a kind's default images, an item like any other
 //
-// The URL of a served object is its key under /v1/ on the site's media host.
+// A versioned kind's item is its version: {kind}/{version}/. The URL of a
+// served object is its key under /v1/ on the site's media host.
 package layout
 
 import (
@@ -25,34 +23,29 @@ import (
 
 // Folder areas.
 const (
-	AreaManifest  = "manifest"
-	AreaPrivate   = "private"
-	AreaPublic    = "public"
-	AreaTemp      = "temp" // historical/non-version staging
-	AreaTmp       = "tmp"
-	AreaOriginals = "originals"
-	AreaInternal  = "internal"
+	AreaManifest = "manifest"
+	AreaInternal = "internal"
+	AreaPrivate  = "private"
+	AreaPublic   = "public"
+	AreaTmp      = "tmp"
 )
 
 const (
 	// ManifestName is the manifest's key within the folder.
 	ManifestName = "manifest.json"
-	// FenceName is an item's reserved gateway fence in public/, never a
-	// rendition: while it exists the gateway serves none of the item's files.
-	// Its FenceMeta is FenceDeleted while the item is soft-deleted, and restore
-	// removes it; any other fence is permanent erasure. The name predates
-	// deletion fences.
+	// FenceName is an item's reserved gateway fence in public/: while it
+	// exists the gateway serves none of the item's files. Its FenceMeta is
+	// FenceDeleted while the item is soft-deleted, and restore removes it;
+	// FenceErased is permanent.
 	FenceName = "_contentkit_erased"
 	// FenceMeta is the fence's user-metadata key (x-amz-meta-contentkit-fence).
 	FenceMeta = "contentkit-fence"
 	// FenceDeleted and FenceErased are FenceMeta's values.
 	FenceDeleted = "deleted"
 	FenceErased  = "erased"
-	// DefaultID is the item id under which a kind's default public images live.
+	// DefaultID is the item id holding a kind's default images.
 	DefaultID = "_default"
-	// SHA256Prefix starts every blob name.
-	SHA256Prefix = "sha256-"
-	// StagedPrefix starts a staged upload's name in temp/.
+	// StagedPrefix starts a staged upload's name in tmp/.
 	StagedPrefix = "u-"
 	// URLPrefix is the path every media URL starts with.
 	URLPrefix = "/v1/"
@@ -62,7 +55,6 @@ const (
 type Key struct {
 	Namespace, Kind, ID string
 	Scope               Scope
-	Version             string // "" outside a version's folder
 	Area                string
 	Name                string // the name within the area; "" for the manifest
 }
@@ -70,9 +62,9 @@ type Key struct {
 // Folder is the key's item folder.
 func (k Key) Folder() string {
 	if !k.Scope.IsZero() {
-		return k.Scope.Prefix(k.Kind, k.ID, k.Version)
+		return k.Scope.Prefix(k.Kind, k.ID)
 	}
-	return Prefix(k.Namespace, k.Kind, k.ID, k.Version)
+	return Prefix(k.Namespace, k.Kind, k.ID)
 }
 
 // Parse classifies an object key; ok is false for anything outside the layout.
@@ -96,22 +88,17 @@ func Parse(key string) (Key, bool) {
 		}
 		parts = append([]string{scope.Partition()}, parts...)
 	}
-	if len(parts) < 4 || len(parts) > 6 || !ValidSegment(parts[0]) || !ValidSegment(parts[1]) || !ValidSegment(parts[2]) {
+	if len(parts) < 4 || len(parts) > 5 || !ValidSegment(parts[0]) || !ValidSegment(parts[1]) || !ValidSegment(parts[2]) {
 		return Key{}, false
 	}
 	k := Key{Namespace: parts[0], Scope: scope, Kind: parts[1], ID: parts[2]}
 	rest := parts[3:]
-	if len(rest) > 1 && ValidVersion(rest[0]) {
-		k.Version, rest = rest[0], rest[1:]
-	}
 	switch {
 	case len(rest) == 1 && rest[0] == ManifestName:
 		k.Area = AreaManifest
-	case len(rest) == 2 && rest[0] == AreaPrivate && ValidBlobName(rest[1]),
-		len(rest) == 2 && rest[0] == AreaPublic && ValidPublicName(rest[1]),
-		len(rest) == 2 && (rest[0] == AreaTemp || rest[0] == AreaTmp) && ValidSegment(rest[1]),
-		len(rest) == 2 && rest[0] == AreaOriginals && ValidBlobName(rest[1]),
-		len(rest) == 2 && rest[0] == AreaInternal && ValidPublicName(rest[1]):
+	case len(rest) == 2 && (rest[0] == AreaInternal || rest[0] == AreaPrivate || rest[0] == AreaPublic) && ValidHash(rest[1]),
+		len(rest) == 2 && rest[0] == AreaPublic && rest[1] == FenceName,
+		len(rest) == 2 && rest[0] == AreaTmp && ValidStagedName(rest[1]):
 		k.Area, k.Name = rest[0], rest[1]
 	default:
 		return Key{}, false
@@ -119,30 +106,15 @@ func Parse(key string) (Key, bool) {
 	return k, true
 }
 
-// Prefix is an item's folder: "{namespace}/{kind}/{id}/", and a version's
-// "{namespace}/{kind}/{id}/{version}/".
-func Prefix(namespace, kind, id, version string) string {
-	if version != "" {
-		return namespace + "/" + kind + "/" + id + "/" + version + "/"
-	}
+// Prefix is an item's folder: "{namespace}/{kind}/{id}/".
+func Prefix(namespace, kind, id string) string {
 	return namespace + "/" + kind + "/" + id + "/"
 }
 
-// ParseFolder parses an item folder, "{namespace}/{kind}/{id}/" or a
-// version's "{namespace}/{kind}/{id}/{version}/".
+// ParseFolder parses an item folder.
 func ParseFolder(prefix string) (Key, bool) {
 	k, ok := Parse(prefix + ManifestName)
 	return k, ok && k.Folder() == prefix
-}
-
-// ValidVersion accepts a version folder's segment: a valid segment that is
-// no area, manifest or reserved "_" name.
-func ValidVersion(s string) bool {
-	switch s {
-	case ManifestName, AreaPrivate, AreaPublic, AreaTemp, AreaTmp, AreaOriginals, AreaInternal:
-		return false
-	}
-	return ValidSegment(s) && s[0] != '_'
 }
 
 // ValidSegment keeps keys stable ASCII: [A-Za-z0-9._-]{1,128}, no leading dot.
@@ -159,77 +131,45 @@ func ValidSegment(s string) bool {
 	return true
 }
 
-// ValidPublicName also accepts the generation suffix on a logical public
-// filename. Only object names gain that allowance; folder segments keep their
-// existing bounds. Default images use content-addressed names.
-func ValidPublicName(name string) bool {
-	if name == FenceName {
+// ValidHash accepts a stored file's name: 64 lowercase hex digits, the
+// SHA-256 of its bytes.
+func ValidHash(name string) bool {
+	if len(name) != 64 {
 		return false
 	}
-	if ValidSegment(name) {
-		return true
-	}
-	logical, ok := SplitGeneration(name)
-	return ok && ValidSegment(logical)
-}
-
-// SplitGeneration returns the logical name of a public filename that carries
-// a publication's generation. Such a file is written once and never replaced.
-func SplitGeneration(name string) (logical string, ok bool) {
-	stem, ext := name, ""
-	// The extension follows the last dot, including dotted logical stems.
-	if i := strings.LastIndexByte(name, '.'); i >= 0 {
-		stem, ext = name[:i], name[i:]
-	}
-	if len(stem) < 38 || stem[len(stem)-37] != '-' || !ValidStagedName(StagedPrefix+stem[len(stem)-36:]) {
-		return "", false
-	}
-	return stem[:len(stem)-37] + ext, true
-}
-
-// ValidHashName accepts "sha256-{64 lowercase hex}".
-func ValidHashName(name string) bool {
-	_, ok := ParseSHA256Name(name)
-	return ok
-}
-
-// ParseSHA256Name returns the digest of a "sha256-{hex}" name.
-func ParseSHA256Name(name string) ([]byte, bool) {
-	h, ok := strings.CutPrefix(name, SHA256Prefix)
-	if !ok || len(h) != 64 || strings.ToLower(h) != h {
-		return nil, false
-	}
-	sum, err := hex.DecodeString(h)
-	return sum, err == nil
-}
-
-// A blob reference (a manifest's File.Blob) names an allocation in its item
-// folder: "sha256-{hex}-{uuid}" in private/, "{area}/sha256-{hex}-{uuid}"
-// in another area.
-
-// BlobRef is the reference of an allocation named name in area.
-func BlobRef(area, name string) string {
-	if area != AreaPrivate {
-		return area + "/" + name
-	}
-	return name
-}
-
-// SplitBlobRef is a blob reference's area and allocation name.
-func SplitBlobRef(ref string) (area, name string, ok bool) {
-	area, name = AreaPrivate, ref
-	if prefix, n, qualified := strings.Cut(ref, "/"); qualified {
-		switch prefix {
-		case AreaOriginals, AreaInternal, AreaPublic:
-			area, name = prefix, n
-		default:
-			return "", "", false
+	for i := 0; i < 64; i++ {
+		if c := name[i]; !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
+			return false
 		}
 	}
-	if area == AreaInternal || area == AreaPublic {
-		return area, name, ValidPublicName(name)
+	return true
+}
+
+// Hash is the stored name of bytes whose SHA-256 is sum.
+func Hash(sum []byte) string { return hex.EncodeToString(sum) }
+
+// A blob reference (a manifest's File.Blob) names a stored file within its
+// item folder: "{area}/{sha256}". Identical bytes in the same area are one
+// object.
+
+// BlobRef is the reference of the bytes whose SHA-256 is sum in area.
+func BlobRef(area string, sum []byte) string { return area + "/" + Hash(sum) }
+
+// MoveRef is ref's bytes in another area.
+func MoveRef(ref, area string) string {
+	_, h, _ := strings.Cut(ref, "/")
+	return area + "/" + h
+}
+
+// SplitBlobRef is a blob reference's area and hash.
+func SplitBlobRef(ref string) (area, hash string, ok bool) {
+	area, hash, ok = strings.Cut(ref, "/")
+	switch area {
+	case AreaInternal, AreaPrivate, AreaPublic:
+	default:
+		return "", "", false
 	}
-	return area, name, ValidBlobName(name)
+	return area, hash, ok && ValidHash(hash)
 }
 
 // ValidBlobRef accepts a blob reference.
@@ -238,36 +178,24 @@ func ValidBlobRef(ref string) bool {
 	return ok
 }
 
-// BlobName names one physical allocation of SHA-256 bytes. A later write,
-// even of identical bytes, must receive a different allocation UUID.
-func BlobName(sum []byte, allocation string) string { return SHA256Name(sum) + "-" + allocation }
-
-// ValidBlobName accepts a private allocation: "sha256-{hex}-{uuid}", or a
-// legacy "sha256-{hex}" the upgrade adopted. New writes always get a UUID.
-func ValidBlobName(name string) bool {
-	_, ok := nameDigest(name)
-	return ok
-}
-
-// BlobDigest returns the content digest of a blob reference.
+// BlobDigest returns the SHA-256 a blob reference names.
 func BlobDigest(ref string) ([]byte, bool) {
-	if _, name, ok := SplitBlobRef(ref); ok {
-		return nameDigest(name)
-	}
-	return nil, false
-}
-
-func nameDigest(name string) ([]byte, bool) {
-	const digestEnd = len(SHA256Prefix) + 64
-	if len(name) == digestEnd {
-		return ParseSHA256Name(name)
-	}
-	if len(name) != digestEnd+37 || name[digestEnd] != '-' || !ValidStagedName(StagedPrefix+name[digestEnd+1:]) ||
-		name[digestEnd+1:] == "00000000-0000-0000-0000-000000000000" {
+	_, h, ok := SplitBlobRef(ref)
+	if !ok {
 		return nil, false
 	}
-	return ParseSHA256Name(name[:digestEnd])
+	sum, err := hex.DecodeString(h)
+	return sum, err == nil
 }
+
+// BlobArea is a blob reference's area, "" when invalid.
+func BlobArea(ref string) string {
+	area, _, _ := SplitBlobRef(ref)
+	return area
+}
+
+// Served reports an area the gateway serves.
+func Served(area string) bool { return area == AreaPrivate || area == AreaPublic }
 
 // ValidStagedName accepts "u-{uuid}", a canonical lowercase UUID.
 func ValidStagedName(name string) bool {
@@ -287,6 +215,3 @@ func ValidStagedName(name string) bool {
 	}
 	return true
 }
-
-// SHA256Name names a digest, not a physical allocation: "sha256-{hex}".
-func SHA256Name(sum []byte) string { return SHA256Prefix + hex.EncodeToString(sum) }

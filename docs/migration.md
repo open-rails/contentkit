@@ -56,6 +56,13 @@ The table is copied, not altered, so writers keep writing during the copy:
 3. `0074` locks the old table (`ACCESS EXCLUSIVE`, `lock_timeout` 10s), rewrites the keys written since `0073`, drops it and renames the copy. The lock lasts as long as those keys take, normally well under a second; a timeout fails only this step.
 
 At 15.1M rows (2.7 GB of heap, 9.7 GB of indexes) expect about 30–60 s for the check, 1–3 minutes for the copy, 2–5 minutes for the indexes at the default `maintenance_work_mem` and under a second for the swap: 4–9 minutes and 6–8 GB of WAL. The table ends at about 6 GB (2 GB heap, 4 GB indexes). The previous release cannot read it, so roll the hosts forward with the migration.
+## Media model
+
+Media's bucket is now the only record of an item's files (README "Media"). Migrations `postgres/0076_bucket_media_model` and `accounts/0004_bucket_media_model` drop the media journal, allocations, cleanup, processing, publication, publication-request, quota, lock and delivery tables and create the cache `content_media_items`. Stable avatar names, MP4 download renditions, ZIP presets, upload quotas (`UploadLimits`, `Channels.Uploads`) and media restore are gone; `MEDIA_GATEWAY_DEFAULTS` is no longer read.
+
+The bucket must never have had versioning, and an existing bucket's media is not carried over: start the release on a new, empty bucket created without versioning (`MEDIA_S3_BUCKET`), run `media-worker publish-defaults`, then import the media again. Delete the old bucket once the site is verified.
+
+A video kind's download streams its original as uploaded (its master under the identity recipe): drop MP4 presets from the registry. Manifests record each upload's `master` and each rendition's `input`; with no `master` recipe the master is the original and nothing more is stored.
 
 ## Time-ordered ids
 

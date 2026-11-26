@@ -63,6 +63,14 @@ func (j *jobs) contribution() riverhelpers.Contribution {
 		} else if !ok {
 			cfg.Queues[queueContentKit] = river.QueueConfig{MaxWorkers: workers}
 		}
+		if e.media != nil {
+			if _, ok := cfg.Queues[mediastore.GCQueueName]; !ok {
+				cfg.Queues[mediastore.GCQueueName] = river.QueueConfig{MaxWorkers: 2}
+			}
+			if err := river.AddWorkerSafely(cfg.Workers, &mediastore.GCWorker{Jobs: e.media.jobs}); err != nil {
+				return err
+			}
+		}
 		for _, add := range []func() error{
 			func() error { return river.AddWorkerSafely(cfg.Workers, &searchSyncWorker{e: e}) },
 			func() error { return river.AddWorkerSafely(cfg.Workers, &preferenceSyncWorker{e: e}) },

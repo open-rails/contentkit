@@ -30,7 +30,6 @@ export type ErrorCode =
   | "not_joinable"
   | "not_ready"
   | "not_uploaded"
-  | "quota_exceeded"
   | "rate_limited"
   | "tenant_mismatch"
   | "too_large"
@@ -77,7 +76,6 @@ export const CONTENTKIT_ERROR_CODES: Readonly<Record<ErrorCode, { status: number
   not_joinable: { status: 409, meaning: "The group has no free offer to join: it sells its membership, or nothing." },
   not_ready: { status: 409, meaning: "A version that would go live still has files processing or a publication not yet current; `error` says what. Retry once processing finishes." },
   not_uploaded: { status: 409, meaning: "A commit names an upload that has not landed; `blobs` lists the ones to upload again." },
-  quota_exceeded: { status: 413, meaning: "The uploader's storage quota is used up." },
   rate_limited: { status: 429, meaning: "Too many requests; retry after `retry_after` seconds (also the Retry-After header)." },
   tenant_mismatch: { status: 500, meaning: "A host port answered with another tenant's data: a configuration fault." },
   too_large: { status: 413, meaning: "The file is larger than its upload path allows; `details` has `size` and `max_bytes`." },

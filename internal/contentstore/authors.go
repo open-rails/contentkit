@@ -58,7 +58,11 @@ func (rt *Runtime) authors(ctx context.Context, ids []string) map[string]content
 	if len(held) == 0 || rt.avatars == nil {
 		return out
 	}
-	images := rt.avatars.Avatars(held...)
+	images, err := rt.avatars.Avatars(ctx, held...)
+	if err != nil {
+		rt.log.WarnContext(ctx, "content: avatars unavailable", "err", err.Error())
+		return out
+	}
 	for i, id := range held {
 		if i < len(images) && len(images[i].Renditions) > 0 {
 			u := out[id]

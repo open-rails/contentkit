@@ -68,10 +68,7 @@ func PageAnalysisFits(meta map[string]any) bool {
 // PageAnalysisCapacity reserves evidence only after existing rendition and
 // failure records. Optional analysis must never make an item unpublishable.
 func (k *RegisteredKind) PageAnalysisCapacity(m *Manifest) int {
-	if m.Full {
-		return 0
-	}
-	return int(max(0, int64(editLimit)-m.size-k.Unwritten(m)) / pageAnalysisBytes)
+	return int(max(0, int64(media.MaxManifestBytes-editHeadroom)-m.size-k.Unwritten(m)) / pageAnalysisBytes)
 }
 
 // WithPageAnalysis replaces only page.analysis. Manual choices and unknown
