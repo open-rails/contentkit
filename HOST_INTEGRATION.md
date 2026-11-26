@@ -1527,16 +1527,8 @@ reactions and comment threads never do.
 - **Reference**: the reaction row, the counts rollup and the export all use
   the resolver's canonical reference (`Resolution.Ref`); comment reactions
   never export. `Counts` reads exactly the reference given.
-- **Sync**: the engine's preference job runs every 30 s. It sends rows past the tenant's watermark in revision
-  order as one `signal` event per subject × reference × axis (`Type` = axis,
-  `EventID` = `"current"`, `Revision`, `OccurredAt` =
-  row `updated_at`, `Value`), then records a checkpoint; the newest revision
-  wins, so re-sends are harmless. Each scan restarts from the newest
-  checkpoint older than `Options.PreferenceSyncOverlap` (default 5m) before
-  the previous sync: a write is delivered if its transaction commits within
-  the overlap of allocating its revision. A failed sync advances nothing.
-- **Repair**: the engine re-sends every preference daily (zeros included),
-  which repairs a sink loss.
+- **Sync**: the engine's preference job runs every minute and sends each change once, as one `signal` event per subject × reference × axis (`Type` = axis, `EventID` = `"current"`, `Revision`, `OccurredAt` = row `updated_at`, `Value`). Each run samples the revision sequence and sends, in revision order, the rows past the tenant's cursor up to the newest sample at least five minutes old: a write is delivered if its transaction commits within five minutes of allocating its revision, about five minutes after it. Rows go in batches of 1,000, each one plain multi-row insert, and the cursor advances after every batch. A run stops at 30 s or half its job's timeout and the next follows at once, so a backlog drains across runs and a run cut short re-sends at most its batch in flight; the newest revision wins, so that re-send is harmless. A run with nothing new sends nothing.
+- **Repair**: after the signal plane loses data (a restored ClickHouse), `Engine.ResyncPreferences` rewinds the cursor and the job sends every preference once more (zeros included), in the same batches.
 - **Account deletion**: `ck.AnonymizeAccount` moves the subject's rows to
   an anonymous key behind the source fence and fences the signal plane, which
   drops any late send.

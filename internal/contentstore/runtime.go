@@ -60,6 +60,9 @@ type Options struct {
 	// commit and still be picked up by SyncPreferences.
 	// Default DefaultPreferenceSyncOverlap.
 	PreferenceSyncOverlap time.Duration
+	// Now is the clock preference sync samples the revision sequence by;
+	// default time.Now.
+	Now func() time.Time
 
 	// Optional ports (nil -> default).
 	TextProcessor content.TextProcessor // comments; default: trim plain text
@@ -211,7 +214,7 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 	}
 	// preferences before the writers that resolve through it; reactions before
 	// comments, which reuse its applyTx primitive.
-	rt.preferences = newPreferences(rt, opts.PreferenceSyncOverlap)
+	rt.preferences = newPreferences(rt, opts.PreferenceSyncOverlap, opts.Now)
 	rt.reactions = newReactions(rt)
 	rt.polls = newPolls(rt)
 	rt.comments = newComments(rt)
@@ -223,7 +226,7 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 func (rt *Runtime) checkSchema(ctx context.Context) error {
 	if _, err := rt.store.pool.Exec(ctx, `SELECT tenant_id, content_kind, content_id, content_version_id FROM `+rt.store.t.counts+` LIMIT 0;
 		SELECT revision FROM `+rt.store.t.reactions+` LIMIT 0; SELECT value, revision FROM `+rt.store.t.favorites+` LIMIT 0;
-		SELECT revision FROM `+rt.store.t.preferenceSync+` LIMIT 0;
+		SELECT revision FROM `+rt.store.t.preferenceSync+` LIMIT 0; SELECT revision FROM `+rt.store.t.preferenceCursor+` LIMIT 0;
 		SELECT moderation,author_hidden FROM `+rt.store.t.comments+` LIMIT 0;
 		SELECT tenant_id,actor_id FROM `+rt.hiddenAuthorsTable()+` LIMIT 0;
 		SELECT revision,withdrawn FROM `+pgx.Identifier{rt.schema, "content_comment_notifications"}.Sanitize()+` LIMIT 0;

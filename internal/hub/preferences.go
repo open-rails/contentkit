@@ -13,28 +13,20 @@ import (
 // the same revision and converges.
 const PreferenceEventID = "current"
 
-// SendPreferences writes one page into the signal plane: one event per
-// subject × reference × axis with the row's revision, change time and value
-// (0 = neutral / unfavorited). Erased subjects are dropped by the store. It
-// is content's PreferenceSender.
+// SendPreferences writes one batch into the signal plane as one insert: one
+// event per subject × reference × axis with the row's revision, change time
+// and value (0 = neutral / unfavorited). It is content's PreferenceSender.
 func (h *Hub) SendPreferences(ctx context.Context, page []content.Preference) error {
 	store, err := h.requireStore()
 	if err != nil {
 		return err
 	}
-	for len(page) > 0 {
-		n := min(len(page), signal.MaxSignalsPerBatch)
-		batch := make([]signal.Signal, n)
-		for i, p := range page[:n] {
-			batch[i] = signal.Signal{ContentRef: p.ContentRef, Subject: signal.Subject{UserID: p.ActorID}, Type: p.Axis,
-				EventID: PreferenceEventID, Revision: uint64(p.Revision), OccurredAt: p.UpdatedAt, Value: float64(p.Value)}
-		}
-		if err := store.RecordSignals(ctx, h.tenant, batch); err != nil {
-			return err
-		}
-		page = page[n:]
+	batch := make([]signal.Signal, len(page))
+	for i, p := range page {
+		batch[i] = signal.Signal{ContentRef: p.ContentRef, Subject: signal.Subject{UserID: p.ActorID}, Type: p.Axis,
+			EventID: PreferenceEventID, Revision: uint64(p.Revision), OccurredAt: p.UpdatedAt, Value: float64(p.Value)}
 	}
-	return nil
+	return store.RecordPreferences(ctx, h.tenant, batch)
 }
 
 // SignalPlane reports whether the hub's signal plane is up.
