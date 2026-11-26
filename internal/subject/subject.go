@@ -5,6 +5,7 @@
 package subject
 
 import (
+	"context"
 	"crypto/sha256"
 	"net/http"
 	"strconv"
@@ -70,6 +71,19 @@ func Of(app uuid.UUID, actor access.Actor, browser string) (uuid.UUID, bool) {
 // FromRequest is Of with the anonymous id from r's header.
 func FromRequest(app uuid.UUID, actor access.Actor, r *http.Request) (uuid.UUID, bool) {
 	return Of(app, actor, r.Header.Get(Header))
+}
+
+type browserKey struct{}
+
+// WithBrowser binds a signed-out request's anonymous id (Header) to ctx.
+func WithBrowser(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, browserKey{}, id)
+}
+
+// Browser is the anonymous id WithBrowser bound to ctx; "" when none.
+func Browser(ctx context.Context) string {
+	id, _ := ctx.Value(browserKey{}).(string)
+	return id
 }
 
 // maxOffset bounds an offset: the world's zones run from UTC-12 to UTC+14.

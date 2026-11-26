@@ -14,6 +14,7 @@ import (
 	"github.com/open-rails/contentkit/access"
 	content "github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/clientaddr"
 	"github.com/open-rails/contentkit/internal/httpapi"
 )
 
@@ -425,12 +426,12 @@ func (p *polls) optionsFor(ctx context.Context, q querier, ids []string) (map[st
 
 // votesFor batch-loads the caller's chosen option per question (qid -> optionID).
 func (p *polls) votesFor(ctx context.Context, q querier, actor access.Actor, ids []string) (map[string]string, error) {
-	userID, ip, ok := reactionKey(actor)
+	userID, ip, ok := voterKey(actor)
 	if !ok {
 		return map[string]string{}, nil
 	}
 	rows, err := q.Query(ctx, `SELECT question_id::text, option_id::text FROM `+p.s.t.pollVotes+`
-		WHERE tenant_id = $1 AND question_id = ANY($2::uuid[]) AND `+actorPred(userID, 3), p.s.tenant, ids, actorArg(userID, ip))
+		WHERE tenant_id = $1 AND question_id = ANY($2::uuid[]) AND `+voterPred(userID, 3), p.s.tenant, ids, voterArg(userID, ip))
 	if err != nil {
 		return nil, err
 	}
@@ -458,7 +459,7 @@ func (p *polls) vote(ctx context.Context, actor access.Actor, pollID, optionID s
 	if !uuidRe.MatchString(optionID) {
 		return content.Poll{}, badRequest("invalid option_id")
 	}
-	userID, ip, ok := reactionKey(actor)
+	userID, ip, ok := voterKey(actor)
 	if !ok {
 		return content.Poll{}, badRequest("cannot identify voter (no user id or ip)")
 	}
@@ -1006,4 +1007,39 @@ func (p *polls) handleVote(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, v)
+}
+
+// voterKey is a voter's dedup identity: a user id when present, else the
+// address's key (an IPv6 address counts as its /64). ok=false when the actor
+// is fully unidentifiable.
+func voterKey(a access.Actor) (userID, ip string, ok bool) {
+	if a.Member() {
+		return a.AccountID(), a.IP, true
+	}
+	if a.Anonymous && a.IP != "" {
+		return "", clientaddr.Key(a.IP), true
+	}
+	return "", "", false
+}
+
+// voterPred/voterArg select the caller's vote; n is the placeholder of the arg.
+func voterPred(userID string, n int) string {
+	if userID != "" {
+		return "user_id = $" + strconv.Itoa(n)
+	}
+	return "user_id IS NULL AND ip = $" + strconv.Itoa(n)
+}
+
+func voterArg(userID, ip string) string {
+	if userID != "" {
+		return userID
+	}
+	return ip
+}
+
+func nullIf(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
 }

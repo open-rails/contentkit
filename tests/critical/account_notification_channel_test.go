@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/authkit"
 	"github.com/open-rails/authkit/authtest"
@@ -162,7 +163,7 @@ func TestAccountNotificationChannel(t *testing.T) {
 		}
 		_, err = n.a.client(ownerToken).PostCommentLike(t.Context(), parent.ID)
 		must(t, err)
-		_, err = n.a.client("").PostCommentLike(t.Context(), parent.ID)
+		_, err = browserAt(n.a, uuid.NewString(), "").PostCommentLike(t.Context(), parent.ID)
 		must(t, err)
 		_, err = n.a.client(writerToken).PostCommentDislike(t.Context(), parent.ID)
 		must(t, err)
@@ -533,7 +534,7 @@ func hiddenCommentAuthorReactions(t *testing.T, n *accountNoticeWorld) {
 	a := n.a
 	owner, ownerToken := n.w.person(t, 0)
 	writer, writerToken := n.w.person(t, 0)
-	ownerClient, writerClient, public := a.client(ownerToken), a.client(writerToken), a.client("")
+	ownerClient, writerClient, public := a.client(ownerToken), a.client(writerToken), browserAt(a, uuid.NewString(), "")
 	item := publishedArticle(t, a, "Hidden reactions")
 	second := publishedArticle(t, a, "Reactions made while hidden")
 	postComment(t, writerClient, item.ID, "Author and reactor on the same content")
@@ -594,10 +595,10 @@ func hiddenCommentAuthorReactions(t *testing.T, n *accountNoticeWorld) {
 		t.Helper()
 		var rows []importer.ReactionRecord
 		for _, id := range []string{parent.ID, fresh.ID, negative.ID, imported.ID} {
-			rows = append(rows, importer.ReactionRecord{Target: importer.TargetRef{Comment: &importer.Ref{ID: id}}, IP: "203.0.113.44", Value: 0})
+			rows = append(rows, importer.ReactionRecord{Target: importer.TargetRef{Comment: &importer.Ref{ID: id}}, AnonymousKey: "recount-guest", Value: 0})
 		}
 		for _, id := range []string{item.ID, second.ID} {
-			rows = append(rows, importer.ReactionRecord{Target: importer.TargetRef{Content: &importer.Ref{ID: id}}, IP: "203.0.113.44", Value: 0})
+			rows = append(rows, importer.ReactionRecord{Target: importer.TargetRef{Content: &importer.Ref{ID: id}}, AnonymousKey: "recount-guest", Value: 0})
 		}
 		importReactions(rows...)
 	}

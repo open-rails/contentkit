@@ -414,7 +414,7 @@ func (s *Service) Continue(ctx context.Context, o discovery.ContinueOptions) (di
 	rows, err := s.o.Pool.Query(ctx, `SELECT c.id FROM `+s.t.reading+` r JOIN `+s.t.items+` c ON c.tenant_id = $1 AND c.id = r.content_id::text
  WHERE r.app_id = $2 AND r.subject = $3 AND r.best_outcome IN ($4, $5) AND NOT r.hidden AND ($6 = '' OR c.kind = $6)
   AND NOT EXISTS (SELECT 1 FROM `+s.t.reactions+` x WHERE x.tenant_id = $1 AND x.content_id = c.id AND x.value < 0
-   AND (x.user_id = $7 OR x.user_id IS NULL AND x.anonymous_subject = $3))
+   AND (x.user_id = $7 OR x.anonymous_subject = $3))
  ORDER BY r.last_seen_at DESC, r.content_id LIMIT $8 OFFSET $9`, s.o.Tenant, s.app(), who, readingstore.OutcomeNeutral, readingstore.OutcomeGood,
 		o.Kind, who.String(), limit+1, offset)
 	if err != nil {

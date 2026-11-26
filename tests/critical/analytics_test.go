@@ -149,7 +149,7 @@ func (x *analyticsWorld) state(t *testing.T, who uuid.UUID, content string) (rea
 func (x *analyticsWorld) history(t *testing.T, who uuid.UUID, day time.Time) []readingstore.Action {
 	t.Helper()
 	var packed []byte
-	err := x.pool.QueryRow(t.Context(), `SELECT actions FROM `+x.schema+`.reading_history WHERE app_id = $1 AND subject = $2 AND day = $3`, x.app(), who, day).Scan(&packed)
+	err := x.pool.QueryRow(t.Context(), `SELECT actions FROM `+x.schema+`.interaction_history WHERE app_id = $1 AND subject = $2 AND day = $3`, x.app(), who, day).Scan(&packed)
 	if err != nil && strings.Contains(err.Error(), "no rows") {
 		return nil
 	}
@@ -562,7 +562,7 @@ func TestAnalyticsErasure(t *testing.T) {
 		}
 		var links, days int
 		must(t, x.pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM `+x.schema+`.anonymous_links WHERE app_id = $1),
- (SELECT count(*) FROM `+x.schema+`.reading_history WHERE app_id = $1 AND subject = ANY($2))`, x.app(), []uuid.UUID{account, anon}).Scan(&links, &days))
+ (SELECT count(*) FROM `+x.schema+`.interaction_history WHERE app_id = $1 AND subject = ANY($2))`, x.app(), []uuid.UUID{account, anon}).Scan(&links, &days))
 		if links != 0 || days != 0 {
 			t.Fatalf("erasure kept %d links and %d history days", links, days)
 		}

@@ -227,8 +227,8 @@ func TestReactionFeedback(t *testing.T) {
 		if n := f.rows("user_id = $2::uuid", user.ID); n != 2 {
 			t.Fatalf("%d prompts recorded, want 2", n)
 		}
-		// Each signed-out browser has its own budget, keyed by its anonymous id.
-		// The rig's browsers share an address, whose reaction names the last.
+		// Each signed-out browser has its own budget and reaction, keyed by its
+		// anonymous id, though the rig's browsers share an address.
 		one, two := f.browser(uuid.NewString()), f.browser(uuid.NewString())
 		for _, b := range []*ck.Client{one, two} {
 			_, err = b.PostContentLike(t.Context(), first.ID, ck.PostContentLikeQuery{})
@@ -472,7 +472,7 @@ func TestReactionFeedback(t *testing.T) {
 			t.Fatal("a signed-out choice was stored as account filters")
 		}
 		who, _ := subject.Anonymous(uuid.UUID(a.cfg.Scope.AppID), id)
-		if n := f.rows("anonymous_actor_id = $2 AND user_id IS NULL AND content_id = $3::uuid AND reason = 'other' AND text = 'signed-out words' AND hide_entity_id = $4 AND hide_taken",
+		if n := f.rows("anonymous_subject = $2 AND user_id IS NULL AND content_id = $3::uuid AND reason = 'other' AND text = 'signed-out words' AND hide_entity_id = $4 AND hide_taken",
 			who, item.ID, string(f.furry.ID)); n != 1 {
 			t.Fatal("the signed-out answer and its hide decision were not recorded under its browser")
 		}
@@ -557,8 +557,7 @@ func TestReactionFeedback(t *testing.T) {
 }
 
 // TestReactionFeedbackSampling runs an app asking half of likes and no
-// dislikes. Each signed-out browser is a person; the rig's share one address,
-// whose reaction names the browser that made it last.
+// dislikes. Each signed-out browser is a person with its own reaction.
 func TestReactionFeedbackSampling(t *testing.T) {
 	w := feedbackWorld(t)
 	a := w.apps[0]
@@ -606,7 +605,7 @@ func TestReactionFeedbackSampling(t *testing.T) {
 				}
 			}
 		}
-		if n := f.rows("anonymous_actor_id IS NOT NULL"); n != len(asked) {
+		if n := f.rows("anonymous_subject IS NOT NULL"); n != len(asked) {
 			t.Fatalf("%d prompts stored, want %d", n, len(asked))
 		}
 		if n := f.rows("reaction = 'dislike'"); n != 0 {

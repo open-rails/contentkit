@@ -2782,14 +2782,14 @@
     {
       "id": "CK-J02-S41",
       "journey": "CK-J02",
-      "behavior": "An IPv6 /64 is one anonymous visitor for reactions and limits",
+      "behavior": "An IPv6 /64 is one address for anonymous limits",
       "status": "verified",
       "evidence": [
-        "Anonymous likes from two addresses in one /64 count once and read back as the visitor's own; another /64 counts again; the reaction limit counts the /64, refusing its fourth reaction while another /64 and an IPv4 visitor still react.",
-        "Fails on the base, which keys each IPv6 address on its own. Not yet an execution receipt; qualification runs the case."
+        "A signed-out browser's like is its own from two addresses in one /64 and counts once; the reaction limit counts the /64, refusing its fourth reaction; the anonymous_reaction limit counts a /64's browsers on one item, refusing a third while an IPv4 browser still reacts.",
+        "Fails on the base, which keys a signed-out reaction by its /64 and has no anonymous_reaction limit. contentkit#308: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
       ],
       "cases": [
-        "TestAnonymousIPv6Prefix/CK-J02-S41_an_IPv6_64_is_one_anonymous_visitor"
+        "TestAnonymousIPv6Prefix/CK-J02-S41_an_IPv6_64_is_one_address_for_anonymous_limits"
       ]
     },
     {
@@ -3140,14 +3140,14 @@
     {
       "id": "CK-J27-S10",
       "journey": "CK-J27",
-      "behavior": "Imported account ids are stored canonical and anonymous addresses as live writes key them",
+      "behavior": "Imported account ids are stored canonical and a signed-out reactor's anonymous_key only as a hash",
       "status": "verified",
       "cases": [
-        "TestImportContracts/CK-J27-S10_imported_account_ids_and_addresses_are_canonical"
+        "TestImportContracts/CK-J27-S10_imported_account_ids_are_canonical_and_anonymous_keys_hashed"
       ],
       "evidence": [
-        "An upper-case, padded account id favorites as the signed-in account; anonymous reaction addresses are stored as an unmapped IPv4 address and an IPv6 /64; an invalid address fails invalid.",
-        "contentkit#287: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+        "An upper-case, padded account id favorites as the signed-in account; two anonymous keys store two UUIDv8 anonymous_actor_ids, never the key; a trimmed key re-sent updates its own reaction; a key over 256 bytes fails invalid.",
+        "Fails on the base, whose ReactionRecord has no anonymous_key. contentkit#308: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
       ]
     },
     {
@@ -3591,7 +3591,7 @@
     {
       "id": "CK-J32-S03",
       "journey": "CK-J32",
-      "behavior": "The job classifies each person x gallery x day by fraction read and pace, and packs the day into reading_history with session starts and each gallery's first-open surface",
+      "behavior": "The job classifies each person x gallery x day by fraction read and pace, and packs the day into interaction_history with session starts and each gallery's first-open surface",
       "status": "verified",
       "evidence": [
         "Real HTTP over real PostgreSQL and ClickHouse; the engine's batched writer and analytics job do the work."
@@ -3748,7 +3748,7 @@
     {
       "id": "CK-J32-S16",
       "journey": "CK-J32",
-      "behavior": "A signed-out subject idle past anonymous_retention loses its reading state, history, recent searches and reaction links to the hourly expiry job; an active one and one linked to an account keep theirs, and reaction counts are unchanged",
+      "behavior": "A signed-out subject idle past anonymous_retention loses its reading state, interaction history, recent searches and reaction links to the hourly expiry job; an active one and one linked to an account keep theirs, and reaction counts are unchanged",
       "status": "verified",
       "evidence": [
         "The idle visitor's feedback answer and its free text expire with the rest; the answer is logged as its like with reason other and the text in no activity row.",
@@ -3899,6 +3899,71 @@
       "evidence": [
         "At like 1/2 and dislike 0, 60 signed-out browsers each reacting are asked between 12 and 48 times and never about the dislike; each passed-over browser reacting and asking three more times is never asked; rows match.",
         "contentkit#300: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
+      "id": "CK-J41-S01",
+      "journey": "CK-J41",
+      "behavior": "A signed-out reaction is its browser's, keyed by the anonymous id and never by address; the browser's next reaction replaces it, from any address; without the anonymous id it is refused",
+      "status": "verified",
+      "cases": [
+        "TestAnonymousReactions/CK-J41-S01_a_signed_out_reaction_is_its_browsers_and_replaces_its_own"
+      ],
+      "evidence": [
+        "A like then a dislike, then a like from another address, leave one row keyed by the browser's subject; another browser at that address holds none; content_reactions has no address column; no ContentKit-Anonymous-Id is 400 invalid_request.",
+        "Fails on the base: another browser at the address reads the reaction as its own, the like from a new address adds a row, and a reaction without an anonymous id is accepted. contentkit#308: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
+      "id": "CK-J41-S02",
+      "journey": "CK-J41",
+      "behavior": "Two browsers behind one address each keep their own reaction, on content and on comments",
+      "status": "verified",
+      "cases": [
+        "TestAnonymousReactions/CK-J41-S02_two_browsers_behind_one_address_keep_their_own_reactions"
+      ],
+      "evidence": [
+        "One browser's like and the other's dislike both count and read back as each one's own; both browsers' comment likes count and show as their own.",
+        "Fails on the base, where the second browser's reaction replaces the first's. contentkit#308: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
+      "id": "CK-J41-S03",
+      "journey": "CK-J41",
+      "behavior": "The per-address anonymous_reaction limit refuses another browser past its limit on one item, while a counted browser changing its reaction, another item, another address and an account still react",
+      "status": "verified",
+      "cases": [
+        "TestAnonymousReactions/CK-J41-S03_the_per_address_ballot_limit_refuses_past_its_limit"
+      ],
+      "evidence": [
+        "At 3 an hour, a fourth browser's like is 429 rate_limited with action anonymous_reaction; the first browser's switch to dislike, the fourth browser on another item or from another address, and a signed-in like succeed.",
+        "Fails on the base, which has no such limit. contentkit#308: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
+      "id": "CK-J41-S04",
+      "journey": "CK-J41",
+      "behavior": "Signing in moves the browser's reactions to the account; another browser's at the same address stays its own; where the account already reacted, its reaction wins and the browser's stays counted, unlinked",
+      "status": "verified",
+      "cases": [
+        "TestAnonymousReactions/CK-J41-S04_sign_in_moves_the_browsers_reaction_to_the_account"
+      ],
+      "evidence": [
+        "After the analytics job folds the link, the account's cards show the browser's like and its own dislike; the neighbouring browser's dislike still counts and reads as its own; no row keeps the folded browser's subject.",
+        "Fails on the base, where the neighbour's dislike replaced the browser's like on the shared address, so the fold finds none. contentkit#308: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
+      "id": "CK-J41-S05",
+      "journey": "CK-J41",
+      "behavior": "Anonymous expiry keeps public reaction counts: the expired browsers' reactions stay counted, unlinked, so a recount from the rows agrees",
+      "status": "verified",
+      "cases": [
+        "TestAnonymousReactions/CK-J41-S05_expiry_keeps_public_counts"
+      ],
+      "evidence": [
+        "Two browsers' likes count 2 before and after the contentkit_anonymous_expiry job 31 days on; both rows remain with anonymous_actor_id and no subject; the rows' count equals the public count; a returning browser holds no reaction.",
+        "Fails on the base, where the two browsers share one address-keyed like. contentkit#308: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
       ]
     },
     {

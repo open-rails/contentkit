@@ -55,8 +55,8 @@ CREATE TRIGGER critical_recount BEFORE UPDATE ON %[1]s.content_interaction_count
 	comment := func(external, body string, replyTo *importer.Ref) importer.CommentRecord {
 		return importer.CommentRecord{ExternalID: external, Target: on, ReplyTo: replyTo, AnonName: "Legacy guest", Body: body}
 	}
-	like := func(ip string, value int16) importer.ReactionRecord {
-		return importer.ReactionRecord{Target: on, IP: ip, Value: value}
+	like := func(key string, value int16) importer.ReactionRecord {
+		return importer.ReactionRecord{Target: on, AnonymousKey: key, Value: value}
 	}
 	vote := func(option, ip string) importer.VoteRecord {
 		return importer.VoteRecord{Poll: importer.Ref{ExternalID: "poll"}, Option: importer.Ref{ExternalID: option}, IP: ip}
@@ -74,7 +74,7 @@ CREATE TRIGGER critical_recount BEFORE UPDATE ON %[1]s.content_interaction_count
 	first := importer.Batch{Source: "deferred-recounts", DeferRecounts: true,
 		Comments: []importer.CommentRecord{comment("parent", "Parent", nil), comment("two", "Two", nil), comment("reply-one", "Reply one", parent),
 			comment("blank", "   ", nil), comment("three", "Three", nil), comment("reply-two", "Reply two", parent)},
-		Reactions: []importer.ReactionRecord{like("203.0.113.1", 1), like("203.0.113.2", 1), {Target: importer.TargetRef{Comment: parent}, IP: "203.0.113.3", Value: 1}},
+		Reactions: []importer.ReactionRecord{like("guest-1", 1), like("guest-2", 1), {Target: importer.TargetRef{Comment: parent}, AnonymousKey: "guest-3", Value: 1}},
 		Favorites: []importer.FavoriteRecord{{Target: on, UserID: legacyAccount(1)}},
 		Polls:     []importer.PollRecord{poll},
 		Votes:     []importer.VoteRecord{vote("first", "203.0.113.1"), vote("first", "203.0.113.2")},
@@ -112,7 +112,7 @@ CREATE TRIGGER critical_recount BEFORE UPDATE ON %[1]s.content_interaction_count
 	// stay queued once and the counts hold only the live writes.
 	second := importer.Batch{Source: first.Source, DeferRecounts: true,
 		Comments:  []importer.CommentRecord{comment("four", "Four", nil)},
-		Reactions: []importer.ReactionRecord{like("203.0.113.4", 1)},
+		Reactions: []importer.ReactionRecord{like("guest-4", 1)},
 		Favorites: []importer.FavoriteRecord{{Target: on, UserID: legacyAccount(2)}},
 		Votes:     []importer.VoteRecord{vote("second", "203.0.113.4")},
 		Deletes:   []importer.DeleteRecord{{Entity: importer.RecordComment, ExternalID: "two"}}}

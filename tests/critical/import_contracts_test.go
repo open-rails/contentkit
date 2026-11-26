@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/open-rails/authkit/authtest"
@@ -112,13 +113,13 @@ func TestImportContracts(t *testing.T) {
 		}
 	})
 
-	t.Run("CK-J27-S10_imported_account_ids_and_addresses_are_canonical", func(t *testing.T) {
+	t.Run("CK-J27-S10_imported_account_ids_are_canonical_and_anonymous_keys_hashed", func(t *testing.T) {
 		item := publishedArticle(t, a, "Canonical import target")
 		user, token := w.person(t, 0)
 		target := importer.TargetRef{Content: &importer.Ref{ID: item.ID}}
 		res, err := admin.PostImport(ctx, importer.Batch{Source: "canonical",
-			Reactions: []importer.ReactionRecord{{Target: target, IP: "::ffff:192.0.2.7", Value: 1}, {Target: target, IP: "2001:db8:1:2:3:4:5:6", Value: 1},
-				{Target: target, IP: "192.0.2.300", Value: 1}},
+			Reactions: []importer.ReactionRecord{{Target: target, AnonymousKey: "guest-a", Value: 1}, {Target: target, AnonymousKey: " guest-b ", Value: 1},
+				{Target: target, AnonymousKey: strings.Repeat("k", 257), Value: 1}},
 			Favorites: []importer.FavoriteRecord{{Target: target, UserID: " " + strings.ToUpper(user.ID) + " "}}})
 		must(t, err)
 		if got := importFailures(res); !reflect.DeepEqual(got, []importFailure{{importer.SectionReactions, 2, importer.CodeInvalid}}) ||
@@ -130,11 +131,29 @@ func TestImportContracts(t *testing.T) {
 		if !state.Favorited {
 			t.Fatal("a favorite imported under a non-canonical account id is not the account's")
 		}
-		// Stored as live anonymous writes key them: unmapped IPv4, IPv6 /64.
-		var ips []string
-		must(t, w.pool.QueryRow(ctx, `SELECT array_agg(ip ORDER BY ip) FROM `+qs+`.content_reactions WHERE tenant_id=$1 AND content_id=$2 AND user_id IS NULL`, app, item.ID).Scan(&ips))
-		if !reflect.DeepEqual(ips, []string{"192.0.2.7", "2001:db8:1:2::/64"}) {
-			t.Fatalf("imported addresses stored as %q", ips)
+		// A key re-sent, trimmed alike, updates its own reaction.
+		res, err = admin.PostImport(ctx, importer.Batch{Source: "canonical", Reactions: []importer.ReactionRecord{{Target: target, AnonymousKey: "guest-b", Value: -1}}})
+		must(t, err)
+		if len(res.Failed) != 0 {
+			t.Fatalf("re-sent key: %+v", res)
+		}
+		// Each key is one signed-out reactor, stored only as a hash.
+		rows, err := w.pool.Query(ctx, `SELECT anonymous_actor_id, value FROM `+qs+`.content_reactions
+ WHERE tenant_id=$1 AND content_id=$2 AND user_id IS NULL AND anonymous_subject IS NULL ORDER BY value`, app, item.ID)
+		must(t, err)
+		type stored struct {
+			Actor uuid.UUID
+			Value int16
+		}
+		got, err := pgx.CollectRows(rows, pgx.RowToStructByPos[stored])
+		must(t, err)
+		if len(got) != 2 || got[0].Value != -1 || got[1].Value != 1 || got[0].Actor == got[1].Actor || got[0].Actor.Version() != 8 || got[1].Actor.Version() != 8 {
+			t.Fatalf("imported anonymous reactions stored as %+v", got)
+		}
+		counts, err := a.client("").GetContentReaction(ctx, item.ID, ck.GetContentReactionQuery{})
+		must(t, err)
+		if counts.Likes == nil || *counts.Likes != 1 || counts.Dislikes == nil || *counts.Dislikes != 1 {
+			t.Fatalf("imported counts %+v", counts)
 		}
 	})
 }

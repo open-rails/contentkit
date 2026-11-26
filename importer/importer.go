@@ -240,16 +240,19 @@ type CommentRecord struct {
 }
 
 // ReactionRecord is a person's like (1), dislike (-1) or neutral (0) on a
-// content item, version, comment or entity; an anonymous one is keyed by IP.
-// Value 0 neutralizes a row owned by this batch source; a named user can also
-// clear a pre-provenance row. Hosts must clear only reactions they imported.
+// content item, version, comment or entity. A signed-out one is keyed by
+// AnonymousKey, the source's stable key for that reactor (a keyed hash of its
+// address, say, never the address): ContentKit stores only its hash, and a
+// record re-sent with the same key updates the same reaction. Value 0
+// neutralizes a row owned by this batch source; a named user can also clear a
+// pre-provenance row. Hosts must clear only reactions they imported.
 type ReactionRecord struct {
-	Target    TargetRef  `json:"target"`
-	UserID    string     `json:"user_id,omitempty"`
-	IP        string     `json:"ip,omitempty"`
-	Value     int16      `json:"value"`
-	CreatedAt *time.Time `json:"created_at,omitempty"`
-	UpdatedAt *time.Time `json:"updated_at,omitempty"`
+	Target       TargetRef  `json:"target"`
+	UserID       string     `json:"user_id,omitempty"`
+	AnonymousKey string     `json:"anonymous_key,omitempty"`
+	Value        int16      `json:"value"`
+	CreatedAt    *time.Time `json:"created_at,omitempty"`
+	UpdatedAt    *time.Time `json:"updated_at,omitempty"`
 }
 
 // FavoriteRecord is a person's bookmark of a content item or version.

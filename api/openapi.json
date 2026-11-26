@@ -16033,6 +16033,7 @@
           "action": {
             "type": "string",
             "enum": [
+              "anonymous_reaction",
               "comment",
               "comment_reaction",
               "favorite",
@@ -18973,7 +18974,7 @@
           "user_id": {
             "type": "string"
           },
-          "ip": {
+          "anonymous_key": {
             "type": "string"
           },
           "value": {

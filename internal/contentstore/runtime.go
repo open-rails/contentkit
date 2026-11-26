@@ -23,7 +23,6 @@ import (
 	"github.com/open-rails/contentkit/internal/gate"
 	"github.com/open-rails/contentkit/internal/ratelimit"
 	"github.com/open-rails/contentkit/internal/resolve"
-	"github.com/open-rails/contentkit/internal/subject"
 	"github.com/open-rails/contentkit/kinds"
 )
 
@@ -119,6 +118,7 @@ type Runtime struct {
 	store           *store
 	schema          string
 	tenant          string
+	app             uuid.UUID // the tenant as the app id
 	guard           *gate.Gate
 	userInfo        userinfo.Lookup
 	avatars         content.Avatars
@@ -187,11 +187,16 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 		return nil, fmt.Errorf("content: DuplicateWindow must not be negative")
 	}
 	processor := orDefault[content.TextProcessor](opts.TextProcessor, trimProcessor{})
+	app, err := uuid.Parse(opts.Tenant)
+	if err != nil {
+		return nil, fmt.Errorf("content: Tenant is the app id: %w", err)
+	}
 	rt := &Runtime{
 		store:           newStore(opts.Pool, opts.Schema, opts.Tenant),
 		locate:          opts.Locate,
 		schema:          opts.Schema,
 		tenant:          opts.Tenant,
+		app:             app,
 		userInfo:        opts.UserInfo,
 		avatars:         opts.Avatars,
 		resolver:        opts.Resolver,
@@ -394,16 +399,6 @@ func orDefault[T comparable](v, def T) T {
 		return def
 	}
 	return v
-}
-
-// anonymousSubject is a signed-out request's anonymous subject: kept beside
-// its address on a reaction, so signing in re-keys the reaction.
-func (rt *Runtime) anonymousSubject(req *http.Request, actor access.Actor) uuid.UUID {
-	if !actor.Anonymous || rt.activity == nil {
-		return uuid.Nil
-	}
-	who, _ := subject.Anonymous(rt.activity.App, req.Header.Get(subject.Header))
-	return who
 }
 
 // logActivity logs a reaction, favorite or their undoing of a content item
