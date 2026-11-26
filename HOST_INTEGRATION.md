@@ -1323,8 +1323,8 @@ Every item's current public images are cached in Postgres (`content_media_items`
 
 - A manifest edit that stops referencing a file moves it to the manifest's `retired` list with a due time: 7 days for a replaced file, an hour for a release's leftovers, at once for withdrawn, taken-down or erased files. A file shared by retained entries stays live; reordering entries does not delete or rename it.
 - Garbage collection (`contentkit_media_gc`, one job per item) deletes retired files once due, and after a write lists the item's folder once for orphans older than a day. Nothing lists the bucket otherwise.
-- Configure the S3 adapter's lifecycle policy and allow `x-amz-tagging` in upload CORS. Worker credentials also need `s3:PutObjectTagging` and `s3:DeleteObjectTagging`. `Store.Configure` preserves unrelated lifecycle rules, expires staged uploads and aborts multipart uploads after seven days. Use equivalent server settings where multipart lifecycle is unsupported.
-- Soft deletion records the deletion in the manifest and writes the item's gateway fence; restoring removes it. Erasure (`Jobs.Erase`) writes the permanent fence and an empty manifest whose files are all retired and due, then deletes them; restoring is refused from the tombstone on.
+- Configure the S3 adapter's lifecycle policy and allow `x-amz-tagging` in upload CORS. Worker credentials also need `s3:PutObjectTagging` and `s3:DeleteObjectTagging`. `Store.Configure` preserves unrelated lifecycle rules, expires what is left in `tmp/` (staged uploads, a killed encode's video chunks) and aborts multipart uploads after seven days. Use equivalent server settings where multipart lifecycle is unsupported.
+- Soft deletion records the deletion in the manifest and writes the item's gateway fence; restoring removes it. Erasure (`Jobs.Erase`) writes the permanent fence and an empty manifest whose files are all retired and due, then deletes everything else in the item's folder; restoring is refused from the tombstone on.
 
 ## Upgrading from v0.69
 

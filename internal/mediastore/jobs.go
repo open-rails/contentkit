@@ -144,9 +144,10 @@ func (j *Jobs) Tombstone(ctx context.Context, ref contentref.ContentRef) error {
 	return err
 }
 
-// Erase tombstones ref and deletes every object it holds but the manifest
-// and the fence, then verifies the folder. Objects that land later (a
-// worker's late write) are deleted by the item's next collection.
+// Erase tombstones ref and deletes every object under its folder but the
+// manifest and the fence, keys outside the layout included, then verifies
+// the folder. Objects that land later (a worker's late write) are deleted by
+// the item's next collection.
 func (j *Jobs) Erase(ctx context.Context, ref contentref.ContentRef) error {
 	if err := j.Tombstone(ctx, ref); err != nil {
 		return err
@@ -184,7 +185,9 @@ const (
 // dropped once their DELETE has settled. After a write within the last day
 // it also lists the folder for orphans: objects the manifest does not know,
 // older than a day, which a crashed writer left. An erased item's unknown
-// objects are all orphans. Nothing is deleted without the manifest's say.
+// objects are all orphans, and the rest of its folder (tmp/, keys outside
+// the layout) is deleted outright. Nothing is deleted without the manifest's
+// say.
 func (j *Jobs) Collect(ctx context.Context, ref contentref.ContentRef) (time.Time, error) {
 	item, err := j.reg.Item(ref)
 	if err != nil {
@@ -198,13 +201,13 @@ func (j *Jobs) Collect(ctx context.Context, ref contentref.ContentRef) (time.Tim
 	}
 	now := j.cfg.Now().UTC()
 	erased := cur.Deleted != nil && cur.Deleted.Erased
-	var tmp []string
+	var loose []string
 	if erased || now.Sub(cur.WrittenAt) < orphanWindow {
-		orphans, staged, err := j.orphans(ctx, item, cur, now, erased)
+		orphans, rest, err := j.orphans(ctx, item, cur, now, erased)
 		if err != nil {
 			return time.Time{}, err
 		}
-		tmp = staged
+		loose = rest
 		if len(orphans) > 0 {
 			if cur, err = j.manifests.EditWith(ctx, ref, EditOptions{Lifecycle: true}, func(m *Manifest) error {
 				live := m.referenced()
@@ -253,7 +256,7 @@ func (j *Jobs) Collect(ctx context.Context, ref contentref.ContentRef) (time.Tim
 		}
 		deleted[r.Blob] = true
 	}
-	for _, key := range tmp {
+	for _, key := range loose {
 		if err := j.delete(ctx, key); err != nil {
 			errs = append(errs, err)
 		}
@@ -284,9 +287,10 @@ func (j *Jobs) NextCollection(m *Manifest) time.Time {
 	return nextCollection(m, j.manifests.settle, j.cfg.Now().UTC())
 }
 
-// orphans lists item's folder for objects m does not know, and for an
-// erased item its staged uploads too.
-func (j *Jobs) orphans(ctx context.Context, item Item, m *Manifest, now time.Time, erased bool) (blobs, staged []string, err error) {
+// orphans lists item's folder for blobs m does not know and, for an erased
+// item, every other key but the manifest and the fence: tmp/ and anything
+// outside the layout. A live item's tmp/ expires by the bucket's lifecycle.
+func (j *Jobs) orphans(ctx context.Context, item Item, m *Manifest, now time.Time, erased bool) (blobs, loose []string, err error) {
 	known := m.referenced()
 	for _, r := range m.Retired {
 		known[r.Blob] = true
@@ -296,11 +300,12 @@ func (j *Jobs) orphans(ctx context.Context, item Item, m *Manifest, now time.Tim
 			return nil, nil, err
 		}
 		k, ok := layout.Parse(obj.Key)
-		if !ok || k.Folder() != item.Prefix() {
-			continue
-		}
-		switch k.Area {
-		case layout.AreaInternal, layout.AreaPrivate, layout.AreaPublic:
+		switch {
+		case !ok || k.Folder() != item.Prefix() || k.Area == layout.AreaTmp:
+			if erased {
+				loose = append(loose, obj.Key)
+			}
+		case k.Area == layout.AreaInternal || k.Area == layout.AreaPrivate || k.Area == layout.AreaPublic:
 			blob := k.Area + "/" + k.Name
 			if !layout.ValidBlobRef(blob) {
 				continue // the gateway fence
@@ -308,13 +313,9 @@ func (j *Jobs) orphans(ctx context.Context, item Item, m *Manifest, now time.Tim
 			if !known[blob] && (erased || now.Sub(obj.LastModified) > orphanAge) {
 				blobs = append(blobs, blob)
 			}
-		case layout.AreaTmp:
-			if erased {
-				staged = append(staged, obj.Key)
-			}
 		}
 	}
-	return blobs, staged, nil
+	return blobs, loose, nil
 }
 
 // delete sends one DELETE; an absent object is deleted.

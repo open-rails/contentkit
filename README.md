@@ -323,6 +323,7 @@ Media is an app-defined file system in the app's own private bucket. The bucket 
            /private/{sha256}     released files, behind the item's token
            /public/{sha256}      covers, free pages; served to anyone
            /tmp/u-{uuid}         staged uploads; never served
+           /tmp/w-{run}-{name}   a video encode's chunks until their rung is assembled; never served
 {kind}/_default/                 the kind's default images, an item like any other
 _accounts/{kind}/{id}/…          the tenant's account media (avatars), in the avatar primary's bucket
 ```
@@ -371,7 +372,7 @@ Reader chapters accept `start_page` and derive their end from the next start, or
 
 Audio attachments are played as uploaded after verified placement, with no conversion job. A reader kind's `Publish.Playback` names its audio upload pattern, such as `audio/{name}`; page cues keep the same track names. The release moves declared audio with the pages. Audio tracks inside a movie still belong to its video conversion.
 
-**Deletion and erasure.** Soft deletion records the deletion in the manifest and writes the gateway fence at once; files are kept, and restore removes the fence. Erasure writes the permanent fence, then an empty manifest whose files are all retired and due, and deletes them; GC deletes any late write. Staged uploads expire by bucket lifecycle (`s3.Store.Configure`: seven-day `tmp/` expiration and incomplete-multipart abort, preserving other applications' rules).
+**Deletion and erasure.** Soft deletion records the deletion in the manifest and writes the gateway fence at once; files are kept, and restore removes the fence. Erasure writes the permanent fence, then an empty manifest whose files are all retired and due, and deletes everything else in the item's folder; GC deletes any late write. What is left in `tmp/` (staged uploads, a killed encode's chunks) expires by bucket lifecycle (`s3.Store.Configure`: seven-day `tmp/` expiration and incomplete-multipart abort, preserving other applications' rules).
 
 **Paywalls**: media gates each item through the engine's access rules. A version's `private/` holds only released files, so an item token opens what has been released until it expires; originals of readers' pages stay in `internal/` outside the ZIP download.
 

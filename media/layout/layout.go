@@ -10,10 +10,14 @@
 //	           /private/{sha256}      released files, behind the item's bucket-bound token
 //	           /public/{sha256}       always-visible files (covers), served to anyone
 //	           /public/_contentkit_erased  fence: while it exists the gateway serves nothing of the item
-//	           /tmp/u-{uuid}          staged uploads (tag-expired); never served
+//	           /tmp/u-{uuid}          staged uploads; never served
+//	           /tmp/w-{run}-{name}    a worker run's scratch (video chunks); never served
 //	{kind}/_default/                  a kind's default images, an item like any other
 //	_accounts/{kind}/{id}/…           a tenant's account media (avatars), the same folders,
 //	                                  in the avatar primary's bucket
+//
+// The store tags everything in tmp/ temporary when it writes it, so the
+// bucket's lifecycle expires what nothing deletes.
 //
 // A versioned kind's item is its version: {kind}/{version}/. Top-level names
 // starting with "_" are ContentKit's (_accounts/, the store's _probe/), and
@@ -52,6 +56,9 @@ const (
 	DefaultID = "_default"
 	// StagedPrefix starts a staged upload's name in tmp/.
 	StagedPrefix = "u-"
+	// ScratchPrefix starts a worker's scratch name in tmp/: "w-{run}-{name}",
+	// run a UUID.
+	ScratchPrefix = "w-"
 	// URLPrefix is the path every media URL starts with.
 	URLPrefix = "/v1/"
 	// AccountRoot holds a tenant's account media, in the avatar primary's
@@ -90,7 +97,7 @@ func Parse(key string) (Key, bool) {
 		k.Area = AreaManifest
 	case len(rest) == 2 && (rest[0] == AreaInternal || rest[0] == AreaPrivate || rest[0] == AreaPublic) && ValidHash(rest[1]),
 		len(rest) == 2 && rest[0] == AreaPublic && rest[1] == FenceName,
-		len(rest) == 2 && rest[0] == AreaTmp && ValidStagedName(rest[1]):
+		len(rest) == 2 && rest[0] == AreaTmp && (ValidStagedName(rest[1]) || ValidScratchName(rest[1])):
 		k.Area, k.Name = rest[0], rest[1]
 	default:
 		return Key{}, false
@@ -199,7 +206,21 @@ func Served(area string) bool { return area == AreaPrivate || area == AreaPublic
 // ValidStagedName accepts "u-{uuid}", a canonical lowercase UUID.
 func ValidStagedName(name string) bool {
 	id, ok := strings.CutPrefix(name, StagedPrefix)
-	if !ok || len(id) != 36 {
+	return ok && validUUID(id)
+}
+
+// ValidScratchName accepts "w-{run}-{name}": a canonical lowercase UUID and
+// a segment.
+func ValidScratchName(name string) bool {
+	rest, ok := strings.CutPrefix(name, ScratchPrefix)
+	return ok && len(rest) > 37 && validUUID(rest[:36]) && rest[36] == '-' && ValidSegment(rest[37:])
+}
+
+// ScratchName is run's scratch name for name; ValidScratchName checks it.
+func ScratchName(run, name string) string { return ScratchPrefix + run + "-" + name }
+
+func validUUID(id string) bool {
+	if len(id) != 36 {
 		return false
 	}
 	for i := 0; i < len(id); i++ {

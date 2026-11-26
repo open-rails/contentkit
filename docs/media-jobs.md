@@ -61,8 +61,11 @@ the rest of its group unrecorded.
 
 A failed ingest or derivative attempt retries through that same durable job.
 Video attempts checkpoint bounded work so successful chunks/renditions are not
-encoded again. After five failed attempts, the shared worker records remaining
-image, video, subtitle, and frame work as failed before cancelling the job.
+encoded again. A chunk's renditions wait in the item's `tmp/` until their rung
+is recorded or the run is superseded, and are then deleted; the bucket's
+lifecycle expires what a killed run leaves. After five failed attempts, the
+shared worker records remaining image, video, subtitle, and frame work as failed
+before cancelling the job.
 Completed outputs and checkpoints survive. Regeneration clears these failures,
 including frames that failed before producing their first blob. Shutdowns,
 checkpoint yields, and bounded storage-outage snoozes retain their existing

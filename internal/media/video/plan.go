@@ -447,6 +447,7 @@ func (c WorkerConfig) insertRuns(ctx context.Context, ref contentref.ContentRef,
 		return err
 	}
 	defer tx.Rollback(ctx)
+	var spent []string // chunk renditions no run needs, deleted once committed
 	insertChunks := func(id string, bounds [][2]int64) error {
 		for ordinal, bound := range bounds {
 			if _, err := tx.Exec(ctx, `INSERT INTO `+c.chunkTable()+`
@@ -487,6 +488,13 @@ WHERE ref = $1 AND file_name = $2 AND source_name = $3 AND source_etag = $4 AND 
 			return err
 		}
 		if i < done && state != "complete" {
+			// Its stage is published (an assembly that stopped short of
+			// finishing the run): its chunks are spent.
+			keys, err := c.chunkKeys(ctx, tx, id)
+			if err != nil {
+				return err
+			}
+			spent = append(spent, keys...)
 			if _, err := tx.Exec(ctx, `UPDATE `+c.runTable()+`
 SET state = 'complete', updated_at = now() WHERE id = $1`, id); err != nil {
 				return err
@@ -502,6 +510,12 @@ SET state = 'complete', updated_at = now() WHERE id = $1`, id); err != nil {
 					return err
 				}
 			}
+			// A host's cancellation leaves the run's chunks to whoever reopens it.
+			keys, err := c.chunkKeys(ctx, tx, id)
+			if err != nil {
+				return err
+			}
+			spent = append(spent, keys...)
 			if _, err := tx.Exec(ctx, `UPDATE `+c.chunkTable()+`
 SET state = 'planned', output = NULL, finished_at = NULL WHERE run_id = $1`, id); err != nil {
 				return err
@@ -512,7 +526,10 @@ SET state = 'planned', class = $2, updated_at = now() WHERE id = $1`, id, string
 			}
 		}
 	}
-	return tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	return c.Encoder.deleteScratch(ctx, spent)
 }
 
 func (c WorkerConfig) loadRun(ctx context.Context, id string) (encodeRun, error) {
