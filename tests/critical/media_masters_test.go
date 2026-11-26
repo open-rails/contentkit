@@ -587,7 +587,6 @@ func TestMediaMasters(t *testing.T) {
 		}
 		// Everything derived from the video follows its new master: the HLS
 		// renditions with their sprite, the grabbed poster and its thumbnail.
-		var after *mediastore.Manifest
 		waitForWithin(t, 120*time.Second, func() bool {
 			cur, _, err := manifests.Get(t.Context(), cref)
 			must(t, err)
@@ -607,13 +606,16 @@ func TestMediaMasters(t *testing.T) {
 			}
 			p, _ := cur.Get("poster.png")
 			thumbs := cur.Outputs("poster.png", "poster")
-			if p.Frame == nil || blobHashOf(p.Frame.Of) != made || len(thumbs) != 1 || thumbs[0].Input != blobHashOf(p.Blob) {
+			if p.Frame == nil || blobHashOf(p.Frame.Of) != made || len(thumbs) != 1 || thumbs[0].Input != blobHashOf(p.Blob) ||
+				!layout.Served(layout.BlobArea(thumbs[0].Blob)) {
 				return false
 			}
-			after = cur
 			return true
 		})
+		// Released: what the release moves is served, so nothing more is written.
 		settleMedia(t, f.world.pool, f.app.cfg.Media.WorkerSchema)
+		after, _, err := manifests.Get(t.Context(), cref)
+		must(t, err)
 		video, _ := after.Get("source.mp4")
 		was, _ := before.Get("source.mp4")
 		if video.Blob != was.Blob || video.Master.Of != blobHashOf(video.Blob) || video.Master.Type != media.MasterMatroska || hook.calls.Load() != 1 {
