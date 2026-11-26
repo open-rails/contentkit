@@ -244,6 +244,33 @@ func TestLockedPreviewPages(t *testing.T) {
 		}
 	})
 
+	t.Run("CK-J09-S65_a_page_made_free_keeps_its_private_copy_readable_for_an_hour", func(t *testing.T) {
+		target, err := registry.VersionRef(ref.Kind, ref.ID, ref.Version)
+		must(t, err)
+		before, _, err := manifests.Get(t.Context(), target)
+		must(t, err)
+		page, ok := before.Get("reader/01.webp")
+		if area, _, _ := layout.SplitBlobRef(page.Blob); !ok || area != layout.AreaPrivate {
+			t.Fatalf("a page without a preview is not private: %+v", page)
+		}
+		key, err := item.Blob(page.Blob)
+		must(t, err)
+		ring, err := token.NewRing(m.key, nil)
+		must(t, err)
+		signed := m.gateway.URL + layout.URLPrefix + key + "?t=" + url.QueryEscape(ring.Sign(privateFileScope(key), time.Now().Add(time.Hour)))
+		_, err = admin.PatchContentVersion(t.Context(), ref.ID, ref.Version, catalog.VersionInput{Access: paid(1)})
+		must(t, err)
+		unsigned(awaitPreviews(ref, item, []int{0}, "reader/01.webp"), item)
+		after, _, err := manifests.Get(t.Context(), target)
+		must(t, err)
+		if r, ok := after.Retiring(page.Blob); !ok || r.Due.Sub(r.At) < 59*time.Minute {
+			t.Fatalf("the private copy of a page made free is not kept for an hour: %+v", r)
+		}
+		if got := status(signed); got != http.StatusOK {
+			t.Fatalf("a reader's private URL of a page made free: HTTP %d mid-read", got)
+		}
+	})
+
 	t.Run("CK-J06-S08_scheduled_chapter_never_contributes_previews", func(t *testing.T) {
 		ref, item := gallery("Paid chapters with free pages", paid(3), 4)
 		future := w.clock.now().Add(time.Hour)
