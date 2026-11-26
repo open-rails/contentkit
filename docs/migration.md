@@ -6,7 +6,7 @@ Each store has one baseline; later schema changes are numbered migrations after 
 |---|---|---|---|
 | PostgreSQL catalog | `migrations.Postgres` | `postgres/0001_baseline.up.sql` | content, versions, entities, memberships, facets, the event log, import ids, codes, interactions, polls, search, preferences, erasure and media state |
 | PostgreSQL accounts | `migrations.Accounts` | `accounts/0001_baseline.up.sql` | account media, avatar placement and account erasure records |
-| ClickHouse | `migrations.ClickHouse` | `clickhouse/0001_baseline.up.sql` | signals, measured engagement, exposures, popularity and erasure fences |
+| ClickHouse | `migrations.ClickHouse` | `clickhouse/0001_activity.up.sql` | the activity log, `content_daily`, `audience_daily` and erasure fences |
 
 No checksum is silently accepted or rewritten; a database recorded by an
 earlier migration history is recreated, not converted. A version id is NULL for
@@ -170,6 +170,8 @@ references have no cross-store FK enforcement.
 ## Retained state
 
 Back up authored content, moderation and retained-publication state,
-reactions, favorites and their revision sequence, source erasure fences,
-and the ClickHouse signal plane. Search documents and group counts are
-rebuildable. The baseline contains only current signal tables. See [restore.md](restore.md).
+reactions, favorites, reading state and history, source erasure fences,
+and the ClickHouse rollups (`content_daily`, `audience_daily`). Search
+documents and group counts are rebuildable; the raw activity log lives 90
+days. A ClickHouse database migrated by an earlier baseline fails its
+migration check: recreate it. See [restore.md](restore.md).

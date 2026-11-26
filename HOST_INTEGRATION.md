@@ -27,8 +27,8 @@ for _, r := range routes {
 
 ### Jobs
 
-ContentKit runs its background work (search indexing, preference sync,
-popularity refresh, publication, retention and release work) on its own River
+ContentKit runs its background work (search indexing, the analytics job,
+entity popularity, publication, retention and release work) on its own River
 client, on `Deps.Postgres` in `Config.Database.RiverSchema` (default
 `{schema}_river`), never in a host's fleet or schema. `Start` builds that
 client so requests enqueue; it works nothing. The process that works jobs
@@ -199,8 +199,7 @@ A host mounting a module alone passes the same Auth: `content.Options.Auth`
 `contenturl.Router.Handler` needs none.
 
 Hosts use the routes and `ck.Client()` (the same surface in process).
-Search, typeahead, signals and discovery run inside the engine; their routes
-land with #122.
+Search, typeahead, activity and discovery run inside the engine.
 
 Ordinary content deletion always addresses versions: `Catalog.DeleteVersions` in
 embedded Go, `Client.DeleteContentVersion` remotely, or
@@ -533,9 +532,9 @@ file; one not rendered yet stays as it is.
 Public files exist only while the item is live; its editors see an
 unpublished item's images through an editor read (the SDK's `useContent`).
 
-There is no `Recorder` and no `Moderation` port: reactions and favorites feed
-the signal plane through ContentKit's own preference outbox, and the
-`ContentModerator` decides comment publication.
+There is no `Recorder` and no `Moderation` port: the server logs reactions and
+favorites to the activity log as it writes them, and the `ContentModerator`
+decides comment publication.
 
 The tenant is pinned at construction and stamped on every row; a `ContentRef`
 of another tenant passed to any read is `content.ErrTenant`, never remapped.
@@ -807,8 +806,8 @@ the signed-in/anonymous reader split changes. Privileged content/entity imports
 and moderator provenance remain host responsibilities; this is not a general
 backup-restore or privileged-write policy.
 
-The signal plane follows the [signal-plane contract](#signal-plane-account-deletion).
-`MigrateClickHouse` records in the account schema that the app has a signal plane (run `MigratePostgres` first). An app whose plane was never provisioned has no signals to erase; once one was, an engine without ClickHouse returns `ErrSignalPlaneRequired` and the deletion stays pending. Any configured-plane failure returns an error: keep the deletion pending and retry.
+Reading follows the [analytics erasure contract](#analytics-account-deletion).
+`MigrateClickHouse` records in the account schema that the app has a signal plane (run `MigratePostgres` first). An app whose plane was never provisioned has no activity to erase; once one was, an engine without ClickHouse returns `ErrSignalPlaneRequired` and the deletion stays pending. Any configured-plane failure returns an error: keep the deletion pending and retry.
 
 Content anonymization commits atomically:
 
@@ -899,10 +898,10 @@ that fits the reader (`display_language` first, then position).
 - A query is at most 1 KiB, 256 characters and 16 words, and each word at most 128 characters once normalized (compatibility characters can spell several letters); anything longer answers `400 invalid_request` on `/search`, `/typeahead` and `/manage/search-suggestions` before any retrieval. Search tolerates a typo only in words of 3 to 16 characters, within a bounded set of spellings per query. Typeahead suggests an entity only when the domain lists one of its works, and entity cards' counts and automatic covers come only from works inside the domain and the visitor's location rules.
 - A `summary` counts at most 10,000 contents; a larger selection answers lower-bound counts with `truncated: true`.
 - Cursors are opaque: one whose value, content id or seed is malformed, or from another sort, answers `400 invalid_request`, as do `tz=Local` and `time_zone=Local`. A `newest`/`oldest` cursor issued before v0.139 is refused once; restart from the first page.
-- `GET /contents/{id}/similar`, `GET /recommendations`: co-engagement
-  candidates, admitted through the reader's visibility.
-  Recommendations fill from the last 30 days' popularity, then all-time,
-  then the newest content the reader has not seen.
+- `GET /contents/{id}/similar`, `GET /recommendations`: candidates admitted
+  through the reader's visibility; see [discovery candidates](#discovery-candidates).
+  Recommendations fill from popularity, then the newest content the reader
+  has not seen, disliked or hidden.
 - `GET /release-dates` (`by=day|month`, the list filters): counts and free
   counts per date.
 - `GET /releases` (`days=10`, `time_zone=America/Denver`, the reader/content
@@ -930,44 +929,43 @@ that fits the reader (`display_language` first, then position).
   host's CORS policy, and prune stale browser choices against a public
   `GET /content-filters` without the header before attaching them to reads.
   Account language remains the host's existing profile preference.
-- `GET|DELETE /me/history`, `POST /signals` (explicit clicks; signed out,
-  `session` names the browser), `POST /exposures`.
+- `GET|DELETE /me/history`, `GET /me/continue` (started, unfinished reads),
+  `PUT|DELETE /contents/{id}/hidden`, `POST /activity` (opens and progress),
+  `POST /me/anonymous-link` (sent once at sign-in); see
+  [activity and reading state](#activity-and-reading-state).
 - `GET /me/favorites`: what the reader favorited, contents as cards or
   channels, most recent first.
 - `GET /sitemap/contents?kind=`, `GET /sitemap/entities?kind=` (open): the
   request site's live, listed pages by id (`cursor`, up to 10000 a page),
   each with `lastmod` and its path per language it serves. Content filters
   and access don't apply.
-- Staff (`root:content:view-restricted`): `GET /stats/activity` (views,
-  viewers and signed-in viewers per day) and `GET /stats/top` (`metric`
+- Staff (`root:content:view-restricted`): `GET /stats/active` (active people
+  per day by access, from `audience_daily`) and `GET /stats/top` (`metric`
   views or comments, `period`, `access`, `tiers`). `GET /me/stats`: the
   reader's finished contents per kind, comments and the reactions they got.
-- `GET|DELETE /me/searches` (signed out, `session`): the reader's recent
-  searches, one per query, newest first, which `GET /search` keeps (its
-  `session` names a signed-out browser). A clear deletes them (`?query=`
+- `GET|DELETE /me/searches`: the reader's recent searches (signed out, its
+  anonymous id's), one per query, newest first, which `GET /search` keeps. A clear deletes them (`?query=`
   only that one); erasure deletes them too, and an hourly job deletes those
   unused for 180 days and any recorded while an erasure ran.
 
 A card carries title and path in the display language, cover renditions, the
 version (languages, traits, pages, duration), the version's entities with pages
 by kind, likes, dislikes, favorites and all-time viewers, the access decision
-(`allowed`, `sell`, `requires`, `preview`, `releases`), the signed-in
-reader's favorite and progress, `published_at` and attributes. Content
-detail (`GET /contents/{id}`, `.../versions/{vid}`) carries the same
+(`allowed`, `sell`, `requires`, `preview`, `releases`), the reader's
+favorite and reaction (signed in) and reading state (progress against the
+version's length, position, outcome, hidden), `published_at` and attributes.
+Content detail (`GET /contents/{id}`, `.../versions/{vid}`) carries the same
 `viewer` standing on the item and each version, to resume from. Without a
-signal plane (no ClickHouse, or one that is down, which fails the
-`contentkit_clickhouse` probe with the cause) the engine runs on Postgres:
-`GET /v1/kinds` says `"signals": false`, contentkit-ui sends no signals or
-exposures, popular sorts use what `content_facets` holds, and signal reads
-and writes answer 501 `not_configured`, or 503 `unavailable` while a
-configured one is down. The engine retries a down ClickHouse in the
-background (migrations, connection, schema) and pings a live one every 30
-seconds with the driver's protocol ping, not a query; the probe reports what
-that loop last found and sends nothing itself. Signals come back on without a
-restart, and contentkit-ui reads the model again a minute after it last found
-them off.
+signal plane the engine runs on Postgres: `GET /v1/kinds` says
+`"signals": false`, contentkit-ui reports nothing and `POST /v1/activity`
+answers 501 `not_configured`; reading state stays empty. A configured
+ClickHouse that is down fails the `contentkit_clickhouse` probe with the
+cause; activity waits in each process's buffer meanwhile, and the engine
+retries in the background (migrations, connection, schema) and pings a live
+one every 30 seconds with the driver's protocol ping.
 
-A signal read serving a request (history, states, similar, recommendations, popular lists, stats, attribution) gets a ten-second deadline when its context has none, which the driver also sends as `max_execution_time`, and a 1 GiB `max_memory_usage`; a job's own deadline stands. Set `Config.ClickHouse.TLS` (`tls`) to connect to `Addr` over TLS, ClickHouse's secure native port, verifying the server against the system roots or `ca_file`; `MigrateClickHouse` and the engine's own migrations use the same TLS. Without it the password crosses in clear, so keep a plain connection on a private network.
+Only the staff report reads ClickHouse to serve a request; it carries a 20 s
+`max_execution_time` and a 1 GiB `max_memory_usage`. Set `Config.ClickHouse.TLS` (`tls`) to connect to `Addr` over TLS, ClickHouse's secure native port, verifying the server against the system roots or `ca_file`; `MigrateClickHouse` and the engine's own migrations use the same TLS. Without it the password crosses in clear, so keep a plain connection on a private network.
 
 ## Search job
 
@@ -1491,51 +1489,49 @@ encodings. Descriptive membership fields refer to entities; access-rule `group_i
 `group`/`group_ppv` refer to paid channel membership. Real AuthKit permission
 groups hold editorial roles independently of those read entitlements.
 
-## Preference boundary (reactions and favorites into the signal plane)
+## Activity and reading state
 
-Reactions and favorites reach the signal plane straight from their own rows.
-`content_reactions.value` is -1/0/1 and `content_favorites.value` is 1/0:
-neutral and unfavorite keep the row at 0. Every value change stamps the row
-with `revision` from `content_preference_revision_seq` under the row lock; a
-no-op allocates nothing. Only authenticated rows export; anonymous (IP)
-reactions and comment threads never do.
+The activity log is ClickHouse's `activity` table: every open, progress
+report, reaction, favorite, hide and search, 90 days. A row's subject is the
+account id, else a hash of the browser's anonymous id, which the SDK keeps in
+local storage, sends as `ContentKit-Anonymous-Id` while signed out and
+replaces at sign-out. The API stamps the site (domain and language), the
+access (`anonymous`, `account` or the tiers the token claims), the local UTC
+offset (`ContentKit-UTC-Offset`, else Cloudflare's `cf-timezone`) and the time.
+Each process buffers rows and writes them every second as one
+`INSERT … VALUES` with `async_insert=1, wait_for_async_insert=1`.
 
-- **Reference**: the reaction row, the counts rollup and the export all use
-  the resolver's canonical reference (`Resolution.Ref`); comment reactions
-  never export. `Counts` reads exactly the reference given.
-- **Sync**: the engine's preference job runs every minute and sends each change once, as one `signal` event per subject × reference × axis (`Type` = axis, `EventID` = `"current"`, `Revision`, `OccurredAt` = row `updated_at`, `Value`). Each run samples the revision sequence and sends, in revision order, the rows past the tenant's cursor up to the newest sample at least five minutes old: a write is delivered if its transaction commits within five minutes of allocating its revision, about five minutes after it. Rows go in batches of 1,000, each one plain multi-row insert, and the cursor advances after every batch. A run stops at 30 s or half its job's timeout and the next follows at once, so a backlog drains across runs and a run cut short re-sends at most its batch in flight; the newest revision wins, so that re-send is harmless. A run with nothing new sends nothing.
-- **Repair**: after the signal plane loses data (a restored ClickHouse), `Engine.ResyncPreferences` rewinds the cursor and the job sends every preference once more (zeros included), in the same batches.
-- **Account deletion**: `ck.AnonymizeAccount` moves the subject's rows to
-  an anonymous key behind the source fence and fences the signal plane, which
-  drops any late send.
-- **Restore**: after restoring PostgreSQL against a retained signal plane, the
-  preference revision floor must be raised to the sink's newest revision
-  before writers resume: `POST /v1/import` with `preference_floor` (only ever
-  advancing).
+The analytics job runs every 15 minutes, one at a time. It folds each new
+sign-in link (`anonymous_links`) into its account (reading state and history
+merge; reactions and recent searches are re-keyed where the account has
+none), then recomputes each touched person × gallery × day's outcome from the
+log (bounce, neutral, good or complete by the fraction read at a minimum
+pace) into `reading_state` by maximum and latest, and rewrites that day's
+packed `reading_history`. It rebuilds today's `content_daily` and
+`audience_daily` hourly, yesterday's once after midnight, and deletes erased
+rows daily. Every write is a recompute or a max/latest merge, so a repeated
+run is harmless. Hiding writes `reading_state` at once.
 
-## Signal-plane account deletion
+Legacy reading imports (`legacy_reading`) merge into `reading_state` the same
+way.
 
-`AnonymizeAccount` completes its signal step only when:
+## Analytics account deletion
 
-1. the old account is recorded in the `erasures` ledger with `insert_quorum` =
-   every replica; a down replica fails fast and moves nothing;
-2. every row of the account in signals, compact state, daily contributions,
-   exposures and the kept pre-ContentKit tables is copied to the anonymous key
-   and deleted on every replica (`mutations_sync = 2`), re-counted as zero;
-3. from the moment the ledger row is durable, every write, read, projection
-   and export evaluates the ledger inside its own statement.
-
-The subject key is dead in that tenant forever. Residue (rows that landed
-after the fence or came back with a restore) is unreadable. After a restore,
-run `ReplayErasureFences` for the accounts deleted since the backup. A shared account exists in every tenant:
-each host erases its own tenant.
+`AnonymizeAccount` records the account and the anonymous ids folded into it in
+ClickHouse's `erasures` (an `insert_quorum` of every replica; a down replica
+fails it), so every read of the log drops their rows at once and the daily
+delete removes them, then deletes their `reading_state`, `reading_history`
+and links and records the anonymous ids as erased, so their late rows never
+count. After a restore, run `ReplayErasureFences` for the accounts deleted
+since the backup. Each host erases its own tenant.
 
 ## Discovery candidates
 
-Similar and recommended lists get their candidates from co-engagement over
-the signal plane. The recommender applies one policy to them: tenant and kinds,
-never the anchor, seen and disliked works, the reader's visibility (admission
-in one batch), dedupe, limit, and the popularity fill.
+Recommendations seed from the reader's recent good or complete reads; similar
+lists have no candidate source until the on-demand rankings land. The
+recommender applies one policy to them: tenant and kinds, never the anchor,
+seen, disliked and hidden works, the reader's visibility (admission in one
+batch), dedupe, limit, and the popularity fill.
 
 ## Popularity (policy-ranked)
 
@@ -1554,10 +1550,10 @@ rating behavior.
 
 - Import legacy data through `POST /v1/import` ([docs/import.md](docs/import.md)), never into ContentKit's tables.
 - Create and reuse one `contentkit.Engine` per tenant.
-- Read lists, search and recommendations through the discovery routes; send actual reading snapshots through `POST /engagement` and explicit clicks through `POST /signals`.
+- Read lists, search and recommendations through the discovery routes; report reading with the SDK's `useReadingProgress` (`POST /activity`).
 - Run migrations explicitly through the host's development/deployment command ([docs/migration.md](docs/migration.md)); app startup checks schema readiness.
 - Wire `Options.Moderator` when comments require screening and grant `root:moderation:review` to reviewers. Polls use predefined choices.
-- Adopt the preference boundary (doujins #888 / hentai0 #594): pin this ContentKit, delete the callback-time bridge (`internal/social` `recorder`, `discovery.Recorder.Reaction`, `socialReactionSignal`) and every per-delivery signal-identity adapter, wire `Engine.AnonymizeAccount` into deletion and move favorite and reaction readers onto the routes.
+- Wire `Engine.AnonymizeAccount` into deletion and read favorites and reactions through the routes.
 - Replace `socialkit` imports with `content`: `EntityRef`/`EntityKey`/`entity_type`/`entity_id` → `contentref.ContentRef`/`ContentKey`/`content_kind`/`content_id`; `Entities` → `Resolver`; `Content` → `Processor`; `EntityTypes` → `ContentKinds`; `parent_id` → `reply_to_id`; `Counts(kind, id)` → `Counts([]ContentRef)`; delete the `Recorder` and `Moderation` adapters.
 - Replace `content.Options.Storage`/`Media` (`StorageConfig`, `MediaStore`) with `Options.Media` over media, register the content kinds' `Named` body uploads (`Body`, a private image preset) and the `poll` kind with its public preset, and move image uploads to the SDK's `upload` plus the image routes above.
 - Adopt the one media model (v0.62.0): declare the registry (`media.Config`), use version ids as item ids, replace slots with upload paths and public presets, and wire the hooks; see "Media".

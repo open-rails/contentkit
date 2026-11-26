@@ -36,8 +36,8 @@ Entity, poll and account media retirement tombstone and erase the same way. A
 deleted entity's media is fenced from its deletion; retirement makes that fence
 permanent before deleting the files. Account avatar erasure is synchronous.
 
-The same sweep erases the purged content's ClickHouse engagement and history
-records. Its exact cleanup references are committed with the PostgreSQL purge
+The same sweep erases the purged content's activity and `content_daily` rows
+in ClickHouse; its reading state goes with the PostgreSQL purge. Its exact cleanup references are committed with the PostgreSQL purge
 and survive removal of the content rows. A ClickHouse outage leaves those
 references pending without holding back unrelated PostgreSQL or media deletion.
 After ClickHouse acknowledges the deletion, the sweep removes the references;

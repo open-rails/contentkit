@@ -4,8 +4,9 @@
 and marketplace hosts: tenant-scoped **content** (items, versions, entities),
 **interactions** (comments, reactions, favorites, polls), **keyword search**
 over that content, the
-ClickHouse **signal plane** (consumption, feedback, exposures, popularity,
-erasure) and the **discovery reads** over both. It needs no model provider,
+**activity log** in ClickHouse (opens, reading progress, reactions, hides,
+searches) with the **reading state** and daily rollups folded from it, and the
+**discovery reads** over both. It needs no model provider,
 API key or vector extension. Semantic search belongs entirely to the separate, deferred User Intelligence
 library; ContentKit has no semantic search configuration or runtime hook.
 
@@ -78,7 +79,7 @@ bodies' wire and data types and its ports; its implementation is the
 | `internal/entitystore`, `internal/channelstore` | entities by kind and channels: names, text, covers, scopes, merges, memberships |
 | `internal/contentstore` | comments, reactions, favorites, polls, bans, moderation, interaction limits |
 | `internal/discoverystore`, `internal/search`, `internal/popularity` | public reads: lists, search, typeahead, similar and recommended, release dates, history; keyword search; ranking policy |
-| `internal/signalstore` | the ClickHouse signal plane |
+| `internal/signalstore`, `internal/readingstore`, `internal/analytics` | the ClickHouse activity log and daily rollups; reading state, history and sign-in links in PostgreSQL; the job folding one into the other ([docs/analytics.md](docs/analytics.md)) |
 | `internal/mediastore`, `internal/versionstore` | media manifests, uploads, reads, processing records; version reader plans, publication and downloads |
 | `internal/entitlement` | the access `Gate`, its listing `Filter` and the request memo |
 | `internal/urlstore`, `internal/importstore` | content codes, slugs, aliases; the bulk import |
@@ -120,8 +121,8 @@ for _, r := range routes {
   scope, with tenant-shared account media. Content kinds' media are their
   versions' (`media.ForContent`, the `media/versions` service). All content
   belongs to ContentKit: hosts create it through `/v1/contents` (or `Client()`).
-- `Start` runs every background job: search indexing, preference sync,
-  popularity refresh, publication events, event retention and content purge,
+- `Start` runs every background job: search indexing, the analytics job,
+  entity popularity, publication events, event retention and content purge,
   and the media jobs. Hosts schedule nothing. Start before
   serving: writes queue jobs.
 - The engine builds the access `Gate` from `Config.Content` and
@@ -493,29 +494,25 @@ including staff browsing, honors optional choices; authorized management keeps
 its visibility. Fixed and required domain rules also constrain direct access.
 `kinds.DecodeContentFilters` strictly reads an embedded app's policy block.
 
-## Signal plane and discovery
+## Analytics and discovery
 
-The signal plane runs inside the engine over `Config.ClickHouse`; its public
-routes (signals, exposures, history, popular, similar, recommend) land with
-#122.
+ClickHouse holds the activity log; PostgreSQL holds each reader's reading
+state and history. Product pages read only PostgreSQL. See
+[docs/analytics.md](docs/analytics.md).
 
-- Identity is `(tenant, content ref, subject, type, event id)`; retries,
-  reordering and revisions converge, nothing is incremented. Record the work
-  view and, separately, the selected version's view (`g1.WithVersion(v)`).
-- Work reads (`History`, `Popular`, `SeenIDs`, co-engagement) count the work
-  once across versions; `States` and `Metrics` read exactly the references
-  given, work or version.
-- Windows are whole UTC days, 7/30/90/365/all, no decay.
-- Rank by a named policy, not the default rank: `popularity.ByName("v1")`,
-  `popularity.New(popularity.Config{Source: hub, Policy: policy})` over the engine's hub, then
-  `ranker.Popular` / `ranker.Scores` / `ranker.Entities`
-  ([docs/popularity-policy.md](docs/popularity-policy.md)).
-- Similar and recommended content draw candidates from co-engagement; see
-  [discovery candidates](HOST_INTEGRATION.md#discovery-candidates).
-- `AnonymizeAccount` is account deletion with a quorum-written fence; see
-  [HOST_INTEGRATION.md](HOST_INTEGRATION.md#signal-plane-account-deletion)
-  and, for interaction data, [account lifecycle](HOST_INTEGRATION.md#account-lifecycle-and-interaction-erasure).
-- Reactions and favorites reach the signal plane from their own revisioned rows: the engine's preference job sends each change once, about five minutes after it, in batches behind a per-tenant cursor; `Engine.ResyncPreferences` re-sends everything after a signal-plane loss; see [HOST_INTEGRATION.md](HOST_INTEGRATION.md#preference-boundary-reactions-and-favorites-into-the-signal-plane).
+- The browser reports `open` and `progress` (`POST /v1/activity`); the server
+  logs reactions, favorites, hides and searches where they happen. A row's
+  subject is the account, else the browser's anonymous id
+  (`ContentKit-Anonymous-Id`).
+- Each process buffers rows and writes them every second as one async INSERT.
+- The analytics job (every 15 minutes) folds new rows into `reading_state` and
+  `reading_history` and sign-in links into the account, rebuilds today's
+  `content_daily` and `audience_daily` hourly, and deletes erased rows daily.
+- History, continue reading, card progress, `view_status` and hidden
+  galleries read `reading_state`; hiding (`PUT /v1/contents/{id}/hidden`) is
+  immediate.
+- `AnonymizeAccount` deletes the account's reading and fences its rows; see
+  [account lifecycle](HOST_INTEGRATION.md#account-lifecycle-and-interaction-erasure).
 
 ## Testing
 

@@ -174,26 +174,3 @@ previous ranking. Listings order by place, then the same content count as
 with no ranking, the whole list follows count and ID. The cursor carries all
 three keys. Counts retain the listing's language, content kind and visibility
 rules. A refresh or catalogue edit while browsing can change the order.
-
-## Performance evidence
-
-The [daily participation experiment](../benchmarks/daily-participation/README.md)
-measures the actual ranking query over 36.5 million synthetic item/day rows with
-UUID-formatted String IDs and replacement handling. It returns 100,000 ordered
-item scores for a 365-day period in 1.59–2.17 seconds of ClickHouse time on the
-recorded machine, using two query threads and about 49 MiB peak query memory.
-These are cache-assisted local results for combining already prepared counts,
-not a production HTTP latency guarantee or an end-to-end raw-engagement benchmark.
-
-Daily source preparation is measured separately. A 60,000-user day with ten
-distinct items per person means 600,000 user/item-days, before multiple receipts
-and revisions. The actual preparation method reduced a synthetic day with
-3.6 million delivered receipt rows in 34.86 seconds, with all 100,000 item counts
-verified. Filtering immutable scope before grouping then reduced the same
-replayed-data rebuild from 47.11 to 13.32 seconds with identical counts and read
-volume. Reusing a finalized day read only its checkpoint in 8–25ms; this
-excludes the worker's separate PostgreSQL availability-history read.
-Reducing that day's raw data is reusable work; combining a date
-range does not revisit those receipts. More configured scopes increase
-preparation and storage work. Raw data, finalized daily counts and prepared
-rankings have distinct costs and must be reported separately.
