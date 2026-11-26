@@ -62,6 +62,10 @@ func (c WorkerConfig) assemble(ctx context.Context, run encodeRun, jobID int64) 
 			return snoozeOnShutdown(ctx, err)
 		}
 	}
+	// The rung is recorded: its chunks are spent.
+	if err := c.dropChunks(ctx, run.ID); err != nil {
+		return snoozeOnShutdown(ctx, err)
+	}
 	done := progress.item(media.PhaseImages)
 	err = e.grabFrames(ctx, w.item)
 	done()

@@ -261,6 +261,16 @@ func (i Item) Staged(name string) (string, error) {
 	return i.TempPrefix() + name, nil
 }
 
+// Scratch is the key of a worker run's scratch name ("w-{run}-{name}"), in
+// tmp/ until the run deletes it or the bucket's lifecycle expires it.
+func (i Item) Scratch(run, name string) (string, error) {
+	n := layout.ScratchName(run, name)
+	if !layout.ValidScratchName(n) {
+		return "", fmt.Errorf("media: invalid scratch name %q", n)
+	}
+	return i.TempPrefix() + n, nil
+}
+
 // DefaultsItem is the item holding the kind's default images, with its
 // own manifest (image.PublishDefaults).
 func (k *RegisteredKind) DefaultsItem() Item {
