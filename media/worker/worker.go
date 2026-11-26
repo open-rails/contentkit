@@ -36,6 +36,7 @@ import (
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/media/image"
 	"github.com/open-rails/contentkit/internal/media/master"
+	"github.com/open-rails/contentkit/internal/media/scratch"
 	"github.com/open-rails/contentkit/internal/media/video"
 	"github.com/open-rails/contentkit/internal/media/workqueue"
 	"github.com/open-rails/contentkit/internal/pglock"
@@ -72,8 +73,11 @@ type Config struct {
 	// there.
 	HostSchema string
 
-	TempDir string // scratch for video sources and outputs; default os.TempDir()
-	Threads int    // ffmpeg threads; default GOMAXPROCS
+	// TempDir is the root of the worker's scratch (default os.TempDir()).
+	// Each worker process works in a directory of its own under it, removed
+	// when Run returns and, after a crash, by the next worker to start there.
+	TempDir string
+	Threads int // ffmpeg threads; default GOMAXPROCS
 	// Preset, TopPreset, VideoEncoder and VideoCodecs are the video
 	// encoder's: x264 presets up to 1080 and above it, auto, cpu or nvenc,
 	// and the ladder's codecs, preferred first.
@@ -114,6 +118,7 @@ type Config struct {
 	reg     *mediastore.Registry
 	metrics *metrics
 	locks   *pglock.Locks
+	scratch *scratch.Dir
 }
 
 func (c *Config) defaults() error {
@@ -162,14 +167,16 @@ type Worker struct {
 	account    *Worker
 	client     *river.Client[pgx.Tx]
 	stopSlices func()
+	scratch    *scratch.Dir // its own, the account worker's too
 }
 
 // New builds the River client with the image and video workers. It needs no
 // DDL rights: the host's contentkit.MigratePostgres migrates Schema, so the
 // worker can run as the host's unprivileged app role. Missing tables, a
 // recipe naming a hook Hooks lacks or has at another version, and two hooks
-// of one name are refused here, before any job runs.
-func New(ctx context.Context, c Config) (*Worker, error) {
+// of one name are refused here, before any job runs. It removes the scratch
+// of workers that died under TempDir.
+func New(ctx context.Context, c Config) (_ *Worker, err error) {
 	if err := c.defaults(); err != nil {
 		return nil, err
 	}
@@ -215,8 +222,17 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 			return nil, fmt.Errorf("media/worker: missing %s; the host must apply ContentKit migrations", name)
 		}
 	}
-	if err := video.SweepTemp(c.TempDir); err != nil {
-		return nil, fmt.Errorf("media/worker: sweep scratch: %w", err)
+	var own *scratch.Dir
+	if c.scratch == nil {
+		if own, err = scratch.Open(c.TempDir); err != nil {
+			return nil, fmt.Errorf("media/worker: %w", err)
+		}
+		c.scratch = own
+		defer func() {
+			if err != nil {
+				err = errors.Join(err, own.Close())
+			}
+		}()
 	}
 	queue, err := workqueue.NewWithAccounts(c.Pool, c.reg, c.Schema, c.AccountWorkerSchema)
 	if err != nil {
@@ -246,7 +262,7 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 	if c.metrics != nil {
 		observeEncode = c.metrics.observeEncode
 	}
-	enc, err := video.New(ctx, video.Config{Manifests: manifests, Queue: queue, TempDir: c.TempDir,
+	enc, err := video.New(ctx, video.Config{Manifests: manifests, Queue: queue, TempDir: c.scratch.Path(),
 		Threads: c.Threads, Preset: c.Preset, TopPreset: c.TopPreset, Encoder: c.VideoEncoder, Codecs: c.VideoCodecs, Logger: c.Logger,
 		ObserveEncode: observeEncode})
 	if err != nil {
@@ -260,7 +276,7 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 			hooks = append(hooks, leader)
 		}
 	}
-	masters, err := master.New(master.Config{Manifests: manifests, Hooks: masterHooks, TempDir: c.TempDir, WebP: image.Lossless})
+	masters, err := master.New(master.Config{Manifests: manifests, Hooks: masterHooks, TempDir: c.scratch.Path(), WebP: image.Lossless})
 	if err != nil {
 		return nil, err
 	}
@@ -288,7 +304,7 @@ func New(ctx context.Context, c Config) (*Worker, error) {
 	if err != nil {
 		return nil, err
 	}
-	out := &Worker{c: c, client: client, stopSlices: sync.OnceFunc(func() { close(stopping) })}
+	out := &Worker{c: c, client: client, stopSlices: sync.OnceFunc(func() { close(stopping) }), scratch: own}
 	if c.AccountSchema != "" {
 		child := c
 		child.ContentSchema = c.AccountSchema
@@ -372,15 +388,24 @@ const checkTimeout = 10 * time.Second
 
 // Run waits for the bucket (every job needs it; waiting burns no job
 // attempts), then works jobs until ctx is done. Running jobs get ShutdownGrace before
-// cancellation. A non-nil error may leave jobs unwinding: the caller must not
-// close their database pool until the worker's River client has stopped.
-func (w *Worker) Run(ctx context.Context) error {
+// cancellation. Once they have stopped, Run removes the worker's scratch. A
+// non-nil error may leave jobs unwinding, and their scratch for the next
+// start: the caller must not close their database pool until the worker's
+// River client has stopped.
+func (w *Worker) Run(ctx context.Context) (err error) {
+	if w.scratch != nil {
+		defer func() {
+			if err == nil {
+				err = w.scratch.Close()
+			}
+		}()
+	}
 	if w.account != nil {
 		run, cancel := context.WithCancel(ctx)
 		defer cancel()
 		out := make(chan error, 2)
 		own := *w
-		own.account = nil
+		own.account, own.scratch = nil, nil
 		go func() { out <- own.Run(run) }()
 		go func() { out <- w.account.Run(run) }()
 		first := <-out
@@ -477,7 +502,7 @@ func (w *ingestWorker) Work(ctx context.Context, job *river.Job[workqueue.Ingest
 	if _, err := w.manifests.Place(ctx, a.Ref); err != nil {
 		return full(ctx, w.manifests, a.Ref, err)
 	}
-	if err := w.manifests.IngestArchives(ctx, a.Ref, w.c.TempDir); err != nil {
+	if err := w.manifests.IngestArchives(ctx, a.Ref, w.c.scratch.Path()); err != nil {
 		return full(ctx, w.manifests, a.Ref, err)
 	}
 	if !a.Force && a.Preset == "" {

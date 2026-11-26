@@ -97,7 +97,7 @@ func storeFromEnv() (*mediaS3.Store, error) {
 //	MEDIA_WORKER_SCHEMA          the host's worker River schema (required, one per host, e.g. doujins_media_worker)
 //	MEDIA_CONTENT_SCHEMA         the shared ContentKit schema (required; same as the uploader's journal)
 //	MEDIA_HOST_RIVER_SCHEMA      the host's River schema (default: the connection's search path)
-//	MEDIA_WORKER_TMP             scratch dir (default os.TempDir()), on disk, not tmpfs; size for each running job's largest source: a video source plus outputs, or a ZIP plus one page (docs/media-jobs.md)
+//	MEDIA_WORKER_TMP             scratch root (default os.TempDir()), on disk, not tmpfs; each process works in its own directory under it; size for each running job's largest source: a video source plus outputs, or a ZIP plus one page (docs/media-jobs.md)
 //	MEDIA_WORKER_THREADS         ffmpeg threads (default: CPU limit)
 //	MEDIA_WORKER_PRESET          x264 preset of rungs up to 1080 (default fast)
 //	MEDIA_WORKER_TOP_PRESET      x264 preset of the rungs above (default fast)

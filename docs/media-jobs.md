@@ -92,6 +92,8 @@ The default, 0, yields after every chunk.
 
 Jobs write scratch files under `TempDir` (stock workers: `MEDIA_WORKER_TMP`, default the system temporary directory). Put it on disk, not a memory-backed tmpfs, and size it for every job that can run at once in one process: `MEDIA_WORKER_INGEST_CONCURRENCY` (default 2) times the largest accepted ZIP upload (`MaxBytes` of its `Publish.Import` upload) plus one page (`MaxBytes` of its `Publish.Pages` upload), and `MEDIA_WORKER_CONCURRENCY` (default 1) times the largest video source plus its encoded outputs. A ZIP is validated in one streaming pass and its pages are then extracted again, one at a time, as each batch is written, so its expanded size (up to 2 GiB) never lands on disk.
 
+Each worker process works in a directory of its own, `contentkit-media-worker/<id>/` under `TempDir`, locked for as long as the process runs. Run removes it when the worker stops. A worker that starts removes the directories of processes that died, a hard kill included, and never one whose process still runs, so several workers can share `TempDir`.
+
 ## Adoption
 
 Use matching host libraries, media-worker images (or a host's own worker binary, built from the same release) and KEDA triggers. Configure
