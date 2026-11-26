@@ -181,15 +181,78 @@ export function capRung(rungs: readonly Rung[], width: number, height: number, p
   return cap;
 }
 
+/** A level as hls.js lists it, for choosing what plays. */
+export interface PlayableLevel {
+  codecSet?: string;
+  /** VIDEO-RANGE: "SDR" (or absent), "PQ" or "HLG". */
+  videoRange?: string;
+  videoCodec?: string;
+  width: number;
+  height: number;
+  bitrate: number;
+  frameRate?: number;
+}
+
+/** What the HDR choice reads of the browser; `globalThis` by default. */
+export interface DisplayEnv {
+  matchMedia?: (query: string) => { matches: boolean };
+  navigator?: { mediaCapabilities?: { decodingInfo(c: MediaDecodingConfiguration): Promise<{ supported: boolean }> } };
+}
+
+export const isHdrLevel = (l: { videoRange?: string }) => !!l.videoRange && l.videoRange !== "SDR";
+
+/** The screen shows high dynamic range (CSS `dynamic-range: high`). */
+export function hdrDisplay(env: DisplayEnv = globalThis): boolean {
+  try {
+    return env.matchMedia?.("(dynamic-range: high)").matches === true;
+  } catch {
+    return false;
+  }
+}
+
+/** MediaCapabilities confirms the browser decodes and renders level's HDR video. */
+export async function decodesHdr(level: PlayableLevel, env: DisplayEnv = globalThis): Promise<boolean> {
+  const caps = env.navigator?.mediaCapabilities;
+  if (!caps?.decodingInfo || !level.videoCodec || !isHdrLevel(level)) return false;
+  try {
+    const info = await caps.decodingInfo({
+      type: "media-source",
+      video: {
+        contentType: `video/mp4; codecs="${level.videoCodec}"`,
+        width: level.width || 1920,
+        height: level.height || 1080,
+        bitrate: level.bitrate || 1,
+        framerate: level.frameRate || 30,
+        transferFunction: level.videoRange === "HLG" ? "hlg" : "pq",
+        colorGamut: "rec2020",
+      },
+    });
+    return info.supported === true;
+  } catch {
+    return false;
+  }
+}
+
 /**
- * Levels to remove (indices, descending) so one codec set remains: the set of
- * the level hls.js lists first, which is the master playlist's first playable
- * codec (AV1 before H.264 when the browser decodes it). hls.js never
- * switches codec sets for bandwidth, and the quality menu lists each rung once.
+ * Levels to remove (indices, descending) so one dynamic range and one codec
+ * set remain. HDR levels play only on an HDR display whose decoder confirms
+ * them (each level asked), else SDR; a ladder without SDR keeps its HDR
+ * levels. The codec set is that of the level hls.js lists first, the master
+ * playlist's first playable codec (AV1 before H.264 when the browser decodes
+ * it), when it has levels in that range, else the first such level's. hls.js
+ * never switches codec sets for bandwidth, and the quality menu lists each
+ * rung once. Video is never drawn through a canvas: the browser renders HDR.
  */
-export function otherCodecLevels(levels: readonly { codecSet?: string }[], first: number): number[] {
-  const keep = (levels[first] ?? levels[0])?.codecSet;
-  return levels.flatMap((l, i) => (l.codecSet === keep ? [] : [i])).reverse();
+export async function otherLevels(levels: readonly PlayableLevel[], first: number, env: DisplayEnv = globalThis): Promise<number[]> {
+  let hdr = levels.map(isHdrLevel);
+  if (levels.some((l) => !isHdrLevel(l))) {
+    const display = hdrDisplay(env);
+    hdr = await Promise.all(levels.map((l) => (display && isHdrLevel(l) ? decodesHdr(l, env) : false)));
+  }
+  const kept = hdr.some(Boolean) ? hdr : levels.map((l) => !isHdrLevel(l));
+  const lead = (levels[first] ?? levels[0])?.codecSet;
+  const set = levels.some((l, i) => kept[i] && l.codecSet === lead) ? lead : levels.find((_, i) => kept[i])?.codecSet;
+  return levels.flatMap((l, i) => (kept[i] && l.codecSet === set ? [] : [i])).reverse();
 }
 
 /** Bits/s to seed the estimator with: a measurement from this page, the browser's downlink, else the policy default. */

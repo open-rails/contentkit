@@ -581,6 +581,7 @@ fullscreen and a mini player.
   what expand opens are the host's.
 - **Theming:** `appearance.variables.playerAccent` colors the played range
   and pressed toggles (default white). Menus are always dark.
+- **Quality and HDR:** Auto streams the highest rung the connection sustains, capped at the player's rendered size times `devicePixelRatio` (hls.js `capLevelToPlayerSize`), so fullscreen on a high-resolution screen reaches the top rung and a small embed doesn't. An HDR upload's ladder has 10-bit AV1 rungs labelled `VIDEO-RANGE=PQ` or `HLG` and tone-mapped SDR H.264 rungs. The player plays HDR only when the screen matches `(dynamic-range: high)` and `MediaCapabilities.decodingInfo` confirms the rung's codec with its transfer; otherwise SDR. The browser renders the video; it is never drawn through a canvas. `QualityLevel.range` is the range playing. A host with its own hls.js setup applies the same choice with `otherLevels(hls.levels, hls.firstLevel)` (indices to `removeLevel`) from `@openrails/contentkit-ui/client`; Safari's native HLS chooses by `VIDEO-RANGE` itself.
 
 ## Comments, reactions and polls
 
