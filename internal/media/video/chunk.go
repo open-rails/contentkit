@@ -40,7 +40,7 @@ func (c WorkerConfig) encodeChunk(ctx context.Context, run encodeRun, ch encodeC
 	if r < 0 {
 		return c.cancelRun(ctx, run.ID)
 	}
-	url, err := e.store.PresignGet(ctx, run.SourceKey, 2*time.Hour)
+	url, err := e.store.PresignGet(ctx, w.key, 2*time.Hour)
 	if err != nil {
 		return err
 	}
@@ -143,11 +143,13 @@ type runWork struct {
 	fp     string
 	pl     plan
 	stages []rung
+	key    string // the source: the upload's master where the manifest has it now
 }
 
 // current loads a run's work; false when the run is superseded: the folder,
-// the upload's blob or the preset's fingerprint changed, or the source is
-// gone.
+// the upload's blob or the preset's fingerprint (which covers its master)
+// changed, or the source is gone. The source is read where the manifest
+// names it: a release moves a master of its own to private/ mid-run.
 func (c WorkerConfig) current(ctx context.Context, run encodeRun) (runWork, bool, error) {
 	e := c.Encoder
 	var w runWork
@@ -168,8 +170,10 @@ func (c WorkerConfig) current(ctx context.Context, run encodeRun) (runWork, bool
 	if w.p, w.fp, ok = e.runPreset(w.item.Kind(), w.f, run.Spec); !ok {
 		return w, false, nil
 	}
-	obj, err := e.store.Head(ctx, run.SourceKey)
-	if errors.Is(err, mediastore.ErrNotFound) || err == nil && obj.ETag != run.SourceETag {
+	if w.key, err = w.item.Blob(mediastore.Input(w.f).Blob); err != nil {
+		return w, false, nil
+	}
+	if _, err := e.store.Head(ctx, w.key); errors.Is(err, mediastore.ErrNotFound) {
 		return w, false, nil
 	} else if err != nil {
 		return w, false, err

@@ -92,6 +92,11 @@ func InputHash(f media.File) string {
 	return blobHash(f.Blob)
 }
 
+// FrameOf reports frame upload f grabbed from video v's current master.
+func FrameOf(f, v media.File) bool {
+	return f.Frame != nil && f.Frame.Of != "" && blobHash(f.Frame.Of) == InputHash(v)
+}
+
 func blobHash(ref string) string {
 	_, h, _ := layout.SplitBlobRef(ref)
 	return h

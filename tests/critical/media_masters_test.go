@@ -15,6 +15,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -75,6 +76,40 @@ func (h *invertHook) Process(_ context.Context, in media.MasterInput) (media.Mas
 		return media.MasterOutput{}, err
 	}
 	return media.MasterOutput{Type: media.MasterPNG}, w.Close()
+}
+
+// negateHook is a video master hook: every pixel negated, written as FFV1 in
+// Matroska with the source's other tracks, as a restoration hook would.
+type negateHook struct{ calls atomic.Int64 }
+
+func (*negateHook) Name() string    { return "negate" }
+func (*negateHook) Version() string { return "1" }
+
+func (h *negateHook) Process(ctx context.Context, in media.MasterInput) (media.MasterOutput, error) {
+	h.calls.Add(1)
+	if !strings.HasPrefix(in.Type, "video/") {
+		return media.MasterOutput{Unchanged: true}, nil
+	}
+	out, err := exec.CommandContext(ctx, "ffmpeg", "-nostdin", "-v", "error", "-y", "-i", in.Path, "-map", "0",
+		"-vf", "negate", "-c:v", "ffv1", "-c:a", "copy", "-f", "matroska", in.Out).CombinedOutput()
+	if err != nil {
+		return media.MasterOutput{}, fmt.Errorf("negate %s: %v: %s", in.File, err, out)
+	}
+	return media.MasterOutput{Type: media.MasterMatroska}, nil
+}
+
+// fetchPNG decodes the PNG at url.
+func fetchPNG(t *testing.T, url string) image.Image {
+	t.Helper()
+	res, err := http.Get(url)
+	must(t, err)
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("GET %s: HTTP%d", url, res.StatusCode)
+	}
+	img, err := png.Decode(res.Body)
+	must(t, err)
+	return img
 }
 
 // negative is img with every pixel negated.
@@ -507,6 +542,130 @@ func TestMediaMasters(t *testing.T) {
 		must(t, err)
 		if len(now.Files) != len(read.Files) || len(now.Files) == 0 || now.Files[0].Path != read.Files[0].Path {
 			t.Fatalf("a failed hook changed what readers get: %d -> %d files", len(read.Files), len(now.Files))
+		}
+	})
+
+	t.Run("CK-J09-S52_a_video_master_rederives_its_renditions_sprite_frames_and_thumbnails", func(t *testing.T) {
+		f := newTinyHLSConfiguredFixture(t, false, withPosters)
+		admin := f.app.engine.Client()
+		at := 1.0
+		_, err := admin.PostMediaUploadCommit(t.Context(), media.CommitBody{Ref: f.Ref, OperationID: uuid.NewString(), Ops: []media.Op{{Op: media.OpFrame, Path: "poster", T: &at}}})
+		must(t, err)
+		oldPoster := fetchPNG(t, awaitPoster(t, admin, f.Ref).URL)
+		settleMedia(t, f.world.pool, f.app.cfg.Media.WorkerSchema)
+		manifests, cref := failureManifests(t, f.resilientMedia, f.Ref)
+		before, _, err := manifests.Get(t.Context(), cref)
+		must(t, err)
+		hook := &negateHook{}
+		f.restart(t, func(c *ck.Config, wc *worker.Config) {
+			for i := range c.Media.Kinds {
+				if c.Media.Kinds[i].Name == "clip" {
+					c.Media.Kinds[i].Master = &media.Recipe{Steps: []media.RecipeStep{{Hook: "negate", Version: "1"}}}
+				}
+			}
+			wc.Hooks = []media.MasterHook{hook}
+		})
+		n, err := f.app.engine.RegenerateMedia(t.Context(), media.Regeneration{Kind: "clip", IDs: []string{f.Ref.ID}})
+		must(t, err)
+		if n != 1 {
+			t.Fatalf("a regeneration of one clip queued %d", n)
+		}
+		// Everything derived from the video follows its new master: the HLS
+		// renditions with their sprite, the grabbed poster and its thumbnail.
+		var after *mediastore.Manifest
+		waitForWithin(t, 120*time.Second, func() bool {
+			cur, _, err := manifests.Get(t.Context(), cref)
+			must(t, err)
+			v, _ := cur.Get("source.mp4")
+			if v.Master == nil || v.Master.Of == "" || layout.BlobArea(v.Master.Blob) != layout.AreaPrivate {
+				return false
+			}
+			made := blobHashOf(v.Master.Blob)
+			outs := cur.Outputs("source.mp4", "stream")
+			if len(outs) == 0 {
+				return false
+			}
+			for _, o := range outs {
+				if o.Input != made || !layout.Served(layout.BlobArea(o.Blob)) {
+					return false
+				}
+			}
+			p, _ := cur.Get("poster.png")
+			thumbs := cur.Outputs("poster.png", "poster")
+			if p.Frame == nil || blobHashOf(p.Frame.Of) != made || len(thumbs) != 1 || thumbs[0].Input != blobHashOf(p.Blob) {
+				return false
+			}
+			after = cur
+			return true
+		})
+		settleMedia(t, f.world.pool, f.app.cfg.Media.WorkerSchema)
+		video, _ := after.Get("source.mp4")
+		was, _ := before.Get("source.mp4")
+		if video.Blob != was.Blob || video.Master.Of != blobHashOf(video.Blob) || video.Master.Type != media.MasterMatroska || hook.calls.Load() != 1 {
+			t.Fatalf("video master %+v of original %s; the hook ran %d times", video.Master, video.Blob, hook.calls.Load())
+		}
+		item, err := f.registry.Item(cref)
+		must(t, err)
+		key, err := item.Blob(video.Master.Blob)
+		must(t, err)
+		rc, _, err := f.storage.store.Get(t.Context(), key, media.GetOptions{})
+		must(t, err)
+		stored, err := io.ReadAll(rc)
+		rc.Close()
+		must(t, err)
+		if !bytes.HasPrefix(stored, []byte{0x1a, 0x45, 0xdf, 0xa3}) || !bytes.Contains(stored, []byte("FFV1")) {
+			t.Fatal("the video master is not FFV1 in Matroska")
+		}
+		old := map[string]media.File{}
+		for _, o := range before.Outputs("source.mp4", "stream") {
+			old[o.Path] = o
+		}
+		sprite := false
+		for _, o := range after.Outputs("source.mp4", "stream") {
+			if prev, ok := old[o.Path]; ok && (prev.Blob == o.Blob || prev.FP == o.FP) {
+				t.Fatalf("%s was not re-derived from the new master", o.Path)
+			}
+			sprite = sprite || o.Track != nil && o.Track.Kind == media.TrackSprite
+		}
+		if !sprite {
+			t.Fatal("the new master has no sprite")
+		}
+		poster, _ := after.Get("poster.png")
+		oldFrame, _ := before.Get("poster.png")
+		thumb, oldThumb := after.Outputs("poster.png", "poster")[0], before.Outputs("poster.png", "poster")[0]
+		if poster.Blob == oldFrame.Blob || poster.Frame.T != oldFrame.Frame.T || thumb.Blob == oldThumb.Blob {
+			t.Fatalf("the poster %s and its thumbnail %s were not made again", poster.Blob, thumb.Blob)
+		}
+		var newPoster media.FileInfo
+		for _, file := range editorRead(t, admin, f.Ref).Files {
+			if file.Upload && file.Path == "poster.png" {
+				newPoster = file
+			}
+		}
+		grabbed := fetchPNG(t, newPoster.URL)
+		if near, far := frameDistance(grabbed, negative(oldPoster)), frameDistance(grabbed, oldPoster); near > 8 || far < 4*near+20 {
+			t.Fatalf("the poster is not grabbed from the negated master: %.1f from the negative, %.1f from the old poster", near, far)
+		}
+		// Readers stream the new renditions.
+		master, err := f.Reader.GetMediaVersionHls(t.Context(), f.Ref.Kind, f.Ref.ID, f.Ref.Version, f.MasterPath, ck.GetMediaVersionHlsQuery{})
+		must(t, err)
+		child, err := f.Reader.GetMediaVersionHls(t.Context(), f.Ref.Kind, f.Ref.ID, f.Ref.Version, path.Join(path.Dir(f.MasterPath), playlistURIForTest(t, master.Body)), ck.GetMediaVersionHlsQuery{})
+		must(t, err)
+		served := false
+		for _, o := range after.Outputs("source.mp4", "stream") {
+			served = served || o.Track != nil && o.Track.Kind == media.TrackVideo && bytes.Contains(child.Body, []byte(blobHashOf(o.Blob)))
+		}
+		if master.Status != http.StatusOK || !served {
+			t.Fatalf("readers do not stream the new renditions: HTTP%d %s", master.Status, child.Body)
+		}
+		// The same recipe again: nothing is made or written.
+		_, err = f.app.engine.RegenerateMedia(t.Context(), media.Regeneration{Kind: "clip", IDs: []string{f.Ref.ID}})
+		must(t, err)
+		settleMedia(t, f.world.pool, f.app.cfg.Media.WorkerSchema)
+		again, _, err := manifests.Get(t.Context(), cref)
+		must(t, err)
+		if again.Rev != after.Rev || hook.calls.Load() != 1 {
+			t.Fatalf("a current video master was made again: revision %d -> %d, %d hook runs", after.Rev, again.Rev, hook.calls.Load())
 		}
 	})
 

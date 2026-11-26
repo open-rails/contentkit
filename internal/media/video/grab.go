@@ -19,8 +19,9 @@ import (
 )
 
 // grabFrames grabs the frames of uploads declaring Upload.Frames that have
-// none from their video's current blob: at Frame.T, or the first detailed
-// frame when Frame.Auto. A frame From another item's video is grabbed once.
+// none, or were grabbed from another master, from their video's current
+// master once it is made: at Frame.T, or the first detailed frame when
+// Frame.Auto. A frame From another item's video is grabbed once.
 // Each is recorded as the upload's PNG blob, at the video's display size
 // (the space of its edit), and handed to the image job.
 func (e *Encoder) grabFrames(ctx context.Context, item mediastore.Item) error {
@@ -47,7 +48,7 @@ func (e *Encoder) grabFrames(ctx context.Context, item mediastore.Item) error {
 				continue
 			}
 			ok = v.Path != ""
-		} else if v, ok = item.Kind().FramesVideo(man, f.Path); !ok || v.Blob == "" || f.Blob != "" && f.Frame.Of == v.Blob {
+		} else if v, ok = item.Kind().FramesVideo(man, f.Path); !ok || v.Blob == "" || f.Blob != "" && mediastore.FrameOf(f, v) || item.Kind().MasterPending(v) {
 			continue
 		}
 		if fail := v.Fail(); !ok || fail != nil || v.Gone || v.Blob == "" {
@@ -151,8 +152,12 @@ func (e *Encoder) grab(ctx context.Context, item mediastore.Item, f media.File, 
 	grabbed := media.File{Blob: blob}
 	err = e.publish(ctx, item, []media.File{grabbed}, func(m *mediastore.Manifest) error {
 		if f.Frame.From == nil {
-			if _, err := current(m, v.Path, v.Blob); err != nil {
+			cur, err := current(m, v.Path, v.Blob)
+			if err != nil {
 				return err
+			}
+			if mediastore.InputHash(cur) != mediastore.InputHash(v) {
+				return errStale // a new master: grabbed again from it
 			}
 		}
 		i := m.Find(f.Path)
@@ -168,7 +173,7 @@ func (e *Encoder) grab(ctx context.Context, item mediastore.Item, f media.File, 
 			return errStale // charged under another commit's policy
 		}
 		g.Blob, g.Type, g.Size, g.W, g.H, g.Failed = blob, "image/png", size, w, h, nil
-		g.Frame = &media.Frame{T: t, Auto: g.Frame.Auto, Of: v.Blob, From: g.Frame.From}
+		g.Frame = &media.Frame{T: t, Auto: g.Frame.Auto, Of: mediastore.Input(v).Blob, From: g.Frame.From}
 		if g.Edit.Check(w, h) != nil { // made for another shape: centred instead
 			g.Edit = nil
 		}

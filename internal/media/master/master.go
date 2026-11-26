@@ -275,11 +275,17 @@ func lossless(path, typ, original string) (media.Dims, error) {
 			return d, nil
 		}
 	case !image && typ == media.MasterMatroska:
-		if bytes.HasPrefix(head, []byte{0x1a, 0x45, 0xdf, 0xa3}) && bytes.Contains(head, []byte("V_FFV1")) {
+		if bytes.HasPrefix(head, []byte{0x1a, 0x45, 0xdf, 0xa3}) && ffv1(head) {
 			return media.Dims{}, nil
 		}
 	}
 	return media.Dims{}, fmt.Errorf("%w (got %s for %s)", media.ErrMasterFormat, typ, original)
+}
+
+// ffv1 finds FFV1 in a Matroska header: codec V_FFV1, or the Video for
+// Windows mapping (fourcc FFV1) older FFmpeg muxers write.
+func ffv1(head []byte) bool {
+	return bytes.Contains(head, []byte("V_FFV1")) || bytes.Contains(head, []byte("V_MS/VFW/FOURCC")) && bytes.Contains(head, []byte("FFV1"))
 }
 
 // webpLossless is a lossless WebP's size: a VP8L image, no lossy chunk.

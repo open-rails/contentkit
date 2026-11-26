@@ -3739,6 +3739,18 @@
       ]
     },
     {
+      "id": "CK-J09-S52",
+      "journey": "CK-J09",
+      "behavior": "A video hook's master (FFV1 in Matroska, its own object, released to private/) re-derives everything made from the video: every HLS rendition and the seek sprite record its hash, the grabbed poster is grabbed again from it and its thumbnail rendered again, readers stream the new renditions, and a repeat regeneration writes nothing",
+      "status": "verified",
+      "evidence": [
+        "contentkit#304: real bucket (MinIO in CI), real PostgreSQL, FFmpeg, engine and a worker built by media/worker.New with the hook."
+      ],
+      "cases": [
+        "TestMediaMasters/CK-J09-S52_a_video_master_rederives_its_renditions_sprite_frames_and_thumbnails"
+      ]
+    },
+    {
       "id": "CK-J09-S53",
       "journey": "CK-J09",
       "behavior": "A host's own worker binary, media/worker.Main with its master hook, makes the recipe's masters; media/worker.New refuses a recipe's missing hook, another version and two hooks of one name, and the stock worker binary exits at start, taking no job, while a recipe names a hook it lacks",

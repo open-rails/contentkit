@@ -30,6 +30,8 @@ type tinyHLSFixture struct {
 	MasterPath, ChildPath, SegmentURL string
 	Reader                            *ck.Client
 	private                           bool
+	worker                            worker.Config
+	stop                              func(*testing.T)
 }
 
 func newTinyHLSFixture(t *testing.T, private ...bool) *tinyHLSFixture {
@@ -56,22 +58,9 @@ func newTinyHLSConfiguredFixture(t *testing.T, private bool, configure func(*ck.
 	config.VideoCodecs = []media.Codec{media.CodecH264}
 	config.VideoEncoder, config.Preset, config.TopPreset = "cpu", "ultrafast", "ultrafast"
 	config.TempDir = t.TempDir()
-	w, err := worker.New(t.Context(), config)
-	must(t, err)
-	run, cancel := context.WithCancel(context.Background())
-	done := make(chan error, 1)
-	go func() { done <- w.Run(run) }()
-	t.Cleanup(func() {
-		cancel()
-		select {
-		case err := <-done:
-			if err != nil {
-				t.Errorf("stop tiny-video worker: %v", err)
-			}
-		case <-time.After(20 * time.Second):
-			t.Error("tiny-video worker did not stop")
-		}
-	})
+	f := &tinyHLSFixture{resilientMedia: m, MasterPath: "streams/master.m3u8", worker: config, private: private}
+	f.startWorker(t)
+	t.Cleanup(func() { f.stop(t) })
 	source := filepath.Join(t.TempDir(), "source.mp4")
 	command := exec.CommandContext(t.Context(), "ffmpeg", "-nostdin", "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=256x144:rate=12", "-t", "2", "-an", "-c:v", "libx264", "-threads", "1", "-preset", "ultrafast", "-pix_fmt", "yuv420p", "-movflags", "+faststart", source)
 	if output, err := command.CombinedOutput(); err != nil {
@@ -79,12 +68,8 @@ func newTinyHLSConfiguredFixture(t *testing.T, private bool, configure func(*ck.
 	}
 	data, err := os.ReadFile(source)
 	must(t, err)
-	f := &tinyHLSFixture{resilientMedia: m, Source: data, MasterPath: "streams/master.m3u8", Reader: m.app.client(""), private: private}
-	if f.private {
-		// This fixture checks media capability scope, not billing grants.
-		// The authorized editor receives an ordinary completed-reader view.
-		f.Reader = m.app.engine.Client()
-	}
+	f.Source = data
+	f.setReader()
 	f.Ref = f.addClip(t, "Tiny public HLS")
 	master, err := f.Reader.GetMediaVersionHls(t.Context(), f.Ref.Kind, f.Ref.ID, f.Ref.Version, f.MasterPath, ck.GetMediaVersionHlsQuery{})
 	must(t, err)
@@ -102,6 +87,56 @@ func newTinyHLSConfiguredFixture(t *testing.T, private bool, configure func(*ck.
 		t.Fatalf("child playlist bypasses the media host: %s", f.SegmentURL)
 	}
 	return f
+}
+
+func (f *tinyHLSFixture) setReader() {
+	f.Reader = f.app.client("")
+	if f.private {
+		// This fixture checks media capability scope, not billing grants.
+		// The authorized editor receives an ordinary completed-reader view.
+		f.Reader = f.app.engine.Client()
+	}
+}
+
+func (f *tinyHLSFixture) startWorker(t *testing.T) {
+	t.Helper()
+	w, err := worker.New(t.Context(), f.worker)
+	must(t, err)
+	run, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- w.Run(run) }()
+	f.stop = func(t *testing.T) {
+		cancel()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Errorf("stop tiny-video worker: %v", err)
+			}
+		case <-time.After(20 * time.Second):
+			t.Error("tiny-video worker did not stop")
+		}
+		f.stop = func(*testing.T) {}
+	}
+}
+
+// restart redeploys the engine and the worker once change has changed
+// their configuration.
+func (f *tinyHLSFixture) restart(t *testing.T, change func(*ck.Config, *worker.Config)) {
+	t.Helper()
+	a := f.app
+	a.server.Close()
+	must(t, a.engine.Close(t.Context()))
+	f.stop(t)
+	change(&a.cfg, &f.worker)
+	var err error
+	f.worker.Kinds, err = a.cfg.MediaKinds()
+	must(t, err)
+	a.engine, err = ck.New(t.Context(), a.cfg, a.deps)
+	must(t, err)
+	a.server = mountEngine(t, a.engine)
+	must(t, a.engine.StartJobs(t.Context()))
+	f.setReader()
+	f.startWorker(t)
 }
 
 func (f *tinyHLSFixture) addSiteClip(t *testing.T) media.RefBody {
