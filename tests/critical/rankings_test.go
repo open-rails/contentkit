@@ -341,11 +341,11 @@ func TestPopularity(t *testing.T) {
 		p.t = t
 		monthAgo := time.Date(p.today.Year(), p.today.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, -2, 0)
 		F := p.article("F read 20 days ago", old, nil)
-		G := p.article("G read yesterday", old, nil)
+		G := p.article("G read two days ago", old, nil)
 		H := p.article("H read two months ago", monthAgo.AddDate(0, 0, -10), nil)
 		I := p.article("I read later that month", monthAgo.AddDate(0, 0, -10), nil)
 		p.seed(daily{id: F, day: day(20), class: "good", people: 10},
-			daily{id: G, day: day(1), class: "good", people: 3},
+			daily{id: G, day: day(2), class: "good", people: 3},
 			daily{id: H, day: monthAgo.AddDate(0, 0, 2), class: "good", people: 4},
 			daily{id: I, day: monthAgo.AddDate(0, 0, 3), class: "good", people: 2})
 		must(t, boolError(p.precompute()))
@@ -401,13 +401,13 @@ func TestPopularity(t *testing.T) {
 	t.Run("CK-J07-S56_trending_ranks_per_live_day", func(t *testing.T) {
 		p.t = t
 		N := p.article("N live all week", day(20), nil)
-		O := p.article("O live since yesterday", day(1), nil)
-		for n := 1; n <= 6; n++ {
+		O := p.article("O live for two days", day(2), nil)
+		for n := 2; n <= 6; n++ {
 			p.seed(daily{id: N, day: day(n), class: "good", people: 2})
 		}
-		p.seed(daily{id: O, day: day(1), class: "good", people: 5})
+		p.seed(daily{id: O, day: day(2), class: "good", people: 8})
 		must(t, boolError(p.precompute()))
-		// 12 good reads over six-plus days trail 5 over one-plus.
+		// 10 good reads over six-plus live days trail 8 over two-plus.
 		p.order(main, ck.GetContentsQuery{Window: "week"}, O, N)
 		p.order(main, ck.GetContentsQuery{Window: "30d"}, N, O)
 	})

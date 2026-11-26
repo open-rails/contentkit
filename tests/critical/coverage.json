@@ -3882,7 +3882,7 @@
       "behavior": "Trending divides by the days a gallery was live",
       "status": "verified",
       "evidence": [
-        "In the week, 5 good reads of an article live since yesterday beat 12 over six days; in 30d the order reverses.",
+        "In the week, 8 good reads of an article live for two days beat 10 over six; in 30d the order reverses.",
         "contentkit#300: written against real PostgreSQL and ClickHouse with the engine's own precompute job; not executed locally, CI runs it."
       ],
       "cases": [
