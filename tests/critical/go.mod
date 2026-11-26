@@ -112,8 +112,8 @@ require (
 	github.com/open-rails/contentkit/adapters/openrails v0.11.0
 	github.com/open-rails/contentkit/server v0.11.0
 	github.com/open-rails/helpers v1.22.1
-	github.com/open-rails/migratekit v1.12.0
-	github.com/open-rails/openrails v0.283.1-0.20261125213256-71a8a703b5d9
+	github.com/open-rails/migratekit v1.13.0
+	github.com/open-rails/openrails v0.284.0
 	github.com/paulmach/orb v0.14.0 // indirect
 	github.com/philhofer/fwd v1.2.0 // indirect
 	github.com/pierrec/lz4/v4 v4.1.33 // indirect

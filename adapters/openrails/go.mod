@@ -6,7 +6,7 @@ toolchain go1.26.11
 
 require (
 	github.com/open-rails/contentkit v0.128.1
-	github.com/open-rails/openrails v0.283.1-0.20261125213256-71a8a703b5d9
+	github.com/open-rails/openrails v0.284.0
 )
 
 require (
@@ -62,7 +62,7 @@ require (
 	github.com/oasisprotocol/curve25519-voi v0.0.0-20251114093237-2ab5a27a1729 // indirect
 	github.com/open-rails/authkit v1.57.0 // indirect
 	github.com/open-rails/helpers v1.22.1 // indirect
-	github.com/open-rails/migratekit v1.12.0 // indirect
+	github.com/open-rails/migratekit v1.13.0 // indirect
 	github.com/paulmach/orb v0.14.0 // indirect
 	github.com/pierrec/lz4/v4 v4.1.33 // indirect
 	github.com/redis/go-redis/v9 v9.23.0 // indirect

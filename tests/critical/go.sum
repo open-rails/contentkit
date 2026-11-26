@@ -210,10 +210,10 @@ github.com/open-rails/authkit v1.57.0 h1:Y6yebJW11Js5wFXTrX8GmXj458ECtM3KHKkNO4S
 github.com/open-rails/authkit v1.57.0/go.mod h1:G4gfpS95panM0Il2eZd3IxtMDvmjRlTjE5ut92vF7NI=
 github.com/open-rails/helpers v1.22.1 h1:TGSebGApvAiWwiSkmjv1RFP4ToX/hsJBeT4u/cuOklI=
 github.com/open-rails/helpers v1.22.1/go.mod h1:zYjaT7bwVqSiLYgXw+qvqw2hgLxnIFNzsEjEvscK4xw=
-github.com/open-rails/migratekit v1.12.0 h1:2W3WWJs3uNKfBj5/7jT4aTxFVqmBxw8qE1jPCKj6WNM=
-github.com/open-rails/migratekit v1.12.0/go.mod h1:ONDMUycRcwAB+eKlPvho6mnNAZf9gf9+yqwCKDRuO9g=
-github.com/open-rails/openrails v0.283.1-0.20261125213256-71a8a703b5d9 h1:JcGkmt+S8AhQpw1bz/1+sEPftAT9rTALpPbSXsr4Etg=
-github.com/open-rails/openrails v0.283.1-0.20261125213256-71a8a703b5d9/go.mod h1:SxML78sGkIm6eLh9y+ORCje5oXyVlZNdQI0RojBTs4I=
+github.com/open-rails/migratekit v1.13.0 h1:9IYOZpvbszlWewiXTdD4MjuJ5beDwjdecw72xomUUog=
+github.com/open-rails/migratekit v1.13.0/go.mod h1:ONDMUycRcwAB+eKlPvho6mnNAZf9gf9+yqwCKDRuO9g=
+github.com/open-rails/openrails v0.284.0 h1:yjQWp/XgKrhafRZWF4aB/t5ixpYFXgt/nAqy7fp8m7U=
+github.com/open-rails/openrails v0.284.0/go.mod h1:A8SgzBKwByLAuOMcPKH5EccochB4x7u1//wB4W+fjyc=
 github.com/oschwald/geoip2-golang v1.13.0 h1:Q44/Ldc703pasJeP5V9+aFSZFmBN7DKHbNsSFzQATJI=
 github.com/oschwald/geoip2-golang v1.13.0/go.mod h1:P9zG+54KPEFOliZ29i7SeYZ/GM6tfEL+rgSn03hYuUo=
 github.com/oschwald/maxminddb-golang v1.13.0 h1:R8xBorY71s84yO06NgTmQvqvTvlS/bnYZrrWX1MElnU=
