@@ -105,7 +105,7 @@ func TestDeletedContentPurgeOwnsMedia(t *testing.T) {
 				return
 			}
 		}
-		if deletion && failDelete.Load() || failCheck.Load() && strings.HasSuffix(r.URL.Query().Get("prefix"), "_health/") {
+		if deletion && failDelete.Load() || failCheck.Load() && strings.HasSuffix(r.URL.Path, "/_probe/_health") {
 			if deletion {
 				deletes.Add(1)
 			}

@@ -48,7 +48,8 @@ type tables struct {
 	bannedWords   string
 	ipBans        string
 
-	preferenceSync string
+	preferenceSync   string
+	preferenceCursor string
 }
 
 func newStore(pool *pgxpool.Pool, schema, tenant string) *store {
@@ -74,7 +75,8 @@ func newStore(pool *pgxpool.Pool, schema, tenant string) *store {
 			bannedWords:   q("content_banned_words"),
 			ipBans:        q("content_ip_bans"),
 
-			preferenceSync: q("content_preference_sync"),
+			preferenceSync:   q("content_preference_sync"),
+			preferenceCursor: q("content_preference_cursor"),
 		},
 		revisionSeq: revisionSeqName(schema),
 	}

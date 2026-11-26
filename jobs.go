@@ -41,8 +41,7 @@ func (j *jobs) bound() *river.Client[pgx.Tx] {
 // The engine's schedules; each periodic run is unique per its period.
 const (
 	searchSyncEvery     = 5 * time.Minute // backstop: writes queue their own sync (syncDocuments)
-	preferenceSyncEvery = 5 * time.Minute
-	resyncEvery         = 24 * time.Hour
+	preferenceSyncEvery = time.Minute     // also samples the revision sequence that settles its rows
 	searchPruneEvery    = time.Hour
 	popularRefreshEvery = 5 * time.Minute
 )
@@ -98,7 +97,6 @@ func (j *jobs) contribution() riverhelpers.Contribution {
 			}, &river.PeriodicJobOpts{ID: "contentkit_entity_popular_refresh", RunOnStart: true}))
 		if e.hub.SignalsConfigured() { // their runs skip while it is down
 			periodic("contentkit_preference_sync", preferenceSyncEvery, preferenceSyncArgs{})
-			periodic("contentkit_preference_resync", resyncEvery, preferenceSyncArgs{Resync: true})
 			// A refresh can outlast its period; it never runs twice at once.
 			cfg.PeriodicJobs = append(cfg.PeriodicJobs, riverhelpers.NewPeriodicJob(cfg, popularRefreshEvery,
 				func() (river.JobArgs, *river.InsertOpts) {
@@ -221,29 +219,35 @@ func (w *searchPruneWorker) Work(ctx context.Context, _ *river.Job[searchPruneAr
 }
 
 type preferenceSyncArgs struct {
-	// Resync re-sends every exportable preference: the repair for sink loss.
-	Resync bool `json:"resync,omitempty"`
+	After int64 `json:"after,omitempty"`
 }
 
-func (preferenceSyncArgs) Kind() string { return "contentkit_preference_sync" }
+func (preferenceSyncArgs) Kind() string                      { return "contentkit_preference_sync" }
+func (a preferenceSyncArgs) FollowUp(id int64) river.JobArgs { a.After = id; return a }
 
-// preferenceSyncWorker sends reactions and favorites into the signal plane.
+// preferenceSyncWorker sends changed reactions and favorites into the signal
+// plane, each once.
 type preferenceSyncWorker struct {
 	river.WorkerDefaults[preferenceSyncArgs]
 	e *Engine
 }
 
+// Work runs one sync bounded by its budget and its job's timeout; a
+// backlog's next run follows at once.
 func (w *preferenceSyncWorker) Work(ctx context.Context, job *river.Job[preferenceSyncArgs]) error {
+	c := river.ClientFromContext[pgx.Tx](ctx)
+	if err := mediastore.WaitFor(ctx, c, job.Args.After); err != nil {
+		return err
+	}
 	h := w.e.hub
 	if !h.SignalPlane() {
 		return nil
 	}
-	if job.Args.Resync {
-		_, err := w.e.content.ResyncPreferences(ctx, h.SendPreferences)
+	report, err := w.e.content.SyncPreferences(ctx, h.SendPreferences)
+	if err != nil || !report.More {
 		return err
 	}
-	_, err := w.e.content.SyncPreferences(ctx, h.SendPreferences)
-	return err
+	return mediastore.InsertOnce(ctx, c.Insert, preferenceSyncArgs{After: job.ID}, river.InsertOpts{Queue: queueContentKit, MaxAttempts: 3})
 }
 
 type popularRefreshArgs struct{}

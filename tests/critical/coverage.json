@@ -793,6 +793,20 @@
       ]
     },
     {
+      "id": "CK-J07-S35",
+      "journey": "CK-J07",
+      "behavior": "Watching a video's encoded rendition to its end records a completion even where the rendition outlasts the stored duration_ms; a watched range past that duration plus its two-second tolerance is refused with 400",
+      "status": "verified",
+      "evidence": [
+        "A real H.264 video whose audio outlasts its video stream is encoded by the media worker and published; the watched range ends where the longest media playlist of its HLS ladder ends, read through the public HLS route, and the completed history lists it.",
+        "contentkit#302: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ],
+      "cases": [
+        "TestVideoCompletion/CK-J07-S35_watching_the_rendition_to_its_end_records_a_completion",
+        "TestVideoCompletion/CK-J07-S35_a_range_past_the_duration_and_its_tolerance_is_refused"
+      ]
+    },
+    {
       "id": "CK-J07-S20",
       "journey": "CK-J07",
       "behavior": "The shipped popularity grid uses host choices and prepared whole-day ranges",
@@ -992,6 +1006,21 @@
       ],
       "cases": [
         "TestChannelReadBoundary/CK-J07-S33_deleted_channel_metadata_is_not_public"
+      ]
+    },
+    {
+      "id": "CK-J07-S34",
+      "journey": "CK-J07",
+      "behavior": "The preference job sends each settled reaction and favorite once: a backlog larger than a run completes across deadline-limited runs without re-sending what earlier runs sent, a run with nothing new sends nothing, and a change is sent once after it settles",
+      "status": "verified",
+      "evidence": [
+        "The real preference job runs on a River fleet with a one-second job timeout over 20,000 imported reactions and favorites spread over twelve months; merges of the owned signals table are stopped, so its row count is every row sent. Only the engine clock that settles revision samples is controlled.",
+        "contentkit#301: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ],
+      "cases": [
+        "TestPreferenceSync/CK-J07-S34_backlog_completes_across_deadline_limited_runs_without_resending",
+        "TestPreferenceSync/CK-J07-S34_a_run_with_nothing_new_sends_nothing",
+        "TestPreferenceSync/CK-J07-S34_a_change_is_sent_once_after_it_settles"
       ]
     },
     {
@@ -2664,6 +2693,19 @@
       ]
     },
     {
+      "id": "CK-J03-S74",
+      "journey": "CK-J03",
+      "behavior": "Engine.Client is held to no per-viewer media read or interaction limit; every credential, a staff key included, stays limited",
+      "status": "verified",
+      "evidence": [
+        "Over real PostgreSQL/MinIO the in-process host reads a published gallery past a burst of two and edits a person's comment past a two-per-hour comment limit; a staff application key with owner authority is refused 429 rate_limited on its third read and the person on its third comment. Not executed locally; CI's critical run is its first execution."
+      ],
+      "cases": [
+        "TestHostClientSkipsViewerLimits/CK-J03-S74_host_reads_past_the_media_read_limit",
+        "TestHostClientSkipsViewerLimits/CK-J03-S74_host_edits_past_the_comment_limit"
+      ]
+    },
+    {
       "id": "CK-J30-S01",
       "journey": "CK-J30",
       "behavior": "Only predefined-choice polls accept creation, import and votes; choices lock after voting while scope, closure, final-vote and erasure counts remain correct; a deleted poll keeps no votes",
@@ -3168,6 +3210,19 @@
       "evidence": [
         "After a real MigrateClickHouse for the app, its engine without ClickHouse returns ErrSignalPlaneRequired and writes no receipt; a sibling app that never had a plane completes.",
         "contentkit#287: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
+      "id": "CK-J23-S09",
+      "journey": "CK-J23",
+      "behavior": "A preference batch racing an account erasure leaves no row of the erased account in the signal plane",
+      "status": "verified",
+      "evidence": [
+        "The signal plane's erasure fence lands after Postgres still holds the account's changed reaction; the job's plain multi-row insert lands it and the post-insert ledger check deletes it, while another account's change in the same batch stays.",
+        "contentkit#301: reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ],
+      "cases": [
+        "TestPreferenceSync/CK-J23-S09_a_preference_batch_racing_an_erasure_leaves_no_rows"
       ]
     },
     {

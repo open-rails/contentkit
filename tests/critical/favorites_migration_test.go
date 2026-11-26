@@ -25,13 +25,6 @@ import (
 	"github.com/open-rails/contentkit/kinds"
 )
 
-// preferenceResync is the engine's preference job asked to re-send every row.
-type preferenceResync struct {
-	Resync bool `json:"resync"`
-}
-
-func (preferenceResync) Kind() string { return "contentkit_preference_sync" }
-
 // TestFavoritesMigrateToBinaryKeys puts favorites back in their text-keyed
 // table, as the previous release left them, writes to it as that release's
 // code would between the migration's steps, and checks the conversion keeps
@@ -118,6 +111,8 @@ func TestFavoritesMigrateToBinaryKeys(t *testing.T) {
 		apply(previous, first-1)
 		sequence, err := migratekit.Sequence(steps[first].Name)
 		must(t, err)
+		last, err := migratekit.Sequence(steps[first+2].Name)
+		must(t, err)
 		exec(`CREATE TABLE ` + table("critical_converted") + ` AS TABLE ` + table("content_favorites"))
 		exec(`DROP TABLE ` + table("content_favorites"))
 		exec(`CREATE TABLE ` + table("content_favorites") + ` (LIKE ` + pgx.Identifier{previous, "content_favorites"}.Sanitize() + ` INCLUDING ALL)`)
@@ -126,8 +121,7 @@ func TestFavoritesMigrateToBinaryKeys(t *testing.T) {
  SELECT app_id::text, user_id::text, content_kind, content_id::text, content_version_id::text, value, revision,
  created_at, updated_at, anonymous_actor_id, import_source FROM ` + table("critical_converted"))
 		exec(`DROP TABLE ` + table("critical_converted"))
-		last, err := migratekit.Sequence(steps[first+2].Name)
-		must(t, err)
+		// Only the conversion is unrecorded; later migrations stay applied.
 		exec(`DELETE FROM public.migrations WHERE app='contentkit' AND schema=$1 AND sequence BETWEEN $2 AND $3`, w.schema, sequence, last)
 		account := func(n int) string { return fmt.Sprintf("00000000-0000-4000-8000-%012d", n) }
 		for id, accounts := range ranked {
@@ -257,7 +251,12 @@ func TestFavoritesMigrateToBinaryKeys(t *testing.T) {
 				return row.State == rivertype.JobStateCompleted
 			})
 		}
-		runJob(preferenceResync{Resync: true})
+		// A run samples the revision sequence after every write above; once
+		// that sample is an overlap old, the next sends every row up to it.
+		w.clock.set(w.clock.now().Add(time.Minute))
+		runJob(preferenceSyncJob{})
+		w.clock.set(w.clock.now().Add(content.DefaultPreferenceSyncOverlap + time.Minute))
+		runJob(preferenceSyncJob{})
 		preferences := func(query string, run func(string, ...any) ([]string, error)) []string {
 			t.Helper()
 			out, err := run(query, app)

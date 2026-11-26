@@ -152,16 +152,21 @@ func (s *Store) Capabilities(ctx context.Context) (media.Capabilities, error) {
 
 // Check reports whether the bucket answers, probing the capabilities while
 // they are unknown. New never dials, so hosts start without the bucket and
-// run Check as their S3 dependency probe.
+// run Check as their S3 dependency probe. Once they are known it reads one
+// fixed object, written on the first Check that finds none: a HEAD proves
+// reachability and the keys without a listing, which on a heavily sharded
+// bucket index reads every shard.
 func (s *Store) Check(ctx context.Context) error {
 	if s.caps.Load() == nil {
 		_, err := s.Capabilities(ctx)
 		return err
 	}
-	for _, err := range s.List(ctx, s.probe+"_health/") {
-		return err
+	key := s.probe + "_health"
+	_, err := s.Head(ctx, key)
+	if errors.Is(err, mediastore.ErrNotFound) {
+		_, err = s.Put(ctx, key, strings.NewReader(""), 0, media.PutOptions{})
 	}
-	return nil
+	return err
 }
 
 func (s *Store) Put(ctx context.Context, key string, body io.Reader, size int64, o media.PutOptions) (media.Object, error) {
