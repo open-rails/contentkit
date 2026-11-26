@@ -37,7 +37,7 @@ var (
 func TestImageShapePresets(t *testing.T) {
 	t.Run("CK-J09-S31_registry_validates_shapes_and_unmeasured_uploads_use_the_preset_image", func(t *testing.T) {
 		kind := func(p media.Private) media.Config {
-			return media.Config{Namespace: "shapes", Kinds: []media.Kind{{Name: "gallery",
+			return media.Config{Scope: newMediaScope(), Kinds: []media.Kind{{Name: "gallery",
 				Uploads: []media.Upload{{Path: "pages/{name}", Types: []string{"image/png"}, MaxBytes: 1 << 20}},
 				Private: []media.Private{p}}}}
 		}

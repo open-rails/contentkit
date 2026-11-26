@@ -1,7 +1,7 @@
 package media
 
 // CopyRequest stages a server-side copy of From, a key of the item's bucket
-// outside ContentKit's namespaces, as an upload at Path.
+// outside ContentKit's media layout (an importer's), as an upload at Path.
 type CopyRequest struct {
 	Path string `json:"path"`
 	Type string `json:"type"`

@@ -1524,14 +1524,14 @@
     {
       "id": "CK-J13-S04",
       "journey": "CK-J13",
-      "behavior": "Host/tenant/app mismatch and encoded traversal cannot fetch an object",
+      "behavior": "Host or bucket mismatch, unrouted account media and encoded traversal cannot fetch an object",
       "status": "verified",
       "evidence": [
-        "Existing objects under foreign host/tenant/app roots and encoded traversal forms404 despite valid-looking signatures; the real owning-root object remains available.",
+        "An unknown host, the same item's token for another bucket or without one, a key under a tenant/app prefix, account media on a host whose Route names no account bucket and encoded traversal forms 404 despite valid-looking signatures; the owning object remains available, account media is served once the Route names its bucket, and a host routed twice is refused.",
         "Reviewed against current public behavior; exact cases passed in integrated/focused race receipts retained with this task. Full qualification still requires every selected contract and one integrated execution."
       ],
       "cases": [
-        "TestGatewayCapabilities/CK-J13-S04_host_scope_and_encoded_traversal_refuse_existing_objects"
+        "TestGatewayCapabilities/CK-J13-S04_host_bucket_and_encoded_traversal_refuse_existing_objects"
       ]
     },
     {

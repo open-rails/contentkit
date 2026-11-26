@@ -19,7 +19,6 @@ import (
 	"github.com/open-rails/contentkit/catalog"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/gateway"
-	"github.com/open-rails/contentkit/media/layout"
 	"github.com/open-rails/contentkit/media/token"
 )
 
@@ -109,7 +108,7 @@ func TestMediaAdmissionBoundaries(t *testing.T) {
 			}
 		})
 		gw := m.storage.gatewayConfig
-		gw.Routes = []gateway.Route{{Host: "127.0.0.1", Scope: layout.Scope{TenantID: b.cfg.Scope.TenantID.String(), AppID: b.cfg.Scope.AppID.String()}, Bucket: m.storage.bucket}}
+		gw.Routes = []gateway.Route{{Host: "127.0.0.1", Bucket: m.storage.bucket}}
 		handler, err := gateway.New(gw)
 		must(t, err)
 		server := httptest.NewServer(handler)

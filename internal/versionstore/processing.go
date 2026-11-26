@@ -33,12 +33,11 @@ func Recorded(pool *pgxpool.Pool, riverSchema, contentSchema string, registry *m
 		if !k.Versions || ref.Version() == "" || m.Deleted != nil {
 			return nil, versions.Target{}, false, nil
 		}
-		catalog := k.NS()
-		if scope, scoped := registry.Scope(); scoped {
-			if err := tx.QueryRow(ctx, `SELECT catalog_key FROM `+pgxIdent(contentSchema, "content_app_bindings")+`
+		var catalog string
+		scope := registry.Scope()
+		if err := tx.QueryRow(ctx, `SELECT catalog_key FROM `+pgxIdent(contentSchema, "content_app_bindings")+`
  WHERE tenant_id=$1::uuid AND app_id=$2::uuid`, scope.TenantID, scope.AppID).Scan(&catalog); err != nil {
-				return nil, versions.Target{}, false, err
-			}
+			return nil, versions.Target{}, false, err
 		}
 		s := publicationService(pool, contentSchema, catalog, registry)
 		s.client = client
@@ -98,11 +97,10 @@ func PrepareDerivatives(pool *pgxpool.Pool, schema string, manifests *mediastore
 		if !k.Versions || ref.Version() == "" || k.Publish == nil {
 			return nil
 		}
-		tenant := k.NS()
-		if scope, ok := reg.Scope(); ok {
-			if err := pool.QueryRow(ctx, `SELECT catalog_key FROM `+pgxIdent(schema, "content_app_bindings")+` WHERE tenant_id=$1::uuid AND app_id=$2::uuid`, scope.TenantID, scope.AppID).Scan(&tenant); err != nil {
-				return err
-			}
+		var tenant string
+		scope := reg.Scope()
+		if err := pool.QueryRow(ctx, `SELECT catalog_key FROM `+pgxIdent(schema, "content_app_bindings")+` WHERE tenant_id=$1::uuid AND app_id=$2::uuid`, scope.TenantID, scope.AppID).Scan(&tenant); err != nil {
+			return err
 		}
 		s := publicationService(pool, schema, tenant, reg)
 		s.o.Logger = slog.Default()

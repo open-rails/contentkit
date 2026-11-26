@@ -18573,9 +18573,6 @@
           "base": {
             "type": "string"
           },
-          "namespace": {
-            "type": "string"
-          },
           "root": {
             "type": "string"
           },
@@ -18603,7 +18600,7 @@
           "name",
           "from",
           "base",
-          "namespace",
+          "root",
           "to",
           "widths"
         ]

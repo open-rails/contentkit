@@ -96,9 +96,6 @@ func (c Config) withScope() (Config, *Scope, error) {
 	}
 	if c.Media != nil {
 		mc := *c.Media
-		if mc.Namespace != "" {
-			return c, nil, errors.New("contentkit: scoped media derives its root; remove Media.Namespace")
-		}
 		wanted := layout.Scope{TenantID: scope.TenantID.String(), AppID: scope.AppID.String()}
 		if !mc.Scope.IsZero() && mc.Scope != wanted {
 			return c, nil, errors.New("contentkit: Media.Scope must be derived from Config.Scope")

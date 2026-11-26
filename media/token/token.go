@@ -3,10 +3,13 @@
 //
 //	{kid}.{exp}.base64url(HMAC-SHA256(secret, "{scope}|{exp}"))
 //
-// An item token's scope is an item's folder without its trailing slash,
-// "tenant/{t}/app/{a}/{kind}/{id}": every file in the item's private/ or
-// none. There are no per-file tokens. Tokens are bearer tokens, revoked only
-// by expiry (and by the item's deletion fence).
+// An item token's scope is the item's bucket and folder without its trailing
+// slash, "{bucket}/{kind}/{id}" (or "{bucket}/_accounts/{kind}/{id}"): every
+// file in the item's private/ or none. The bucket is the tenancy boundary, so
+// a token never opens another app's item of the same id, even through a
+// gateway holding one key for many apps. There are no per-file tokens.
+// Tokens are bearer tokens, revoked only by expiry (and by the item's
+// deletion fence).
 package token
 
 import (
@@ -130,17 +133,17 @@ func (r Ring) Sign(scope string, exp time.Time) string {
 	return r.current.ID + "." + e + "." + mac(r.current.Secret, scope, e)
 }
 
-// ItemScope is the scope of an item token for the item folder prefix.
-func ItemScope(prefix string) string { return strings.TrimSuffix(prefix, "/") }
+// ItemScope is the scope of an item token for the item folder prefix in bucket.
+func ItemScope(bucket, prefix string) string { return bucket + "/" + strings.TrimSuffix(prefix, "/") }
 
-// VerifyPrivate checks an item token for a private key: the token of the
-// item whose private/ holds key.
-func (r Ring) VerifyPrivate(tok, key string, now time.Time) error {
+// VerifyPrivate checks an item token for a private key in bucket: the token
+// of the item whose private/ holds key.
+func (r Ring) VerifyPrivate(tok, bucket, key string, now time.Time) error {
 	k, area, ok := keyFolder(key)
-	if !ok || area != layout.AreaPrivate {
+	if !ok || area != layout.AreaPrivate || bucket == "" {
 		return ErrInvalid
 	}
-	return r.VerifyScope(tok, ItemScope(k.Folder()), now)
+	return r.VerifyScope(tok, ItemScope(bucket, k.Folder()), now)
 }
 
 // VerifyScope checks tok for exactly scope at now.

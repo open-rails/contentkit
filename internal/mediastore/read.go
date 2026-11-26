@@ -51,6 +51,7 @@ type Reader struct {
 	o       ReaderOptions
 	reg     *Registry
 	ring    token.Ring
+	bucket  string // item tokens are bound to it
 	base    string
 	indexes *indexCache
 	issue   *issuance
@@ -103,6 +104,10 @@ func NewReader(o ReaderOptions) (*Reader, error) {
 	if err := d.Keys.Validate(); err != nil {
 		return nil, err
 	}
+	bucket := o.Manifests.store.Bucket()
+	if !layout.ValidSegment(bucket) {
+		return nil, fmt.Errorf("media: invalid bucket name %q", bucket)
+	}
 	ring := d.Keys
 	if d.TTL <= 0 {
 		d.TTL = time.Hour
@@ -125,7 +130,7 @@ func NewReader(o ReaderOptions) (*Reader, error) {
 	if o.Now == nil {
 		o.Now = time.Now
 	}
-	return &Reader{o: o, reg: reg, ring: ring, base: strings.TrimRight(reg.cfg.BaseURL, "/"),
+	return &Reader{o: o, reg: reg, ring: ring, bucket: bucket, base: strings.TrimRight(reg.cfg.BaseURL, "/"),
 		indexes: newIndexCache(o.IndexCacheBytes), issue: newIssuance(o.Issuance, o.Now, slog.Default())}, nil
 }
 
@@ -162,7 +167,7 @@ func (r *Reader) Grant(ctx context.Context, ref contentref.ContentRef, actor acc
 	if !res.Visible {
 		return nil, ErrNotVisible
 	}
-	scope := strings.TrimSuffix(item.Prefix(), "/")
+	scope := token.ItemScope(r.bucket, item.Prefix())
 	editorRead := res.Editor && resolve.EditorRead(ctx)
 	inspectionRead := !res.Editor && res.ReadRestricted && resolve.EditorRead(ctx)
 	if res.Full() || res.Editor || res.ReadRestricted {

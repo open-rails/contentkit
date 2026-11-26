@@ -4,9 +4,9 @@
 // A database journal records conditional manifest writes, pending allocations
 // and exact retirement effects, including interrupted uploads and caches.
 //
-// Scoped roots are tenant/<tenant>/app/<app>/<kind>/<item>/; versioned
-// content uses the version as the physical item ID. Account media uses
-// tenant/<tenant>/account/. Legacy roots remain documented in media/layout.
+// Each app has its own bucket: items are {kind}/{item}/, and versioned
+// content uses the version as the physical item ID. Account media is
+// _accounts/{kind}/{item}/ in the avatar primary's bucket (media/layout).
 package media
 
 import (
@@ -21,13 +21,12 @@ import (
 
 // Config is the app's media registry, as data (NewRegistry).
 type Config struct {
-	// Namespace is the app's own namespace, e.g. "doujins": its kinds' items
-	// live under {Namespace}/{kind}/{id}/.
-	Namespace string `json:"namespace,omitempty"`
-	// Scope derives object roots and internal partitions; Namespace is legacy-only.
-	Scope layout.Scope `json:"scope,omitzero"`
+	// Scope is the app (tenant and app IDs): its refs' namespace and
+	// database partitions. It is never part of an object key: the bucket is
+	// the app's own.
+	Scope layout.Scope `json:"scope"`
 	// BaseURL is the site's media origin, e.g. "https://media.doujins.ai":
-	// every URL is {BaseURL}/v1/{namespace}/{kind}/{id}/{public|private}/{name}.
+	// every URL is {BaseURL}/v1/{kind}/{id}/{public|private}/{name}.
 	// It is https; plain http only for a loopback host, since item tokens
 	// travel to it.
 	BaseURL string `json:"base_url,omitempty"`
@@ -57,10 +56,8 @@ var DefaultEditor = Image{Width: 2048, Height: 2048, Quality: 82}
 // validates it into a RegisteredKind.
 type Kind struct {
 	Name string `json:"name"`
-	// Namespace is "" for Config.Namespace, or a shared one such as
-	// "accounts" whose items every app importing the kind serves.
-	Namespace string `json:"namespace,omitempty"`
-	// Account places this kind in the tenant account root of a scoped registry.
+	// Account makes this kind the tenant's account media, shared by its
+	// apps: partitioned by tenant, under _accounts/ in the bucket.
 	Account bool `json:"account,omitempty"`
 	// Versions marks a content kind (ForContent). Each version owns its
 	// folder; its parent content exists in the catalog, not in storage.

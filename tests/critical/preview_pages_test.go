@@ -182,7 +182,7 @@ func TestLockedPreviewPages(t *testing.T) {
 		must(t, err)
 		ring, err := token.NewRing(m.key, nil)
 		must(t, err)
-		signed := m.gateway.URL + layout.URLPrefix + key + "?t=" + url.QueryEscape(ring.Sign(privateFileScope(key), time.Now().Add(time.Minute)))
+		signed := m.gateway.URL + layout.URLPrefix + key + "?t=" + url.QueryEscape(ring.Sign(privateFileScope(m.bucket, key), time.Now().Add(time.Minute)))
 		if got := status(signed); got != http.StatusOK {
 			t.Fatalf("a page past the preview is not served with its exact-file token: %d", got)
 		}

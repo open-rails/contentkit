@@ -115,7 +115,7 @@ func TestRestrictedMediaReadIsNotEditAuthority(t *testing.T) {
 	}
 	ring, err := mediatoken.NewRing(storage.key, nil)
 	must(t, err)
-	response, err := http.Get(storage.gateway.URL + "/v1/" + key + "?t=" + ring.Sign(folder, time.Now().Add(time.Minute)))
+	response, err := http.Get(storage.gateway.URL + "/v1/" + key + "?t=" + ring.Sign(mediatoken.ItemScope(storage.bucket, folder), time.Now().Add(time.Minute)))
 	must(t, err)
 	response.Body.Close()
 	if response.StatusCode != 404 {

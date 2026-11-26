@@ -15,11 +15,10 @@ import (
 )
 
 // RegisteredKind is a Kind NewRegistry validated and placed in its
-// namespace and scope.
+// namespace.
 type RegisteredKind struct {
 	media.Kind
-	ns       string
-	scope    layout.Scope
+	ns       string    // its refs' TenantID: the app's partition, or the tenant's for Account
 	patterns []pattern // parallel to Uploads
 }
 
@@ -263,8 +262,8 @@ func (k *RegisteredKind) EditBounds(path string) media.Image {
 }
 
 func (k *RegisteredKind) validate() error {
-	if !layout.ValidSegment(k.Name) || strings.HasPrefix(k.Name, "_") {
-		return errors.New("invalid name")
+	if !layout.ValidKind(k.Name) {
+		return errors.New("invalid or reserved name")
 	}
 	if len(k.Uploads) == 0 {
 		return errors.New("no uploads")

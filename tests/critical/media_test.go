@@ -27,7 +27,6 @@ import (
 	"github.com/open-rails/contentkit/internal/media/worker"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/gateway"
-	"github.com/open-rails/contentkit/media/layout"
 	medias3 "github.com/open-rails/contentkit/media/s3"
 	"github.com/open-rails/contentkit/media/token"
 	"github.com/riverqueue/river"
@@ -76,7 +75,7 @@ func newMediaStorage(t *testing.T, scope ck.Scope) *mediaWorld {
 	ring, err := token.NewRing(m.key, nil)
 	must(t, err)
 	m.gatewayConfig = gateway.Config{Endpoint: endpoint, AccessKeyID: user, SecretAccessKey: password, Ring: ring,
-		Routes: []gateway.Route{{Host: "127.0.0.1", Scope: layout.Scope{TenantID: scope.TenantID.String(), AppID: scope.AppID.String()}, Bucket: m.bucket, Origins: []string{"https://critical.invalid"}}}}
+		Routes: []gateway.Route{{Host: "127.0.0.1", Bucket: m.bucket, Origins: []string{"https://critical.invalid"}}}}
 	handler, err := gateway.New(m.gatewayConfig)
 	must(t, err)
 	m.gateway = httptest.NewServer(handler)
@@ -134,7 +133,7 @@ func attachMediaWith(t *testing.T, w *world, a *application, wrap func(media.Sto
 	accountStorage, accountPrimary, err := a.cfg.AccountMedia()
 	must(t, err)
 	if accountPrimary {
-		m.gatewayConfig.Routes = append(m.gatewayConfig.Routes, gateway.Route{Host: "127.0.0.1", Scope: layout.Scope{TenantID: a.cfg.Scope.TenantID.String()}, Bucket: m.bucket})
+		m.gatewayConfig.Routes[0].Accounts = m.bucket
 		handler, err := gateway.New(m.gatewayConfig)
 		must(t, err)
 		m.gateway.Close()
