@@ -1631,6 +1631,19 @@
       ]
     },
     {
+      "id": "CK-J13-S11",
+      "journey": "CK-J13",
+      "behavior": "A download outlives the host server's ReadTimeout and WriteTimeout: the archive route (ZIP, watermarked ZIP, a file's original or master) clears both deadlines once the request is read, so a slow reader gets every byte",
+      "status": "verified",
+      "cases": [
+        "TestDownloadOutlivesHostWriteTimeout/CK-J13-S11_a_slow_download_outlives_the_host_servers_WriteTimeout"
+      ],
+      "evidence": [
+        "The engine is mounted in an http.Server with a 2 s WriteTimeout and 4 KiB socket send buffers; a client with a 4 KiB receive buffer reads a released video's original download a KiB at a time over about 5 s and must receive it byte for byte. With only the read deadline cleared, the same server and client cut a 96 KiB body at 2.2 s (local net/http harness); clearing the write deadline completes it.",
+        "Reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
       "id": "CK-J16-S01",
       "journey": "CK-J16",
       "behavior": "Owned entity creates only the expected tenant/app authorization scope",
