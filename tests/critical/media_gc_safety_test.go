@@ -152,7 +152,7 @@ func TestMediaGCSafety(t *testing.T) {
 		// Its fence has expired: a withdrawal copies the same bytes back and
 		// names them while the next collection is under way, after it read
 		// the manifest.
-		clk.advance(settle)
+		clk.advance(settle + time.Second)
 		manifestKey := item.ManifestKey()
 		var rereferenced atomic.Bool
 		hooked.get = func(key string) {
