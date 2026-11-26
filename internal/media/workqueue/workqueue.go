@@ -17,9 +17,11 @@ import (
 	"time"
 
 	mediastore "github.com/open-rails/contentkit/internal/mediastore"
+	"github.com/open-rails/contentkit/internal/migrations"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5/stdlib"
 	riverhelpers "github.com/open-rails/helpers/river"
 	"github.com/open-rails/migratekit"
 	"github.com/riverqueue/river"
@@ -48,6 +50,9 @@ const (
 //go:embed migrations/*.sql
 var migrationFiles embed.FS
 
+// ledgerApp is the worker storage's migratekit identity.
+const ledgerApp = "contentkit-media-worker"
+
 var schemaName = regexp.MustCompile(`^[a-z_][a-z0-9_]{0,62}$`)
 
 // ValidSchema requires a lowercase Postgres identifier for the worker's schema.
@@ -75,12 +80,12 @@ func Migrate(ctx context.Context, pool *pgxpool.Pool, schema string) error {
 	if err != nil {
 		return fmt.Errorf("media/workqueue: load migrations: %w", err)
 	}
-	migrator, err := migratekit.NewPostgresFromPGXPool(pool, "contentkit-media-worker")
-	if err != nil {
+	db := stdlib.OpenDBFromPool(pool)
+	defer db.Close()
+	if err := migrations.RequireCurrentHistory(ctx, db, ledgerApp, schema, baseline); err != nil {
 		return err
 	}
-	defer migrator.Close()
-	if err := migrator.WithSchema(schema).ApplyMigrations(ctx, baseline); err != nil {
+	if err := migratekit.NewPostgres(db, ledgerApp).WithSchema(schema).WithImmutableMigrations().ApplyMigrations(ctx, baseline); err != nil {
 		return fmt.Errorf("media/workqueue: migrate %s: %w", schema, err)
 	}
 	return nil

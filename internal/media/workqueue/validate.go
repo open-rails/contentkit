@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/jackc/pgx/v5/stdlib"
+	"github.com/open-rails/contentkit/internal/migrations"
 	riverhelpers "github.com/open-rails/helpers/river"
 	"github.com/open-rails/migratekit"
 )
@@ -25,9 +26,16 @@ func Validate(ctx context.Context, pool *pgxpool.Pool, schema string) error {
 	if err != nil {
 		return err
 	}
+	steps, err := migratekit.Load(scripts, ".")
+	if err != nil {
+		return err
+	}
 	db := stdlib.OpenDBFromPool(pool)
 	defer db.Close()
-	if err := migratekit.ValidatePostgresMigrations(ctx, db, migratekit.MigrationSource{App: "contentkit-media-worker", Schema: schema, FS: scripts}); err != nil {
+	if err := migrations.RequireCurrentHistory(ctx, db, ledgerApp, schema, steps); err != nil {
+		return err
+	}
+	if err := migratekit.NewPostgres(db, ledgerApp).WithSchema(schema).ValidateAllApplied(ctx, steps); err != nil {
 		return fmt.Errorf("media/workqueue: run Migrate for %s: %w", schema, err)
 	}
 	name := pgx.Identifier{schema}.Sanitize()

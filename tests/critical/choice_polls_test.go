@@ -3,7 +3,6 @@ package critical_test
 import (
 	"io"
 	"net/http"
-	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -434,13 +433,10 @@ func TestDeletedPollKeepsNoVotes(t *testing.T) {
 		}})
 		must(t, err)
 		resent := result.IDs[importer.RecordPoll]["resent"]
-		var migrated, kept content.Poll
-		for _, p := range []*content.Poll{&migrated, &kept} {
-			*p, err = admin.PostPolls(t.Context(), input)
-			must(t, err)
-		}
+		kept, err := admin.PostPolls(t.Context(), input)
+		must(t, err)
 		polls := map[string][2]string{resent: {result.IDs[importer.RecordOption]["resent-yes"], result.IDs[importer.RecordOption]["resent-no"]},
-			migrated.ID: {migrated.Options[0].ID, migrated.Options[1].ID}, kept.ID: {kept.Options[0].ID, kept.Options[1].ID}}
+			kept.ID: {kept.Options[0].ID, kept.Options[1].ID}}
 		for id, options := range polls {
 			_, err := a.client(token).PostPollVote(t.Context(), id, content.PollVote{OptionID: options[0]})
 			must(t, err)
@@ -448,10 +444,9 @@ func TestDeletedPollKeepsNoVotes(t *testing.T) {
 			must(t, err)
 		}
 		// Deleted as before the fix: the votes stay.
-		_, err = w.pool.Exec(t.Context(), `UPDATE `+w.schema+`.content_poll_questions SET deleted_at=now() WHERE tenant_id=$1 AND id=ANY($2::uuid[])`, tenant, []string{resent, migrated.ID})
+		_, err = w.pool.Exec(t.Context(), `UPDATE `+w.schema+`.content_poll_questions SET deleted_at=now() WHERE tenant_id=$1 AND id=$2`, tenant, resent)
 		must(t, err)
 		votes(t, resent, 2, 1)
-		votes(t, migrated.ID, 2, 1)
 		write := func(batch importer.Batch) {
 			t.Helper()
 			result, err := admin.PostImport(t.Context(), batch)
@@ -462,18 +457,6 @@ func TestDeletedPollKeepsNoVotes(t *testing.T) {
 		}
 		write(importer.Batch{Source: "legacy-polls", Deletes: []importer.DeleteRecord{{Entity: importer.RecordPoll, ExternalID: "resent"}}})
 		votes(t, resent, 0, 0)
-		votes(t, migrated.ID, 2, 1)
-		migration, err := os.ReadFile("../../internal/migrations/postgres/0069_deleted_poll_votes.up.sql")
-		must(t, err)
-		tx, err := w.pool.Begin(t.Context())
-		must(t, err)
-		defer tx.Rollback(t.Context())
-		_, err = tx.Exec(t.Context(), `SELECT set_config('search_path', $1, true)`, w.schema)
-		must(t, err)
-		_, err = tx.Exec(t.Context(), string(migration))
-		must(t, err)
-		must(t, tx.Commit(t.Context()))
-		votes(t, migrated.ID, 0, 0)
 		votes(t, kept.ID, 2, 1)
 	})
 }

@@ -740,12 +740,10 @@ are `NULL` for unknown history, an empty string for native writes, and a nonempt
 string for an import source. Native writes, including same-value actions after an
 import, set the native marker. Import clears protect native-marked and
 other-source rows; non-clear imports update only their own source's rows.
-Hosts must select only their own historical imports when clearing unknown rows.
-PostgreSQL migration 0067 is additive: existing rows default to `NULL`, with no
-backfill or ownership inference from timestamps or account IDs.
+Hosts must select only their own historical imports when clearing unknown rows;
+nothing infers ownership from timestamps or account IDs.
 `LegacyReadingRecord.Removed` clears the separate legacy progress fact with its
-source change time in `LastReadAt` and optional `Revision`; native measured reading stays. ClickHouse migration 0002
-adds that tombstone. See [import details](docs/import.md) for ordering, bulk
+source change time in `LastReadAt` and optional `Revision`; native measured reading stays. See [import details](docs/import.md) for ordering, bulk
 recounts and host call examples.
 
 `closes_at` (optional, `PATCH`-able, `null` clears it) and `is_active = false`

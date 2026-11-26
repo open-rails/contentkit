@@ -188,6 +188,3 @@ CREATE TABLE IF NOT EXISTS content_media_items (
     CONSTRAINT content_media_items_status_check CHECK ((jsonb_typeof(status) = 'object'::text)),
     CONSTRAINT content_media_items_pkey PRIMARY KEY (tenant_id, content_kind, content_id, content_version_id)
 );
-
--- The chains before this baseline dropped the catalog's empty stand-in here.
-DROP TABLE IF EXISTS content_media_commits;

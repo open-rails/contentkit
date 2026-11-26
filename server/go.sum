@@ -238,6 +238,8 @@ github.com/open-rails/helpers v1.19.0/go.mod h1:Olub8akvlMMb6wxdVX15+9sTETLvNnyy
 github.com/open-rails/migratekit v1.11.2/go.mod h1:ONDMUycRcwAB+eKlPvho6mnNAZf9gf9+yqwCKDRuO9g=
 github.com/open-rails/migratekit v1.12.0 h1:2W3WWJs3uNKfBj5/7jT4aTxFVqmBxw8qE1jPCKj6WNM=
 github.com/open-rails/migratekit v1.12.0/go.mod h1:ONDMUycRcwAB+eKlPvho6mnNAZf9gf9+yqwCKDRuO9g=
+github.com/open-rails/migratekit v1.13.0 h1:9IYOZpvbszlWewiXTdD4MjuJ5beDwjdecw72xomUUog=
+github.com/open-rails/migratekit v1.13.0/go.mod h1:ONDMUycRcwAB+eKlPvho6mnNAZf9gf9+yqwCKDRuO9g=
 github.com/open-rails/openrails v0.266.0 h1:jiSflMyYaSw+TSvQ8FdFoPv3AUTUIYZDZdIXSk+09Wk=
 github.com/open-rails/openrails v0.266.0/go.mod h1:RTCLkrEETwfeba36Tpa351XVrLHXemj4shO+Nt/7reM=
 github.com/oschwald/geoip2-golang v1.13.0 h1:Q44/Ldc703pasJeP5V9+aFSZFmBN7DKHbNsSFzQATJI=

@@ -1313,13 +1313,6 @@ CREATE TABLE content_media_items (
     CONSTRAINT content_media_items_pkey PRIMARY KEY (tenant_id, content_kind, content_id, content_version_id)
 );
 
--- Empty: the chains before this baseline left it in a catalog-only schema.
-CREATE TABLE content_media_commits (
-    tenant_id text,
-    actor_id text,
-    effects jsonb
-);
-
 -- Management search reads names through these views.
 CREATE VIEW content_management_content_names AS
  SELECT c.tenant_id,

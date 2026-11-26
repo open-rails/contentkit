@@ -16,9 +16,11 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/open-rails/authkit/userinfo"
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/internal/locationpolicy"
+	"github.com/open-rails/contentkit/internal/migrations"
 	"github.com/open-rails/contentkit/kinds"
 )
 
@@ -59,11 +61,21 @@ func TestLocationRulesFromPostgres(t *testing.T) {
 	defer pool.Close()
 	schema := fmt.Sprintf("ck_location_labels_%d", time.Now().UnixNano())
 	qs := pgx.Identifier{schema}.Sanitize()
-	if _, err := pool.Exec(t.Context(), "CREATE SCHEMA "+qs); err != nil {
+	setup, err := pgxpool.New(t.Context(), dsn)
+	if err != nil {
 		t.Fatal(err)
 	}
-	defer pool.Exec(context.Background(), "DROP SCHEMA "+qs+" CASCADE")
-	tx, err := pool.Begin(t.Context())
+	defer setup.Close()
+	defer func() {
+		setup.Exec(context.Background(), "DROP SCHEMA IF EXISTS "+qs+" CASCADE")
+		setup.Exec(context.Background(), "DELETE FROM public.migrations WHERE schema = $1", schema)
+	}()
+	db := stdlib.OpenDBFromPool(setup)
+	defer db.Close()
+	if err := migrations.ApplyPostgres(t.Context(), db, schema); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := setup.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,29 +83,12 @@ func TestLocationRulesFromPostgres(t *testing.T) {
 	if _, err := tx.Exec(t.Context(), "SET LOCAL search_path TO "+qs); err != nil {
 		t.Fatal(err)
 	}
-	migration, err := os.ReadFile("../migrations/postgres/0070_location_rules.up.sql")
-	if err != nil {
-		t.Fatal(err)
-	}
 	if _, err := tx.Exec(t.Context(), `
-CREATE TABLE content_items (tenant_id text,id text,kind text,state text,PRIMARY KEY (tenant_id,id));
-CREATE TABLE content_versions (tenant_id text,id text,content_id text,state text,position int);
-CREATE TABLE content_version_text (tenant_id text,version_id text,language text,title text);
-CREATE TABLE content_entities (tenant_id text,id text,kind text,state text,PRIMARY KEY (tenant_id,id));
-CREATE TABLE content_entity_names (tenant_id text,entity_id text,language text,kind text,name text);
-CREATE TABLE content_erased_subjects (tenant_id text,actor_id text);
-INSERT INTO content_items VALUES ('tenant','one','article','draft'),('tenant','two','gallery','draft'),('tenant','deleted','article','deleted'),('other','foreign','article','draft');
-INSERT INTO content_versions VALUES ('tenant','v-de','one','draft',0),('tenant','v-en','one','draft',1),('tenant','fallback','two','draft',0),('tenant','removed','two','deleted',0),('other','v-foreign','one','draft',0);
-INSERT INTO content_version_text VALUES ('tenant','v-de','de','German'),('tenant','v-en','en','English'),('tenant','fallback','de','Fallback'),('tenant','removed','en','Deleted version'),('other','v-foreign','en','Foreign title');
-INSERT INTO content_entities VALUES ('tenant','tag','tag','active'),('tenant','deleted-tag','tag','deleted'),('other','foreign-tag','tag','active');
-INSERT INTO content_entity_names VALUES ('tenant','tag','de','name','German tag'),('tenant','tag','en','name','English tag'),('tenant','tag','en','alias','Alias'),('other','tag','en','name','Foreign tag');
-`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := tx.Exec(t.Context(), string(migration)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := tx.Exec(t.Context(), `
+INSERT INTO content_items (tenant_id,id,kind,state) VALUES ('tenant','one','article','draft'),('tenant','two','gallery','draft'),('tenant','deleted','article','deleted'),('other','foreign','article','draft'),('other','one','article','draft');
+INSERT INTO content_versions (tenant_id,id,content_id,state,position,languages,access) VALUES ('tenant','v-de','one','draft',0,'{de}','{}'),('tenant','v-en','one','draft',1,'{en}','{}'),('tenant','fallback','two','draft',0,'{de}','{}'),('tenant','removed','two','deleted',0,'{en}','{}'),('other','v-foreign','one','draft',0,'{en}','{}');
+INSERT INTO content_version_text (tenant_id,version_id,language,title) VALUES ('tenant','v-de','de','German'),('tenant','v-en','en','English'),('tenant','fallback','de','Fallback'),('tenant','removed','en','Deleted version'),('other','v-foreign','en','Foreign title');
+INSERT INTO content_entities (tenant_id,id,kind,slug,state) VALUES ('tenant','tag','tag','tag','active'),('tenant','deleted-tag','tag','deleted-tag','deleted'),('other','foreign-tag','tag','foreign-tag','active'),('other','tag','tag','tag','active');
+INSERT INTO content_entity_names (tenant_id,entity_id,language,kind,name) VALUES ('tenant','tag','de','name','German tag'),('tenant','tag','en','name','English tag'),('tenant','tag','en','alias','Alias'),('other','tag','en','name','Foreign tag');
 INSERT INTO content_location_rules (tenant_id,id,target,enabled,created_by,updated_by) VALUES
 ('tenant','first','content',true,'staff','staff'),
 ('tenant','second','content',true,'staff','staff'),

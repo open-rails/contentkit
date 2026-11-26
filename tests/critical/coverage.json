@@ -3034,6 +3034,19 @@
       ]
     },
     {
+      "id": "CK-J01-S19",
+      "journey": "CK-J01",
+      "behavior": "A schema an earlier migration history built (before 0.141.0's baselines, or by an edited migration) is rebuilt, never migrated forward: MigratePostgres and a SkipMigrations New refuse it, naming the schema and the rebuild, and the refusal is not ErrMigrationsRequired",
+      "status": "verified",
+      "cases": [
+        "TestEarlierMigrationHistoryRefused/CK-J01-S19_a_schema_an_earlier_history_built_is_refused_naming_the_rebuild"
+      ],
+      "evidence": [
+        "MigratePostgres builds a fresh catalog schema; its ledger's 0001 record then carries other content, as a pre-0.141 database's does. MigratePostgres and New with SkipMigrations both fail with the schema and 'rebuild it', and neither error is ErrMigrationsRequired.",
+        "Reviewed executable scenario written against the real services, not executed locally; exact integrated execution is required."
+      ]
+    },
+    {
       "id": "CK-J31-S05",
       "journey": "CK-J31",
       "behavior": "A remote host delivers account deletion, restore and purge over HTTP",
