@@ -34,7 +34,8 @@ type HandlerOptions struct {
 	// Limit is the per-viewer rate limit (default 2/s, burst 120, per
 	// process; set Limit.Redis to share it across replicas): every read,
 	// playlist and download counts.
-	// Viewers are keyed by Actor.ID, anonymous ones by their address.
+	// Viewers are keyed by Actor.ID, anonymous ones by their address; the
+	// engine's in-process client is not limited.
 	Limit RateLimit
 	// Events selects the retained processing log for this physical item.
 	Events func(contentref.ContentRef) (eventlog.Reader, error)
@@ -211,6 +212,10 @@ func limited(o HandlerOptions, log *slog.Logger) func(http.Handler) http.Handler
 func limit(lim *ratelimit.Limiter, next http.Handler, log *slog.Logger) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		actor := gate.Actor(req.Context())
+		if gate.IsHost(actor) {
+			next.ServeHTTP(w, req) // the engine's own client is no viewer
+			return
+		}
 		if ok, wait := lim.Allow(req.Context(), viewerKey(actor)); !ok {
 			log.Warn("media read rate limited", "viewer", actor.ID, "anonymous", actor.Anonymous, "path", req.URL.Path)
 			w.Header().Set("Retry-After", strconv.Itoa(max(1, int(math.Ceil(wait.Seconds())))))

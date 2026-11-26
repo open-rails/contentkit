@@ -619,7 +619,8 @@ Banned-word rules mask the stored name or reject it with `422 moderation_rejecte
 ## Interaction limits
 
 ContentKit limits each actor's interactions itself: the user id, or the IP
-for an anonymous actor (an actor with neither is not limited here). Hosts
+for an anonymous actor (an actor with neither, and `Engine.Client`, is not
+limited here; a credential, even a staff key, always is). Hosts
 keep no limiter around these routes; the edge (Traefik) keeps the generic
 per-IP ceiling. Every attempt spends one, so undoing (unfavorite,
 `DELETE .../reaction`) costs the same as doing. Each rate is "at most `Count`
@@ -1468,7 +1469,8 @@ the host's periodic jobs. The worker migrates its schema itself.
     every anonymous viewer in one count. The per-process count forgets some
     viewers once it is full, and they start again.
   - `HandlerOptions.Limit` bounds requests to the read API (at most `Burst`
-    per `Burst/PerSecond` per viewer; default 120 per minute).
+    per `Burst/PerSecond` per viewer; default 120 per minute). `Engine.Client`
+    is not a viewer and is not limited; every credential is.
   - The ingress of the media host limits downloads per IP (Traefik's
     `rateLimit`). Clients treat its 429 as "over the limit" and do not retry
     in a loop (the SDK does not).
