@@ -45,8 +45,10 @@ import (
 //
 // `publish-defaults` renders the default images the kinds' public presets
 // name (Public.Default) into each kind's _default item. It needs
-// MEDIA_KINDS_FILE and MEDIA_S3_*, no database. MEDIA_DEFAULTS_DIR holds the
-// host's own default images, over ContentKit's (media/avatar).
+// MEDIA_KINDS_FILE and MEDIA_S3_*; the avatar primary's account kind also
+// DATABASE_URL and MEDIA_ACCOUNT_SCHEMA, since every site reads its defaults
+// from the tenant account cache. MEDIA_DEFAULTS_DIR holds the host's own
+// default images, over ContentKit's (media/avatar).
 //
 // `rebuild` refills the database's item cache from the bucket's manifests
 // (the same environment as the worker).
@@ -192,7 +194,9 @@ func rebuild(ctx context.Context, log *slog.Logger) error {
 
 // publishDefaults renders the images the kinds' public presets name
 // (Public.Default) into each kind's _default item and its manifest, then
-// prints the kinds it wrote. Rendering again changes nothing.
+// prints the kinds it wrote. An account kind's are recorded in the tenant
+// account cache too, where every site reads them. Rendering again changes
+// nothing.
 func publishDefaults(ctx context.Context, out io.Writer) error {
 	kinds, err := kindsFromEnv()
 	if err != nil {
@@ -209,6 +213,22 @@ func publishDefaults(ctx context.Context, out io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("MEDIA_KINDS_FILE: %w", err)
 	}
+	var o mediastore.ManifestOptions
+	if kind := accountDefaults(reg); kind != "" {
+		if os.Getenv("DATABASE_URL") == "" || os.Getenv("MEDIA_ACCOUNT_SCHEMA") == "" {
+			return fmt.Errorf("kind %s is account media: its defaults are recorded in the tenant account cache, which needs DATABASE_URL and MEDIA_ACCOUNT_SCHEMA (the avatar primary's worker environment)", kind)
+		}
+		cfg, err := fromEnv(ctx)
+		if err != nil {
+			return err
+		}
+		defer cfg.Pool.Close()
+		cache, err := mediastore.NewPGCache(cfg.Pool, cfg.AccountSchema, reg, mediastore.CacheOptions{})
+		if err != nil {
+			return err
+		}
+		o.Written = cache.Record
+	}
 	store, err := storeFromEnv()
 	if err != nil {
 		return err
@@ -217,7 +237,7 @@ func publishDefaults(ctx context.Context, out io.Writer) error {
 	if err := store.Check(ctx); err != nil {
 		return fmt.Errorf("media store: %w", err)
 	}
-	manifests, err := mediastore.NewManifests(store, reg, mediastore.ManifestOptions{})
+	manifests, err := mediastore.NewManifests(store, reg, o)
 	if err != nil {
 		return err
 	}
@@ -229,6 +249,18 @@ func publishDefaults(ctx context.Context, out io.Writer) error {
 		}
 	}
 	return publishErr
+}
+
+// accountDefaults names an account kind with a default image, "" if none.
+func accountDefaults(reg *mediastore.Registry) string {
+	for _, k := range reg.Kinds() {
+		for _, p := range k.Public {
+			if k.Account && p.Default != "" {
+				return k.Name
+			}
+		}
+	}
+	return ""
 }
 
 // layered opens a name from the first file system that has it.

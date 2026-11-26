@@ -16,7 +16,8 @@ import (
 
 // PublishDefaults renders every kind's default public images into its
 // _default item: each output under its hash in public/, then the item's
-// manifest naming them (Registry.DefaultImage reads it). It returns the kinds
+// manifest naming them (Registry.DefaultImage reads it; an account kind's
+// from the cache the manifests' Written records it in). It returns the kinds
 // it wrote. Rendering again writes the same names and changes nothing.
 func PublishDefaults(ctx context.Context, manifests *mediastore.Manifests) ([]string, error) {
 	if err := start(); err != nil {

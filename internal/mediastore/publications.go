@@ -159,18 +159,61 @@ func hasDefault(p *media.Public) bool {
 	return p.Default != "" && !strings.Contains(p.To, "{name}")
 }
 
-// defaultImage reads the kind's defaults manifest: the preset's outputs of
-// its Default path.
+// defaultImage reads the kind's defaults manifest from the bucket.
 func (m *Manifests) defaultImage(ctx context.Context, k *RegisteredKind, p *media.Public) (media.PublicImage, bool) {
 	item := k.DefaultsItem()
 	cur, _, err := m.get(ctx, item.ManifestKey())
 	if err != nil {
 		return media.PublicImage{}, false
 	}
+	return m.reg.defaultOf(item, p, k.defaultImages(cur))
+}
+
+// defaultImage reads an account kind's defaults from its _default row.
+func (c *PGCache) defaultImage(ctx context.Context, k *RegisteredKind, p *media.Public) (media.PublicImage, bool) {
+	item := k.DefaultsItem()
+	rows, err := c.read(ctx, []contentref.ContentRef{item.Ref()})
+	if err != nil {
+		return media.PublicImage{}, false
+	}
+	row, ok := rows[item.Ref().Key()]
+	if !ok || row.Deleted {
+		return media.PublicImage{}, false
+	}
+	return c.reg.defaultOf(item, p, row.Images)
+}
+
+// defaultImages are a _default item's images: each public preset's outputs
+// of its Default.
+func (k *RegisteredKind) defaultImages(m *Manifest) []cachedImage {
+	out := []cachedImage{}
+	for i := range k.Public {
+		p := &k.Public[i]
+		if !hasDefault(p) {
+			continue
+		}
+		img := cachedImage{Path: p.Default, Preset: p.Name}
+		for _, o := range m.Outputs(p.Default, p.Name) {
+			if area, hash, ok := layout.SplitBlobRef(o.Blob); ok && area == layout.AreaPublic {
+				img.Renditions = append(img.Renditions, cachedRendition{Hash: hash, W: o.W, H: o.H})
+			}
+		}
+		if len(img.Renditions) > 0 {
+			out = append(out, img)
+		}
+	}
+	return out
+}
+
+// defaultOf is preset p's image among a _default item's images. From is
+// empty.
+func (r *Registry) defaultOf(item Item, p *media.Public, images []cachedImage) (media.PublicImage, bool) {
 	image := media.PublicImage{Preset: p.Name}
-	for _, o := range cur.Outputs(p.Default, p.Name) {
-		if area, hash, ok := layout.SplitBlobRef(o.Blob); ok && area == layout.AreaPublic {
-			image.Renditions = append(image.Renditions, media.PublicRendition{URL: m.reg.publicURL(item, hash), W: o.W, H: o.H})
+	for _, img := range images {
+		if img.Preset == p.Name && img.Path == p.Default {
+			for _, rend := range img.Renditions {
+				image.Renditions = append(image.Renditions, media.PublicRendition{URL: r.publicURL(item, rend.Hash), W: rend.W, H: rend.H})
+			}
 		}
 	}
 	return image, len(image.Renditions) > 0

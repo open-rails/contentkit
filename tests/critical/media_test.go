@@ -130,13 +130,29 @@ func attachMediaWith(t *testing.T, w *world, a *application, wrap func(media.Sto
 	}
 	accountStorage, accountPrimary, err := a.cfg.AccountMedia()
 	must(t, err)
-	if accountPrimary {
-		m.gatewayConfig.Routes[0].Accounts = m.bucket
+	// The route's accounts is the bucket of the tenant's avatar primary,
+	// attached first; a secondary serves its files from there.
+	accounts := ""
+	switch {
+	case accountPrimary:
+		accounts = m.bucket
+		w.avatarBuckets.Store(a.cfg.Scope.TenantID, m.bucket)
+	case a.cfg.Accounts != nil && a.cfg.Accounts.Avatars != nil:
+		bucket, ok := w.avatarBuckets.Load(a.cfg.Scope.TenantID)
+		if !ok {
+			t.Fatal("attach the tenant's avatar primary first")
+		}
+		accounts = bucket.(string)
+	}
+	if accounts != "" {
+		m.gatewayConfig.Routes[0].Accounts = accounts
 		handler, err := gateway.New(m.gatewayConfig)
 		must(t, err)
 		m.gateway.Close()
 		m.gateway = httptest.NewServer(handler)
 		a.cfg.Media.BaseURL = m.gateway.URL
+	}
+	if accountPrimary {
 		t.Cleanup(func() {
 			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 			defer cancel()

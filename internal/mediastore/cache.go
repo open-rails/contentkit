@@ -104,14 +104,23 @@ type cacheRow struct {
 // already holds this revision or a newer one. A row that moves forward runs
 // Recorded in the same transaction, appends a processing event when the
 // status changed, and then schedules processing and collection.
+//
+// A kind's defaults (its _default item) are no catalog item and have none of
+// that. An app kind's are read from its bucket and not cached; an account
+// kind's are, since every site of the tenant reads them here.
 func (c *PGCache) Record(ctx context.Context, item Item, m *Manifest, etag string) error {
-	if item.Ref().ContentID == layout.DefaultID {
-		return nil // a kind's defaults: no catalog item
+	k := item.Kind()
+	defaults := item.Ref().ContentID == layout.DefaultID
+	if defaults && !k.Account {
+		return nil
 	}
 	c = c.forTenant(item.Ref().TenantID)
-	k := item.Kind()
 	status := statusOf(k, m, media.EncodeStatus{})
-	images, err := json.Marshal(k.publicImages(m))
+	cached := k.publicImages(m)
+	if defaults {
+		cached = k.defaultImages(m)
+	}
+	images, err := json.Marshal(cached)
 	if err != nil {
 		return err
 	}
@@ -134,7 +143,7 @@ func (c *PGCache) Record(ctx context.Context, item Item, m *Manifest, etag strin
 	}
 	var advanced bool
 	err = pgx.BeginFunc(ctx, c.pool, func(tx pgx.Tx) error {
-		if c.o.Lock != nil {
+		if c.o.Lock != nil && !defaults {
 			if err := c.o.Lock(ctx, tx, item, m); err != nil {
 				return err
 			}
@@ -155,6 +164,9 @@ WHERE t.rev < EXCLUDED.rev`, ref.TenantID, ref.ContentKind, ref.ContentID, ref.V
 			return err
 		}
 		advanced = true
+		if defaults {
+			return nil
+		}
 		if c.o.Recorded != nil {
 			if err := c.o.Recorded(ctx, tx, item, m); err != nil {
 				return err
@@ -165,7 +177,7 @@ WHERE t.rev < EXCLUDED.rev`, ref.TenantID, ref.ContentKind, ref.ContentID, ref.V
 		}
 		return c.appendProcessing(ctx, tx, ref, fact, statusJSON)
 	})
-	if err != nil || !advanced {
+	if err != nil || !advanced || defaults {
 		return err
 	}
 	return c.followUp(ctx, item, m)

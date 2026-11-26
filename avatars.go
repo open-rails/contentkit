@@ -55,20 +55,20 @@ func (e *Engine) newAvatars(deps Deps) (*engineAvatars, error) {
 	out := &engineAvatars{images: e.media.cache, reg: e.media.reg, kind: kind.Name, preset: preset}
 	if a.Primary != "" {
 		// Its media host serves the primary's files: URLs are built at it.
-		// The primary records avatars in the tenant's account item cache,
-		// which this site reads; the kind's defaults are read from the bucket.
+		// The primary records avatars and the kind's defaults in the
+		// tenant's account item cache, which this site reads.
 		var err error
 		if out.reg, err = mediastore.NewRegistry(media.Config{Scope: e.media.reg.Config().Scope, BaseURL: e.media.reg.Config().BaseURL,
 			Kinds: []media.Kind{kind}, Avatars: media.Avatars{Kind: kind.Name, Preset: preset}}, mediastore.Hooks{}); err != nil {
 			return nil, fmt.Errorf("contentkit: Config.Accounts.Avatars: %w", err)
 		}
-		if _, err = mediastore.NewManifests(e.media.store, out.reg, mediastore.ManifestOptions{}); err != nil {
-			return nil, err
-		}
 		schema, _ := e.accountStorage()
-		if out.images, err = mediastore.NewPGCache(e.pool, schema, out.reg, mediastore.CacheOptions{}); err != nil {
+		accounts, err := mediastore.NewPGCache(e.pool, schema, out.reg, mediastore.CacheOptions{})
+		if err != nil {
 			return nil, err
 		}
+		out.reg.ReadAccountDefaults(accounts)
+		out.images = accounts
 		if out.forward, err = newAvatarForward(e, deps, kind, a); err != nil {
 			return nil, err
 		}
