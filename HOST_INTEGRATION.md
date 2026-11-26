@@ -774,8 +774,8 @@ cursor only after it succeeds. Comments and anonymous reaction/favorite/vote
 contributions remain, with their existing counts. Their fresh random actor
 key preserves one-person-per-work ranking across versions and interaction
 types. Reading statistics use that anonymous key too; the temporary account-to-key mapping is discarded on
-completion. Inbox, avatar, recent-search and provider cleanup remains part of
-the operation. A failure is retryable. No periodic erasure sweep is required:
+completion. Avatar, recent-search and provider cleanup remains part of
+the operation; AuthKit's purge has already erased the inbox. A failure is retryable. No periodic erasure sweep is required:
 the event reader keeps the obligation pending until completion. Normal startup
 allows unfinished purges, including ones the reader has not reached, and never
 waits on the avatar primary's receipt for them. The shared avatar URL can remain

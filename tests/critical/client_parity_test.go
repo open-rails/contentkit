@@ -68,7 +68,7 @@ func TestClientEquivalentStaffOperations(t *testing.T) {
 		}
 		server := httptest.NewServer(mux)
 		defer server.Close()
-		transport := &http.Client{Transport: bearerTransport{key.Secret, http.DefaultTransport}}
+		transport := &http.Client{Transport: bearerTransport{token: key.Secret, base: http.DefaultTransport}}
 		first := ck.NewClient(server.URL+"/nested/first/", transport)
 		second := ck.NewClient(server.URL+"/nested/second", transport)
 		before, err := first.GetManage(t.Context(), ck.GetManageQuery{})

@@ -44,8 +44,7 @@ func TestCredentialAndAppBoundary(t *testing.T) {
 		requireError(t, err, 401, "unauthorized")
 	})
 	t.Run("CK-J02-S03_expired_signed_credential_is_refused", func(t *testing.T) {
-		claims, err := w.tenant[0].Verify(t.Context(), token)
-		must(t, err)
+		claims := tokenClaims(t, token)
 		valid, err := w.tenant[0].MintAccessToken(t.Context(), alice.ID, iam.AccessTokenOptions{SessionID: claims.SessionID, TTL: time.Minute})
 		must(t, err)
 		_, err = a.client(valid.Value).GetContents(t.Context(), ck.GetContentsQuery{})
@@ -78,8 +77,7 @@ func TestCredentialAndAppBoundary(t *testing.T) {
 		client := a.client(token)
 		_, err := client.GetContents(t.Context(), ck.GetContentsQuery{})
 		must(t, err)
-		claims, err := w.tenant[0].Verify(t.Context(), token)
-		must(t, err)
+		claims := tokenClaims(t, token)
 		who := authtest.Identity(t, w.tenant[0], token)
 		must(t, w.tenant[0].RevokeSession(t.Context(), who, user.ID, claims.SessionID))
 		_, err = client.GetContents(t.Context(), ck.GetContentsQuery{})
@@ -148,7 +146,7 @@ func TestCredentialAndAppBoundary(t *testing.T) {
 		}
 		srv := httptest.NewServer(mux)
 		defer srv.Close()
-		client := ck.NewClient(srv.URL, &http.Client{Transport: bearerTransport{token, http.DefaultTransport}})
+		client := ck.NewClient(srv.URL, &http.Client{Transport: bearerTransport{test: t, auth: w.auth, token: token, base: http.DefaultTransport}})
 		_, err = client.GetContents(t.Context(), ck.GetContentsQuery{})
 		must(t, err)
 		authtest.GrantRole(t, w.tenant[0], a.group, iam.UserSubject(alice.ID), w.writer)

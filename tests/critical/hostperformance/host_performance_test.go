@@ -100,8 +100,10 @@ func (c *loggedCH) Query(ctx context.Context, q string, args ...any) (driver.Row
 }
 
 type fixture struct {
-	readerSignIn                       func() string
-	readerToken                        string
+	readerSignIn func() string
+	readerToken  string
+	// auth presents the reader's DPoP-bound session (authtest.Authorize).
+	auth                               *authkit.Client
 	pg                                 *pgTrace
 	t                                  *testing.T
 	app, kind, schema, db, tenant, out string
@@ -222,7 +224,7 @@ func newFixture(t *testing.T, app, out string) *fixture {
 	for _, p := range access.ChannelPermissions() {
 		channel.Declare(p)
 	}
-	ak, _ := authtest.New(t, authtest.WithConfig(func(c *authkit.Config) { c.Roles = roles; c.DefaultTenantID = iam.TenantID{} }), authtest.WithDeps(func(d *authkit.Deps) { d.Postgres = f.pool }))
+	ak, _ := authtest.New(t, authtest.WithConfig(func(c *authkit.Config) { c.Roles = roles; c.Tenancy = authkit.TenancyMulti }), authtest.WithDeps(func(d *authkit.Deps) { d.Postgres = f.pool }))
 	tid := iam.NewTenantID()
 	must(t, ak.CreateTenant(t.Context(), iam.Tenant{ID: tid, Slug: "ck-" + tid.String()}))
 	ta, e := ak.ForTenant(t.Context(), tid)
@@ -239,6 +241,7 @@ func newFixture(t *testing.T, app, out string) *fixture {
 	scope := ck.Scope{TenantID: ctid, AppID: aid}
 	f.tenant = aid.String()
 	reader := authtest.NewUser(t, ta)
+	f.auth = ta
 	f.readerSignIn = func() string { return authtest.SignIn(t, ta, reader).AccessToken }
 	policy, e := ckauth.NewAuthorization(t.Context(), ak, ckauth.AuthorizationConfig{Scope: scope, Issuer: authtest.Issuer, AppScope: scopeAuth})
 	must(t, e)

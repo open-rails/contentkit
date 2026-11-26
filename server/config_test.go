@@ -32,6 +32,35 @@ idle_timeout: 2m
 	}
 }
 
+func TestLoadAuthAndBilling(t *testing.T) {
+	const merchant = "0195f0c4-7a3e-7d2b-9c1a-3f4e5d6c7b8a"
+	c, err := Load([]byte(`
+auth:
+  issuer: https://contentkit.example.test
+  resource: {id: https://contentkit.example.test}
+auth_keys: /vault/auth
+openrails: {base_url: https://openrails.example, merchant_id: `+merchant+`}
+`), func(v string) string {
+		if v == "CONTENTKIT_OPENRAILS_API_KEY" {
+			return "merchant-key"
+		}
+		return ""
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Auth.Issuer != "https://contentkit.example.test" || c.Auth.Resource.ID != "https://contentkit.example.test" || c.AuthKeys != "/vault/auth" ||
+		c.OpenRails.MerchantID.String() != merchant || c.OpenRails.APIKey != "merchant-key" {
+		t.Fatalf("loaded %+v", c)
+	}
+	for _, removed := range []string{"auth: {token: {issuer: https://contentkit.example.test}}", "auth: {keys: {path: /vault/auth}}",
+		"openrails: {merchant_id: not-a-uuid}"} {
+		if _, err := Load([]byte(removed), func(string) string { return "" }); err == nil {
+			t.Errorf("%s loaded", removed)
+		}
+	}
+}
+
 func TestSecureEndpoint(t *testing.T) {
 	for raw, ok := range map[string]bool{"https://openrails.example": true, "http://127.0.0.1:8080": true, "http://localhost": true, "http://[::1]:1": true,
 		"http://openrails.example": false, "ftp://openrails.example": false, "openrails.example": false} {

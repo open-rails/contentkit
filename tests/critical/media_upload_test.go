@@ -196,7 +196,7 @@ func TestUploadAcceptanceAndRetry(t *testing.T) {
 			connection.Close()
 		}))
 		defer proxy.Close()
-		uncertain := ck.NewClient(proxy.URL+"/content", &http.Client{Transport: bearerTransport{credential, http.DefaultTransport}})
+		uncertain := ck.NewClient(proxy.URL+"/content", &http.Client{Transport: bearerTransport{test: t, auth: w.auth, token: credential, base: http.DefaultTransport}})
 		_, err := uncertain.PostMediaUploadCommit(t.Context(), batch)
 		if err == nil || !accepted.Load() {
 			t.Fatalf("did not lose an accepted response: %v accepted=%v", err, accepted.Load())

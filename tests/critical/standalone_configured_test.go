@@ -94,7 +94,7 @@ func TestConfiguredStandaloneParity(t *testing.T) {
 		must(t, err)
 		key, err := w.tenant[0].CreateAPIKey(t.Context(), iam.SystemIdentity(), a.group, iam.NewAPIKey{Name: "Standalone editor", Role: persona.OwnerRole()})
 		must(t, err)
-		staff := ck.NewClient(base+"/configured", &http.Client{Transport: bearerTransport{key.Secret, http.DefaultTransport}})
+		staff := ck.NewClient(base+"/configured", &http.Client{Transport: bearerTransport{token: key.Secret, base: http.DefaultTransport}})
 		editor, err := staff.GetMediaVersion(t.Context(), ref.Kind, ref.ID, ref.Version, ck.GetMediaVersionQuery{Editor: true})
 		must(t, err)
 		if len(editor.Uploads) == 0 || editor.State == "" {
@@ -102,7 +102,7 @@ func TestConfiguredStandaloneParity(t *testing.T) {
 		}
 		foreign, err := w.tenant[0].CreateAPIKey(t.Context(), iam.SystemIdentity(), w.apps[1].group, iam.NewAPIKey{Name: "Foreign standalone editor", Role: persona.OwnerRole()})
 		must(t, err)
-		_, err = ck.NewClient(base+"/configured", &http.Client{Transport: bearerTransport{foreign.Secret, http.DefaultTransport}}).GetMediaVersion(t.Context(), ref.Kind, ref.ID, ref.Version, ck.GetMediaVersionQuery{Editor: true})
+		_, err = ck.NewClient(base+"/configured", &http.Client{Transport: bearerTransport{token: foreign.Secret, base: http.DefaultTransport}}).GetMediaVersion(t.Context(), ref.Kind, ref.ID, ref.Version, ck.GetMediaVersionQuery{Editor: true})
 		requireError(t, err, 403, "forbidden")
 		eventID := uuid.NewString()
 		must(t, client.PostSignals(t.Context(), discovery.Signals{Session: uuid.NewString(), Signals: []discovery.SignalInput{{ContentID: ref.ID, Type: "click", EventID: eventID, OccurredAt: time.Now()}}}))
@@ -170,7 +170,7 @@ func TestConfiguredStandaloneParity(t *testing.T) {
 		}
 		// An event stream outlives the read timeout: its heartbeat comes
 		// after ten seconds.
-		staff := ck.NewClient(base+"/configured", &http.Client{Transport: bearerTransport{staffKey(t, w, a), http.DefaultTransport}})
+		staff := ck.NewClient(base+"/configured", &http.Client{Transport: bearerTransport{token: staffKey(t, w, a), base: http.DefaultTransport}})
 		ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 		defer cancel()
 		var events []string

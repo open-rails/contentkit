@@ -254,14 +254,6 @@ VALUES ($1,$2,false) ON CONFLICT (tenant_id,actor_id) DO NOTHING`, rt.tenant, ac
 	if err != nil {
 		return err
 	}
-	// Every app consumes the terminal event and fences its own inbox scope.
-	// A global fence would block a sibling's startup before its consumer could
-	// finish that sibling's still-pending anonymization.
-	if rt.eraseAccountReceipts != nil {
-		if err := rt.eraseAccountReceipts(ctx, []string{actorID}); err != nil {
-			return err
-		}
-	}
 	if rt.providerEraser != nil {
 		return rt.providerEraser.EraseSubjects(ctx, rt.tenant, []string{actorID})
 	}

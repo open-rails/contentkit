@@ -150,7 +150,7 @@ func attachMedia(t *testing.T, w *world, a *application, configure ...func(*ck.C
 	for _, route := range routes {
 		mux.Handle(route.Path, route.Handler)
 	}
-	a.server = httptest.NewServer(mux)
+	a.server = httptest.NewServer(withSessionProofs(t, mux))
 	config, err := a.cfg.MediaKinds()
 	must(t, err)
 	registry, err := mediastore.NewRegistry(config, mediastore.Hooks{})

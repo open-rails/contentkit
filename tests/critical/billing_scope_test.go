@@ -98,7 +98,7 @@ func TestCommerceEntitlementBoundaries(t *testing.T) {
 		return a.client(credential), id
 	}
 	grant := func(t *testing.T, customer billing.CustomerID, p billing.Product, hours *int) billing.ProductAccessGrant {
-		rows, err := b.merchant.CreateProductAccess(t.Context(), billing.CreateProductAccessBatchParams{IdempotencyKey: uuid.NewString(), Items: []billing.CreateProductAccessParams{{CustomerID: customer, ProductID: p.ID, Hours: hours}}})
+		rows, err := b.merchant.CreateProductAccess(t.Context(), uuid.NewString(), []billing.CreateProductAccessParams{{CustomerID: customer, ProductID: p.ID, Hours: hours}})
 		must(t, err)
 		if len(rows) != 1 {
 			t.Fatalf("grant returned %d windows", len(rows))
@@ -265,7 +265,7 @@ func TestCommerceEntitlementBoundaries(t *testing.T) {
 			host string
 			want []string
 		}{{"limited.invalid", []string{one.ID}}, {"wide.invalid", []string{one.ID, other.ID}}} {
-			client := ck.NewClient(server.URL+"/content", &http.Client{Transport: domainTransport{sample.host, credential}})
+			client := ck.NewClient(server.URL+"/content", &http.Client{Transport: domainTransport{test: t, auth: w.auth, host: sample.host, token: credential}})
 			page, err := client.GetMeLibrary(t.Context(), ck.GetMeLibraryQuery{})
 			must(t, err)
 			seen := map[string]bool{}
@@ -296,7 +296,7 @@ func TestCommerceEntitlementBoundaries(t *testing.T) {
 		must(t, err)
 		defer func() { must(t, siblingEngine.Close(context.Background())) }()
 		siblingServer := mountEngine(t, siblingEngine)
-		client := ck.NewClient(siblingServer.URL+"/content", &http.Client{Transport: bearerTransport{credential, http.DefaultTransport}})
+		client := ck.NewClient(siblingServer.URL+"/content", &http.Client{Transport: bearerTransport{test: t, auth: w.auth, token: credential, base: http.DefaultTransport}})
 		page, err := client.GetMeLibrary(t.Context(), ck.GetMeLibraryQuery{})
 		must(t, err)
 		if len(page.Items) != 1 || page.Items[0].ContentID != foreign.ID {

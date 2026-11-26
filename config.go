@@ -65,7 +65,8 @@ type Config struct {
 	// ActivityCohorts defines application-owned daily readership buckets. First
 	// match wins; nil reports totals without audience-specific categories.
 	ActivityCohorts []signal.ActivityCohort `yaml:"activity_cohorts,omitempty" json:"activity_cohorts,omitempty"`
-	// Accounts declares one shared account space for inboxes and avatars.
+	// Accounts declares one shared account space for avatars and account
+	// erasure records.
 	// It does not combine this site's content catalog with any other site's.
 	Accounts *AccountsConfig `json:"accounts,omitempty" yaml:"accounts,omitempty"`
 	avatars  *AvatarsConfig  // Accounts.Avatars with its account kind, set by withAccounts

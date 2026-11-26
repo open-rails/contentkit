@@ -140,7 +140,7 @@ func TestTypeScriptPublicContracts(t *testing.T) {
 		must(t, err)
 		_, err = commerce.merchant.UpdateCustomer(t.Context(), customer, billing.UpdateCustomerParams{})
 		must(t, err)
-		grants, err := commerce.merchant.CreateProductAccess(t.Context(), billing.CreateProductAccessBatchParams{IdempotencyKey: "typescript-access", Items: []billing.CreateProductAccessParams{{CustomerID: customer, ProductID: product.ID}}})
+		grants, err := commerce.merchant.CreateProductAccess(t.Context(), "typescript-access", []billing.CreateProductAccessParams{{CustomerID: customer, ProductID: product.ID}})
 		must(t, err)
 		if len(grants) != 1 {
 			t.Fatal("real purchased library grant absent")

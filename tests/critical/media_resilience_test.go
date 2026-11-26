@@ -551,7 +551,7 @@ func TestMediaClientResumption(t *testing.T) {
 				}
 			}))
 			defer wire.Close()
-			uncertain := ck.NewClient(wire.URL+"/content", &http.Client{Transport: bearerTransport{credential, http.DefaultTransport}})
+			uncertain := ck.NewClient(wire.URL+"/content", &http.Client{Transport: bearerTransport{test: t, auth: m.auth, token: credential, base: http.DefaultTransport}})
 			operation := uuid.NewString()
 			meta := map[string]any{"caption": "original", "nested": map[string]any{"label": "retained"}}
 			_, err = uncertain.IngestMedia(t.Context(), nil, ref, operation, []ck.MediaFile{{Path: "pages/one.png", Type: "image/png", Body: bytes.NewReader(imageBytes(t)), Meta: meta}})

@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/open-rails/authkit/auth"
+
 	"github.com/open-rails/contentkit/internal/httpapi"
 )
 
@@ -34,5 +36,25 @@ func TestGuardReachesTheConnection(t *testing.T) {
 	h.ServeHTTP(c, httptest.NewRequest(http.MethodGet, "/x", nil))
 	if !c.read.Equal(at) || !c.flushed {
 		t.Fatalf("the connection was not reached: %+v", c)
+	}
+}
+
+type pathAuth struct{ seen string }
+
+func (a *pathAuth) Authenticate(r *http.Request) (auth.Verified, error) {
+	a.seen = r.URL.EscapedPath()
+	return nil, auth.ErrUnauthenticated
+}
+
+// A sender proof names the URL as the client sent it: the gate authenticates
+// that, not the path a module's router sees beneath its prefix.
+func TestGuardAuthenticatesTheURLAsSent(t *testing.T) {
+	a := &pathAuth{}
+	h := (&Gate{Auth: a}).Guard(httpapi.Spec{Method: http.MethodGet, Path: "/x", Auth: httpapi.Public}, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	r := httptest.NewRequest(http.MethodGet, "/content/v1/x", nil)
+	r.Header.Set("Authorization", "DPoP token")
+	http.StripPrefix("/content/v1", h).ServeHTTP(httptest.NewRecorder(), httpapi.KeepSentURL(r))
+	if a.seen != "/content/v1/x" {
+		t.Fatalf("authenticated %q, want the sent /content/v1/x", a.seen)
 	}
 }

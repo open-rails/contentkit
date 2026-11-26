@@ -34,8 +34,8 @@ func validateAuthorizationConfig(cfg Config, ak authkit.Config) error {
 	if a == nil || a.Issuer == "" || strings.TrimSpace(a.Issuer) != a.Issuer || a.AppGroupID == "" || strings.TrimSpace(a.AppGroupID) != a.AppGroupID {
 		return errors.New("server: engine.scope requires authorization.issuer and authorization.app_group_id")
 	}
-	if ak.Token.Issuer == "" || strings.TrimSpace(ak.Token.Issuer) != ak.Token.Issuer {
-		return errors.New("server: scoped authorization requires explicit auth.token.issuer permission authority")
+	if ak.Issuer == "" || strings.TrimSpace(ak.Issuer) != ak.Issuer {
+		return errors.New("server: scoped authorization requires explicit auth.issuer permission authority")
 	}
 	if cfg.UsersIssuer != "" && cfg.UsersIssuer != a.Issuer {
 		return errors.New("server: users_issuer must match authorization.issuer in scoped mode")
@@ -91,7 +91,7 @@ func (s *Server) scopedAuthorization(ctx context.Context, cfg Config, ak authkit
 		return fmt.Errorf("server: authorization app group must be provisioned before startup: %w", err)
 	}
 	policy := ckauthkit.AuthorizationConfig{
-		Scope: *cfg.Engine.Scope, Issuer: a.Issuer, PermissionAuthority: ak.Token.Issuer,
+		Scope: *cfg.Engine.Scope, Issuer: a.Issuer, PermissionAuthority: ak.Issuer,
 		AppScope: app,
 	}
 	if a.TenantGroupID != "" {
@@ -99,7 +99,7 @@ func (s *Server) scopedAuthorization(ctx context.Context, cfg Config, ak authkit
 			return fmt.Errorf("server: authorization tenant group must be provisioned before startup: %w", err)
 		}
 	}
-	if a.Issuer == ak.Token.Issuer {
+	if a.Issuer == ak.Issuer {
 		tenantID, err := iam.ParseTenantID(cfg.Engine.Scope.TenantID.String())
 		if err != nil {
 			return err

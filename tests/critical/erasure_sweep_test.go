@@ -146,7 +146,8 @@ func TestPurgeLeavesNoAccountID(t *testing.T) {
 			!remote.RequestedAt.Equal(*local.RequestedAt) || !remote.CompletedAt.Equal(*local.CompletedAt) {
 			t.Fatalf("remote erasure state %+v differs from %+v", remote, local)
 		}
-		_, err = a.client(token).GetAccountErasure(ctx, user.ID)
+		_, reader := w.person(t, 0)
+		_, err = a.client(reader).GetAccountErasure(ctx, user.ID)
 		requireError(t, err, 403, "forbidden")
 	})
 }

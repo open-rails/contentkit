@@ -25,9 +25,7 @@ engine:
 auth:
   database:
     schema: example_auth
-  token:
-    issuer: https://contentkit.example.test
-    issued_audiences: [contentkit]
+  issuer: https://contentkit.example.test
   resource:
     id: https://contentkit.example.test
 authorization:
@@ -37,9 +35,9 @@ authorization:
 ```
 
 The IDs are examples. Generate them once and use the same canonical tenant
-UUID in AuthKit and ContentKit. The server derives AuthKit's default tenant
-from `engine.scope.tenant_id` when absent and rejects a conflicting explicit
-value. Provision the tenant before startup. `app_group_id` must equal the app
+UUID in AuthKit and ContentKit. AuthKit runs multi-tenant: the server derives
+its default tenant from `engine.scope.tenant_id` when absent and rejects a
+conflicting explicit value. Provision the tenant before startup. `app_group_id` must equal the app
 UUID and name a live `app` group owned by that tenant. The optional
 `tenant_group_id` must equal the tenant UUID and name its built-in `tenant`
 group. Startup does not create groups or assign roles.
@@ -52,7 +50,7 @@ permission objects across that tenant's apps. Shared avatar administration is
 `tenant:avatars:write`. A tenant-bound user directory validates avatar targets.
 
 `authorization.issuer` is the verified identity issuer;
-`auth.token.issuer` is the local permission authority. For an external identity
+`auth.issuer` is the local permission authority. For an external identity
 issuer, provision its enabled remote application in `app_group_id`, with
 explicitly restricted permissions and public verification keys. This remote
 compatibility path requires a dedicated one-tenant issuer; it cannot attest
@@ -75,10 +73,12 @@ The file is YAML; unknown keys are refused. Durations are Go durations (`30s`).
 | `engine` | The embedded engine's `contentkit.Config` ([host integration](../HOST_INTEGRATION.md)). | required |
 | `engine.trusted_proxies` | CIDR prefixes of the proxies in front of the server (an ingress, a load balancer). From one, the client is read from `Forwarded` or `X-Forwarded-For`, right to left past trusted hops; a malformed chain is 400. Behind a proxy, set it: otherwise every visitor is the proxy, location rules match nobody and anonymous visitors share one limit. See [client address](../HOST_INTEGRATION.md#client-address). AuthKit takes the same proxies, or the peer when there are none: `auth.http` declares no proxies of its own, and `auth.http.direct_peer_ip` beside a proxy, or AuthKit proxies that differ from these, refuse startup. | none: the peer is the client |
 | `engine.clickhouse.tls`, `engine.clickhouse.ca_file` | Connect to ClickHouse over TLS, migrations included, verifying it against the system roots or the PEM CA file. | plain |
-| `auth` | AuthKit as a resource server; its tables are in `auth.database.schema`, its River in `auth.database.river_schema`. Neither may be one of the engine's schemas. `auth.token.issuer` is https (http only on a loopback host). | `contentkit_auth`, `contentkit_auth_river` |
+| `auth` | AuthKit as a resource server (`authkit.Config`); its tables are in `auth.database.schema`, its River in `auth.database.river_schema`. Neither may be one of the engine's schemas. `auth.issuer` is https (http only on a loopback host). | `contentkit_auth`, `contentkit_auth_river` |
+| `auth_keys` | The directory of AuthKit's `keys.json` (and `totp.key`), reloaded on rotation: the keys of `auth.issuer`'s tokens, for a server sharing that issuer's account store. Empty holds no keys: the server verifies trusted issuers' tokens and API keys only. | none |
 | `authorization` | The AuthKit groups and identity issuer the engine is bound to ([scoped authorization](#scoped-authorization)). | required |
 | `users_issuer` | The issuer whose directory names authors; when set it must equal `authorization.issuer`. | `authorization.issuer` |
 | `openrails.base_url` | The OpenRails server holding the site's merchant; https, or http only to a loopback host. Empty runs without billing. | none |
+| `openrails.merchant_id` | The site's merchant, the one `CONTENTKIT_OPENRAILS_API_KEY` is bound to (OpenRails' `GET /v1/admin/access` names it). Required with `openrails.base_url`. | none |
 | `s3` | The media bucket: `bucket`, `region`, `endpoint`, `public_endpoint` (where browsers PUT presigned uploads), `use_path_style`. Both endpoints are http(s); plain http suits a private network, since requests carry SigV4 signatures, never the key. | `region` `us-east-1`, `public_endpoint` the `endpoint` |
 | `routes` | Route groups served (`content`, `upload`, `media`, `codes`, `entities`, `discovery`, `import`, `all`). | every group the engine can serve |
 | `prefix` | Where the API is served: `/api/contentkit` serves `/api/contentkit/v1/*`. | the root |

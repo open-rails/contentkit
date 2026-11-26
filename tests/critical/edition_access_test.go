@@ -74,9 +74,7 @@ func TestEditionEntitlementIsolation(t *testing.T) {
 				Key: "edition-" + uuid.NewString(), DisplayName: "Edition access", Entitlements: test.grants,
 			})
 			must(t, err)
-			_, err = b.merchant.CreateProductAccess(t.Context(), billing.CreateProductAccessBatchParams{
-				IdempotencyKey: uuid.NewString(), Items: []billing.CreateProductAccessParams{{CustomerID: customer, ProductID: product.ID}},
-			})
+			_, err = b.merchant.CreateProductAccess(t.Context(), uuid.NewString(), []billing.CreateProductAccessParams{{CustomerID: customer, ProductID: product.ID}})
 			must(t, err)
 			g, err := entitlement.NewGate(entitlement.GateConfig{Tenant: a.cfg.Scope.AppID.String(), Kinds: a.cfg.Content, Billing: ckbilling.Billing(b.merchant), Now: w.clock.now})
 			must(t, err)

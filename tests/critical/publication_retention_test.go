@@ -76,7 +76,7 @@ func TestDeletedEditionClosedUntilRestore(t *testing.T) {
 				must(t, err)
 				product, err := b.merchant.CreateProduct(t.Context(), billing.CreateProductParams{Key: uuid.NewString(), DisplayName: "Bought edition", Entitlements: []string{key.String()}})
 				must(t, err)
-				_, err = b.merchant.CreateProductAccess(t.Context(), billing.CreateProductAccessBatchParams{IdempotencyKey: uuid.NewString(), Items: []billing.CreateProductAccessParams{{CustomerID: customer, ProductID: product.ID}}})
+				_, err = b.merchant.CreateProductAccess(t.Context(), uuid.NewString(), []billing.CreateProductAccessParams{{CustomerID: customer, ProductID: product.ID}})
 				must(t, err)
 				return holder{a.client(credential), customer, key.String()}
 			}

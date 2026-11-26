@@ -23,8 +23,10 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/open-rails/authkit"
 	"github.com/open-rails/authkit/iam"
+	"github.com/open-rails/authkit/keys"
 	"github.com/open-rails/helpers/deps"
 	"github.com/open-rails/openrails"
+	"github.com/open-rails/openrails/billing"
 	"github.com/redis/go-redis/v9"
 
 	contentkit "github.com/open-rails/contentkit"
@@ -42,10 +44,15 @@ type Config struct {
 	// Engine is what contentkit.New takes.
 	Engine contentkit.Config `yaml:"engine"`
 	// Auth is the server's AuthKit as a resource server (AuthKit's own
-	// configuration): Token.Issuer, Resource.ID and the site's trusted
-	// issuer in RemoteApplications. It mints nothing unless Keys says so;
-	// its tables live in Database.Schema (default "contentkit_auth").
+	// configuration): Issuer and Resource.ID. Its tables live in
+	// Database.Schema (default "contentkit_auth"). It runs multi-tenant,
+	// acting in the scope's tenant.
 	Auth authkit.Config `yaml:"auth"`
+	// AuthKeys is the directory of AuthKit's keys.json (and totp.key),
+	// watched for rotation: the keys of Auth.Issuer's tokens. Empty holds
+	// none: the server mints nothing and verifies only trusted issuers'
+	// tokens and API keys.
+	AuthKeys string `yaml:"auth_keys"`
 	// Authorization binds the engine to explicitly provisioned AuthKit groups
 	// and a verified tenant identity directory. Required.
 	Authorization *AuthorizationConfig `yaml:"authorization"`
@@ -84,6 +91,8 @@ const maxHeaderBytes = 64 << 10
 // OpenRailsConfig is the OpenRails server holding the site's merchant.
 type OpenRailsConfig struct {
 	BaseURL string `yaml:"base_url"`
+	// MerchantID is the site's merchant, the one APIKey is bound to.
+	MerchantID billing.MerchantID `yaml:"merchant_id"`
 	// APIKey is the merchant's API key (a secret).
 	APIKey string `yaml:"api_key"`
 }
@@ -118,6 +127,8 @@ type Server struct {
 	log     *slog.Logger
 	engine  *contentkit.Engine
 	auth    *authkit.Client
+	keys    *keys.FileSource
+	billing *openrails.Remote
 	sup     *deps.Supervisor
 	handler http.Handler
 }
@@ -145,6 +156,9 @@ func New(ctx context.Context, cfg Config, d Deps) (_ *Server, err error) {
 		}
 	}
 	ak := cfg.Auth
+	// The scope's tenant is one provisioned tenant of AuthKit's directory,
+	// which root operators share with other tenants.
+	ak.Tenancy = authkit.TenancyMulti
 	if cfg.Engine.Scope != nil && ak.DefaultTenantID.IsZero() {
 		ak.DefaultTenantID, err = iam.ParseTenantID(cfg.Engine.Scope.TenantID.String())
 		if err != nil {
@@ -155,10 +169,7 @@ func New(ctx context.Context, cfg Config, d Deps) (_ *Server, err error) {
 		ak.Database.Schema = "contentkit_auth"
 	}
 	if ak.Database.RiverSchema == "" {
-		ak.Database.RiverSchema = ak.Database.Schema + "_river" // AuthKit's own, never ContentKit's
-	}
-	if !ak.Keys.AllowEphemeralDevKeys && ak.Keys.Path == "" {
-		ak.Keys.VerifyOnly = true // a resource server verifies; it mints nothing
+		ak.Database.RiverSchema = ak.Database.Schema + "_river"
 	}
 	if err := validateAuthorizationConfig(cfg, ak); err != nil {
 		return nil, err
@@ -174,7 +185,14 @@ func New(ctx context.Context, cfg Config, d Deps) (_ *Server, err error) {
 		ak.HTTP = &h
 	}
 	ak.Roles = serverRoles(cfg.Engine)
-	if s.auth, err = authkit.New(ctx, ak, authkit.Deps{Postgres: d.Postgres, Redis: d.Redis}); err != nil {
+	var keySource keys.Source = keys.Static{} // no signer: it verifies, minting nothing
+	if cfg.AuthKeys != "" {
+		if s.keys, err = keys.Watch(cfg.AuthKeys, s.log); err != nil {
+			return nil, fmt.Errorf("server: auth_keys: %w", err)
+		}
+		keySource = s.keys
+	}
+	if s.auth, err = authkit.New(ctx, ak, authkit.Deps{Postgres: d.Postgres, Redis: d.Redis, KeySource: keySource, Logger: s.log}); err != nil {
 		return nil, fmt.Errorf("server: AuthKit: %w", err)
 	}
 
@@ -186,11 +204,20 @@ func New(ctx context.Context, cfg Config, d Deps) (_ *Server, err error) {
 		if err := secureEndpoint(cfg.OpenRails.BaseURL); err != nil {
 			return nil, fmt.Errorf("server: openrails.base_url: %w", err)
 		}
-		billing, err := openrails.NewRemoteMerchant(cfg.OpenRails.BaseURL, openrails.RemoteCredential{APIKey: cfg.OpenRails.APIKey})
+		id := cfg.OpenRails.MerchantID
+		if id.IsZero() {
+			return nil, errors.New("server: openrails.merchant_id is required with openrails.base_url")
+		}
+		if s.billing, err = openrails.NewRemote(cfg.OpenRails.BaseURL, openrails.RemoteOptions{
+			Credentials: map[billing.MerchantID]openrails.RemoteCredential{id: {APIKey: cfg.OpenRails.APIKey}}, Logger: s.log,
+		}); err != nil {
+			return nil, fmt.Errorf("server: OpenRails: %w", err)
+		}
+		merchant, err := s.billing.Merchant(id)
 		if err != nil {
 			return nil, fmt.Errorf("server: OpenRails: %w", err)
 		}
-		engineDeps.Billing = ckopenrails.Billing(billing)
+		engineDeps.Billing = ckopenrails.Billing(merchant)
 	}
 	if cfg.Engine.Media != nil {
 		b := cfg.S3
@@ -420,15 +447,22 @@ func (s *Server) Serve(ctx context.Context, ln net.Listener) error {
 	return errors.Join(serveErr, s.Close(shutdown))
 }
 
-// Close stops the jobs and closes the engine and AuthKit, leaving the pool
-// and Redis open.
+// Close stops the jobs and closes the engine, OpenRails' client and AuthKit,
+// leaving the pool and Redis open.
 func (s *Server) Close(ctx context.Context) error {
 	var errs []error
 	if s.engine != nil {
 		errs = append(errs, s.engine.Close(ctx))
 	}
+	if s.billing != nil {
+		errs = append(errs, s.billing.Close(ctx))
+		s.billing = nil
+	}
 	if s.auth != nil {
 		errs = append(errs, s.auth.Close(ctx))
+	}
+	if s.keys != nil {
+		s.keys.Close()
 	}
 	return errors.Join(errs...)
 }

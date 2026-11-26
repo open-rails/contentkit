@@ -36,7 +36,7 @@ func mountEngine(t *testing.T, engine *ck.Engine) *httptest.Server {
 	for _, route := range routes {
 		mux.Handle(route.Path, route.Handler)
 	}
-	server := httptest.NewServer(mux)
+	server := httptest.NewServer(withSessionProofs(t, mux))
 	t.Cleanup(server.Close)
 	return server
 }
