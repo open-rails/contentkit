@@ -511,7 +511,7 @@ state and history. Product pages read only PostgreSQL. See
   (`ContentKit-Anonymous-Id`).
 - Each process buffers rows and writes them every second as one async INSERT.
 - The analytics job (every 15 minutes) folds new rows into `reading_state` and
-  `reading_history` and sign-in links into the account, rebuilds today's
+  `interaction_history` and sign-in links into the account, rebuilds today's
   `content_daily` and `audience_daily` hourly, and deletes erased rows daily.
 - History, continue reading, card progress, `view_status` and hidden
   galleries read `reading_state`; hiding (`PUT /v1/contents/{id}/hidden`) is

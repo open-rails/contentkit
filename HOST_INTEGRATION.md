@@ -1575,12 +1575,12 @@ Each process buffers rows and writes them every second as one
 `INSERT … VALUES` with `async_insert=1, wait_for_async_insert=1`.
 
 The analytics job runs every 15 minutes, one at a time. It folds each new
-sign-in link (`anonymous_links`) into its account (reading state and history
-merge; reactions and recent searches are re-keyed where the account has
-none), then recomputes each touched person × gallery × day's outcome from the
+sign-in link (`anonymous_links`) into its account (reading state and
+interaction history merge; reactions and recent searches are re-keyed where
+the account has none), then recomputes each touched person × gallery × day's outcome from the
 log (bounce, neutral, good or complete by the fraction read at a minimum
 pace) into `reading_state` by maximum and latest, and rewrites that day's
-packed `reading_history`. It rebuilds today's `content_daily` and
+packed `interaction_history`. It rebuilds today's `content_daily` and
 `audience_daily` hourly, yesterday's once after midnight, and deletes erased
 rows daily. Every write is a recompute or a max/latest merge, so a repeated
 run is harmless. Hiding writes `reading_state` at once.
@@ -1593,7 +1593,7 @@ way.
 `AnonymizeAccount` records the account and the anonymous ids folded into it in
 ClickHouse's `erasures` (an `insert_quorum` of every replica; a down replica
 fails it), so every read of the log drops their rows at once and the daily
-delete removes them, then deletes their `reading_state`, `reading_history`
+delete removes them, then deletes their `reading_state`, `interaction_history`
 and links and records the anonymous ids as erased, so their late rows never
 count. After a restore, run `ReplayErasureFences` for the accounts deleted
 since the backup. Each host erases its own tenant.

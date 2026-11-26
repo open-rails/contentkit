@@ -31,7 +31,7 @@ func (x *analyticsWorld) personal(t *testing.T, who uuid.UUID) [5]int {
 	t.Helper()
 	var n [5]int
 	must(t, x.pool.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM `+x.schema+`.reading_state WHERE app_id = $1 AND subject = $2),
- (SELECT count(*) FROM `+x.schema+`.reading_history WHERE app_id = $1 AND subject = $2),
+ (SELECT count(*) FROM `+x.schema+`.interaction_history WHERE app_id = $1 AND subject = $2),
  (SELECT count(*) FROM `+x.schema+`.content_searches WHERE tenant_id = $3 AND subject = $4),
  (SELECT count(*) FROM `+x.schema+`.content_reactions WHERE tenant_id = $3 AND anonymous_subject = $2),
  (SELECT count(*) FROM `+x.schema+`.content_reaction_feedback WHERE app_id = $1 AND anonymous_actor_id = $2)`,

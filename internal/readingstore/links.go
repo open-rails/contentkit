@@ -69,7 +69,7 @@ func (s *Store) Unfolded(ctx context.Context, limit int) ([]Link, error) {
 }
 
 // Fold moves an anonymous id's reading into its account: reading_state and
-// reading_history merge, and its reactions and recent searches are re-keyed
+// interaction_history merge, and its reactions and recent searches are re-keyed
 // where the account has none. Repeating it is harmless.
 func (s *Store) Fold(ctx context.Context, l Link) error {
 	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {

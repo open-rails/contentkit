@@ -62,7 +62,7 @@ func (s *Store) ExpireIdle(ctx context.Context, cutoff time.Time) (int, error) {
 }
 
 // expireBatch deletes the personal rows of up to expireBatch signed-out
-// subjects idle since before cutoff: reading state, history, recent searches
+// subjects idle since before cutoff: reading state, interaction history, recent searches
 // and feedback answers, free text included; their reactions stay, unlinked
 // from them. A subject linked to an
 // account is never expired.

@@ -1,7 +1,7 @@
-// Package readingstore is the per-person reading state, history and identity
-// links in PostgreSQL that the analytics job writes from ClickHouse's
-// activity log, and the immediate writes beside it: hide, sign-in links,
-// clearing history and erasure.
+// Package readingstore is the per-person reading state, interaction history
+// and identity links in PostgreSQL that the analytics job writes from
+// ClickHouse's activity log, and the immediate writes beside it: hide, sign-in
+// links, clearing history, anonymous expiry and erasure.
 package readingstore
 
 import (
@@ -32,7 +32,7 @@ type tables struct {
 // New is app's store in schema; now is the engine's clock.
 func New(pool *pgxpool.Pool, schema string, app uuid.UUID, now func() time.Time) *Store {
 	q := func(t string) string { return pgx.Identifier{schema, t}.Sanitize() }
-	return &Store{pool: pool, app: app, tenant: app.String(), now: now, t: tables{state: q("reading_state"), history: q("reading_history"),
+	return &Store{pool: pool, app: app, tenant: app.String(), now: now, t: tables{state: q("reading_state"), history: q("interaction_history"),
 		links: q("anonymous_links"), active: q("anonymous_activity"), job: q("analytics_job"), erased: q("content_erased_subjects"),
 		reactions: q("content_reactions"), searches: q("content_searches"), items: q("content_items"), memberships: q("content_memberships"),
 		favorites: q("content_favorites"), feedback: q("content_reaction_feedback")}}
@@ -171,7 +171,7 @@ ON CONFLICT (app_id, subject, day) DO UPDATE SET actions = EXCLUDED.actions`, s.
 WHERE h.app_id = $1 AND h.subject = u.subject AND h.day = u.day`, s.app, empty, emptyDates)
 	}
 	if err := s.pool.SendBatch(ctx, b).Close(); err != nil {
-		return fmt.Errorf("readingstore: write reading history: %w", err)
+		return fmt.Errorf("readingstore: write interaction history: %w", err)
 	}
 	return nil
 }

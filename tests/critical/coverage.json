@@ -3591,7 +3591,7 @@
     {
       "id": "CK-J32-S03",
       "journey": "CK-J32",
-      "behavior": "The job classifies each person x gallery x day by fraction read and pace, and packs the day into reading_history with session starts and each gallery's first-open surface",
+      "behavior": "The job classifies each person x gallery x day by fraction read and pace, and packs the day into interaction_history with session starts and each gallery's first-open surface",
       "status": "verified",
       "evidence": [
         "Real HTTP over real PostgreSQL and ClickHouse; the engine's batched writer and analytics job do the work."
@@ -3748,7 +3748,7 @@
     {
       "id": "CK-J32-S16",
       "journey": "CK-J32",
-      "behavior": "A signed-out subject idle past anonymous_retention loses its reading state, history, recent searches and reaction links to the hourly expiry job; an active one and one linked to an account keep theirs, and reaction counts are unchanged",
+      "behavior": "A signed-out subject idle past anonymous_retention loses its reading state, interaction history, recent searches and reaction links to the hourly expiry job; an active one and one linked to an account keep theirs, and reaction counts are unchanged",
       "status": "verified",
       "evidence": [
         "The idle visitor's feedback answer and its free text expire with the rest; the answer is logged as its like with reason other and the text in no activity row.",

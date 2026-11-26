@@ -32,7 +32,7 @@ between an OpenRails customer and a ContentKit account.
 | Registration, profile, avatar | Tenant and account | Editing an avatar in either app changes the same avatar |
 | Credential, session, recovery, tenant account disablement | Tenant's identity provider | One registration works across all apps; sessions still obey origin/audience rules |
 | Inbox receipt and read/archive state | Tenant and account | Reading a tenant-wide billing notice in one app reads it in the other |
-| Catalog, versions, media, taxonomy, comments, reactions, favorites, reading history | Tenant and app | App queries, counters, URLs and access rules stay separate |
+| Catalog, versions, media, taxonomy, comments, reactions, favorites, interaction history | Tenant and app | App queries, counters, URLs and access rules stay separate |
 | Moderator/editor roles, app preferences and restrictions | Tenant, app and account | A Doujins moderator or ban is not automatically a Hentai0 moderator or ban |
 | Content ownership | Tenant, app, content and account | One account may own content in both apps, with separate authority |
 | Product, charge, subscription, retry decision, access grant | Linked OpenRails merchant | OpenRails remains the authority; ContentKit presents the outcome and enforces access |
