@@ -258,7 +258,7 @@ func TestLockedPreviewPages(t *testing.T) {
 		must(t, err)
 		ring, err := token.NewRing(m.key, nil)
 		must(t, err)
-		signed := m.gateway.URL + layout.URLPrefix + key + "?t=" + url.QueryEscape(ring.Sign(privateFileScope(key), time.Now().Add(time.Hour)))
+		signed := m.gateway.URL + layout.URLPrefix + key + "?t=" + url.QueryEscape(ring.Sign(privateFileScope(m.bucket, key), time.Now().Add(time.Hour)))
 		_, err = admin.PatchContentVersion(t.Context(), ref.ID, ref.Version, catalog.VersionInput{Access: paid(3)})
 		must(t, err)
 		var after *mediastore.Manifest
