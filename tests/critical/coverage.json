@@ -656,8 +656,8 @@
       "behavior": "Pagination/similar/recommendations never reintroduce excluded content",
       "status": "verified",
       "evidence": [
-        "Cursor pagination has exact membership without duplication; real ClickHouse-backed similar and signed-in recommendations retain the same domain/publication/access exclusions and include positive controls.",
-        "Executed with the race detector in the completed 8d5ae7c6 aggregate; the strict runner requires these exact cases on every qualification."
+        "Cursor pagination has exact membership without duplication; similar (shared tags and artist in Postgres) and signed-in recommendations retain the same domain/publication/access exclusions and include positive controls.",
+        "contentkit#300: similar is tag and artist overlap; the excluded fixtures share the anchor's tag, so only the reader's policy keeps them out."
       ],
       "cases": [
         "TestDiscoveryVisibility/CK-J07-S08_pagination_similar_and_recommendations_keep_exclusions"
@@ -721,32 +721,6 @@
       ],
       "cases": [
         "TestListingSummaryRefreshesWithinAMinute"
-      ]
-    },
-    {
-      "id": "CK-J07-S15",
-      "journey": "CK-J07",
-      "behavior": "Popular lists follow the stored ranking of their kind, period and reader scope",
-      "status": "verified",
-      "evidence": [
-        "A configured bucket reads its stored order; an empty prepared ranking remains empty without unrelated standing scores."
-      ],
-      "cases": [
-        "TestDiscoveryVisibility/CK-J07-S15_popular_list_follows_the_stored_ranking"
-      ]
-    },
-    {
-      "id": "CK-J07-S16",
-      "journey": "CK-J07",
-      "behavior": "Public popularity reads only declared presets or prepared whole-day ranges",
-      "status": "verified",
-      "evidence": [
-        "Unknown bucket, kind and scope requests are refused without creating work.",
-        "Cold start prepares configured presets without public requests; metadata distinguishes pending from computed empty and reports actual covered dates across UTC rollover.",
-        "Arbitrary ranges read prepared scalars with catalog pagination and create no cache rows; dates before the first fully trusted UTC day or beyond prepared coverage are refused with structured bounds."
-      ],
-      "cases": [
-        "TestDiscoveryVisibility/CK-J07-S16_public_requests_cannot_create_popularity_work"
       ]
     },
     {
@@ -814,18 +788,6 @@
       ],
       "cases": [
         "TestConcurrentFirstSearchSync/CK-J07-S24_first_search_syncs_of_an_api_and_worker_starting_together_both_succeed"
-      ]
-    },
-    {
-      "id": "CK-J07-S25",
-      "journey": "CK-J07",
-      "behavior": "Popular entity listings use hourly domain rankings of recent distinct account favourites, with decay, a one-hit guard and a support floor, then content count",
-      "status": "verified",
-      "evidence": [
-        "Account favourites count once per entity, collapse versions, decay with age, require support beyond one content and a score of 20, exclude categorical/internal/inactive entities and respect domain boundaries. The River build runs without signals and retains prior places on failure; unranked entities page by count and id. Kinds without popularity and listings of no kind are refused."
-      ],
-      "cases": [
-        "TestEntityPopularity"
       ]
     },
     {
@@ -3834,6 +3796,162 @@
       ],
       "cases": [
         "TestMediaMasters/CK-J09-S54_a_master_past_the_single_put_limit_goes_up_in_parts"
+      ]
+    },
+    {
+      "id": "CK-J07-S50",
+      "journey": "CK-J07",
+      "behavior": "Pages never query ClickHouse for featured windows; popular requests are validated",
+      "status": "verified",
+      "evidence": [
+        "Before any precompute a popular list serves a pending week (ready false) listing every article newest first; unknown windows, malformed calendar windows and ranges, a page with a cursor, a missing kind and a window without sort=popular are refused.",
+        "contentkit#300: written against real PostgreSQL and ClickHouse with the engine's own precompute job; not executed locally, CI runs it."
+      ],
+      "cases": [
+        "TestPopularity/CK-J07-S50_pages_never_query_clickhouse_for_featured_windows"
+      ]
+    },
+    {
+      "id": "CK-J07-S51",
+      "journey": "CK-J07",
+      "behavior": "Galleries rank by quality-weighted person-days; a polarizing gallery scores about zero",
+      "status": "verified",
+      "evidence": [
+        "From real content_daily rows and outcome_values guesses, 40 good reads beat 5 complete ones and 3 good reads beat 60 split between favourites and \"not into\", which sum below zero and follow an unread article; the tag's own list ranks by its audience, where the split article leads.",
+        "contentkit#300: written against real PostgreSQL and ClickHouse with the engine's own precompute job; not executed locally, CI runs it."
+      ],
+      "cases": [
+        "TestPopularity/CK-J07-S51_quality_weighted_person_days_rank_galleries"
+      ]
+    },
+    {
+      "id": "CK-J07-S52",
+      "journey": "CK-J07",
+      "behavior": "Entities sum their galleries' popularity and show polarization",
+      "status": "verified",
+      "evidence": [
+        "The tag listing defaults to popular: a tag scores the exact sum of its articles, an unread tag follows the read ones and the negative tag comes last; the split tag's polarization is 2\u00b730/80 and a uniformly good tag's is 0.",
+        "contentkit#300: written against real PostgreSQL and ClickHouse with the engine's own precompute job; not executed locally, CI runs it."
+      ],
+      "cases": [
+        "TestPopularity/CK-J07-S52_entities_sum_their_galleries_and_show_polarization"
+      ]
+    },
+    {
+      "id": "CK-J07-S53",
+      "journey": "CK-J07",
+      "behavior": "Featured windows, closed calendar ranges and open reports rank their own days",
+      "status": "verified",
+      "evidence": [
+        "week, 30d and all order the same articles differently by when they were read; a past month is computed once and kept, ignoring rows added later; an open range is recomputed per request and reports its bounds.",
+        "contentkit#300: written against real PostgreSQL and ClickHouse with the engine's own precompute job; not executed locally, CI runs it."
+      ],
+      "cases": [
+        "TestPopularity/CK-J07-S53_windows_closed_ranges_and_reports"
+      ]
+    },
+    {
+      "id": "CK-J07-S54",
+      "journey": "CK-J07",
+      "behavior": "Each site (domain and language) ranks its own reads",
+      "status": "verified",
+      "evidence": [
+        "English, German (via Accept-Language) and a second domain rank the same two articles by the reads on that site only.",
+        "contentkit#300: written against real PostgreSQL and ClickHouse with the engine's own precompute job; not executed locally, CI runs it."
+      ],
+      "cases": [
+        "TestPopularity/CK-J07-S54_each_site_ranks_its_own_reads"
+      ]
+    },
+    {
+      "id": "CK-J07-S55",
+      "journey": "CK-J07",
+      "behavior": "Gated galleries scale to the people who could open them",
+      "status": "verified",
+      "evidence": [
+        "With 10 of 100 active people holding gold (audience_daily), a gold-only article read by 5 a day outranks a public one read by 10, using the access history's tier days.",
+        "contentkit#300: written against real PostgreSQL and ClickHouse with the engine's own precompute job; not executed locally, CI runs it."
+      ],
+      "cases": [
+        "TestPopularity/CK-J07-S55_gated_days_scale_to_the_people_who_could_open_them"
+      ]
+    },
+    {
+      "id": "CK-J07-S56",
+      "journey": "CK-J07",
+      "behavior": "Trending divides by the days a gallery was live",
+      "status": "verified",
+      "evidence": [
+        "In the week, 5 good reads of an article live since yesterday beat 12 over six days; in 30d the order reverses.",
+        "contentkit#300: written against real PostgreSQL and ClickHouse with the engine's own precompute job; not executed locally, CI runs it."
+      ],
+      "cases": [
+        "TestPopularity/CK-J07-S56_trending_ranks_per_live_day"
+      ]
+    },
+    {
+      "id": "CK-J07-S57",
+      "journey": "CK-J07",
+      "behavior": "Popular listings drop only what the viewer's filters block",
+      "status": "verified",
+      "evidence": [
+        "A site's default-hidden tag removes its articles and itself from signed-out gallery and tag listings while unread articles stay; a signed-out browser choice and an account override show both again.",
+        "contentkit#300: written against real PostgreSQL and ClickHouse with the engine's own precompute job; not executed locally, CI runs it."
+      ],
+      "cases": [
+        "TestPopularity/CK-J07-S57_listings_drop_only_what_the_filters_block"
+      ]
+    },
+    {
+      "id": "CK-J07-S58",
+      "journey": "CK-J07",
+      "behavior": "Artists show their read-through rate from reading_state",
+      "status": "verified",
+      "evidence": [
+        "Of four readers of an artist's first work active after the next one's release, two read it within 30 days: the artist card shows 0.5 over 4 readers; a reader not seen since is not counted.",
+        "contentkit#300: written against real PostgreSQL and ClickHouse with the engine's own precompute job; not executed locally, CI runs it."
+      ],
+      "cases": [
+        "TestPopularity/CK-J07-S58_artists_show_their_read_through_rate"
+      ]
+    },
+    {
+      "id": "CK-J07-S59",
+      "journey": "CK-J07",
+      "behavior": "Similar weighs rare shared tags and the artist, under the viewer's filters",
+      "status": "verified",
+      "evidence": [
+        "The artist's other work comes first, then the one sharing a rare tag, then the common-tag ones; one hidden by the site's filters never appears.",
+        "contentkit#300: written against real PostgreSQL and ClickHouse with the engine's own precompute job; not executed locally, CI runs it."
+      ],
+      "cases": [
+        "TestPopularity/CK-J07-S59_similar_weighs_rare_tags_and_the_artist"
+      ]
+    },
+    {
+      "id": "CK-J07-S60",
+      "journey": "CK-J07",
+      "behavior": "A popular cursor keeps its ranking across a refresh",
+      "status": "verified",
+      "evidence": [
+        "After a precompute moves an unread article to the top, a cursor from before it pages the rest of the ranking it started, without duplicates or gaps, while a new first page shows the new order.",
+        "contentkit#300: written against real PostgreSQL and ClickHouse with the engine's own precompute job; not executed locally, CI runs it."
+      ],
+      "cases": [
+        "TestPopularity/CK-J07-S60_cursors_keep_their_ranking_across_a_refresh"
+      ]
+    },
+    {
+      "id": "CK-J07-S61",
+      "journey": "CK-J07",
+      "behavior": "Rankings are served stale while ClickHouse fails",
+      "status": "verified",
+      "evidence": [
+        "With content_daily unreachable the precompute fails and lists keep serving the last ranking, ready, then marked stale hours later; the next precompute after recovery succeeds.",
+        "contentkit#300: written against real PostgreSQL and ClickHouse with the engine's own precompute job; not executed locally, CI runs it."
+      ],
+      "cases": [
+        "TestPopularity/CK-J07-S61_rankings_are_served_stale_while_clickhouse_fails"
       ]
     }
   ],
@@ -12828,6 +12946,21 @@
           "path": "/v1/me/content-filters/initialize"
         }
       ]
+    },
+    {
+      "issue": "contentkit#300",
+      "case": "TestDiscoveryVisibility/CK-J07-S15_popular_list_follows_the_stored_ranking",
+      "reason": "Stored rankings, prepared daily popularity and host-declared buckets are deleted: popularity is computed from content_daily and cached; replaced by TestPopularity (CK-J07-S50 to S61)."
+    },
+    {
+      "issue": "contentkit#300",
+      "case": "TestDiscoveryVisibility/CK-J07-S16_public_requests_cannot_create_popularity_work",
+      "reason": "Stored rankings, prepared daily popularity and host-declared buckets are deleted: popularity is computed from content_daily and cached; replaced by TestPopularity (CK-J07-S50 to S61)."
+    },
+    {
+      "issue": "contentkit#300",
+      "case": "TestEntityPopularity",
+      "reason": "Stored rankings, prepared daily popularity and host-declared buckets are deleted: popularity is computed from content_daily and cached; replaced by TestPopularity (CK-J07-S50 to S61)."
     }
   ]
 }
