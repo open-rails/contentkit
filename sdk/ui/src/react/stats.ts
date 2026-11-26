@@ -1,7 +1,7 @@
 import type { ContentKitClient } from "../client/client.js";
 import type { ContentKitError } from "../client/errors.js";
-import type { Activity, MyStats } from "../client/generated/wire.js";
-import type { ActivityQuery } from "../client/stats.js";
+import type { ActiveDays, MyStats } from "../client/generated/wire.js";
+import type { ActiveQuery } from "../client/stats.js";
 import { keyOf, useContentScope, useResource } from "./use-resource.js";
 
 export interface UseStats<T> {
@@ -20,10 +20,10 @@ function useStats<T>(key: string | null, fetch: (c: ContentKitClient, signal: Ab
   return { data: r.data ?? null, loading: !!key && (r.loading || !r.loaded), error: unavailable ? undefined : r.error, unavailable, reload: r.reload };
 }
 
-/** Staff: daily distinct engaged people in the host's cohorts, not period-unique visitors. Null reads nothing. */
-export function useActivity(q: ActivityQuery | null, o: { client?: ContentKitClient } = {}): UseStats<Activity> {
+/** Staff: distinct people active on the site per day, by access; not period-unique visitors. Null reads nothing. */
+export function useActive(q: ActiveQuery | null, o: { client?: ContentKitClient } = {}): UseStats<ActiveDays> {
   const { scope } = useContentScope(o.client);
-  return useStats(q ? keyOf("stats", scope, "activity", q.kind, q.days) : null, (c, s) => c.stats.activity(q!, s), o);
+  return useStats(q ? keyOf("stats", scope, "active", q.days) : null, (c, s) => c.stats.active(q!, s), o);
 }
 
 /** The signed-in reader's statistics; nothing signed out. */

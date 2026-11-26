@@ -1,11 +1,11 @@
 import { ArrowDown01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "@hugeicons/react";
 import { cn } from "cn";
-import { useCallback, useContext, useId, useMemo, useState, useRef, type MouseEvent } from "react";
+import { useContext, useId, useMemo, useState, useRef, type MouseEvent } from "react";
 import type { DailyReleasesQuery } from "../../client/discovery.js";
 import type { Card, ReleaseDay } from "../../client/generated/wire.js";
 import { useMessages } from "../../i18n/context.js";
-import { useDailyReleases, useExposure } from "../../react/discovery.js";
+import { useDailyReleases, useOpen } from "../../react/discovery.js";
 import { ContentKitContext } from "../../react/context.js";
 import { useContentScope } from "../../react/use-resource.js";
 import { useNearViewport } from "../../react/viewport.js";
@@ -101,8 +101,8 @@ function ReleaseDaySection({ day, initial, step, pending, cardProps: p, collapse
     if (premium) result.push(premium);
     return result;
   }, [cards, collapsePremium, premiumExpanded, p.premiumLast]);
-  const exposed = useMemo(() => open && !pending ? entries.filter((entry) => !entry.summary).map((entry) => ({ ...entry.card, position: entry.position })) : [], [open, pending, entries]);
-  const exposure = useExposure(exposed, { surface: p.surface ?? "releases", render: day.date, client: p.client });
+  const report = useOpen({ client: p.client });
+  const surface = p.surface ?? "releases";
   const layout = cardGridLayout(p.grid);
   const reveal = useReleaseReveal(`${visible}|${entries.map((entry) => entry.key).join("\0")}`);
   const label = new Intl.DateTimeFormat(m.language, { dateStyle: "full", timeZone: "UTC" }).format(new Date(`${day.date}T12:00:00Z`));
@@ -128,7 +128,7 @@ function ReleaseDaySection({ day, initial, step, pending, cardProps: p, collapse
           <ol ref={reveal.grid} className={cn(layout.className, "pt-2")} style={layout.style}>
             {entries.map((entry) => entry.summary ?
               <ContentSummaryTile key={entry.key} tileKey={entry.key} contentKind={kinds?.[0] ?? entry.card.kind} open={open && !pending} preview={entry.card} cardProps={p} kind="premium" label={summaryLabels?.premium?.(premiumCount) ?? m.plural("releases.premiumMore", premiumCount)} onClick={expandPremium} /> :
-              <ReleaseCard key={entry.key} card={entry.card} open={open && !pending} position={entry.position} exposure={exposure} cardProps={p} />)}
+              <ReleaseCard key={entry.key} card={entry.card} open={open && !pending} onOpen={() => report(entry.card.id, { surface, position: entry.position })} cardProps={p} />)}
             {day.filtered_count > 0 && <ContentSummaryTile tileKey="filtered-summary" contentKind={summaryContentKind} open={open && !pending} cardProps={p} kind="filtered" filteredEntities={day.filtered_entities} label={summaryLabels?.filtered?.(day.filtered_count) ?? m.plural("releases.filteredMore", day.filtered_count)} onClick={(event) => { filterTrigger.current = event.currentTarget; setFiltersOpen(true); }} />}
           </ol>
           {visible < day.contents.length && <div className="flex justify-center pt-5 pb-1"><Button type="button" variant="secondary" onClick={(event) => { reveal.prepare(event.detail === 0); setVisible((n) => Math.min(n + step, day.contents.length)); }}>{m.t("contents.showMore")}</Button></div>}
@@ -140,11 +140,9 @@ function ReleaseDaySection({ day, initial, step, pending, cardProps: p, collapse
 }
 
 
-function ReleaseCard({ card, open, position, exposure, cardProps: p }: { card: Card; open: boolean; position: number; exposure: ReturnType<typeof useExposure>; cardProps: ReleaseCardProps }) {
+function ReleaseCard({ card, open, onOpen, cardProps: p }: { card: Card; open: boolean; onOpen: () => void; cardProps: ReleaseCardProps }) {
   const [viewport, visible] = useNearViewport({ margin: "0px", leaveMargin: "1200px 0px" });
-  const tracked = useMemo(() => exposure.track(card.id, position), [exposure, card.id, position]);
-  const ref = useCallback((element: HTMLLIElement | null) => { viewport(element); tracked(element); }, [viewport, tracked]);
-  return <li ref={ref} data-release-key={card.id}>
-    <ContentCard card={card} client={p.client} href={() => exposure.href(card.id, position, p.href ? p.href(card) : card.path)} shape={p.shape} aspectRatio={p.aspectRatio} titlePosition={p.titlePosition} loadMedia={open && visible} entityKinds={p.entityKinds} chips={p.chips} chipOverflow={p.chipOverflow} chipFit={p.chipFit} filterEntity={p.filterEntity} entityStyle={p.entityStyle} entityLayout={p.entityLayout} metadata={p.metadata} showCounts={p.showCounts} tiers={p.tiers} labels={p.labels} showChannel={p.showChannel} channelHref={p.channelHref} decorate={p.decorate} cardTitle={p.cardTitle} showLockBadge={p.showLockBadge} status={p.status} dimDisliked={p.dimDisliked} onOpen={() => exposure.click(card.id, position, exposure.href(card.id, position, p.href ? p.href(card) : card.path))} />
+  return <li ref={viewport} data-release-key={card.id}>
+    <ContentCard card={card} client={p.client} href={() => (p.href ? p.href(card) : card.path)} shape={p.shape} aspectRatio={p.aspectRatio} titlePosition={p.titlePosition} loadMedia={open && visible} entityKinds={p.entityKinds} chips={p.chips} chipOverflow={p.chipOverflow} chipFit={p.chipFit} filterEntity={p.filterEntity} entityStyle={p.entityStyle} entityLayout={p.entityLayout} metadata={p.metadata} showCounts={p.showCounts} tiers={p.tiers} labels={p.labels} showChannel={p.showChannel} channelHref={p.channelHref} decorate={p.decorate} cardTitle={p.cardTitle} showLockBadge={p.showLockBadge} status={p.status} dimDisliked={p.dimDisliked} onOpen={onOpen} />
   </li>;
 }

@@ -392,7 +392,6 @@ export const admin: typeof en = {
   },
   stats: {
     title: "Statistiken",
-    kind: "Inhalt",
     activity: "Täglich aktive Leser",
     visitorsNote: "Personen, die mindestens einen Inhalt gelesen oder abgespielt haben, einmal pro Tag gezählt.",
     days: "Tage",
@@ -400,7 +399,6 @@ export const admin: typeof en = {
     today: "Heute",
     visitors: "Leser",
     peak: "Höchstwert {count}",
-    activeTime: "Aktive Zeit",
     date: "Tag",
     showTable: "Tabelle anzeigen",
     noActivity: "Keine gemessene Aktivität in diesem Zeitraum.",

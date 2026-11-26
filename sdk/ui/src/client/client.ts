@@ -1,4 +1,3 @@
-import { guestReadingHistory, type GuestReadingHistory } from "./guest-reading-history.js";
 import { ChannelsClient } from "./channels.js";
 import { CatalogClient } from "./catalog.js";
 import { CodesClient } from "./codes.js";
@@ -55,7 +54,7 @@ export interface ContentKitClient {
   readonly entities: EntitiesClient;
   /** Channel identity, authoring permissions and repost feeds. */
   readonly channels: ChannelsClient;
-  /** Lists, search, typeahead, rails, release dates, content filters, purchase library, history, signals and exposures. */
+  /** Lists, search, typeahead, rails, release dates, content filters, purchase library, history, continue reading, hiding and activity. */
   readonly discovery: DiscoveryClient;
   /** Content versions: reader plans, reader metadata, forks and downloads. */
   readonly versions: VersionsClient;
@@ -66,8 +65,6 @@ export interface ContentKitClient {
   /** The signed-in person's account inbox; transport may be supplied by AuthKit. */
   /** Browser guest preferences and explicit registration inheritance. */
   readonly preferences: ReaderPreferencesClient;
-  /** Browser-owned guest reading progress, isolated to this catalog mount. */
-  readonly guestHistory: GuestReadingHistory;
 
   /** What the content module allows: which interactions signed-out visitors may make. */
   config(signal?: AbortSignal): Promise<Config>;
@@ -104,7 +101,6 @@ export function createContentKitClient(options: ContentKitClientOptions): Conten
     codes: new CodesClient(h),
     stats: new StatsClient(h),
     preferences: new ReaderPreferencesClient(h),
-    guestHistory: guestReadingHistory(h.mount("discovery")),
     config: (signal) => call(h, "GET", "/config", { signal }),
     kinds: (signal) =>
       call(h, "GET", "/kinds", { signal }).then((model: ContentModel) => {

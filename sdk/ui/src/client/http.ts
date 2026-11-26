@@ -3,6 +3,7 @@ import type { ContentChange } from "./content/types.js";
 import { CONTENTKIT_MODULES } from "./generated/routes.js";
 import type { FileInfo, RefBody } from "./generated/wire.js";
 import { browserReaderPreferences, type BrowserReaderPreferences, type GuestReaderPreferences } from "./browser-reader-preferences.js";
+import { anonymousId, anonymousUsed, markAnonymousUsed, renewAnonymousId } from "./anonymous.js";
 
 /** A module's base URL, or one per item (a host that splits uploads by kind). */
 export type Mount = string | ((ref: RefBody) => string);
@@ -108,8 +109,25 @@ export class Http {
   }
 
   setViewer(viewer: string | null | undefined): void {
+    const previous = this.viewer;
     if (viewer !== this.viewer) this.viewerRevision++;
     this.viewer = viewer;
+    if (typeof viewer === "string" && typeof previous !== "string") this.linkAnonymous();
+    else if (viewer === null && typeof previous === "string") renewAnonymousId();
+  }
+
+  /**
+   * Signing in hands the anonymous id the browser used to the account once,
+   * so its reading becomes the account's, then starts a fresh one: the next
+   * person signed out on this browser is not tied to the account.
+   */
+  private linkAnonymous(): void {
+    const id = anonymousId();
+    const used = anonymousUsed(id);
+    renewAnonymousId();
+    if (!used) return;
+    void this.request(`${this.mount("discovery")}/me/anonymous-link`, { method: "POST", body: { anonymous_id: id }, guestPreferences: false })
+      .catch(() => { /* Best effort: unlinked reading stays anonymous. */ });
   }
 
   acceptGuestFilters(filters: readonly { entity: { id: string } }[]): void {
@@ -185,6 +203,14 @@ export class Http {
     if (token && !headers.has("Authorization")) headers.set("Authorization", `Bearer ${token}`);
     const lang = this.o.language?.();
     if (lang) headers.set("Accept-Language", lang);
+    headers.set("ContentKit-UTC-Offset", String(-new Date().getTimezoneOffset()));
+    if (typeof this.viewer !== "string") {
+      const id = anonymousId();
+      headers.set("ContentKit-Anonymous-Id", id);
+      // Only a known signed-out request reads as the anonymous id; one made
+      // before the viewer resolves may carry an account credential.
+      if (this.viewer === null) markAnonymousUsed(id);
+    }
     if (this.viewer === null && guestPreferences) {
       const filters = this.guestFilters();
       if (filters) headers.set("ContentKit-Reader-Preferences", filters);

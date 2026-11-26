@@ -35,6 +35,7 @@ export {
   type CardQuery,
   type ContentFilterQuery,
   type ContentQuery,
+  type ContinueQuery,
   type HistoryQuery,
   type KnownCardsQuery,
   type ListSort,
@@ -52,8 +53,9 @@ export {
 } from "./discovery.js";
 export { VersionsClient, isPending } from "./versions.js";
 export { emptyReaderMeta, matchAudio, readerMetaProblems, readerNames, type AudioMatch, type ReaderMetaProblem, type ReaderNames } from "./reader-meta.js";
-export { StatsClient, type ActivityQuery } from "./stats.js";
-export { Beacons, eventId, readerSession, type Attribution, type BeaconOptions } from "./beacons.js";
+export { StatsClient, type ActiveQuery } from "./stats.js";
+export { ActivityReporter, ProgressTracker, type ActivityReporterOptions, type OpenSource, type ProgressTrackerOptions } from "./activity.js";
+export { anonymousId, renewAnonymousId } from "./anonymous.js";
 export { LETTERS, attributeInput, entityDisplayName, fold, fromLocalInput, humanize, letterOf, parseAttribute, parseAttributes, slugify, toLocalInput } from "./entity-fields.js";
 export { CodesClient } from "./codes.js";
 export { ReaderPreferencesClient, type LanguagePreference, type ReaderPreferenceState } from "./reader-preferences.js";
@@ -155,8 +157,6 @@ export {
 } from "./player.js";
 export * from "./generated/wire.js";
 
-export { EngagementTracker, type EngagementTrackerOptions, type ReadingObservation, type VisiblePage } from "./engagement.js";
-export { GuestReadingHistory, guestStanding, type GuestReadingItem, type GuestReadingSnapshot } from "./guest-reading-history.js";
 export { entitiesForVersion } from "./content-entities.js";
 export { allowsEntityScope } from "./entity-scopes.js";
 
