@@ -113,6 +113,11 @@ func (e *Encoder) grab(ctx context.Context, item mediastore.Item, f media.File, 
 			return err
 		}
 	}
+	if src.url != "" && v.Range != media.RangeSDR {
+		if src.toSDR, err = sourceToSDR(ctx, src.url); err != nil {
+			return err
+		}
+	}
 	dir, err := os.MkdirTemp(e.c.TempDir, tempPattern)
 	if err != nil {
 		return err
@@ -209,8 +214,24 @@ func (e *Encoder) measure(ctx context.Context, item mediastore.Item, v media.Fil
 			return v, err
 		}
 	}
-	v.W, v.H, v.Dur = pl.width, pl.height, pl.duration
+	v.W, v.H, v.Dur, v.Range = pl.width, pl.height, pl.duration, pl.color.dynamicRange()
 	return v, nil
+}
+
+// sourceToSDR is the tone mapping of the HDR source at url, from its color.
+func sourceToSDR(ctx context.Context, url string) (string, error) {
+	pr, err := probeRemote(ctx, url)
+	if err != nil {
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+		return "", &PermanentError{err}
+	}
+	pl, err := newPlan(pr)
+	if err != nil {
+		return "", &PermanentError{err}
+	}
+	return pl.color.toSDR(), nil
 }
 
 func (e *Encoder) sourceURL(ctx context.Context, item mediastore.Item, v media.File) (string, error) {
@@ -223,12 +244,13 @@ func (e *Encoder) sourceURL(ctx context.Context, item mediastore.Item, v media.F
 }
 
 // frameSource is where frames are cut: the widest current rendition of the
-// video (H.264 when there is one, any ffmpeg decodes it), read by range, or
-// else the source itself.
+// video (SDR, then H.264 when there is one, any ffmpeg decodes it), read by
+// range, or else the source itself. An HDR input is tone-mapped (toSDR).
 type frameSource struct {
-	key  string
-	segs []media.Segment
-	url  string
+	key   string
+	segs  []media.Segment
+	url   string
+	toSDR string
 }
 
 func (e *Encoder) frameSource(ctx context.Context, item mediastore.Item, man *mediastore.Manifest, v media.File) (frameSource, error) {
@@ -240,7 +262,8 @@ func (e *Encoder) frameSource(ctx context.Context, item mediastore.Item, man *me
 		fp := e.fp(p, v)
 		for _, o := range man.Outputs(v.Path, p.Name) {
 			if o.FP == fp && o.Track != nil && o.Track.Kind == media.TrackVideo && (best == nil ||
-				cmp.Or(o.W-best.W, boolInt(o.Track.Codec == string(media.CodecH264))-boolInt(best.Track.Codec == string(media.CodecH264))) > 0) {
+				cmp.Or(boolInt(o.Range == media.RangeSDR)-boolInt(best.Range == media.RangeSDR), o.W-best.W,
+					boolInt(o.Track.Codec == string(media.CodecH264))-boolInt(best.Track.Codec == string(media.CodecH264))) > 0) {
 				best = &o
 			}
 		}
@@ -254,17 +277,21 @@ func (e *Encoder) frameSource(ctx context.Context, item mediastore.Item, man *me
 		return frameSource{}, err
 	}
 	key, _ := item.Blob(best.Blob)
-	return frameSource{key: key, segs: idx.Segments}, nil
+	src := frameSource{key: key, segs: idx.Segments}
+	if best.Range != media.RangeSDR {
+		src.toSDR = toneMap // the rendition declares its color
+	}
+	return src, nil
 }
 
 // input is an ffmpeg input at t: a local snippet of the rendition's
 // segments around t (written to path), or the source.
 func (s frameSource) input(ctx context.Context, store media.Store, t float64, path string) (frameInput, error) {
 	if s.url != "" {
-		return frameInput{path: s.url, opts: remoteInputOptions(sourceDemuxers), offset: t}, nil
+		return frameInput{path: s.url, opts: remoteInputOptions(sourceDemuxers), offset: t, toSDR: s.toSDR}, nil
 	}
 	start, err := snippet(ctx, store, s.key, s.segs, t, t, path)
-	return frameInput{path: path, opts: ownMP4, offset: t - start}, err
+	return frameInput{path: path, opts: ownMP4, offset: t - start, toSDR: s.toSDR}, err
 }
 
 // autoFrame picks the earliest sampled frame with detail, else the most detailed.

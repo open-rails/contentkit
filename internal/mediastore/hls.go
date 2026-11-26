@@ -99,9 +99,10 @@ func (g *Grant) sidecars(from string, have []media.File) []media.File {
 }
 
 // MasterPlaylist is the multivariant playlist of the ladder under dir: one
-// variant per video track (rung and codec), with the audio and subtitle
-// groups; an audio-only ladder is one audio variant. Codecs are listed in
-// the ladder's order, so a player that decodes the first starts on it.
+// variant per video track (rung and codec) labelled with its VIDEO-RANGE,
+// with the audio and subtitle groups; an audio-only ladder is one audio
+// variant. Codecs are listed in the ladder's order, so a player that
+// decodes the first starts on it.
 func (g *Grant) MasterPlaylist(dir string, o MasterOptions) ([]byte, error) {
 	video, audio, subs, _ := g.ladder(dir)
 	if len(video) == 0 && len(audio) == 0 {
@@ -148,7 +149,7 @@ func (g *Grant) MasterPlaylist(dir string, o MasterOptions) ([]byte, error) {
 			if v.W > 0 && v.H > 0 {
 				fmt.Fprintf(&b, ",RESOLUTION=%dx%d", v.W, v.H)
 			}
-			fmt.Fprintf(&b, ",CODECS=%q", strings.Join(append([]string{v.Track.Codecs}, audioCodecs...), ","))
+			fmt.Fprintf(&b, ",CODECS=%q,VIDEO-RANGE=%s", strings.Join(append([]string{v.Track.Codecs}, audioCodecs...), ","), v.Range.HLS())
 			if len(audio) > 0 {
 				fmt.Fprintf(&b, ",AUDIO=%q", audioGroup)
 			}

@@ -134,6 +134,8 @@ jobs:
         [[ $status -eq 0 ]] || exit 1
     - name: Build and vet public modules and native commands
       run: bash .github/scripts/build-and-vet.sh
+    - name: Video command lines and HDR filter graphs against FFmpeg
+      run: go test -count=1 -p 1 ./internal/media/video
     - name: Run every reviewed critical contract with race detection
       env:
         CRITICAL_SUITE: ${{ inputs.suite }}

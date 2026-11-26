@@ -137,7 +137,7 @@ func (e *Encoder) assembleHLS(ctx context.Context, w runWork, k int, chunks []en
 			return err
 		}
 		if k == 0 && codec == spriteCodec {
-			if err := e.spriteFromRendition(ctx, path, dir, pl, r); err != nil {
+			if err := e.spriteFromRendition(ctx, path, dir, pl, r, codec); err != nil {
 				return err
 			}
 		}
@@ -146,7 +146,7 @@ func (e *Encoder) assembleHLS(ctx context.Context, w runWork, k int, chunks []en
 		if err != nil {
 			return err
 		}
-		o.W, o.H, o.FP = width, height, w.fp
+		o.W, o.H, o.FP, o.Range = width, height, w.fp, pl.rangeOf(codec)
 		o.Track.Kind, o.Track.Codec, o.Track.Codecs = media.TrackVideo, string(codec), codecs
 		outs = append(outs, o)
 		if err := os.Remove(path); err != nil {
@@ -315,8 +315,9 @@ func (e *Encoder) assembleRendition(ctx context.Context, dir, name string, r run
 
 // spriteFromRendition samples the already-assembled first rung, so the light
 // job never decodes a whole 4K source merely to produce thumbnails.
-func (e *Encoder) spriteFromRendition(ctx context.Context, path, dir string, p plan, rung rung) error {
+func (e *Encoder) spriteFromRendition(ctx context.Context, path, dir string, p plan, rung rung, codec media.Codec) error {
 	p.video, p.audio, p.subs = 0, nil, nil
+	p.color, _ = p.color.output(codec)
 	ps := pass{rung: rung, sprite: true, noTracks: true,
 		enc: encoding{threads: e.c.Threads}}
 	return ladder(ctx, path, dir, p, ps, nil)

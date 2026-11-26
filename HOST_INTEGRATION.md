@@ -1098,7 +1098,12 @@ worker, _ := cfg.MediaRegistry() // the stock worker's MEDIA_KINDS_FILE
   `HLS` (byte-range fMP4 ladder, audio and subtitle tracks, seek sprite; each
   track's segment table is its own blob) or `Subtitles` (clean WebVTT; a
   video lists them after its own tracks). A video's original is kept as
-  uploaded and is what its download serves. Nothing is upscaled.
+  uploaded and is what its download serves. Nothing is upscaled. An HDR
+  upload (PQ or HLG transfer) keeps its range in 10-bit AV1 with its
+  primaries and HDR10 static metadata; its H.264 rungs, sprite and frames
+  are tone-mapped to BT.709 SDR, and each master playlist variant states its
+  `VIDEO-RANGE`. An SDR upload is encoded as before. Dolby Vision and HDR10+
+  dynamic metadata are dropped: their HDR10 or HLG base is what is kept.
   Image presets default to WebP. A private preset with `Image.Format: media.ImageFormatSource` must end its `To` with `{ext}` (the upload's original extension), such as `download-pages/{name}{ext}`. With an inside fit and no edit, a source within its width/height box passes through with its pixels byte-for-byte and its metadata (EXIF, XMP, IPTC, comments, trailing data) dropped, orientation and colour profile kept; `Image.KeepMetadata` keeps all of it and is required for AVIF, HEIF and TIFF uploads. `Width: 6000, Height: 6000` bounds either edge proportionally; zero leaves an edge unbounded. Oversized or edited JPEG, PNG, WebP and GIF files retain their codec, including animation; other accepted codecs support unchanged passthrough only. Keep archival uploads with `KeepOriginals: true`. A reader kind's `Publish.Download` names such a `HostOnly` preset: the pages ZIP then carries a page's bounded rendition in place of an oversized original. `Shapes` give an image preset another `Image` for uploads of another aspect (width:height), wider than `WiderThan` and no wider than `NoWiderThan` (unset is open). They are data, so the stock worker runs them; they never overlap and keep the preset's format and animation; an upload in none renders `Image`. Tall pages keep more height, wide pages more width:
 
   ```json

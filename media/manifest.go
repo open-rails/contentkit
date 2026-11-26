@@ -17,6 +17,9 @@ type File struct {
 	W    int     `json:"w,omitempty"` // an upload's oriented size once measured; an output's size
 	H    int     `json:"h,omitempty"`
 	Dur  float64 `json:"dur,omitempty"`
+	// Range is a video upload's dynamic range once measured, and a video
+	// rendition's; empty is SDR.
+	Range DynamicRange `json:"range,omitempty"`
 
 	// Uploads:
 	Admission  *SourceAdmission `json:"admission,omitempty"`  // verified ZIP source destination, never client-supplied
