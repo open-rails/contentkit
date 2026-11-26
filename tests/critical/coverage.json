@@ -1333,6 +1333,18 @@
       ]
     },
     {
+      "id": "CK-J11-S13",
+      "journey": "CK-J11",
+      "behavior": "A killed worker's job scratch is removed by the next worker to start, and a stopped worker leaves none",
+      "status": "verified",
+      "evidence": [
+        "SIGKILL stops a real worker process mid-archive with the ZIP and a page on its disk; a worker started under the same TempDir removes them before taking work, finishes the archive from the replayed job, and leaves no scratch once it stops."
+      ],
+      "cases": [
+        "TestMediaWorkerScratch/CK-J11-S13_a_killed_job's_scratch_is_gone_after_a_restart"
+      ]
+    },
+    {
       "id": "CK-J12-S01",
       "journey": "CK-J12",
       "behavior": "Real video produces playable configured AV1 and H264 renditions with its soundtrack",
