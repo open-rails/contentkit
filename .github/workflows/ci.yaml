@@ -177,6 +177,45 @@ jobs:
           echo "::endgroup::"
         done
         exit "$status"
+  # Temporary: the squashed baselines build what the RC's chains build.
+  schema-proof:
+    name: Migration baselines match the chains
+    needs: source
+    if: needs.source.outputs.light == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: groonga/pgroonga@sha256:55f246f1137e194d830ffac88a22f4d3e8023bcebb3bc0b36eb8732e322c9dc2 # 4.1.0-debian-18
+        env:
+          POSTGRES_USER: contentkit
+          POSTGRES_PASSWORD: contentkit
+          POSTGRES_DB: proof
+        ports:
+        - 5432:5432
+        options: --health-cmd "pg_isready -U contentkit" --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      GOWORK: 'off'
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      with:
+        ref: ${{ github.sha }}
+        fetch-depth: 2
+        persist-credentials: false
+    - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+      with:
+        go-version-file: go.mod
+    - name: Baselines against the base's chains
+      env:
+        PG: ${{ job.services.postgres.id }}
+      run: go run ./scripts/schemaproof -ref HEAD^1 -dsn "postgres://contentkit:contentkit@localhost:5432/proof?sslmode=disable" -pg-dump "docker exec $PG pg_dump" -keep "$RUNNER_TEMP/schemaproof"
+    - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+      if: always()
+      with:
+        name: schemaproof
+        path: ${{ runner.temp }}/schemaproof/
+        if-no-files-found: ignore
+        retention-days: 7
   ui-package:
     needs: source
     if: needs.source.outputs.light == 'true'
