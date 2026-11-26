@@ -306,7 +306,15 @@ func TestMediaGarbageCollection(t *testing.T) {
 		if !errors.As(err, &settling) {
 			t.Fatalf("re-referencing a deleting hash: %v, want SettlingError", err)
 		}
+		// Past the settle period a HEAD decides: the refused writer's bytes
+		// are there again, so a is deleted once more under a fresh stamp,
+		// and dropped once that one has settled and its object is gone.
 		settled := later.Add(20 * time.Minute)
+		clock.Store(&settled)
+		_, err = jobs.Collect(t.Context(), ref)
+		must(t, err)
+		requireAbsent(t, n.storage.store, item, a)
+		settled = settled.Add(20 * time.Minute)
 		clock.Store(&settled)
 		_, err = jobs.Collect(t.Context(), ref)
 		must(t, err)
