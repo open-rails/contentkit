@@ -21,8 +21,8 @@ import (
 	"time"
 
 	mediastore "github.com/open-rails/contentkit/internal/mediastore"
+	"github.com/open-rails/contentkit/internal/uuidv7"
 
-	"github.com/google/uuid"
 	"github.com/open-rails/helpers/deps"
 	"golang.org/x/sync/errgroup"
 
@@ -741,7 +741,7 @@ func (p *Processor) render(ctx context.Context, item mediastore.Item, m *mediast
 			}
 			stable := pu.Stable
 			publication = media.Publication{Preset: pu.Name, Source: f.Key(), FP: fp, Stable: &stable,
-				Generation: uuid.NewString(), Names: names, Blobs: prepared, Dims: make([]media.Dims, len(names))}
+				Generation: uuidv7.NewString(), Names: names, Blobs: prepared, Dims: make([]media.Dims, len(names))}
 			for i, name := range names {
 				publication.Dims[i] = outs[name].dims
 			}

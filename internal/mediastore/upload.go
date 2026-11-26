@@ -18,6 +18,7 @@ import (
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/clientaddr"
 	"github.com/open-rails/contentkit/internal/ratelimit"
+	"github.com/open-rails/contentkit/internal/uuidv7"
 	media "github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/layout"
 	"github.com/open-rails/contentkit/media/token"
@@ -161,8 +162,17 @@ func (u *Uploads) Presign(ctx context.Context, actor access.Actor, r media.Presi
 	return out, nil
 }
 
+// CallerOperation is the journal key of a caller's commit operation_id. The
+// journal's own operations take UUIDv7s derived from public inputs (a folder,
+// a parent id); hashing a caller's id keeps every one of them out of its
+// reach, so no commit can claim the key an erasure or purge needs. The key is
+// dated at the id's own instant, the Unix epoch for a UUIDv4.
+func CallerOperation(id uuid.UUID) uuid.UUID {
+	return uuidv7.Name(uuidv7.At(id.String()), uuid.Nil, "caller-commit:"+id.String())
+}
+
 // NewStaged is a fresh staged upload name: "u-{uuid}".
-func NewStaged() string { return layout.StagedPrefix + uuid.NewString() }
+func NewStaged() string { return layout.StagedPrefix + uuidv7.NewString() }
 
 // uploadPath is the path to commit for a requested one: its {name} cleaned
 // (or chosen, for a Named upload) and an extension from the type when it
@@ -367,10 +377,11 @@ func (u *Uploads) Commit(ctx context.Context, actor access.Actor, ref contentref
 		return nil, uploadErr(media.CodeInvalid, "operation_id must be a canonical nonzero UUID")
 	}
 	trusted := actor.Kind == "contentkit:system" && actor.ID == "contentkit" && !actor.Anonymous
-	// Deterministic internal IDs share this journal. Untrusted callers must
-	// not reserve a lifecycle receipt belonging to another media item.
-	if !trusted && (id.Variant() != uuid.RFC4122 || id.Version() != 4 && id.Version() != 7) {
-		return nil, uploadErr(media.CodeInvalid, "operation_id must be a UUIDv4 or UUIDv7")
+	if !trusted {
+		if id.Variant() != uuid.RFC4122 || id.Version() != 4 && id.Version() != 7 {
+			return nil, uploadErr(media.CodeInvalid, "operation_id must be a UUIDv4 or UUIDv7")
+		}
+		id = CallerOperation(id)
 	}
 	limit := 1000
 	if trusted {

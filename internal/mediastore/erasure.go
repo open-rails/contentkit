@@ -9,6 +9,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/uuidv7"
 	media "github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/layout"
 )
@@ -68,7 +69,7 @@ func (j *Jobs) Erase(ctx context.Context, d media.Deletion) error {
 	if d.OperationID == "" {
 		return errors.New("media: erasure needs a stable operation ID")
 	}
-	operation := uuid.NewSHA1(uuid.NameSpaceURL, []byte("erase:"+item.Prefix()+d.OperationID))
+	operation := uuidv7.Name(item.at(d.OperationID), uuid.NameSpaceURL, "erase:"+item.Prefix()+d.OperationID)
 	fence := item.PublicPrefix() + layout.FenceName
 	if err = j.fenceErasure(ctx, item); err != nil {
 		return err

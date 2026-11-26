@@ -17,6 +17,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/open-rails/authkit/authtest"
 )
 
 type httpCase struct {
@@ -164,7 +166,7 @@ func (f *fixture) requestPage(ctx context.Context, c httpCase) (page httpPage, s
 	}
 	req.Host = c.Host
 	if c.Token != "" {
-		req.Header.Set("Authorization", "Bearer "+c.Token)
+		authtest.Authorize(f.t, f.auth, req, c.Token)
 	}
 	response, e := f.server.Client().Do(req)
 	if e != nil {

@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/uuidv7"
 	media "github.com/open-rails/contentkit/media"
 	"github.com/riverqueue/river"
 )
@@ -115,7 +116,7 @@ func (j *PGJournal) prepareCleanup(ctx context.Context, c *manifestCommit, effec
 	if err != nil {
 		return err
 	}
-	attempt := uuid.New()
+	attempt := uuidv7.New()
 	err = pgx.BeginFunc(ctx, j.pool, func(tx pgx.Tx) error {
 		if len(effects.Allocate) > 0 {
 			if err := j.lockAdmission(ctx, tx, c.Folder); err != nil {
@@ -184,13 +185,13 @@ type manifestCommit struct {
 // makes restoration refuse the version before the first S3 request is issued.
 func (j *PGJournal) claimErasureTx(ctx context.Context, tx pgx.Tx, item Item) error {
 	j = j.forTenant(item.Ref().TenantID)
-	operation := uuid.NewSHA1(uuid.NameSpaceURL, []byte("erasure-claim:"+item.Prefix()))
+	operation := uuidv7.Name(item.at(), uuid.NameSpaceURL, "erasure-claim:"+item.Prefix())
 	fingerprint := sha256.Sum256([]byte("permanent-version-erasure"))
 	_, err := tx.Exec(ctx, `INSERT INTO `+j.table+`
 (tenant_id,operation_id,content_kind,content_id,content_version_id,folder_prefix,actor_id,fingerprint,lease_id,state,effects)
 VALUES($1,$2,$3,$4,$5,$6,'',$7,$8,'applied','{"erasure":true}')
 ON CONFLICT(tenant_id,operation_id) DO NOTHING`, item.Ref().TenantID, operation, item.Ref().ContentKind,
-		item.Ref().ContentID, item.Ref().ContentVersionID, item.Prefix(), fingerprint[:], uuid.New())
+		item.Ref().ContentID, item.Ref().ContentVersionID, item.Prefix(), fingerprint[:], uuidv7.New())
 	if err != nil {
 		return err
 	}
@@ -208,7 +209,7 @@ func (c manifestCommit) terminal() bool { return c.State == "applied" || c.State
 
 func (j *PGJournal) begin(ctx context.Context, c manifestCommit) (manifestCommit, error) {
 	j = j.forTenant(c.Ref.TenantID)
-	lease := uuid.New()
+	lease := uuidv7.New()
 	effects, err := json.Marshal(c.Effects)
 	if err != nil {
 		return c, err
@@ -400,7 +401,7 @@ AND ($3::uuid IS NULL OR operation_id = $3) FOR UPDATE`, tenant, folder, operati
 		if err != nil {
 			return err
 		}
-		found.Lease, found.State = uuid.New(), "frozen"
+		found.Lease, found.State = uuidv7.New(), "frozen"
 		_, err = tx.Exec(ctx, `UPDATE `+j.table+` SET lease_id = $3, state = 'frozen', updated_at = now()
 WHERE tenant_id = $1 AND operation_id = $2`, tenant, id, found.Lease)
 		c = &found

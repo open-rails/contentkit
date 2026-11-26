@@ -28,12 +28,11 @@ func TestHTTPAuthenticationMatrix(t *testing.T) {
 	attachMedia(t, w, a)
 	item := publishedArticle(t, a, "HTTP authentication target")
 	user, revoked := w.person(t, 0)
-	claims, err := w.tenant[0].Verify(t.Context(), revoked)
-	must(t, err)
+	claims := tokenClaims(t, revoked)
 	identity := authtest.Identity(t, w.tenant[0], revoked)
 	must(t, w.tenant[0].RevokeSession(t.Context(), identity, user.ID, claims.SessionID))
 	_, member := w.person(t, 0)
-	_, err = a.client(member).GetContents(t.Context(), ck.GetContentsQuery{})
+	_, err := a.client(member).GetContents(t.Context(), ck.GetContentsQuery{})
 	must(t, err)
 	signed := func(change func(map[string]any)) string {
 		parts := strings.Split(member, ".")
@@ -100,9 +99,7 @@ func TestHTTPAuthenticationMatrix(t *testing.T) {
 				request, err := http.NewRequestWithContext(t.Context(), method, a.server.URL+"/content"+path, strings.NewReader("{}"))
 				must(t, err)
 				request.Header.Set("Content-Type", "application/json")
-				if bearer != "" {
-					request.Header.Set("Authorization", "Bearer "+bearer)
-				}
+				presentToken(t, w.auth, request, bearer)
 				response, err := http.DefaultClient.Do(request)
 				must(t, err)
 				defer response.Body.Close()
@@ -111,8 +108,17 @@ func TestHTTPAuthenticationMatrix(t *testing.T) {
 				if response.StatusCode != status {
 					t.Fatalf("%s %s returned %d, want %d; body=%s", method, row[2], response.StatusCode, status, body)
 				}
-				if status == 401 && !strings.HasPrefix(response.Header.Get("WWW-Authenticate"), "Bearer") {
-					t.Fatalf("credential refusal omitted challenge: %v", response.Header)
+				// The challenge names the scheme the credential came in (RFC 6750
+				// §3, RFC 9449 §7.1): a refused DPoP-bound session token is
+				// invalid_token under DPoP; none, or a Bearer one, is Bearer.
+				if challenge := response.Header.Get("WWW-Authenticate"); status == 401 {
+					if scheme, _, _ := strings.Cut(request.Header.Get("Authorization"), " "); scheme == "DPoP" {
+						if !strings.HasPrefix(challenge, "DPoP ") || !strings.Contains(challenge, `error="invalid_token"`) {
+							t.Fatalf("DPoP credential refusal omitted its DPoP invalid_token challenge: %v", response.Header)
+						}
+					} else if !strings.HasPrefix(challenge, "Bearer") {
+						t.Fatalf("credential refusal omitted challenge: %v", response.Header)
+					}
 				}
 				if method != "HEAD" {
 					var result struct {

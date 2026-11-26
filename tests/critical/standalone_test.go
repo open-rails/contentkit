@@ -91,7 +91,7 @@ func TestStandaloneParity(t *testing.T) {
 			t.Fatalf("equivalent anonymous reads differ: %+v / %+v", leftContent, rightContent)
 		}
 		for _, prefix := range []string{a.server.URL + "/content", base + "/content"} {
-			bad := ck.NewClient(prefix, &http.Client{Transport: bearerTransport{"invalid", http.DefaultTransport}})
+			bad := ck.NewClient(prefix, &http.Client{Transport: bearerTransport{token: "invalid", base: http.DefaultTransport}})
 			_, err := bad.GetContents(t.Context(), ck.GetContentsQuery{})
 			requireError(t, err, 401, "unauthorized")
 			_, err = ck.NewClient(prefix, nil).GetMediaPresets(t.Context())

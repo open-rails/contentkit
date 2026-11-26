@@ -315,7 +315,7 @@ func (e *Engine) migratePostgres(ctx context.Context, options MigrationOptions) 
 	if options.SkipQueues {
 		return nil
 	}
-	if err := riverhelpers.ApplyMigrations(ctx, e.pool, e.riverSchema); err != nil {
+	if err := riverhelpers.ApplyMigrations(ctx, e.pool, riverhelpers.MigrationOptions{Schema: e.riverSchema, Logger: e.log}); err != nil {
 		return fmt.Errorf("contentkit: River migrations: %w", err)
 	}
 	if account, ok := e.accountMediaStorage(); ok {
@@ -519,7 +519,6 @@ func (e *Engine) contentOptions(deps Deps) contentstore.Options {
 		Locate: e.geo.Lookup, Pool: e.pool, Schema: e.schema, Tenant: e.cfg.Scope.AppID.String(), Auth: e.auth, UserInfo: deps.Users, Resolver: interactionTargets{e}, Kinds: e.cfg.Content,
 		TextProcessor:         deps.TextProcessor,
 		NotificationPublisher: deps.Notifications,
-		EraseAccountReceipts:  e.eraseAccountReceipts,
 		Accounts:              e,
 		Moderator:             deps.Moderator, ModeratorTimeout: in.ModeratorTimeout, ModeratorCooldown: in.ModeratorCooldown,
 		ProviderDataEraser: deps.ProviderDataEraser,

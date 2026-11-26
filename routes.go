@@ -182,7 +182,7 @@ func (e *Engine) dispatch(prefix string, modules map[httpapi.Module]http.Handler
 			return
 		}
 		// One billing read per request, whatever the module.
-		r = r.WithContext(entitlement.WithMemo(r.Context()))
+		r = httpapi.KeepSentURL(r.WithContext(entitlement.WithMemo(r.Context())))
 		if client.IsValid() {
 			r.RemoteAddr = netip.AddrPortFrom(client, 0).String()
 		}

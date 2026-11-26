@@ -3,7 +3,6 @@ package critical_test
 import (
 	"context"
 	"net/http"
-	"strings"
 	"testing"
 	"time"
 
@@ -66,30 +65,5 @@ func TestAccountNotificationsOptional(t *testing.T) {
 		}
 		must(t, engine.AnonymizeAccount(t.Context(), owner.ID))
 		assertNoInbox(t)
-	})
-	t.Run("CK-J25-S19_partial_account_erasure_storage_fails_closed", func(t *testing.T) {
-		must(t, engine.Close(t.Context()))
-		// An incomplete restored account plane must not be mistaken for an
-		// optional inbox that has never been enabled. This is corruption setup.
-		_, err := w.pool.Exec(t.Context(), "CREATE TABLE "+pgx.Identifier{cfg.Accounts.Schema, "notify_recipients"}.Sanitize()+" (scope text)")
-		must(t, err)
-		candidate, err := ck.New(t.Context(), cfg, deps)
-		if candidate != nil {
-			must(t, candidate.Close(t.Context()))
-		}
-		if err == nil || !strings.Contains(err.Error(), "incomplete AuthKit account erasure storage") {
-			t.Fatalf("partial erasure lineage was not refused: %v", err)
-		}
-		// A retained migration ledger also proves the optional inbox previously
-		// existed; losing every data/fence table must not become a fresh opt-out.
-		_, err = w.pool.Exec(t.Context(), "DROP TABLE "+pgx.Identifier{cfg.Accounts.Schema, "notify_recipients"}.Sanitize()+"; CREATE TABLE "+pgx.Identifier{cfg.Accounts.Schema, "notify_migrations"}.Sanitize()+" (version integer PRIMARY KEY)")
-		must(t, err)
-		candidate, err = ck.New(t.Context(), cfg, deps)
-		if candidate != nil {
-			must(t, candidate.Close(t.Context()))
-		}
-		if err == nil || !strings.Contains(err.Error(), "incomplete AuthKit account erasure storage") {
-			t.Fatalf("retained ledger with lost erasure tables was not refused: %v", err)
-		}
 	})
 }

@@ -100,9 +100,6 @@ type Options struct {
 	NotificationPublisher notify.Publisher
 	// Accounts serves the account lifecycle routes; nil answers them 500.
 	Accounts content.AccountLifecycle
-	// EraseAccountReceipts connects the existing account cleanup lifecycle.
-	// Nil is used by standalone content runtimes without shared account storage.
-	EraseAccountReceipts func(context.Context, []string) error
 
 	// Logger receives the access log: each request at DEBUG, a 500 at ERROR
 	// with its cause. nil -> slog.Default().
@@ -112,29 +109,28 @@ type Options struct {
 // Runtime is one tenant's embedded content module: shared deps + the module
 // services, exposing one mountable http.Handler.
 type Runtime struct {
-	locate               func(context.Context, netip.Addr) content.VisitorLocation
-	accounts             content.AccountLifecycle
-	notifier             notify.Publisher
-	eraseAccountReceipts func(context.Context, []string) error
-	store                *store
-	schema               string
-	tenant               string
-	guard                *gate.Gate
-	userInfo             userinfo.Lookup
-	avatars              content.Avatars
-	resolver             resolve.Resolver
-	media                *Media
-	processor            content.TextProcessor
-	moderator            content.ContentModerator
-	breaker              *moderatorBreaker
-	providerEraser       content.ProviderDataEraser
-	anonymous            content.Anonymous
-	duplicateWindow      time.Duration
-	commentMax           int
-	log                  *slog.Logger
-	cfg                  kinds.Config
-	rules                *rules
-	limiters             map[content.Action]*ratelimit.Limiter
+	locate          func(context.Context, netip.Addr) content.VisitorLocation
+	accounts        content.AccountLifecycle
+	notifier        notify.Publisher
+	store           *store
+	schema          string
+	tenant          string
+	guard           *gate.Gate
+	userInfo        userinfo.Lookup
+	avatars         content.Avatars
+	resolver        resolve.Resolver
+	media           *Media
+	processor       content.TextProcessor
+	moderator       content.ContentModerator
+	breaker         *moderatorBreaker
+	providerEraser  content.ProviderDataEraser
+	anonymous       content.Anonymous
+	duplicateWindow time.Duration
+	commentMax      int
+	log             *slog.Logger
+	cfg             kinds.Config
+	rules           *rules
+	limiters        map[content.Action]*ratelimit.Limiter
 
 	preferences *preferences
 	reactions   *reactions
@@ -207,7 +203,6 @@ func New(ctx context.Context, opts Options) (*Runtime, error) {
 		limiters:        limiters,
 	}
 	rt.notifier = opts.NotificationPublisher
-	rt.eraseAccountReceipts = opts.EraseAccountReceipts
 	rt.accounts = opts.Accounts
 	rt.guard = &gate.Gate{Auth: opts.Auth, Log: log}
 	rt.rules = newRules(rt)

@@ -12,7 +12,7 @@ export const dark = theme === "dark";
 document.documentElement.style.colorScheme = dark ? "dark" : "light";
 document.body.style.cssText = `margin:0;font-family:Inter,ui-sans-serif,system-ui,sans-serif;background:${dark ? "#09090b" : "#fafafa"};color:${dark ? "#fafafa" : "#09090b"}`;
 
-export const auth = createAuthClient({ baseUrl: "/api/auth/v1" });
+export const auth = createAuthClient({ baseUrl: "/auth/v1" });
 const user = q.get("user");
 const pw = q.get("pw");
 if (user && pw) await auth.signInWithPassword({ identifier: user, password: pw });

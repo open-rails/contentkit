@@ -29,7 +29,7 @@ var public = append([]string{"", "media/s3", "media/avatar", "media/gateway", "m
 
 // leafHelpers are the internal packages a type package may import: pure
 // value helpers with no storage.
-var leafHelpers = []string{"internal/codes", "internal/normalize", "internal/edition"}
+var leafHelpers = []string{"internal/codes", "internal/normalize", "internal/edition", "internal/uuidv7"}
 
 // Exported functions of type packages named New*, allowed: they build values,
 // not stores.

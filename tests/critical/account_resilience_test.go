@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -22,8 +24,10 @@ import (
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/open-rails/authkit"
+	"github.com/open-rails/authkit/authtest"
+	"github.com/open-rails/authkit/iam"
 	"github.com/open-rails/authkit/notify"
-	notifypg "github.com/open-rails/authkit/notify/postgres"
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/discovery"
@@ -33,15 +37,45 @@ import (
 	"github.com/open-rails/contentkit/signal"
 )
 
+// eraseAuthKitAccount purges id's account as a host does. AuthKit keeps every
+// live group owned (409 last_owner), so the host first hands each group the
+// account owns, such as its channels' scopes, to a steward. PurgeUsers then
+// ends the recovery window and AuthKit's own River deletes the account, its
+// inbox erased in the same transaction. ContentKit's consumer
+// (AnonymizeAccount) has not run.
 func eraseAuthKitAccount(t *testing.T, w *world, a *application, id string) {
 	t.Helper()
-	schema := "contentkit_accounts"
-	if a.cfg.Accounts != nil {
-		schema = a.cfg.Accounts.Schema
+	w.startAuth(t)
+	var steward *authtest.User
+	for m, err := range iam.All(func(p iam.PageRequest) (iam.ListPage[iam.Membership], error) {
+		return a.tenant.ListMemberships(t.Context(), iam.UserSubject(id), p)
+	}) {
+		must(t, err)
+		if !m.Role.IsOwner() {
+			continue
+		}
+		if steward == nil {
+			// An owner counts only once enrolled in a second factor, as in an
+			// ownership transfer.
+			u := authtest.NewUser(t, a.tenant)
+			u.TOTP = authtest.EnrollTOTP(t, a.tenant, u)
+			steward = &u
+		}
+		authtest.GrantRole(t, a.tenant, iam.GroupByID(m.Group.ID), iam.UserSubject(steward.ID), m.Role)
 	}
-	store, err := notifypg.New(w.pool, notifypg.Config{Schema: schema, Scope: "contentkit:" + (layout.Scope{TenantID: a.cfg.Scope.TenantID.String()}).Partition()})
+	results, err := a.tenant.PurgeUsers(t.Context(), []string{id})
 	must(t, err)
-	must(t, store.EraseRecipient(t.Context(), notify.Recipient{Audience: notify.AudienceUser, ID: id}))
+	for _, result := range results {
+		must(t, result.Err)
+	}
+	waitForWithin(t, 30*time.Second, func() bool {
+		_, err := a.tenant.User(t.Context(), iam.UserByID(id), authkit.IncludeDeleted())
+		if errors.Is(err, iam.ErrUserNotFound) {
+			return true
+		}
+		must(t, err)
+		return false
+	})
 }
 
 func checkAnonymizationProbe(t *testing.T, engine *ck.Engine, pending bool) {
@@ -135,6 +169,9 @@ func TestAccountAnonymizationRecoveryAcrossStores(t *testing.T) {
 	sibling.engine, err = ck.New(t.Context(), sibling.cfg, sibling.deps)
 	must(t, err)
 	sibling.server = mountEngine(t, sibling.engine)
+	// Each app's inbox owner is its own deployment: an app-visible notice shows
+	// in its app alone, a tenant-wide one in both.
+	appNotice := map[*application]string{}
 	for _, target := range []struct {
 		app *application
 		id  string
@@ -142,13 +179,31 @@ func TestAccountAnonymizationRecoveryAcrossStores(t *testing.T) {
 		_, err := target.app.client(appResetCredential).PostContentFavorite(t.Context(), target.id, ck.PostContentFavoriteQuery{})
 		must(t, err)
 		must(t, target.app.client(appResetCredential).PostSignals(t.Context(), discovery.Signals{Signals: []discovery.SignalInput{{ContentID: target.id, Type: "click", EventID: uuid.NewString(), OccurredAt: time.Now()}}}))
-		_, err = target.app.publishInbox(t.Context(), inboxPublication{Notifications: []notify.Input{{Recipient: notify.Recipient{Audience: "user", ID: appReset.ID}, Origin: notify.Origin{System: "critical", Scope: target.app.cfg.Scope.AppID.String(), ID: uuid.NewString()}, Kind: "app.private", CreatedAt: time.Now(), Data: json.RawMessage(`{"message":"App receipt"}`)}}})
+		appNotice[target.app] = uuid.NewString()
+		_, err = target.app.publishInbox(t.Context(), inboxPublication{Notifications: []notify.Input{{Recipient: notify.Recipient{Audience: "user", ID: appReset.ID}, Origin: notify.Origin{System: "critical", Scope: target.app.cfg.Scope.AppID.String(), ID: appNotice[target.app]}, Kind: "app.private", CreatedAt: time.Now(), Data: json.RawMessage(`{"message":"App receipt"}`)}}})
 		must(t, err)
 	}
-	shared, err := notifypg.New(w.pool, notifypg.Config{Schema: "contentkit_accounts", Scope: "contentkit:" + (layout.Scope{TenantID: a.cfg.Scope.TenantID.String()}).Partition()})
+	shared, err := w.tenant[0].Notifications(authkit.NotificationProducer{Name: "critical-shared", Origin: notify.OriginScope{System: "critical-shared", Scope: a.cfg.Scope.TenantID.String()}, Visibility: notify.VisibilityTenant})
 	must(t, err)
-	sharedNotice, err := shared.Publish(t.Context(), notify.Input{Recipient: notify.Recipient{Audience: "user", ID: appReset.ID}, Origin: notify.Origin{System: "critical-shared", Scope: a.cfg.Scope.TenantID.String(), ID: uuid.NewString()}, Kind: "tenant.shared", Visibility: notify.VisibilityTenant, CreatedAt: time.Now(), Data: json.RawMessage(`{"message":"Shared account receipt"}`)})
-	must(t, err)
+	sharedNotice := uuid.NewString()
+	must(t, shared.Publish(t.Context(), []notify.Publication{{RecipientID: appReset.ID, ID: sharedNotice, Revision: 1, Kind: "tenant.shared", CreatedAt: time.Now(), Data: json.RawMessage(`{"message":"Shared account receipt"}`)}}))
+	// inboxOf is appReset's inbox in app's view, as the origin IDs it shows.
+	inboxOf := func(t *testing.T, app *application) []string {
+		t.Helper()
+		inbox, err := app.accountInbox(appResetCredential).List(t.Context(), inboxQuery{})
+		must(t, err)
+		ids := []string{}
+		for _, item := range inbox.Items {
+			ids = append(ids, item.Origin.ID)
+		}
+		slices.Sort(ids)
+		return ids
+	}
+	isolated := func(app *application) []string {
+		ids := []string{appNotice[app], sharedNotice}
+		slices.Sort(ids)
+		return ids
+	}
 	endpoint, err := url.Parse(os.Getenv("CONTENTKIT_CRITICAL_S3_ENDPOINT"))
 	must(t, err)
 	proxy := httputil.NewSingleHostReverseProxy(endpoint)
@@ -188,10 +243,8 @@ func TestAccountAnonymizationRecoveryAcrossStores(t *testing.T) {
 	}
 	t.Run("CK-J23-S06_app_deletion_replay_preserves_shared_inbox_and_sibling_data", func(t *testing.T) {
 		for _, app := range []*application{a, sibling} {
-			inbox, err := app.accountInbox(appResetCredential).List(t.Context(), inboxQuery{})
-			must(t, err)
-			if len(inbox.Items) != 2 {
-				t.Fatalf("shared/app inbox positive controls absent: %+v", inbox)
+			if got := inboxOf(t, app); !slices.Equal(got, isolated(app)) {
+				t.Fatalf("an app's inbox is not its own notices and the tenant's: %v, want %v", got, isolated(app))
 			}
 		}
 		must(t, a.engine.AnonymizeAccount(t.Context(), appReset.ID))
@@ -203,15 +256,13 @@ func TestAccountAnonymizationRecoveryAcrossStores(t *testing.T) {
 		if !report.Complete() {
 			t.Fatal("app replay did not finish")
 		}
-		inbox, err := a.accountInbox(appResetCredential).List(t.Context(), inboxQuery{})
-		must(t, err)
-		if len(inbox.Items) != 1 || inbox.Items[0].ID != sharedNotice.ID {
-			t.Fatal("app replay erased or duplicated shared account receipt")
+		// The inbox is AuthKit's, erased by its purge: one app's erasure leaves
+		// the account's inbox, the tenant's notice and the sibling's as they were.
+		if got := inboxOf(t, a); !slices.Equal(got, isolated(a)) {
+			t.Fatalf("app replay erased or duplicated an account receipt: %v, want %v", got, isolated(a))
 		}
-		inbox, err = sibling.accountInbox(appResetCredential).List(t.Context(), inboxQuery{})
-		must(t, err)
-		if len(inbox.Items) != 2 {
-			t.Fatal("app replay changed sibling inbox")
+		if got := inboxOf(t, sibling); !slices.Equal(got, isolated(sibling)) {
+			t.Fatalf("app replay changed sibling inbox: %v, want %v", got, isolated(sibling))
 		}
 		favorite, err := sibling.client(appResetCredential).GetContentFavorite(t.Context(), siblingItem.ID, ck.GetContentFavoriteQuery{})
 		must(t, err)
@@ -277,11 +328,6 @@ func TestAccountAnonymizationRecoveryAcrossStores(t *testing.T) {
 			app.server = mountEngine(lifetime, app.engine)
 			checkAnonymizationProbe(t, app.engine, false)
 		}
-		_, err := w.pool.Exec(t.Context(), `UPDATE contentkit_accounts.notify_recipients SET erased_at=now()-interval '16 minutes' WHERE scope=$1 AND audience='user' AND recipient=$2`, "contentkit:"+(layout.Scope{TenantID: a.cfg.Scope.TenantID.String()}).Partition(), user.ID)
-		must(t, err)
-		for _, app := range []*application{a, sibling} {
-			checkAnonymizationProbe(t, app.engine, true)
-		}
 	})
 	t.Run("CK-J24-S05_database_commit_failure_keeps_attribution_and_retry_pending", func(t *testing.T) {
 		qs := pgx.Identifier{w.schema}.Sanitize()
@@ -314,14 +360,10 @@ CREATE CONSTRAINT TRIGGER critical_reject_anonymization AFTER INSERT OR UPDATE O
 		if counts.Count == nil || *counts.Count != 3 {
 			t.Fatal("anonymization lost a retained contribution")
 		}
-		inbox, err := a.accountInbox(credential).List(t.Context(), inboxQuery{})
-		must(t, err)
-		if len(inbox.Items) != 0 {
-			t.Fatal("app inbox remained after terminal cleanup began")
+		if len(a.inboxItems(t, user.ID)) != 0 {
+			t.Fatal("AuthKit purge retained the app's private inbox")
 		}
-		inbox, err = sibling.accountInbox(credential).List(t.Context(), inboxQuery{})
-		must(t, err)
-		if len(inbox.Items) != 0 {
+		if len(sibling.inboxItems(t, user.ID)) != 0 {
 			t.Fatal("AuthKit purge retained the sibling's private inbox")
 		}
 		for _, replay := range []func(context.Context) (signal.ErasureReport, error){a.engine.ReplayErasureFences, a.engine.ReplayAccountErasures} {
@@ -369,6 +411,10 @@ CREATE CONSTRAINT TRIGGER critical_reject_anonymization AFTER INSERT OR UPDATE O
 		sibling.engine, err = ck.New(t.Context(), sibling.cfg, sibling.deps)
 		must(t, err)
 		sibling.server = mountEngine(lifetime, sibling.engine)
+		// Fixture clock: this app's unfinished erasure began 16 minutes ago.
+		_, err = w.pool.Exec(t.Context(), `UPDATE contentkit_accounts.content_account_erasure_intents SET requested_at=now()-interval '16 minutes' WHERE tenant_id=$1 AND app_id=$2 AND actor_id=$3`,
+			a.cfg.Scope.TenantID.String(), a.cfg.Scope.AppID.String(), user.ID)
+		must(t, err)
 		checkAnonymizationProbe(t, sibling.engine, false)
 		checkAnonymizationProbe(t, a.engine, true)
 	})
@@ -423,7 +469,11 @@ CREATE CONSTRAINT TRIGGER critical_reject_anonymization AFTER INSERT OR UPDATE O
 		if kept.UserID != "" || kept.Body != siblingComment.Body {
 			t.Fatal("sibling consumer did not independently anonymize its contribution")
 		}
+		// AuthKit refuses the purged account's session; ContentKit's own fence
+		// refuses an account this app erased while it still signs in.
 		_, err = a.client(credential).PostContentFavorite(t.Context(), item.ID, ck.PostContentFavoriteQuery{})
+		requireError(t, err, 401, "unauthorized")
+		_, err = a.client(appResetCredential).PostContentFavorite(t.Context(), item.ID, ck.PostContentFavoriteQuery{})
 		requireError(t, err, 403, "forbidden")
 		live, err := a.client(otherCredential).GetContentFavorite(t.Context(), item.ID, ck.GetContentFavoriteQuery{})
 		must(t, err)
@@ -434,15 +484,15 @@ CREATE CONSTRAINT TRIGGER critical_reject_anonymization AFTER INSERT OR UPDATE O
 	t.Run("CK-J24-S06_terminal_fence_refuses_late_avatar_and_notification", func(t *testing.T) {
 		data := imageBytes(t)
 		_, err := a.client(credential).PostMediaUploadPresign(t.Context(), media.PresignBody{Ref: media.RefBody{Kind: "user", ID: user.ID}, Path: "avatar.png", Type: "image/png", Size: int64(len(data)), SHA256: digestBytes(data)})
+		requireError(t, err, 401, "unauthorized")
+		_, err = a.client(appResetCredential).PostMediaUploadPresign(t.Context(), media.PresignBody{Ref: media.RefBody{Kind: "user", ID: appReset.ID}, Path: "avatar.png", Type: "image/png", Size: int64(len(data)), SHA256: digestBytes(data)})
 		requireError(t, err, 404, "not_found")
 		published, err := a.publishInbox(t.Context(), inboxPublication{Notifications: []notify.Input{{Recipient: notify.Recipient{Audience: "user", ID: user.ID}, Origin: notify.Origin{System: "critical", Scope: a.cfg.Scope.AppID.String(), ID: uuid.NewString()}, Kind: "late.notice", CreatedAt: time.Now(), Data: json.RawMessage(`{"message":"must remain absent"}`)}}})
 		must(t, err)
 		if len(published.Items) != 0 {
 			t.Fatal("late notification reattached permanently anonymized account")
 		}
-		inbox, err := a.accountInbox(credential).List(t.Context(), inboxQuery{})
-		must(t, err)
-		if len(inbox.Items) != 0 || accountObjects() != 0 {
+		if len(a.inboxItems(t, user.ID)) != 0 || accountObjects() != 0 {
 			t.Fatal("terminal fence lost private-resource erasure")
 		}
 	})
@@ -469,15 +519,18 @@ CREATE CONSTRAINT TRIGGER critical_reject_anonymization AFTER INSERT OR UPDATE O
 		sibling.engine, err = ck.New(t.Context(), sibling.cfg, sibling.deps)
 		must(t, err)
 		sibling.server = mountEngine(lifetime, sibling.engine)
-		inbox, err := sibling.accountInbox(appResetCredential).List(t.Context(), inboxQuery{})
-		must(t, err)
-		if len(inbox.Items) != 0 {
-			t.Fatal("full replay retained erased shared inbox")
+		if len(sibling.inboxItems(t, appReset.ID)) != 0 {
+			t.Fatal("AuthKit purge retained the erased shared inbox")
 		}
-		favorite, err := sibling.client(appResetCredential).GetContentFavorite(t.Context(), siblingItem.ID, ck.GetContentFavoriteQuery{})
+		// The sibling holds no evidence of a purge its consumer never began:
+		// its event reader finishes it, as user.purged arrives.
+		must(t, sibling.engine.AnonymizeAccount(t.Context(), appReset.ID))
+		favorite, err := sibling.client("").GetContentFavorite(t.Context(), siblingItem.ID, ck.GetContentFavoriteQuery{})
 		must(t, err)
-		if favorite.Favorited || favorite.Count == nil || *favorite.Count != 2 {
-			t.Fatalf("full replay lost an anonymous contribution or kept attribution: %+v", favorite)
+		var attributed int
+		must(t, w.pool.QueryRow(t.Context(), "SELECT count(*) FROM "+pgx.Identifier{w.schema, "content_favorites"}.Sanitize()+" WHERE app_id=$1::uuid AND user_id=$2::uuid", sibling.cfg.Scope.AppID.String(), appReset.ID).Scan(&attributed))
+		if attributed != 0 || favorite.Count == nil || *favorite.Count != 2 {
+			t.Fatalf("sibling erasure lost an anonymous contribution or kept attribution: %+v, %d attributed", favorite, attributed)
 		}
 	})
 }

@@ -1,8 +1,9 @@
 # Account notifications
 
 AuthKit owns the user inbox, its storage, HTTP API, client and UI components.
-ContentKit receives the scoped `authkit/notify.Publisher` returned by
-`accounts.Notifications("contentkit")` as `contentkit.Deps.Notifications`.
+ContentKit receives the `authkit/notify.Publisher` of its own producer,
+`accounts.Notifications(authkit.NotificationProducer{Name: "contentkit", Origin: notify.OriginScope{System: "contentkit", Scope: appID}})`,
+as `contentkit.Deps.Notifications`.
 A nil publisher disables user notifications. ContentKit creates no fallback
 inbox, mounts no notification routes and exposes no notification client or UI.
 
@@ -39,7 +40,9 @@ contains no inbox payload or user read/archive state.
 An application obtains its own producer from AuthKit:
 
 ```go
-publisher, err := accounts.Notifications("application")
+publisher, err := accounts.Notifications(authkit.NotificationProducer{
+    Name: "application", Origin: notify.OriginScope{System: "application", Scope: appID},
+})
 if err != nil { return err }
 err = publisher.Publish(ctx, []notify.Publication{{
     RecipientID: accountID,
@@ -62,14 +65,11 @@ General retained platform event logs and `preference_sync` are independent.
 
 ## Account cleanup
 
-The host's AuthKit inbox scope for ContentKit must be `contentkit:` followed by
-ContentKit's account key (`tenant_<tenant ID>`); account
-cleanup reads erasures under exactly that scope.
+AuthKit's purge erases the account's inbox, in the transaction that deletes the
+account and before `user.purged`; ContentKit neither reads nor erases it.
 
 Erasing an account withdraws the notices for its likes and deletes their
 identities, which name the liker.
 
-Account lifecycle cleanup retains its established canonical account/app erasure
-fences and content-only restore checks. The narrow cleanup adapter calls
-AuthKit's canonical erasure implementation; it creates no inbox tables and
-provides no inbox reader or producer surface.
+Account lifecycle cleanup keeps its erasure intents, receipts and content-only
+restore checks in the account schema.

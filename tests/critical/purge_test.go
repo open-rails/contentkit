@@ -68,9 +68,9 @@ func TestDeletedContentPurgeOwnsMedia(t *testing.T) {
 	_, credential := w.person(t, 0)
 	total := int64(5_000_000)
 	method := b.stripe.NewPaymentMethod(stripemock.Card{Brand: "visa", Last4: "4242"})
-	body, err := json.Marshal(billing.CreateMyOrderParams{Lines: []billing.OrderLineParams{{PriceID: price.ID}}, ExpectedTotal: &total, Payment: &billing.OrderPaymentParams{Token: method}})
+	body, err := json.Marshal(billing.CreateMyInvoiceParams{Lines: []billing.InvoiceLineParams{{PriceID: price.ID}}, ExpectedTotal: &total, Payment: &billing.InvoicePaymentParams{Token: method}})
 	must(t, err)
-	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, b.server.URL+"/billing/v1/me/orders", bytes.NewReader(body))
+	request, err := http.NewRequestWithContext(t.Context(), http.MethodPost, b.server.URL+"/billing/v1/me/invoices", bytes.NewReader(body))
 	must(t, err)
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("Idempotency-Key", uuid.NewString())
@@ -83,9 +83,9 @@ func TestDeletedContentPurgeOwnsMedia(t *testing.T) {
 	if response.StatusCode != 201 {
 		t.Fatalf("purchase failed: %d %s", response.StatusCode, data)
 	}
-	var purchase billing.Order
+	var purchase billing.Invoice
 	must(t, json.Unmarshal(data, &purchase))
-	if purchase.Status != billing.OrderComplete || purchase.Payment.PaymentID == nil {
+	if purchase.Status != billing.InvoiceComplete || purchase.Payment.PaymentID == nil {
 		t.Fatalf("purchase did not settle: %+v", purchase)
 	}
 	// Reopen only this app's engine through a controllable real S3 wire. The
@@ -272,9 +272,9 @@ func TestDeletedContentPurgeOwnsMedia(t *testing.T) {
 		if payment.Status != billing.PaymentSucceeded || payment.Amount != 5_000_000 {
 			t.Fatalf("content purge changed settled payment: %+v", payment)
 		}
-		order, err := b.merchant.GetOrder(t.Context(), purchase.ID)
+		invoice, err := b.merchant.GetInvoice(t.Context(), purchase.ID)
 		must(t, err)
-		if order.ID != purchase.ID || order.Status != billing.OrderComplete {
+		if invoice.ID != purchase.ID || invoice.Status != billing.InvoiceComplete {
 			t.Fatal("content purge erased purchase history")
 		}
 		_, err = b.merchant.GetProduct(t.Context(), product.ID)

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -23,12 +22,12 @@ import (
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/content"
 	"github.com/open-rails/contentkit/importer"
-	"github.com/open-rails/contentkit/media/layout"
 )
 
-// The host installs the inbox beside its real AuthKit directory and injects a
-// fixed producer. The replica shares real accounts, sessions and PostgreSQL;
-// no identity, notification sink or HTTP response is mocked.
+// AuthKit's built-in inbox, beside its real directory, takes ContentKit's
+// fixed producer; app-visible notices belong to the deployment's issuer. The
+// replica shares real accounts, sessions and PostgreSQL; no identity,
+// notification sink or HTTP response is mocked.
 type accountNoticeWorld struct {
 	w            *world
 	a            *application
@@ -50,23 +49,9 @@ func newAccountNoticeWorld(t *testing.T) *accountNoticeWorld {
 		c.Interactions.Anonymous.Reactions = true
 	})
 	a := w.apps[0]
-	inboxSchema := w.schema + "_inbox"
-	t.Cleanup(func() {
-		_, err := w.pool.Exec(context.Background(), "DROP SCHEMA IF EXISTS "+pgx.Identifier{inboxSchema}.Sanitize()+" CASCADE")
-		must(t, err)
-	})
-	scopes := map[string]string{}
-	producers := []authkit.NotificationProducer{}
-	for index, app := range w.apps {
-		tid, err := iam.ParseTenantID(app.cfg.Scope.TenantID.String())
-		must(t, err)
-		scopes[tid.String()] = "contentkit:" + (layout.Scope{TenantID: tid.String()}).Partition()
-		producers = append(producers, authkit.NotificationProducer{Name: fmt.Sprintf("contentkit_%d", index), TenantID: tid,
-			Origin: notify.OriginScope{System: "contentkit", Scope: app.cfg.Scope.AppID.String()}, Visibility: notify.VisibilityApp, AppID: app.cfg.Scope.AppID.String()})
-	}
-	inbox := authtest.Replica(t, w.auth, authtest.WithConfig(func(c *authkit.Config) {
-		c.Notifications = &authkit.NotificationsConfig{Schema: inboxSchema, Scopes: scopes, AppID: a.cfg.Scope.AppID.String(), Producers: producers}
-	}), authtest.WithDeps(func(d *authkit.Deps) {
+	// The replica is the account owner's own deployment (the world's issuer),
+	// whose purge worker runs the required ContentKit cleanup.
+	inbox := authtest.Replica(t, w.auth, authtest.WithDeps(func(d *authkit.Deps) {
 		d.OnPurge = func(ctx context.Context, deletion iam.UserDeletion) error {
 			return a.engine.AnonymizeAccount(ctx, deletion.UserID)
 		}
@@ -75,13 +60,13 @@ func newAccountNoticeWorld(t *testing.T) *accountNoticeWorld {
 	must(t, err)
 	accounts, err := inbox.ForTenant(t.Context(), tid)
 	must(t, err)
-	sink, err := accounts.Notifications("contentkit_0")
+	sink, err := accounts.Notifications(authkit.NotificationProducer{Name: "contentkit_0", Origin: notify.OriginScope{System: "contentkit", Scope: a.cfg.Scope.AppID.String()}})
 	must(t, err)
 	scope, err := accounts.NotificationScope()
 	must(t, err)
-	store, err := notifypg.New(w.pool, notifypg.Config{Schema: inboxSchema, Scope: scope})
+	store, err := notifypg.New(w.pool, notifypg.Config{Schema: w.authSchema, Scope: scope})
 	must(t, err)
-	n := &accountNoticeWorld{w: w, a: a, accounts: accounts, accountOwner: inbox, sink: sink, store: store, schema: inboxSchema, scope: scope, server: httptest.NewServer(inbox.Handler())}
+	n := &accountNoticeWorld{w: w, a: a, accounts: accounts, accountOwner: inbox, sink: sink, store: store, schema: w.authSchema, scope: scope, server: httptest.NewServer(inbox.Handler())}
 	t.Cleanup(n.server.Close)
 	a.deps.Notifications = sink
 	n.reopen(t)
@@ -145,7 +130,7 @@ func TestAccountNotificationChannel(t *testing.T) {
 		}
 		reply := n.reply(t, writerToken, item.ID, parent.ID, "Private comment body must not be copied")
 		before := n.items(t, owner.ID)
-		if len(before) != 1 || before[0].Origin.ID != "comment.reply:"+reply.ID || before[0].Visibility != notify.VisibilityApp || before[0].AppID != n.a.cfg.Scope.AppID.String() || strings.Contains(string(before[0].Data), "Private comment body") {
+		if len(before) != 1 || before[0].Origin.ID != "comment.reply:"+reply.ID || before[0].Visibility != notify.VisibilityApp || before[0].AppID != authtest.Issuer || strings.Contains(string(before[0].Data), "Private comment body") {
 			t.Fatalf("wrong injected reply receipt: %+v", before)
 		}
 		n.requireHTTPInbox(t, ownerToken, 1)

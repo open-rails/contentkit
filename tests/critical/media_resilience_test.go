@@ -344,7 +344,7 @@ func TestMediaFailureRecovery(t *testing.T) {
 					// settlement. No manifest, quota or job row is fabricated.
 					function := pgx.Identifier{m.schema, "critical_media_settlement_refusal"}.Sanitize()
 					table := pgx.Identifier{m.schema, "content_media_commits"}.Sanitize()
-					_, err := m.pool.Exec(t.Context(), "CREATE FUNCTION "+function+"() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.operation_id='"+batch.OperationID+"'::uuid AND NEW.state='applied' THEN RAISE EXCEPTION 'owned media settlement refusal'; END IF; RETURN NEW; END $$; CREATE TRIGGER critical_media_settlement_refusal BEFORE UPDATE ON "+table+" FOR EACH ROW EXECUTE FUNCTION "+function+"()")
+					_, err := m.pool.Exec(t.Context(), "CREATE FUNCTION "+function+"() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.operation_id='"+commitKey(batch.OperationID)+"'::uuid AND NEW.state='applied' THEN RAISE EXCEPTION 'owned media settlement refusal'; END IF; RETURN NEW; END $$; CREATE TRIGGER critical_media_settlement_refusal BEFORE UPDATE ON "+table+" FOR EACH ROW EXECUTE FUNCTION "+function+"()")
 					must(t, err)
 					restore = func() {
 						_, err := m.pool.Exec(context.Background(), "DROP TRIGGER IF EXISTS critical_media_settlement_refusal ON "+table+"; DROP FUNCTION IF EXISTS "+function+"()")
@@ -551,7 +551,7 @@ func TestMediaClientResumption(t *testing.T) {
 				}
 			}))
 			defer wire.Close()
-			uncertain := ck.NewClient(wire.URL+"/content", &http.Client{Transport: bearerTransport{credential, http.DefaultTransport}})
+			uncertain := ck.NewClient(wire.URL+"/content", &http.Client{Transport: bearerTransport{test: t, auth: m.auth, token: credential, base: http.DefaultTransport}})
 			operation := uuid.NewString()
 			meta := map[string]any{"caption": "original", "nested": map[string]any{"label": "retained"}}
 			_, err = uncertain.IngestMedia(t.Context(), nil, ref, operation, []ck.MediaFile{{Path: "pages/one.png", Type: "image/png", Body: bytes.NewReader(imageBytes(t)), Meta: meta}})
@@ -825,9 +825,9 @@ func TestMediaPreparedCommitRecovery(t *testing.T) {
 			storedBefore, err := m.storage.store.Head(t.Context(), item.ManifestKey())
 			must(t, err)
 			for range 2 {
-				must(t, manifests.CompleteCommit(t.Context(), target, batch.OperationID))
+				must(t, manifests.CompleteCommit(t.Context(), target, commitKey(batch.OperationID)))
 				var state string
-				must(t, m.pool.QueryRow(t.Context(), `SELECT state FROM `+pgx.Identifier{m.schema, "content_media_commits"}.Sanitize()+` WHERE tenant_id=$1 AND operation_id=$2`, target.TenantID, batch.OperationID).Scan(&state))
+				must(t, m.pool.QueryRow(t.Context(), `SELECT state FROM `+pgx.Identifier{m.schema, "content_media_commits"}.Sanitize()+` WHERE tenant_id=$1 AND operation_id=$2`, target.TenantID, commitKey(batch.OperationID)).Scan(&state))
 				want, used := "applied", charged
 				if absent {
 					want, used = "absent", before
@@ -858,7 +858,7 @@ func TestMediaPreparedCommitRecovery(t *testing.T) {
 					t.Fatal("absent attempt replaced unrelated manifest")
 				}
 			} else {
-				if current.Receipt == nil || current.Receipt.Operation != batch.OperationID || current.Find("pages/new.png") < 0 {
+				if current.Receipt == nil || current.Receipt.Operation != commitKey(batch.OperationID) || current.Find("pages/new.png") < 0 {
 					t.Fatal("applied recovery lost its receipt or files")
 				}
 			}
@@ -872,7 +872,7 @@ func TestMediaPreparedCommitRecovery(t *testing.T) {
 			for _, job := range jobs.Jobs {
 				var args workqueue.IngestArgs
 				must(t, json.Unmarshal(job.EncodedArgs, &args))
-				if args.Commit == batch.OperationID {
+				if args.Commit == commitKey(batch.OperationID) {
 					admitted = job.ID
 				}
 			}
@@ -1248,7 +1248,7 @@ func TestMediaCommitLockContention(t *testing.T) {
 	_, err = client.PostMediaUploadCommit(t.Context(), batch)
 	must(t, err)
 	var applied int
-	must(t, m.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+pgx.Identifier{m.schema, "content_media_commits"}.Sanitize()+` WHERE tenant_id=$1 AND operation_id=$2 AND state='applied'`, target.TenantID, operation).Scan(&applied))
+	must(t, m.pool.QueryRow(t.Context(), `SELECT count(*) FROM `+pgx.Identifier{m.schema, "content_media_commits"}.Sanitize()+` WHERE tenant_id=$1 AND operation_id=$2 AND state='applied'`, target.TenantID, commitKey(operation)).Scan(&applied))
 	if applied != 1 {
 		t.Fatalf("same-operation retry applied %d receipts", applied)
 	}
@@ -1343,4 +1343,9 @@ func TestMediaIngestLockContention(t *testing.T) {
 	if job.State != rivertype.JobStateCompleted {
 		t.Fatalf("ingest failed to resume after contention: %+v", job)
 	}
+}
+
+// commitKey is the journal key of a caller's commit operation_id.
+func commitKey(operation string) string {
+	return mediastore.CallerOperation(uuid.MustParse(operation)).String()
 }

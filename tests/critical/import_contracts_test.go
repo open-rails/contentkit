@@ -155,7 +155,7 @@ func TestChannelImportScope(t *testing.T) {
 		must(t, err)
 		req, err := http.NewRequestWithContext(ctx, http.MethodPost, a.server.URL+"/content/v1/import", bytes.NewReader(raw))
 		must(t, err)
-		req.Header.Set("Authorization", "Bearer "+token)
+		authtest.Authorize(t, w.auth, req, token)
 		req.Header.Set("Content-Type", "application/json")
 		res, err := http.DefaultClient.Do(req)
 		must(t, err)

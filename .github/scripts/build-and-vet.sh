@@ -30,13 +30,12 @@ CGO_ENABLED=1 go build -p 1 -o tests/critical/.bin/media-worker ./cmd/media-work
 # Hosts, server/ and adapters/* reach only the public surface; the image
 # encoder's geometry, bounds and metadata stripping run against libvips.
 go test -count=1 -p 1 ./internal/boundaries ./internal/media/image
-# The published server module has no local replacements. Qualify this
-# checkout before its paired root/adapter tags exist, just as Docker does.
+# The published server module pins released versions; qualify this checkout against a throwaway modfile that -mod=mod updates.
 server_mod=$(bash .github/scripts/server-modfile.sh)
 (
   cd server
-  go build -mod=readonly -modfile="$server_mod" -p 1 ./...
-  go vet -mod=readonly -modfile="$server_mod" -p 1 ./...
+  go build -mod=mod -modfile="$server_mod" -p 1 ./...
+  go vet -mod=mod -modfile="$server_mod" -p 1 ./...
 )
 test -z "$(gofmt -l tests/critical)"
 (cd tests/critical && go mod tidy -diff && go vet -p 1 ./...)

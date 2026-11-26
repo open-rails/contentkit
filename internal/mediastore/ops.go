@@ -10,12 +10,13 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/uuidv7"
 	media "github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/layout"
 )
 
 // NewName is a fresh Named upload name: "i-{uuid}".
-func NewName() string { return media.NamedPrefix + uuid.NewString() }
+func NewName() string { return media.NamedPrefix + uuidv7.NewString() }
 
 func validateOp(op media.Op) error {
 	bad := func(format string, a ...any) error {

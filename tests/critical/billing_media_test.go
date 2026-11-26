@@ -93,7 +93,7 @@ func TestCommerceMediaGrantRevocation(t *testing.T) {
 				_, err = b.merchant.UpdateCustomer(t.Context(), customer, billing.UpdateCustomerParams{})
 				must(t, err)
 				hours := 1
-				grants, err := b.merchant.CreateProductAccess(t.Context(), billing.CreateProductAccessBatchParams{Items: []billing.CreateProductAccessParams{{CustomerID: customer, ProductID: product.ID, Hours: &hours}}})
+				grants, err := b.merchant.CreateProductAccess(t.Context(), uuid.NewString(), []billing.CreateProductAccessParams{{CustomerID: customer, ProductID: product.ID, Hours: &hours}})
 				must(t, err)
 				if mode == "expire" {
 					// Issue a still-valid download ticket immediately before the
@@ -191,7 +191,7 @@ func TestCommerceMediaGrantRevocation(t *testing.T) {
 		must(t, err)
 		gold, err := b.merchant.CreateProduct(t.Context(), billing.CreateProductParams{Key: "scheduled-gold", DisplayName: "Early tier", Entitlements: []string{"gold"}})
 		must(t, err)
-		_, err = b.merchant.CreateProductAccess(t.Context(), billing.CreateProductAccessBatchParams{Items: []billing.CreateProductAccessParams{{CustomerID: customer, ProductID: gold.ID}}})
+		_, err = b.merchant.CreateProductAccess(t.Context(), uuid.NewString(), []billing.CreateProductAccessParams{{CustomerID: customer, ProductID: gold.ID}})
 		must(t, err)
 		reader, anonymous := a.client(credential), a.client("")
 		setTime := func(at time.Time) { b.clock.Advance(at.Sub(b.clock.Now())); w.clock.set(at) }

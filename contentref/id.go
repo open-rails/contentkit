@@ -3,11 +3,13 @@ package contentref
 import (
 	"crypto/rand"
 	"crypto/sha256"
-	"encoding/binary"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/open-rails/contentkit/internal/uuidv7"
 )
 
 // ErrInvalidID is a content id that is not a canonical UUIDv7.
@@ -53,11 +55,11 @@ func NewID() string { return IDAt(time.Now()) }
 // remaining 74 bits are random, for ids generated once and stored. Imports
 // that must derive the same id on every run use LegacyID.
 func IDAt(t time.Time) string {
-	var u [16]byte
+	var u uuid.UUID
 	if _, err := rand.Read(u[6:]); err != nil {
 		panic(err)
 	}
-	return v7(t, u)
+	return uuidv7.Stamp(t, u).String()
 }
 
 // legacyEpoch dates legacy rows without a created_at, in legacy id order.
@@ -76,10 +78,10 @@ func LegacyID(namespace, kind string, legacyID int64, createdAt time.Time) strin
 	if createdAt.IsZero() {
 		createdAt = legacyEpoch.Add(time.Duration(legacyID) * time.Millisecond)
 	}
-	var u [16]byte
+	var u uuid.UUID
 	h := sha256.Sum256([]byte(fmt.Sprintf("%s/%s/%d", namespace, kind, legacyID)))
 	copy(u[6:], h[:10])
-	return v7(createdAt, u)
+	return uuidv7.Stamp(createdAt, u).String()
 }
 
 func validNamespace(ns string) bool {
@@ -92,14 +94,4 @@ func validNamespace(ns string) bool {
 		}
 	}
 	return true
-}
-
-func v7(t time.Time, u [16]byte) string {
-	var ts [8]byte
-	binary.BigEndian.PutUint64(ts[:], uint64(t.UnixMilli())<<16)
-	copy(u[:6], ts[:6])
-	u[6] = 0x70 | u[6]&0x0f
-	u[8] = 0x80 | u[8]&0x3f
-	h := hex.EncodeToString(u[:])
-	return h[:8] + "-" + h[8:12] + "-" + h[12:16] + "-" + h[16:20] + "-" + h[20:]
 }

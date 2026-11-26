@@ -139,9 +139,8 @@ type MigrationOptions struct {
 // before New with Database.SkipMigrations=true. The flag never skips this
 // explicit operation. Configured fixed owners and their authorization groups are
 // provisioned using options.Scopes; no runtime or object-store client is started.
-// The caller retains ownership of pool.
-// When adopting an existing account inbox, run authkit.MigrateNotifications
-// first. ContentKit validates and adopts that storage but never migrates it.
+// The caller retains ownership of pool. The account inbox is AuthKit's, made
+// by its Migrate; ContentKit neither migrates nor reads it.
 func MigratePostgres(ctx context.Context, pool *pgxpool.Pool, cfg Config, options ...MigrationOptions) error {
 	if ctx == nil {
 		return errors.New("contentkit: migration context is required")
@@ -256,7 +255,7 @@ func (e *Engine) validateDatabase(ctx context.Context) error {
 	if err := migrations.ValidateAccounts(ctx, db, accountSchema); err != nil {
 		return required(err)
 	}
-	if err := riverhelpers.ValidateMigrations(ctx, e.pool, e.riverSchema); err != nil {
+	if err := riverhelpers.ValidateMigrations(ctx, e.pool, riverhelpers.MigrationOptions{Schema: e.riverSchema, Logger: e.log}); err != nil {
 		return required(err)
 	}
 	if account, ok := e.accountMediaStorage(); ok {

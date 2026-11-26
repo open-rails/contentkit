@@ -59,7 +59,7 @@ func (s migrationScopes) Provision(ctx context.Context, scopes []entities.Scope)
 		}
 		groups = append(groups, iam.NewGroup{ID: id, TenantID: tenant, Persona: persona})
 	}
-	if _, err := authkit.EnsureGroups(ctx, s.pool, s.cfg, groups); err != nil {
+	if _, err := authkit.EnsureGroups(ctx, s.pool, s.cfg, groups, nil); err != nil {
 		return fmt.Errorf("contentkit/authkit: provision configured scopes: %w", err)
 	}
 	return nil

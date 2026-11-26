@@ -1913,7 +1913,7 @@
       "behavior": "Replay of an app's account deletion preserves the shared inbox and sibling app data",
       "status": "verified",
       "evidence": [
-        "Deletion and recovery in one app keep the tenant-wide receipt, sibling inbox, same-account sibling favorite and signal partition, and keep the deleted account's contributions anonymously. The app's notices, the account's signal attribution and its avatar on the primary disappear.",
+        "Each app's inbox owner is its own AuthKit deployment (issuer) on the shared account store: before and after one app's deletion and recovery, each app shows exactly its own app notice and the tenant-wide one, and the sibling keeps its favorite and signal partition while the deleted account's contributions stay anonymous. The inbox is AuthKit's to erase at purge; the account's signal attribution and its avatar on the primary disappear.",
         "Reviewed against current public behavior; exact cases passed in integrated/focused race receipts retained with this task. Full qualification still requires every selected contract and one integrated execution."
       ],
       "cases": [
@@ -2026,7 +2026,7 @@
       "behavior": "Erased recipient cannot regain receipt storage through delayed or replayed publication",
       "status": "verified",
       "evidence": [
-        "A real receipt exists before app anonymization. The native publisher acknowledges terminal non-delivery for both replayed and new origins; the HTTP inbox remains empty, stored app receipts remain zero and the same app erasure fence remains present.",
+        "A real receipt exists before AuthKit's real purge (PurgeUsers worked by its River) and the app's anonymization. The native publisher acknowledges terminal non-delivery for both replayed and new origins; the app's inbox view stays empty, AuthKit stores no receipt and its recipient erasure fence remains.",
         "Updated for the AuthKit-owned Publisher contract; exact focused execution and final integrated CI are required."
       ],
       "cases": [
@@ -2523,19 +2523,6 @@
       ],
       "cases": [
         "TestAccountNotificationsOptional/CK-J25-S18_omitted_publisher_has_no_inbox_storage_or_routes"
-      ]
-    },
-    {
-      "id": "CK-J25-S19",
-      "journey": "CK-J25",
-      "behavior": "Partially restored account erasure storage fails closed even when publication is disabled",
-      "status": "verified",
-      "evidence": [
-        "Real partial shared-account lineage and a retained ledger with all erasure tables lost are rejected during public constructor startup; fully absent optional storage remains covered separately.",
-        "Both exact cases passed against real PostgreSQL in contentkit-optional-inbox-final.jsonl (package4.386s), after the ledger-only partial-lineage defect was reproduced and fixed; final exhaustive CI remains required."
-      ],
-      "cases": [
-        "TestAccountNotificationsOptional/CK-J25-S19_partial_account_erasure_storage_fails_closed"
       ]
     },
     {
@@ -11862,6 +11849,10 @@
     }
   ],
   "retired_contracts": [
+    {
+      "case": "TestAccountNotificationsOptional/CK-J25-S19_partial_account_erasure_storage_fails_closed",
+      "reason": "AuthKit 1.55 owns the account inbox in its own schema and erases it at purge; ContentKit no longer reads inbox storage in the account schema, so a partial copy there is nothing to refuse."
+    },
     {
       "issue": "contentkit#259",
       "reason": "Removed parent-text mutation and version-fork product operations; version text uses existing authenticated PATCHversion. Ordinary media processing retained.",

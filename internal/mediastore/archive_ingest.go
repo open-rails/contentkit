@@ -22,6 +22,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/open-rails/contentkit/contentref"
+	"github.com/open-rails/contentkit/internal/uuidv7"
 	media "github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/layout"
 )
@@ -276,7 +277,7 @@ func (m *Manifests) ingestArchive(ctx context.Context, item Item, source media.F
 		Source, Path, Target string
 		Admission            media.SourceAdmission
 	}{source.Blob, source.Path, destination, admission})
-	operation := uuid.NewSHA1(uuid.NameSpaceOID, append([]byte("contentkit:archive-ingest:v1:"+item.Ref().String()+":"), fingerprintInput...))
+	operation := uuidv7.Name(item.at(), uuid.NameSpaceOID, "contentkit:archive-ingest:v1:"+item.Ref().String()+":"+string(fingerprintInput))
 	// Reserve the validated expanded bytes before any page PUT. The accepted
 	// source policy is replayed without invoking a host callback in the worker.
 	reservationKey := item.TempPrefix() + "archive-quota-" + operation.String()
@@ -307,7 +308,7 @@ func (m *Manifests) ingestArchive(ctx context.Context, item Item, source media.F
 		batchEnd := min(batchStart+archiveCommitBatch, len(pages))
 		batchKey := "batch:" + strconv.Itoa(batchStart)
 		batchInput := append(slices.Clone(fingerprintInput), []byte(batchKey)...)
-		mutation := &manifestMutation{commit: manifestCommit{ID: uuid.NewSHA1(operation, []byte(batchKey)), Ref: item.Ref(), Folder: item.Prefix(), Actor: "contentkit:archive-ingest", Fingerprint: sha256.Sum256(batchInput)}, quota: admission.Quota}
+		mutation := &manifestMutation{commit: manifestCommit{ID: uuidv7.Child(operation, batchKey), Ref: item.Ref(), Folder: item.Prefix(), Actor: "contentkit:archive-ingest", Fingerprint: sha256.Sum256(batchInput)}, quota: admission.Quota}
 		if _, replayed, err := m.replayCommit(ctx, item, mutation.commit); err != nil {
 			return err
 		} else if replayed {
@@ -410,7 +411,7 @@ func (m *Manifests) ingestArchive(ctx context.Context, item Item, source media.F
 				}
 				stem := UniquePageName(strings.TrimSuffix(page.name, path.Ext(page.name)), taken)
 				taken[stem] = true
-				createID := uuid.NewSHA1(operation, []byte(strconv.Itoa(n)+":"+page.entry.Name)).String()
+				createID := uuidv7.Child(operation, strconv.Itoa(n)+":"+page.entry.Name).String()
 				if rule.Named {
 					stem = media.NamedPrefix + createID
 				}
