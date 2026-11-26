@@ -230,7 +230,7 @@
     {
       "id": "CK-J03-S01",
       "journey": "CK-J03",
-      "behavior": "Creator writes own content but not another creator’s",
+      "behavior": "Creator writes own content but not another creator\u2019s",
       "status": "verified",
       "evidence": [
         "Real creator edits its own item after role removal and exact readback proves persistence; another creator item remains unchanged after403 and sibling-app/tenant targets refuse.",
@@ -484,7 +484,7 @@
       "evidence": [
         "Actual product-access revocation and exact expiry remove body and purchased-library access plus fresh media URLs and download grants. A real ZIP is readable before loss of access; a still-unexpired signed archive ticket also refuses after revocation/expiry.",
         "Exact cases passed under the race detector in resume-fixed9 / resume-purge10; body/library profiles additionally passed resume-boundaries5.",
-        "Deleting a primary channel closes its content to an exact-edition buyer and anonymous readers alike, while the purchase stays held and listed as deleted in the buyer’s library (contentkit#272)."
+        "Deleting a primary channel closes its content to an exact-edition buyer and anonymous readers alike, while the purchase stays held and listed as deleted in the buyer\u2019s library (contentkit#272)."
       ],
       "cases": [
         "TestCommerceEntitlementBoundaries/CK-J06-S04_revocation_and_expiry_refuse_fresh_content_grants",
@@ -1685,7 +1685,7 @@
     {
       "id": "CK-J20-S01",
       "journey": "CK-J20",
-      "behavior": "Owner ban affects only the owner’s eligible content",
+      "behavior": "Owner ban affects only the owner\u2019s eligible content",
       "status": "verified",
       "evidence": [
         "Owner ban refuses new/reply/edit writes on owned content, preserves existing public comments, leaves another owner thread and favorites available, and lift restores writes.",
@@ -3284,7 +3284,7 @@
     {
       "id": "CK-J09-S40",
       "journey": "CK-J09",
-      "behavior": "An item token (cookie) reaches only its own item’s private area",
+      "behavior": "An item token (cookie) reaches only its own item\u2019s private area",
       "status": "verified",
       "evidence": [
         "contentkit#297: real bucket (MinIO in CI), real PostgreSQL, engine and stock worker."
@@ -3344,7 +3344,7 @@
     {
       "id": "CK-J09-S45",
       "journey": "CK-J09",
-      "behavior": "A version’s ZIP is streamed from its masters (the originals under the identity recipe), byte-identical across requests, with Content-Length, ETag and ranges",
+      "behavior": "A version\u2019s ZIP is streamed from its masters (the originals under the identity recipe), byte-identical across requests, with Content-Length, ETag and ranges",
       "status": "verified",
       "evidence": [
         "contentkit#297: real bucket (MinIO in CI), real PostgreSQL, engine and stock worker."
