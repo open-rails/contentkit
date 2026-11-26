@@ -3804,7 +3804,7 @@
       "behavior": "Pages never query ClickHouse for featured windows; popular requests are validated",
       "status": "verified",
       "evidence": [
-        "Before any precompute a popular list serves a pending week (ready false) listing every article newest first; unknown windows, malformed calendar windows and ranges, a page with a cursor, a missing kind and a window without sort=popular are refused.",
+        "With content_daily renamed away, the popular week and the default tag listing still answer from the cache (every article and tag, nothing read yet); unknown windows, malformed calendar windows and ranges, a page with a cursor, a missing kind and a window without sort=popular are refused.",
         "contentkit#300: written against real PostgreSQL and ClickHouse with the engine's own precompute job; not executed locally, CI runs it."
       ],
       "cases": [

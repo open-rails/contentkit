@@ -247,6 +247,14 @@ func TestPopularity(t *testing.T) {
 	now := w.clock.now()
 	p := &popularity{t: t, w: w, a: a, today: time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC), tags: map[string]entities.EntityID{}}
 	day := func(n int) time.Time { return p.today.AddDate(0, 0, -n) }
+	// run is t.Run with the helpers reporting to the subtest while it runs.
+	run := func(name string, f func(t *testing.T)) {
+		t.Run(name, func(st *testing.T) {
+			p.t = st
+			defer func() { p.t = t }()
+			f(st)
+		})
+	}
 	main := p.reader("popular.invalid", "")
 	old := day(60)
 
@@ -260,16 +268,27 @@ func TestPopularity(t *testing.T) {
 	C2 := p.article("C2 liked by a few", old, nil, split)
 	D := p.article("D unread", old, nil, unread)
 
-	t.Run("CK-J07-S50_pages_never_query_clickhouse_for_featured_windows", func(t *testing.T) {
-		p.t = t
+	run("CK-J07-S50_pages_never_query_clickhouse_for_featured_windows", func(t *testing.T) {
+		// With content_daily unreachable, featured lists still answer from
+		// the cache: no page reads ClickHouse. Nothing was read yet, so every
+		// article lists, newest first.
+		ctx := t.Context()
+		must(t, a.deps.ClickHouse.Exec(ctx, "RENAME TABLE "+p.db()+".content_daily TO "+p.db()+".content_daily_away"))
+		restore := func() {
+			_ = a.deps.ClickHouse.Exec(context.Background(), "RENAME TABLE "+p.db()+".content_daily_away TO "+p.db()+".content_daily")
+		}
+		defer restore()
 		page := p.popular(main, ck.GetContentsQuery{})
-		if page.Popularity == nil || page.Popularity.Ready || page.Popularity.Window != "week" {
-			t.Fatalf("an unprecomputed week served %+v; want a pending week", page.Popularity)
+		if page.Popularity == nil || page.Popularity.Window != "week" {
+			t.Fatalf("the week served %+v; want the week", page.Popularity)
 		}
-		// Without a ranking every content lists newest first.
 		if got := among(page, A, B, C, D, E); len(got) != 5 {
-			t.Fatalf("pending popular list shows %v; want every article", got)
+			t.Fatalf("popular list shows %v; want every article", got)
 		}
+		if tags := p.entities(main, ck.GetEntitiesQuery{Kind: "tag"}); tags.Popularity == nil || len(entityOrder(tags, heavy, light, split, unread)) != 4 {
+			t.Fatalf("tag listing %+v; want every tag, popular by default", tags.Popularity)
+		}
+		restore()
 		for _, q := range []ck.GetContentsQuery{{Window: "fortnight"}, {Window: "month:2026-13"}, {Window: "2026-02-10..2026-02-01"}, {Page: 2, Cursor: "x"}} {
 			q.Kind, q.Sort = "article", "popular"
 			_, err := main.GetContents(t.Context(), q)
@@ -291,8 +310,7 @@ func TestPopularity(t *testing.T) {
 		t.Fatal("precompute failed")
 	}
 
-	t.Run("CK-J07-S51_quality_weighted_person_days_rank_galleries", func(t *testing.T) {
-		p.t = t
+	run("CK-J07-S51_quality_weighted_person_days_rank_galleries", func(t *testing.T) {
 		// 40 good reads beat 5 complete ones; three good reads beat sixty
 		// split between favourites and "not into", which sum below zero and
 		// follow the unread article.
@@ -309,8 +327,7 @@ func TestPopularity(t *testing.T) {
 		p.order(main, ck.GetContentsQuery{Window: "30d", Entities: []string{string(split)}}, C, C2)
 	})
 
-	t.Run("CK-J07-S52_entities_sum_their_galleries_and_show_polarization", func(t *testing.T) {
-		p.t = t
+	run("CK-J07-S52_entities_sum_their_galleries_and_show_polarization", func(t *testing.T) {
 		listing := p.entities(main, ck.GetEntitiesQuery{Kind: "tag", Window: "30d"})
 		if listing.Popularity == nil || !listing.Popularity.Ready {
 			t.Fatalf("tag listing did not default to a ready popular ranking: %+v", listing.Popularity)
@@ -337,8 +354,7 @@ func TestPopularity(t *testing.T) {
 		}
 	})
 
-	t.Run("CK-J07-S53_windows_closed_ranges_and_reports", func(t *testing.T) {
-		p.t = t
+	run("CK-J07-S53_windows_closed_ranges_and_reports", func(t *testing.T) {
 		monthAgo := time.Date(p.today.Year(), p.today.Month(), 1, 0, 0, 0, 0, time.UTC).AddDate(0, -2, 0)
 		F := p.article("F read 20 days ago", old, nil)
 		G := p.article("G read two days ago", old, nil)
@@ -371,8 +387,7 @@ func TestPopularity(t *testing.T) {
 		}
 	})
 
-	t.Run("CK-J07-S54_each_site_ranks_its_own_reads", func(t *testing.T) {
-		p.t = t
+	run("CK-J07-S54_each_site_ranks_its_own_reads", func(t *testing.T) {
 		J, K := p.article("J read in English", old, nil), p.article("K read in German", old, nil)
 		p.seed(daily{id: J, day: day(2), class: "good", people: 8},
 			daily{id: K, day: day(2), class: "good", people: 8, language: "de"},
@@ -384,8 +399,7 @@ func TestPopularity(t *testing.T) {
 		p.order(p.reader("second.invalid", ""), ck.GetContentsQuery{Window: "30d"}, K, J)
 	})
 
-	t.Run("CK-J07-S55_gated_days_scale_to_the_people_who_could_open_them", func(t *testing.T) {
-		p.t = t
+	run("CK-J07-S55_gated_days_scale_to_the_people_who_could_open_them", func(t *testing.T) {
 		L := p.article("L public", old, nil)
 		M := p.article("M gold only", old, &access.Rule{Level: access.TierLevel, Tiers: []string{"gold"}})
 		for _, n := range []int{7, 8, 9} {
@@ -398,8 +412,7 @@ func TestPopularity(t *testing.T) {
 		p.order(main, ck.GetContentsQuery{Window: "30d", Mode: "lock"}, M, L)
 	})
 
-	t.Run("CK-J07-S56_trending_ranks_per_live_day", func(t *testing.T) {
-		p.t = t
+	run("CK-J07-S56_trending_ranks_per_live_day", func(t *testing.T) {
 		N := p.article("N live all week", day(20), nil)
 		O := p.article("O live for two days", day(2), nil)
 		for n := 2; n <= 6; n++ {
@@ -412,8 +425,7 @@ func TestPopularity(t *testing.T) {
 		p.order(main, ck.GetContentsQuery{Window: "30d"}, N, O)
 	})
 
-	t.Run("CK-J07-S57_listings_drop_only_what_the_filters_block", func(t *testing.T) {
-		p.t = t
+	run("CK-J07-S57_listings_drop_only_what_the_filters_block", func(t *testing.T) {
 		spoilers := p.tag("spoilers")
 		S := p.article("S spoilers", old, nil, spoilers)
 		Q := p.article("Q unread neighbour", old, nil)
@@ -443,8 +455,7 @@ func TestPopularity(t *testing.T) {
 		}
 	})
 
-	t.Run("CK-J07-S58_artists_show_their_read_through_rate", func(t *testing.T) {
-		p.t = t
+	run("CK-J07-S58_artists_show_their_read_through_rate", func(t *testing.T) {
 		artist := p.tag("ranked-artist", "artist")
 		first := p.article("P1 first work", day(100), nil, artist)
 		next := p.article("P2 next work", day(40), nil, artist)
@@ -476,8 +487,7 @@ func TestPopularity(t *testing.T) {
 		t.Fatalf("artist listing %+v lacks the artist", listing.Entities)
 	})
 
-	t.Run("CK-J07-S59_similar_weighs_rare_tags_and_the_artist", func(t *testing.T) {
-		p.t = t
+	run("CK-J07-S59_similar_weighs_rare_tags_and_the_artist", func(t *testing.T) {
 		rare, common, creator := p.tag("sim-rare"), p.tag("sim-common"), p.tag("sim-artist", "artist")
 		X := p.article("X anchor", old, nil, rare, common, creator)
 		Y := p.article("Y shares the rare tag", old, nil, rare)
@@ -492,8 +502,7 @@ func TestPopularity(t *testing.T) {
 		}
 	})
 
-	t.Run("CK-J07-S62_new_to_you_leaves_out_what_the_reader_opened", func(t *testing.T) {
-		p.t = t
+	run("CK-J07-S62_new_to_you_leaves_out_what_the_reader_opened", func(t *testing.T) {
 		user, token := w.person(t, 0)
 		reader := p.reader("popular.invalid", token)
 		// The reader bounced from B and hid E; A they never opened.
@@ -507,8 +516,7 @@ func TestPopularity(t *testing.T) {
 			t.Fatalf("new to you lists %v; want A then the unread D, without B and E", got)
 		}
 	})
-	t.Run("CK-J07-S60_cursors_keep_their_ranking_across_a_refresh", func(t *testing.T) {
-		p.t = t
+	run("CK-J07-S60_cursors_keep_their_ranking_across_a_refresh", func(t *testing.T) {
 		first := p.popular(main, ck.GetContentsQuery{Window: "30d", Limit: 2})
 		full := p.popular(main, ck.GetContentsQuery{Window: "30d"})
 		if first.NextCursor == "" || len(full.Contents) < 5 {
@@ -540,8 +548,7 @@ func TestPopularity(t *testing.T) {
 		}
 	})
 
-	t.Run("CK-J07-S61_rankings_are_served_stale_while_clickhouse_fails", func(t *testing.T) {
-		p.t = t
+	run("CK-J07-S61_rankings_are_served_stale_while_clickhouse_fails", func(t *testing.T) {
 		want := among(p.popular(main, ck.GetContentsQuery{Window: "30d"}), D, A, B)
 		ctx := t.Context()
 		must(t, a.deps.ClickHouse.Exec(ctx, "RENAME TABLE "+p.db()+".content_daily TO "+p.db()+".content_daily_away"))
