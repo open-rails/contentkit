@@ -12,7 +12,7 @@ require (
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/microcosm-cc/bluemonday v1.0.27
 	github.com/open-rails/authkit v1.57.0
-	github.com/open-rails/contentkit v0.142.0
+	github.com/open-rails/contentkit v0.143.0
 	github.com/open-rails/contentkit/adapters/authkit v0.14.0
 	github.com/open-rails/helpers v1.23.1
 )
