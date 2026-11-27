@@ -633,6 +633,7 @@ func TestMediaConcurrentRevision(t *testing.T) {
 type mediaChildConfig struct {
 	Kinds                                                                  media.Config
 	Schema, ContentSchema, HostSchema, Endpoint, Bucket, Ready, AfterImage string
+	TempDir                                                                string
 	MaxPixels                                                              int
 	VideoCodecs                                                            []media.Codec
 	VideoEncoder, Preset, TopPreset                                        string
@@ -682,7 +683,7 @@ func TestMediaWorkerProcess(t *testing.T) {
 	store, err := medias3.New(medias3.Config{Bucket: c.Bucket, Endpoint: c.Endpoint, AccessKeyID: os.Getenv("CONTENTKIT_CRITICAL_S3_USER"), SecretAccessKey: os.Getenv("CONTENTKIT_CRITICAL_S3_PASSWORD"), UsePathStyle: true})
 	must(t, err)
 	config := worker.Config{Pool: pool, Schema: c.Schema, ContentSchema: c.ContentSchema, HostSchema: c.HostSchema, Store: store, Kinds: c.Kinds, Threads: 1, IngestWorkers: 1, ImageSources: 1, DerivativeWorkers: 1, ShutdownGrace: time.Second, MaxPixels: c.MaxPixels,
-		VideoCodecs: c.VideoCodecs, VideoEncoder: c.VideoEncoder, Preset: c.Preset, TopPreset: c.TopPreset}
+		VideoCodecs: c.VideoCodecs, VideoEncoder: c.VideoEncoder, Preset: c.Preset, TopPreset: c.TopPreset, TempDir: c.TempDir}
 	if c.AfterImage != "" {
 		config.RiverHooks = []rivertype.Hook{&mediaAfterImage{path: c.AfterImage}}
 	}
