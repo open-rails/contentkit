@@ -510,8 +510,13 @@ func TestMediaMasters(t *testing.T) {
 	t.Run("CK-J09-S50_a_failed_hook_leaves_the_release_unchanged", func(t *testing.T) {
 		g := newReleasedGallery(t, nil, chapterImage(t, 81))
 		g.publish(t)
-		before := g.awaitReleased(t)
+		g.awaitReleased(t)
+		// Readers are served before processing and the release write their
+		// last: the baseline is the manifest once both have settled.
 		settleDerivatives(t, g)
+		awaitDuePublications(t, g.app)
+		before, _, err := g.manifests.Get(t.Context(), g.cref)
+		must(t, err)
 		objects := itemObjects(t, g)
 		reader := g.app.client("")
 		var read media.ReadResult
@@ -525,7 +530,7 @@ func TestMediaMasters(t *testing.T) {
 			c.Media.Kinds[0].Master = &media.Recipe{Steps: []media.RecipeStep{{Hook: "broken", Version: "1"}}}
 			wc.Hooks = []media.MasterHook{hook}
 		})
-		_, err := g.app.engine.RegenerateMedia(t.Context(), media.Regeneration{Kind: "gallery"})
+		_, err = g.app.engine.RegenerateMedia(t.Context(), media.Regeneration{Kind: "gallery"})
 		must(t, err)
 		jobs, err := river.NewClient(riverpgxv5.New(g.world.pool), &river.Config{Schema: g.app.cfg.Media.WorkerSchema})
 		must(t, err)
