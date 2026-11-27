@@ -140,19 +140,19 @@ type zipEntry struct {
 // actor's quota: a ZIP of the masters of the released pages the viewer may
 // read, or the master of the version's downloadable upload (the original
 // under the identity recipe), streamed where it is stored and named
-// {title}{ext}. ErrNotFound when the kind serves none, an UnavailableError
-// when the policy refuses, ErrNoDownload when the version has nothing to
-// serve, ErrNotReady before its release, a QuotaError past the quota.
+// {title}{ext}. ErrNotFound when the kind serves none or the version is
+// deleted or hidden from actor, an UnavailableError when the policy
+// refuses, ErrNoDownload when the version has nothing to serve, ErrNotReady
+// before its release, a QuotaError past the quota.
 func (s *Service) Download(ctx context.Context, actor access.Actor, t versions.Target) (*versions.FileDownload, error) {
 	v, k, err := s.downloadKind(ctx, t)
 	if err != nil {
 		return nil, err
 	}
-	ds, err := s.decisions(ctx, actor, v.Kind, []versions.Target{t}, nil)
+	d, err := s.verdict(ctx, actor, v.Kind, t)
 	if err != nil {
 		return nil, err
 	}
-	d := ds[t]
 	if !d.res.Visible {
 		return nil, ErrNotFound
 	}
@@ -165,13 +165,6 @@ func (s *Service) Download(ctx context.Context, actor access.Actor, t versions.T
 		return nil, ErrNoDownload // unreadable: nothing is charged
 	} else if err != nil {
 		return nil, err
-	}
-	ds, err = s.decisions(ctx, actor, v.Kind, []versions.Target{t}, map[versions.Target]pagesSnapshot{t: view.Pages})
-	if err != nil {
-		return nil, err
-	}
-	if d = ds[t]; !d.res.Visible {
-		return nil, ErrNotFound
 	}
 	title, _ := s.title(ctx, v)
 	ttl := cmp.Or(s.o.Downloads.TTL, versions.DefaultDownloadTTL)
@@ -276,7 +269,8 @@ func downloadablePages(d decision, total int) int {
 
 // Archive opens the ZIP a Download granted. The ticket binds its viewer,
 // marks, name and exact ordered revision. Access, release and policy are
-// checked again.
+// checked again, visibility first as in Download: a version deleted or
+// hidden from the viewer is ErrNotFound, never ErrNotReady.
 func (s *Service) Archive(ctx context.Context, request versions.ArchiveRequest) (*Archive, error) {
 	t, viewer, mark, name, revision := request.Target, request.Viewer, request.Mark, request.Name, request.Revision
 	marked, ok := splitPages(mark)
@@ -297,10 +291,6 @@ func (s *Service) Archive(ctx context.Context, request versions.ArchiveRequest) 
 	if pages == request.File {
 		return nil, ErrNotFound
 	}
-	view, m, err := s.releasedView(ctx, k, t)
-	if err != nil {
-		return nil, err
-	}
 	actor := access.Actor{ID: viewer, Kind: request.Kind, Anonymous: viewer == ""}
 	if request.AccountSet {
 		actor.Account = &access.AccountMembership{ID: request.Account}
@@ -309,28 +299,23 @@ func (s *Service) Archive(ctx context.Context, request versions.ArchiveRequest) 
 		// The ticket above verifies these claims for this target and revision.
 		actor.Verified = archiveClaimProof{identity: auth.Identity{Subject: viewer, SubjectKind: request.Kind}, claims: slices.Clone(request.Claims)}
 	}
-	ds, err := s.decisions(ctx, actor, k.Name, []versions.Target{t}, map[versions.Target]pagesSnapshot{t: view.Pages})
+	d, err := s.verdict(ctx, actor, k.Name, t)
 	if err != nil {
 		return nil, err
 	}
-	d := ds[t]
 	if request.Editor {
 		// A plain attachment navigation cannot replay an SPA's bearer header.
 		// The HMAC delegates the already-authorized edit/read capability only
-		// for this target and revision. Soft deletion still revokes the URL.
-		var active bool
-		if err := s.o.Pool.QueryRow(ctx, `SELECT c.deleted_at IS NULL AND v.deleted_at IS NULL
-FROM `+s.t.items+` c JOIN `+s.t.versions+` v ON v.tenant_id=c.tenant_id AND v.content_id=c.id
-WHERE c.tenant_id=$1 AND c.id=$2 AND v.id=$3`, s.o.Tenant, t.Content, t.Version).Scan(&active); err != nil {
-			return nil, err
-		}
-		if !active {
-			return nil, ErrNotFound
-		}
+		// for this target and revision. Soft deletion still revokes the URL:
+		// a deleted version has no released view.
 		d.res.Visible, d.res.Editor = true, true
 	}
 	if !d.res.Visible {
 		return nil, ErrNotFound
+	}
+	view, m, err := s.releasedView(ctx, k, t)
+	if err != nil {
+		return nil, err
 	}
 	if request.File {
 		if !d.whole() {

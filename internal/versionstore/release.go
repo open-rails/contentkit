@@ -718,11 +718,16 @@ func (s *Service) completeRelease(ctx context.Context, k *mediastore.RegisteredK
 	return *plan.Next, nil
 }
 
-// releasedView is what t's readers see now: its plan's view.
+// releasedView is what t's readers see now: its plan's view. A deleted
+// version shows them nothing, ErrNotFound: the release it keeps for a
+// restore never becomes ready, so it is never ErrNotReady.
 func (s *Service) releasedView(ctx context.Context, k *mediastore.RegisteredKind, t versions.Target) (*releaseView, *mediastore.Manifest, error) {
 	st, err := s.releaseStateOf(ctx, s.o.Pool, t)
 	if err != nil {
 		return nil, nil, err
+	}
+	if st.deleted() {
+		return nil, nil, ErrNotFound
 	}
 	ref, err := s.ref(st.Kind, t)
 	if err != nil {
