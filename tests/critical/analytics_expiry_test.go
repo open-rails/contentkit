@@ -157,6 +157,8 @@ func TestAnalyticsAnonymousExpiryWithoutClickHouse(t *testing.T) {
 			t.Fatalf("before expiry the idle visitor has state, history, searches, reactions, feedback = %v", got)
 		}
 		before := x.likes(t, liked.ID)
+		// A startup run after the jump would expire the active visitor first.
+		x.awaitStartupRun(t, expiryJob)
 		x.advance(31 * 24 * time.Hour)
 		// The active visitor's only activity since is answering its prompt.
 		badArt := discovery.ReasonBadArt

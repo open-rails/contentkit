@@ -109,6 +109,19 @@ func (x *analyticsWorld) runJob(t *testing.T) { t.Helper(); x.runAnalytics(t) }
 // runAnalytics runs one analytics job on the apps' River and waits for it.
 func (w *world) runAnalytics(t *testing.T) { t.Helper(); w.runContentJob(t, "contentkit_analytics") }
 
+// awaitStartupRun waits for the run-on-start periodic job of kind, so it
+// cannot fire later against an advanced clock.
+func (w *world) awaitStartupRun(t *testing.T, kind string) {
+	t.Helper()
+	queue, err := river.NewClient(riverpgxv5.New(w.pool), &river.Config{Schema: w.schema + "_river"})
+	must(t, err)
+	waitForWithin(t, time.Minute, func() bool {
+		done, err := queue.JobList(t.Context(), river.NewJobListParams().Kinds(kind).States(rivertype.JobStateCompleted).First(1))
+		must(t, err)
+		return len(done.Jobs) > 0
+	})
+}
+
 // runContentJob runs one job of kind on the apps' River and waits for it.
 func (w *world) runContentJob(t *testing.T, kind string) {
 	t.Helper()
