@@ -29,8 +29,11 @@ import (
 	"github.com/open-rails/authkit/iam"
 	ck "github.com/open-rails/contentkit"
 	"github.com/open-rails/contentkit/catalog"
+	"github.com/open-rails/contentkit/internal/media/workqueue"
 	"github.com/open-rails/contentkit/media"
 	"github.com/open-rails/contentkit/media/worker"
+	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/rivertype"
 )
 
 // This journey uses the shipped admin components and a real ZIP, HTTP transport,
@@ -216,6 +219,16 @@ func TestMediaSSEUpload(t *testing.T) {
 	if receipt.Status != "passed" || receipt.Pages != 25 {
 		t.Fatalf("browser did not complete expected journey: %s", output.String())
 	}
+	// Readiness is a snapshot of the uploads: a derivative attempt still
+	// running when the browser saw ready can add one (the automatic cover).
+	// The state below is final once the item's media jobs are done.
+	queue := m.queue(t)
+	waitForWithin(t, 45*time.Second, func() bool {
+		jobs, err := queue.JobList(t.Context(), river.NewJobListParams().Kinds((workqueue.IngestArgs{}).Kind(), (workqueue.DerivativeArgs{}).Kind()).
+			States(rivertype.JobStateAvailable, rivertype.JobStatePending, rivertype.JobStateRunning, rivertype.JobStateRetryable, rivertype.JobStateScheduled).First(1))
+		must(t, err)
+		return len(jobs.Jobs) == 0
+	})
 	final := watchMediaSnapshot(t, client, ref, first.Cursor)
 	if final.Read.Status.State != media.StateReady || final.Read.Status.Archives.Pages.Completed != 25 {
 		t.Fatalf("completed stream disagrees with browser: %+v", final.Read.Status)
