@@ -16,7 +16,6 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"runtime"
 	"slices"
 	"time"
@@ -176,22 +175,8 @@ func (e *Encoder) failed(ctx context.Context, item mediastore.Item, path, blob s
 	return nil
 }
 
-// tempPattern names scratch directories; SweepTemp removes leftovers.
+// tempPattern names scratch directories.
 const tempPattern = "ck-video-*"
-
-// SweepTemp removes scratch left in dir by a killed process. Run it at
-// worker start, before any job.
-func SweepTemp(dir string) error {
-	matches, err := filepath.Glob(filepath.Join(cmp.Or(dir, os.TempDir()), tempPattern))
-	if err != nil {
-		return err
-	}
-	var errs []error
-	for _, m := range matches {
-		errs = append(errs, os.RemoveAll(m))
-	}
-	return errors.Join(errs...)
-}
 
 // testBeforePublish runs between the output uploads and the manifest edit.
 var testBeforePublish func()

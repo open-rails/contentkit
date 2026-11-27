@@ -1333,6 +1333,18 @@
       ]
     },
     {
+      "id": "CK-J11-S13",
+      "journey": "CK-J11",
+      "behavior": "A killed worker's job scratch is removed by the next worker to start, and a stopped worker leaves none",
+      "status": "verified",
+      "evidence": [
+        "SIGKILL stops a real worker process mid-archive with the ZIP and a page on its disk; a worker started under the same TempDir removes them before taking work, finishes the archive from the replayed job, and leaves no scratch once it stops."
+      ],
+      "cases": [
+        "TestMediaWorkerScratch/CK-J11-S13_a_killed_job's_scratch_is_gone_after_a_restart"
+      ]
+    },
+    {
       "id": "CK-J12-S01",
       "journey": "CK-J12",
       "behavior": "Real video produces playable configured AV1 and H264 renditions with its soundtrack",
@@ -2380,6 +2392,20 @@
       ],
       "cases": [
         "TestMediaVideoScratch/CK-J08-S12_erasing_an_encoded_video_empties_its_folder"
+      ]
+    },
+    {
+      "id": "CK-J08-S13",
+      "journey": "CK-J08",
+      "behavior": "A deleted version's download links, grant and reader plan answer 404 at once, never 202 pending, to readers and staff; a restore reopens the same link; deleting one version closes only its own",
+      "status": "verified",
+      "evidence": [
+        "A public gallery's two versions each have an anonymous reader's ZIP link and the first an editor's. Deleting the first makes its links (whole and ranged) 404 at once and after its jobs, and its download grant and reader plan 404 to the reader and to staff, while the sibling's link keeps serving the same bytes; a restore serves the same bytes through the old links. Deleting both deletes the content and closes both; restoring one reopens only it.",
+        "A real clip's original link (a single-file transfer) is 404 at once once its only version is deleted, to the reader and staff alike, and serves the same bytes again after the restore."
+      ],
+      "cases": [
+        "TestDeletedVersionDownloads/CK-J08-S13_deleted_pages_ZIP_links_are_not_found_until_restored",
+        "TestDeletedVersionDownloads/CK-J08-S13_a_deleted_last_version's_original_link_is_not_found_until_restored"
       ]
     },
     {

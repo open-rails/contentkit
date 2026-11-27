@@ -1,6 +1,7 @@
 package critical_test
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/open-rails/authkit/authtest"
@@ -30,7 +32,9 @@ func TestShippedBrowserClient(t *testing.T) {
 	base, err := url.Parse(a.server.URL)
 	must(t, err)
 	mux := http.NewServeMux()
-	mux.Handle("/content/", httputil.NewSingleHostReverseProxy(base))
+	held := &serverHold{test: t.Context()}
+	mux.Handle("/content/", held.wrap(httputil.NewSingleHostReverseProxy(base)))
+	held.routes(mux)
 	mux.HandleFunc("/fixture.png", func(out http.ResponseWriter, _ *http.Request) {
 		out.Header().Set("Content-Type", "image/png")
 		_, _ = out.Write(imageBytes(t))
@@ -107,4 +111,126 @@ func TestPollChoicesBrowser(t *testing.T) {
 	if receipt.Scenario != "CK-J30-S01" || receipt.Status != "passed" {
 		t.Fatalf("poll editor scenario did not execute: %s", output)
 	}
+}
+
+// serverHold delays one API response at the test server, so a browser
+// scenario can act while a real request is in flight. The request reaches
+// the real handler at once; its response waits for the driver's release,
+// and a browser that aborts it meanwhile gets nothing, as from any server.
+// (Intercepting it in the browser instead left a later request to the same
+// URL unanswered.)
+type serverHold struct {
+	test  context.Context
+	mu    sync.Mutex
+	armed *heldRequest // the next matching request's
+	last  *heldRequest // the latest armed
+}
+
+type heldRequest struct {
+	method, suffix string
+	seen           chan heldResponse
+	free, done     chan struct{}
+	release        sync.Once
+}
+
+type heldResponse struct {
+	Status int             `json:"status"`
+	Body   json.RawMessage `json:"body"`
+}
+
+// take disarms the hold for the request it matches.
+func (h *serverHold) take(r *http.Request) *heldRequest {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	held := h.armed
+	if held == nil || r.Method != held.method || !strings.HasSuffix(r.URL.Path, held.suffix) {
+		return nil
+	}
+	h.armed = nil
+	return held
+}
+
+// current is the latest armed hold; it refuses a driver that armed none.
+func (h *serverHold) current(out http.ResponseWriter) *heldRequest {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.last == nil {
+		http.Error(out, "no hold armed", http.StatusConflict)
+	}
+	return h.last
+}
+
+func (h *serverHold) wrap(api http.Handler) http.Handler {
+	return http.HandlerFunc(func(out http.ResponseWriter, r *http.Request) {
+		held := h.take(r)
+		if held == nil {
+			api.ServeHTTP(out, r)
+			return
+		}
+		defer close(held.done)
+		recorded := httptest.NewRecorder()
+		api.ServeHTTP(recorded, r.WithContext(context.WithoutCancel(r.Context())))
+		held.seen <- heldResponse{Status: recorded.Code, Body: recorded.Body.Bytes()}
+		select {
+		case <-held.free:
+		case <-h.test.Done():
+			return
+		}
+		if r.Context().Err() != nil {
+			return // the browser gave up on it
+		}
+		for k, v := range recorded.Header() {
+			out.Header()[k] = v
+		}
+		out.WriteHeader(recorded.Code)
+		_, _ = out.Write(recorded.Body.Bytes())
+	})
+}
+
+// routes are the driver's: arm a method and path suffix, wait until the
+// request is held (with its real response), release it, wait until done.
+func (h *serverHold) routes(mux *http.ServeMux) {
+	mux.HandleFunc("POST /fixture/hold", func(out http.ResponseWriter, r *http.Request) {
+		var arm struct{ Method, Path string }
+		if json.NewDecoder(r.Body).Decode(&arm) != nil || arm.Method == "" || arm.Path == "" {
+			http.Error(out, "method and path", http.StatusBadRequest)
+			return
+		}
+		held := &heldRequest{method: arm.Method, suffix: arm.Path, seen: make(chan heldResponse, 1), free: make(chan struct{}), done: make(chan struct{})}
+		h.mu.Lock()
+		h.armed, h.last = held, held
+		h.mu.Unlock()
+		out.WriteHeader(http.StatusNoContent)
+	})
+	mux.HandleFunc("GET /fixture/hold/seen", func(out http.ResponseWriter, r *http.Request) {
+		held := h.current(out)
+		if held == nil {
+			return
+		}
+		select {
+		case response := <-held.seen:
+			out.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(out).Encode(response)
+		case <-r.Context().Done():
+		}
+	})
+	mux.HandleFunc("POST /fixture/hold/release", func(out http.ResponseWriter, _ *http.Request) {
+		held := h.current(out)
+		if held == nil {
+			return
+		}
+		held.release.Do(func() { close(held.free) })
+		out.WriteHeader(http.StatusNoContent)
+	})
+	mux.HandleFunc("GET /fixture/hold/done", func(out http.ResponseWriter, r *http.Request) {
+		held := h.current(out)
+		if held == nil {
+			return
+		}
+		select {
+		case <-held.done:
+			out.WriteHeader(http.StatusNoContent)
+		case <-r.Context().Done():
+		}
+	})
 }

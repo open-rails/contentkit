@@ -61,6 +61,16 @@ func (s *Service) decisions(ctx context.Context, actor access.Actor, kind string
 	return out, nil
 }
 
+// verdict is actor's decision on t alone, without its pages: a download
+// asks it before reading t's release, so what is hidden is never pending.
+func (s *Service) verdict(ctx context.Context, actor access.Actor, kind string, t versions.Target) (decision, error) {
+	res, err := s.decide(ctx, actor, kind, []versions.Target{t})
+	if err != nil {
+		return decision{}, err
+	}
+	return decision{res: res[t]}, nil
+}
+
 // Plan derives chapter spans from current metadata over an immutable file
 // snapshot. Every span reads the same canonical version item.
 func (s *Service) Plan(ctx context.Context, actor access.Actor, t versions.Target) (*versions.ReaderPlan, error) {

@@ -30,8 +30,9 @@ CGO_ENABLED=1 go build -p 1 -o tests/critical/.bin/media-worker ./cmd/media-work
 # A host's own worker binary: media/worker.Main with a master hook.
 (cd tests/critical && CGO_ENABLED=1 go build -p 1 -o .bin/host-media-worker ./testdata/hostworker)
 # Hosts, server/ and adapters/* reach only the public surface; the image
-# encoder's geometry, bounds and metadata stripping run against libvips.
-go test -count=1 -p 1 ./internal/boundaries ./internal/media/image
+# encoder's geometry, bounds and metadata stripping run against libvips;
+# worker scratch is reclaimed only from killed processes.
+go test -count=1 -p 1 ./internal/boundaries ./internal/media/image ./internal/media/scratch
 # The published server module pins released versions; qualify this checkout against a throwaway modfile that -mod=mod updates.
 server_mod=$(bash .github/scripts/server-modfile.sh)
 (

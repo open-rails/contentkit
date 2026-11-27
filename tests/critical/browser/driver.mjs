@@ -19,21 +19,24 @@ try {
   await page.goto(fixture.url);
   await page.waitForFunction(()=>!!window.critical);
   await page.evaluate(input=>window.critical.initialize(input),fixture);
-  async function hold(pattern,method) {
-    let reached, release, delivered;
-    const seen=new Promise(resolve=>reached=resolve), gate=new Promise(resolve=>release=resolve), done=new Promise(resolve=>delivered=resolve);
-    await page.route(pattern,async route=>{
-      if(route.request().method()!==method){await route.continue();return;}
-      const actual=await route.fetch();
-      assert.equal(actual.status(),200,"delayed upstream must have succeeded");
-      const body=await actual.json();
-      if(scenario==="CK-J29-S03")assert.equal(body.favorited,true,"held response must contain Alice's private state");
-      if(scenario==="CK-J29-S04")assert.equal(body.favorited,false,"held write must already be accepted");
-      if(scenario==="CK-J29-S05")assert.equal(body.id,fixture.item,"canceled read must have reached the real handler");
-      reached();await gate;
-      await route.fulfill({response:actual}).catch(error=>{if(!/closed|aborted|intercept/i.test(String(error)))throw error;});
-      delivered();
-    },{times:1});
+  // The test server holds the request: it reaches the real handler at once
+  // and its response waits for release; an abort meanwhile ends it as usual.
+  async function hold(path,method) {
+    const armed=await page.request.post(`${fixture.url}/fixture/hold`,{data:{method,path}});
+    assert.equal(armed.status(),204,"arm the server hold");
+    const seen=page.request.get(`${fixture.url}/fixture/hold/seen`,{timeout:60000}).then(async response=>{
+      assert.equal(response.status(),200,"the held request never reached the server");
+      const held=await response.json();
+      assert.equal(held.status,200,"delayed upstream must have succeeded");
+      if(scenario==="CK-J29-S03")assert.equal(held.body.favorited,true,"held response must contain Alice's private state");
+      if(scenario==="CK-J29-S04")assert.equal(held.body.favorited,false,"held write must already be accepted");
+      if(scenario==="CK-J29-S05")assert.equal(held.body.id,fixture.item,"canceled read must have reached the real handler");
+    });
+    let release;
+    const done=new Promise(resolve=>release=resolve)
+      .then(()=>page.request.post(`${fixture.url}/fixture/hold/release`))
+      .then(()=>page.request.get(`${fixture.url}/fixture/hold/done`,{timeout:60000}))
+      .then(response=>assert.equal(response.status(),204,"the held request did not finish"));
     return {seen,release,done};
   }
   if(scenario==="CK-J30-S01") {
@@ -70,7 +73,7 @@ try {
   } else if(scenario==="CK-J29-S02") {
     assert.match(await page.evaluate(()=>window.critical.binding()),/^[a-f0-9-]{36}$/);
   } else if(scenario==="CK-J29-S03") {
-    const held=await hold(`**/contents/${fixture.item}/favorite`,"GET");
+    const held=await hold(`/contents/${fixture.item}/favorite`,"GET");
     await page.evaluate(()=>window.critical.mount());await held.seen;
     await page.evaluate(()=>window.critical.switchToBob());
     held.release();await held.done;
@@ -84,16 +87,18 @@ try {
     assert.equal(await page.evaluate(id=>window.client.favorites.get({type:"contents",id}).then(x=>x.favorited),fixture.item),false);
     assert.deepEqual(await page.evaluate(()=>window.leaks),[],"Alice's late state appeared transiently in Bob's view");
   } else if(scenario==="CK-J29-S04") {
-    const held=await hold(`**/contents/${fixture.item}/favorite`,"DELETE");
+    const held=await hold(`/contents/${fixture.item}/favorite`,"DELETE");
     await page.evaluate(()=>window.critical.beginMutation());await held.seen;
     await page.evaluate(()=>window.critical.switchScope());held.release();
     const changes=await page.evaluate(()=>window.critical.finishMutation());
     assert.equal(changes.length,1);assert.equal(changes[0].scope,null);assert.equal(changes[0].change.type,"favorite.changed");
+    await held.done;
   } else if(scenario==="CK-J29-S05") {
-    const held=await hold(`**/contents/${fixture.item}`,"GET");
+    const held=await hold(`/contents/${fixture.item}`,"GET");
     await page.evaluate(()=>window.critical.beginCancellation());await held.seen;
     await page.evaluate(()=>window.critical.cancel());held.release();
     assert.deepEqual(await page.evaluate(()=>window.critical.cancellation()),{code:"aborted",status:0});
+    await held.done;
   } else if(scenario==="CK-J29-S06") {
     const error=await page.evaluate(()=>window.critical.stableErrors());assert.equal(error.status,413);assert.equal(error.code,"too_large");
   } else if(scenario==="CK-J09-S01") {
