@@ -2395,6 +2395,20 @@
       ]
     },
     {
+      "id": "CK-J08-S13",
+      "journey": "CK-J08",
+      "behavior": "A deleted version's download links, grant and reader plan answer 404 at once, never 202 pending, to readers and staff; a restore reopens the same link; deleting one version closes only its own",
+      "status": "verified",
+      "evidence": [
+        "A public gallery's two versions each have an anonymous reader's ZIP link and the first an editor's. Deleting the first makes its links (whole and ranged) 404 at once and after its jobs, and its download grant and reader plan 404 to the reader and to staff, while the sibling's link keeps serving the same bytes; a restore serves the same bytes through the old links. Deleting both deletes the content and closes both; restoring one reopens only it.",
+        "A real clip's original link (a single-file transfer) is 404 at once once its only version is deleted, to the reader and staff alike, and serves the same bytes again after the restore."
+      ],
+      "cases": [
+        "TestDeletedVersionDownloads/CK-J08-S13_deleted_pages_ZIP_links_are_not_found_until_restored",
+        "TestDeletedVersionDownloads/CK-J08-S13_a_deleted_last_version's_original_link_is_not_found_until_restored"
+      ]
+    },
+    {
       "id": "CK-J16-S06",
       "journey": "CK-J16",
       "behavior": "Entity counts and covers reflect writes without workers or stale periodic projections, including letter-filtered directory pages; a content-kind directory lists only entities with live content in its language",
