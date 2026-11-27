@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"reflect"
 	"testing"
 	"time"
@@ -143,14 +144,13 @@ CREATE CONSTRAINT TRIGGER critical_reject AFTER INSERT ON `+qs+`.content_items D
 		must(t, err)
 		qs := pgx.Identifier{w.schema}.Sanitize()
 		const barrier int64 = 612900126
-		holder, err := w.pool.Acquire(t.Context())
-		must(t, err)
+		// The barrier and its observer use connections of their own: the
+		// app's pool is what the held commit, the one behind it and any
+		// work queued behind them occupy.
+		holder, observer := ownConnection(t), ownConnection(t)
 		_, err = holder.Exec(t.Context(), "SELECT pg_advisory_lock($1)", barrier)
 		must(t, err)
-		defer func() {
-			_, _ = holder.Exec(context.Background(), "SELECT pg_advisory_unlock($1)", barrier)
-			holder.Release()
-		}()
+		defer func() { _, _ = holder.Exec(context.Background(), "SELECT pg_advisory_unlock($1)", barrier) }()
 		_, err = w.pool.Exec(t.Context(), fmt.Sprintf(`CREATE FUNCTION %s.critical_delay() RETURNS trigger LANGUAGE plpgsql AS $$BEGIN IF NEW.subject_id=TG_ARGV[0] THEN PERFORM pg_advisory_xact_lock(%d); END IF; RETURN NEW; END$$;
 CREATE CONSTRAINT TRIGGER zzz_critical_delay AFTER INSERT ON %s.eventlog_pending DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION %s.critical_delay('%s')`, qs, barrier, qs, qs, one.ID))
 		must(t, err)
@@ -165,7 +165,7 @@ CREATE CONSTRAINT TRIGGER zzz_critical_delay AFTER INSERT ON %s.eventlog_pending
 		go update(one.ID, first)
 		waitFor(t, func() bool {
 			var blocked int
-			err := w.pool.QueryRow(ctx, "SELECT count(*) FROM pg_locks WHERE locktype='advisory' AND objid=$1 AND NOT granted", barrier).Scan(&blocked)
+			err := observer.QueryRow(ctx, "SELECT count(*) FROM pg_locks WHERE locktype='advisory' AND objid=$1 AND NOT granted", barrier).Scan(&blocked)
 			must(t, err)
 			return blocked > 0
 		})
@@ -180,7 +180,7 @@ CREATE CONSTRAINT TRIGGER zzz_critical_delay AFTER INSERT ON %s.eventlog_pending
 			default:
 			}
 			var blocked int
-			must(t, w.pool.QueryRow(ctx, "SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock'").Scan(&blocked))
+			must(t, observer.QueryRow(ctx, "SELECT count(*) FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock'").Scan(&blocked))
 			return blocked >= 2
 		})
 		beforeRelease, err := admin.ListEvents(ctx, catalog.EventQuery{After: checkpoint.NextCursor, Types: []string{"content.updated"}})
@@ -210,6 +210,15 @@ CREATE CONSTRAINT TRIGGER zzz_critical_delay AFTER INSERT ON %s.eventlog_pending
 		_, err = w.pool.Exec(ctx, `DROP TRIGGER zzz_critical_delay ON `+qs+`.eventlog_pending; DROP FUNCTION `+qs+`.critical_delay()`)
 		must(t, err)
 	})
+}
+
+// ownConnection is a database connection outside every fixture pool.
+func ownConnection(t *testing.T) *pgx.Conn {
+	t.Helper()
+	conn, err := pgx.Connect(t.Context(), os.Getenv("CONTENTKIT_CRITICAL_PG"))
+	must(t, err)
+	t.Cleanup(func() { _ = conn.Close(context.Background()) })
+	return conn
 }
 
 func waitFor(t *testing.T, ready func() bool) {
