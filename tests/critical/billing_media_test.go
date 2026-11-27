@@ -257,6 +257,8 @@ func TestCommerceMediaGrantRevocation(t *testing.T) {
 		assertFiles(anonymous, 0) // public policy activates with completed placement
 		wakeDuePublicationJobs(t, a)
 		awaitFiles(anonymous, 2)
+		// Public pages list once moved; a download waits for the release's commit.
+		awaitPublicationJobsIdle(t, w, a)
 		archive(anonymous, 2)
 		// Opening an audience does not grant billing rights to an unpurchased
 		// account: completed public publication does not create a purchase.

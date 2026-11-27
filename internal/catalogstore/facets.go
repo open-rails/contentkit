@@ -17,9 +17,11 @@ import (
 
 // RefreshFacets rewrites the content_facets rows of every version of the
 // content items, and queues their search documents, in q's transaction.
-// live_from is when a version's release completed, kept through deletion so
-// holders of a deleted item still read what was live; deleted marks either
-// deletion. Availability comes only from a completed publication.
+// live_from is when a version opens to readers: the later of its first
+// completed release and its scheduled publication, so a re-schedule hides it
+// at once while the earlier release's withdrawal is still queued. It is kept through
+// deletion so holders of a deleted item still read what was live; deleted
+// marks either deletion. Availability comes only from a completed publication.
 // Every
 // write to a content item, its versions, memberships, access, listing,
 // restrictions, traits or attributes calls it before committing; the entities
@@ -88,7 +90,7 @@ func (s *Store) RefreshFacets(ctx context.Context, q Querier, contentIDs []strin
   CASE WHEN (c.state = 'published' OR (c.state = 'deleted' AND c.published_at IS NOT NULL))
    AND (v.state = 'published' OR (v.state = 'deleted' AND v.published_at IS NOT NULL))
    AND v.released AND c.published_at IS NOT NULL AND v.published_at IS NOT NULL
-   THEN greatest(c.published_at, v.published_at) END,
+   THEN greatest(c.published_at, v.published_at, c.publish_at, v.publish_at) END,
   c.state = 'deleted' OR v.state = 'deleted', v.languages,
   a.level, a.tiers, a.entity_id, coalesce(a.releases, '[]'::jsonb), c.restrictions, a.entities, v.traits, c.owner_entity_id, v.position, c.published_at,
   c.attributes || v.attributes, now()

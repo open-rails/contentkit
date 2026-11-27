@@ -99,7 +99,7 @@ func (e *Engine) lists(cat *catalog, rows []signal.ContentPopularity, i int, w W
 	entities := map[string]*sums{}
 	for _, row := range rows {
 		c, ok := cat.contents[row.ContentID]
-		if !ok || c.kind != row.ContentKind || c.liveFrom.After(at) {
+		if !ok || c.kind != row.ContentKind || c.opens.After(at) {
 			continue
 		}
 		score, audience := row.Score[i], row.Audience[i]

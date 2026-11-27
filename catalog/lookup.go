@@ -15,8 +15,9 @@ type VersionStatus struct {
 	Deleted bool `json:"deleted"`
 	// Live is released and not deleted at the time of the read.
 	Live bool `json:"live"`
-	// LiveFrom is when its release completed, kept through deletion; absent
-	// before release.
+	// LiveFrom is when it opens to readers: the later of its first completed
+	// release and its scheduled publication, kept through deletion; absent
+	// while it is unpublished or unreleased. It may be in the future.
 	LiveFrom *time.Time `json:"live_from,omitempty"`
 }
 

@@ -67,7 +67,7 @@ A video kind's download streams its original as uploaded (its master under the i
 
 ContentKit mints its row, operation and object ids as UUIDv7s, so new rows append to their indexes; generated ids default to `uuidv7()`. Media lifecycle ids (erasure, purge, folder retirement, delivery adoption and withdrawal, archive ingestion) are deterministic UUIDv7s instead of name-based UUIDv5s, so one retried across the upgrade derives a new id and runs again under it.
 
-The media journal keys a commit by a hash of its `operation_id`, never the id as sent, so no caller can claim an id a lifecycle operation derives. Send a UUIDv7 (`contentref.NewID`, Postgres `uuidv7()`) to keep that index ordered; a UUIDv4 is still accepted.
+An upload commit's `operation_id` is recorded in the item's manifest only as a hash, so no caller can claim an id ContentKit's own edits derive. Send a UUIDv7 (`contentref.NewID`); a UUIDv4 is still accepted.
 
 ## Channels
 

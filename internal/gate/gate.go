@@ -24,6 +24,7 @@ import (
 	"github.com/open-rails/contentkit/internal/httpapi"
 	"github.com/open-rails/contentkit/internal/locationpolicy"
 	"github.com/open-rails/contentkit/internal/readerprefs"
+	"github.com/open-rails/contentkit/internal/subject"
 )
 
 // Gate guards one module's routes.
@@ -262,6 +263,7 @@ func (g *Gate) Guard(s httpapi.Spec, next http.Handler) http.Handler {
 		ctx := context.WithValue(context.WithValue(r.Context(), actorKey{}, a), domainKey{}, r.Host)
 		if a.Anonymous {
 			ctx = readerprefs.WithHeader(ctx, r.Header.Values(readerprefs.Header))
+			ctx = subject.WithBrowser(ctx, r.Header.Get(subject.Header))
 		}
 		cw := &cacheWriter{ResponseWriter: w, ctx: ctx, shared: s.Cache.Public() && a.Anonymous && !g.presented(r)}
 		directive := httpapi.NoStore

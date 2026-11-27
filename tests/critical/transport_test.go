@@ -146,38 +146,46 @@ func TestStandaloneClientAddress(t *testing.T) {
 
 func TestAnonymousIPv6Prefix(t *testing.T) {
 	w := newWorld(t, func(c *ck.Config) {
+		c.TrustedProxies = loopbackProxies
 		c.Interactions.Anonymous.Reactions = true
 		c.Interactions.Limits.Reaction = []ck.Rate{{Count: 3, Per: time.Hour}}
+		c.Interactions.Limits.AnonymousReaction = []ck.Rate{{Count: 2, Per: time.Hour}}
 	})
 	a := w.apps[0]
 	one := publishedArticle(t, a, "IPv6 prefix one")
 	two := publishedArticle(t, a, "IPv6 prefix two")
-	visitor := func(ip string) *ck.Client { return a.engine.VisitorClient(netip.MustParseAddr(ip), "") }
-	t.Run("CK-J02-S41_an_IPv6_64_is_one_anonymous_visitor", func(t *testing.T) {
-		like := func(t *testing.T, ip, id string) content.ReactionCounts {
+	t.Run("CK-J02-S41_an_IPv6_64_is_one_address_for_anonymous_limits", func(t *testing.T) {
+		first, second, third, fourth := uuid.NewString(), uuid.NewString(), uuid.NewString(), uuid.NewString()
+		like := func(t *testing.T, browser, ip, id string) content.ReactionCounts {
 			t.Helper()
-			got, err := visitor(ip).PostContentLike(t.Context(), id, ck.PostContentLikeQuery{})
+			got, err := browserAt(a, browser, ip).PostContentLike(t.Context(), id, ck.PostContentLikeQuery{})
 			must(t, err)
 			return got
 		}
-		if got := like(t, "2001:db8:1:2::1", one.ID); got.Likes == nil || *got.Likes != 1 || got.Mine != 1 {
+		if got := like(t, first, "2001:db8:1:2::1", one.ID); got.Likes == nil || *got.Likes != 1 || got.Mine != 1 {
 			t.Fatalf("first like: %+v", got)
 		}
-		// Another address in the same /64 is the same visitor: its like is
-		// the one already counted.
-		if got := like(t, "2001:db8:1:2:ffff::9", one.ID); got.Likes == nil || *got.Likes != 1 || got.Mine != 1 {
+		// A browser's like is its own from any address.
+		if got := like(t, first, "2001:db8:1:2:ffff::9", one.ID); got.Likes == nil || *got.Likes != 1 || got.Mine != 1 {
 			t.Fatalf("a rotated address liked again: %+v", got)
 		}
-		if got := like(t, "2001:db8:1:3::1", one.ID); got.Likes == nil || *got.Likes != 2 {
-			t.Fatalf("another /64 is another visitor: %+v", got)
+		if got := like(t, second, "2001:db8:1:2::5", one.ID); got.Likes == nil || *got.Likes != 2 {
+			t.Fatalf("another browser in the /64: %+v", got)
 		}
-		// The limit counts the /64 too: its third reaction fits, a fourth
-		// from yet another of its addresses does not.
-		like(t, "2001:db8:1:2::3", two.ID)
-		_, err := visitor("2001:db8:1:2::4").PostContentDislike(t.Context(), two.ID, ck.PostContentDislikeQuery{})
-		requireError(t, err, http.StatusTooManyRequests, "rate_limited")
-		like(t, "2001:db8:1:3::2", two.ID)
-		like(t, "192.0.2.1", two.ID)
+		// The reaction limit counts the /64: its fourth reaction is refused.
+		if status, code, action := refusedLike(t, a, two.ID, third, "2001:db8:1:2::6"); status != http.StatusTooManyRequests || code != "rate_limited" || action != string(content.ActionReaction) {
+			t.Fatalf("a fourth reaction from the /64: %d %s %s", status, code, action)
+		}
+		// So does the ballot limit: a third browser on one item from another
+		// /64's addresses is refused, a fourth browser from IPv4 is not.
+		like(t, third, "2001:db8:1:3::1", one.ID)
+		like(t, fourth, "2001:db8:1:3::2", one.ID)
+		if status, code, action := refusedLike(t, a, one.ID, uuid.NewString(), "2001:db8:1:3::3"); status != http.StatusTooManyRequests || code != "rate_limited" || action != string(content.ActionAnonymousReaction) {
+			t.Fatalf("a third browser on one item from the /64: %d %s %s", status, code, action)
+		}
+		if got := like(t, uuid.NewString(), "192.0.2.1", one.ID); got.Likes == nil || *got.Likes != 5 {
+			t.Fatalf("an IPv4 browser: %+v", got)
+		}
 	})
 }
 

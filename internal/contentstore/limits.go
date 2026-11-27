@@ -8,8 +8,10 @@ import (
 	"math"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/open-rails/contentkit/access"
 	content "github.com/open-rails/contentkit/content"
+	"github.com/open-rails/contentkit/contentref"
 	"github.com/open-rails/contentkit/internal/clientaddr"
 	"github.com/open-rails/contentkit/internal/gate"
 	"github.com/open-rails/contentkit/internal/ratelimit"
@@ -28,6 +30,10 @@ type Limits struct {
 	Reaction        []content.Rate // default 30 per minute
 	Favorite        []content.Rate // default 20 per minute
 	PollVote        []content.Rate // default 30 per minute
+	// AnonymousReaction counts the signed-out browsers reacting to one
+	// target from one address (an IPv6 /64); a browser changing its own
+	// reaction spends nothing more. Default 10 per day.
+	AnonymousReaction []content.Rate
 
 	// Redis (or Garnet) shares the limits across replicas; pass the host's
 	// client. Without it each process counts alone, so N replicas allow N
@@ -45,12 +51,13 @@ const actionCommentAttempt content.Action = "comment_attempt"
 var commentAttempts = []content.Rate{{Count: 30, Per: time.Minute}}
 
 var defaultLimits = map[content.Action][]content.Rate{
-	actionCommentAttempt:          commentAttempts,
-	content.ActionComment:         {{Count: 5, Per: 5 * time.Minute}, {Count: 20, Per: time.Hour}},
-	content.ActionCommentReaction: {{Count: 30, Per: time.Minute}},
-	content.ActionReaction:        {{Count: 30, Per: time.Minute}},
-	content.ActionFavorite:        {{Count: 20, Per: time.Minute}},
-	content.ActionPollVote:        {{Count: 30, Per: time.Minute}},
+	actionCommentAttempt:            commentAttempts,
+	content.ActionComment:           {{Count: 5, Per: 5 * time.Minute}, {Count: 20, Per: time.Hour}},
+	content.ActionCommentReaction:   {{Count: 30, Per: time.Minute}},
+	content.ActionReaction:          {{Count: 30, Per: time.Minute}},
+	content.ActionFavorite:          {{Count: 20, Per: time.Minute}},
+	content.ActionPollVote:          {{Count: 30, Per: time.Minute}},
+	content.ActionAnonymousReaction: {{Count: 10, Per: 24 * time.Hour}},
 }
 
 // RateLimitRedisErrors counts shared-limit Redis failures, each served by the
@@ -65,6 +72,7 @@ func newLimiters(l Limits, tenant string, log *slog.Logger) (map[content.Action]
 	set := map[content.Action][]content.Rate{
 		content.ActionComment: l.Comment, content.ActionCommentReaction: l.CommentReaction,
 		content.ActionReaction: l.Reaction, content.ActionFavorite: l.Favorite, content.ActionPollVote: l.PollVote,
+		content.ActionAnonymousReaction: l.AnonymousReaction,
 	}
 	prefix := l.KeyPrefix
 	if prefix == "" {
@@ -134,6 +142,22 @@ func (rt *Runtime) limit(ctx context.Context, a content.Action, actor access.Act
 			a = content.ActionComment
 		}
 		return &content.RateLimitError{Action: a, RetryAfter: wait}
+	}
+	return nil
+}
+
+// limitBallot spends one of the ballots a signed-out browser casts on key
+// from its address: each distinct browser reacting to it there counts once,
+// so a browser changing its own reaction spends nothing more. Accounts and
+// the engine's in-process client are not limited here.
+func (rt *Runtime) limitBallot(ctx context.Context, actor access.Actor, who reactor, key contentref.ContentKey) error {
+	l := rt.limiters[content.ActionAnonymousReaction]
+	if l == nil || who.anon == uuid.Nil || actor.IP == "" || gate.IsHost(actor) {
+		return nil
+	}
+	ballot := "ip:" + clientaddr.Key(actor.IP) + "|" + key.ContentKind + "|" + key.ContentID + "|" + key.ContentVersionID
+	if ok, wait := l.AllowMember(ctx, ballot, who.anon.String()); !ok {
+		return &content.RateLimitError{Action: content.ActionAnonymousReaction, RetryAfter: wait}
 	}
 	return nil
 }

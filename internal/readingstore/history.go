@@ -150,7 +150,7 @@ func EncodeDay(day time.Time, actions []Action) []byte {
 	return out
 }
 
-var errHistory = errors.New("readingstore: malformed reading history")
+var errHistory = errors.New("readingstore: malformed interaction history")
 
 // DecodeDay unpacks a day EncodeDay packed. A gallery's ActiveS is its
 // bucket's lower bound.

@@ -210,7 +210,7 @@ VALUES ($1,$2,false) ON CONFLICT (tenant_id,actor_id) DO NOTHING`, rt.tenant, ac
 			return err // feedback, free text included, is deleted rather than kept anonymously
 		}
 		for _, q := range []string{
-			`UPDATE ` + s.t.reactions + ` SET user_id=NULL,ip=NULL,anonymous_actor_id=$3 WHERE tenant_id=$1 AND user_id=$2`,
+			`UPDATE ` + s.t.reactions + ` SET user_id=NULL,anonymous_actor_id=$3 WHERE tenant_id=$1 AND user_id=$2`,
 			favorites,
 			`UPDATE ` + s.t.pollVotes + ` SET user_id=NULL,ip=NULL,anonymous_actor_id=$3 WHERE tenant_id=$1 AND user_id=$2`,
 		} {

@@ -62,10 +62,10 @@ func (s *Store) ExpireIdle(ctx context.Context, cutoff time.Time) (int, error) {
 }
 
 // expireBatch deletes the personal rows of up to expireBatch signed-out
-// subjects idle since before cutoff: reading state, history, recent searches
-// and feedback answers, free text included; their reactions stay, unlinked
-// from them. A subject linked to an
-// account is never expired.
+// subjects idle since before cutoff: reading state, interaction history,
+// recent searches and feedback answers, free text included. Their reactions
+// stay and keep counting, unlinked from them. A subject linked to an account
+// is never expired.
 func (s *Store) expireBatch(ctx context.Context, cutoff time.Time) (int, error) {
 	var n int
 	err := pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
@@ -91,8 +91,8 @@ func (s *Store) expireBatch(ctx context.Context, cutoff time.Time) (int, error) 
 			{`DELETE FROM ` + s.t.state + ` WHERE app_id = $1 AND subject = ANY($2)`, []any{s.app, subjects}},
 			{`DELETE FROM ` + s.t.history + ` WHERE app_id = $1 AND subject = ANY($2)`, []any{s.app, subjects}},
 			{`DELETE FROM ` + s.t.searches + ` WHERE tenant_id = $1 AND subject = ANY($2)`, []any{s.tenant, texts}},
-			{`UPDATE ` + s.t.reactions + ` SET anonymous_subject = NULL WHERE tenant_id = $1 AND anonymous_subject = ANY($2)`, []any{s.tenant, subjects}},
-			{`DELETE FROM ` + s.t.feedback + ` WHERE app_id = $1 AND anonymous_actor_id = ANY($2)`, []any{s.app, subjects}},
+			{s.unlinkReactions("ANY($2)"), []any{s.tenant, subjects}},
+			{`DELETE FROM ` + s.t.feedback + ` WHERE app_id = $1 AND anonymous_subject = ANY($2)`, []any{s.app, subjects}},
 		} {
 			if _, err := tx.Exec(ctx, q.sql, q.args...); err != nil {
 				return fmt.Errorf("readingstore: expire anonymous: %w", err)

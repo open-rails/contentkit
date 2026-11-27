@@ -175,7 +175,7 @@ is 503, and any other panic while serving is 500 `internal_error`. ContentKit na
 host declares them in its auth's roles from those constants. They are
 root-wide; per-item rights (creators, primary-channel editors) are the catalog's. Behind a
 proxy, list it in `Config.TrustedProxies`, or set `Request.RemoteAddr` to the client's address before the routes:
-location rules and anonymous reactions, votes and limits are keyed by it ([client address](HOST_INTEGRATION.md#client-address)). No content kind may
+location rules, anonymous votes and limits are keyed by it ([client address](HOST_INTEGRATION.md#client-address)). No content kind may
 be named `media`, `codes`, `entities`, `contents`, `kinds`, `catalog` or `notifications`.
 
 Every route is declared once, in its module's route table
@@ -511,7 +511,7 @@ state and history. Product pages read only PostgreSQL. See
   (`ContentKit-Anonymous-Id`).
 - Each process buffers rows and writes them every second as one async INSERT.
 - The analytics job (every 15 minutes) folds new rows into `reading_state` and
-  `reading_history` and sign-in links into the account, rebuilds today's
+  `interaction_history` and sign-in links into the account, rebuilds today's
   `content_daily` and `audience_daily` hourly, and deletes erased rows daily.
 - History, continue reading, card progress, `view_status` and hidden
   galleries read `reading_state`; hiding (`PUT /v1/contents/{id}/hidden`) is

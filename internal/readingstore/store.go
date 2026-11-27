@@ -1,7 +1,7 @@
-// Package readingstore is the per-person reading state, history and identity
-// links in PostgreSQL that the analytics job writes from ClickHouse's
-// activity log, and the immediate writes beside it: hide, sign-in links,
-// clearing history and erasure.
+// Package readingstore is the per-person reading state, interaction history
+// and identity links in PostgreSQL that the analytics job writes from
+// ClickHouse's activity log, and the immediate writes beside it: hide, sign-in
+// links, clearing history, anonymous expiry and erasure.
 package readingstore
 
 import (
@@ -32,7 +32,7 @@ type tables struct {
 // New is app's store in schema; now is the engine's clock.
 func New(pool *pgxpool.Pool, schema string, app uuid.UUID, now func() time.Time) *Store {
 	q := func(t string) string { return pgx.Identifier{schema, t}.Sanitize() }
-	return &Store{pool: pool, app: app, tenant: app.String(), now: now, t: tables{state: q("reading_state"), history: q("reading_history"),
+	return &Store{pool: pool, app: app, tenant: app.String(), now: now, t: tables{state: q("reading_state"), history: q("interaction_history"),
 		links: q("anonymous_links"), active: q("anonymous_activity"), job: q("analytics_job"), erased: q("content_erased_subjects"),
 		reactions: q("content_reactions"), searches: q("content_searches"), items: q("content_items"), memberships: q("content_memberships"),
 		favorites: q("content_favorites"), feedback: q("content_reaction_feedback")}}
@@ -171,7 +171,7 @@ ON CONFLICT (app_id, subject, day) DO UPDATE SET actions = EXCLUDED.actions`, s.
 WHERE h.app_id = $1 AND h.subject = u.subject AND h.day = u.day`, s.app, empty, emptyDates)
 	}
 	if err := s.pool.SendBatch(ctx, b).Close(); err != nil {
-		return fmt.Errorf("readingstore: write reading history: %w", err)
+		return fmt.Errorf("readingstore: write interaction history: %w", err)
 	}
 	return nil
 }
@@ -319,10 +319,10 @@ func (s *Store) Erase(ctx context.Context, account uuid.UUID, anonymous []uuid.U
 			{`DELETE FROM ` + s.t.history + ` WHERE app_id = $1 AND subject = ANY($2)`, []any{s.app, subjects}},
 			{`DELETE FROM ` + s.t.links + ` WHERE app_id = $1 AND (account_id = $2 OR anonymous_id = ANY($3))`, []any{s.app, account, subjects}},
 			{`DELETE FROM ` + s.t.active + ` WHERE app_id = $1 AND subject = ANY($2)`, []any{s.app, subjects}},
-			{`UPDATE ` + s.t.reactions + ` SET anonymous_subject = NULL WHERE tenant_id = $1 AND anonymous_subject = ANY($2)`, []any{s.tenant, subjects}},
+			{s.unlinkReactions("ANY($2)"), []any{s.tenant, subjects}},
 			{`DELETE FROM ` + s.t.searches + ` WHERE tenant_id = $1 AND subject = ANY($2)`, []any{s.tenant, texts}},
 			// Feedback of the anonymous ids folded in; the account's own goes with its interactions.
-			{`DELETE FROM ` + s.t.feedback + ` WHERE app_id = $1 AND anonymous_actor_id = ANY($2)`, []any{s.app, anonymous}},
+			{`DELETE FROM ` + s.t.feedback + ` WHERE app_id = $1 AND anonymous_subject = ANY($2)`, []any{s.app, anonymous}},
 		} {
 			if _, err := tx.Exec(ctx, q.sql, q.args...); err != nil {
 				return fmt.Errorf("readingstore: erase: %w", err)
@@ -373,6 +373,13 @@ ON CONFLICT (app_id) DO UPDATE SET ingested_through = EXCLUDED.ingested_through,
  closed_at = EXCLUDED.closed_at, erased_at = EXCLUDED.erased_at, erasures_through = EXCLUDED.erasures_through`,
 		s.app, p.IngestedThrough, p.RolledUpAt, p.ClosedAt, p.ErasedAt, p.ErasuresThrough)
 	return err
+}
+
+// unlinkReactions is the statement that detaches signed-out subjects'
+// reactions (subjects, a SQL expression over $2, in tenant $1) from them:
+// each keeps counting as a reaction of someone no longer known.
+func (s *Store) unlinkReactions(subjects string) string {
+	return `UPDATE ` + s.t.reactions + ` SET anonymous_subject = NULL, anonymous_actor_id = gen_random_uuid() WHERE tenant_id = $1 AND anonymous_subject = ` + subjects
 }
 
 func clampInt32(v uint32) int32 { return int32(min(v, 1<<31-1)) }

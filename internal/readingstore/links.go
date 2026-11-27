@@ -69,8 +69,10 @@ func (s *Store) Unfolded(ctx context.Context, limit int) ([]Link, error) {
 }
 
 // Fold moves an anonymous id's reading into its account: reading_state and
-// reading_history merge, and its reactions and recent searches are re-keyed
-// where the account has none. Repeating it is harmless.
+// interaction_history merge, and its reactions and recent searches are
+// re-keyed where the account has none; a reaction the account already has
+// for the same target wins, and the anonymous one is unlinked. Repeating it
+// is harmless.
 func (s *Store) Fold(ctx context.Context, l Link) error {
 	return pgx.BeginFunc(ctx, s.pool, func(tx pgx.Tx) error {
 		var erased bool
@@ -90,9 +92,10 @@ ON CONFLICT (app_id, subject, content_id) DO UPDATE SET `+mergeSet+`, hidden = r
 				sql  string
 				args []any
 			}{
-				{`UPDATE ` + s.t.reactions + ` r SET user_id = $3, ip = NULL, anonymous_subject = NULL WHERE r.tenant_id = $1 AND r.anonymous_subject = $2 AND r.user_id IS NULL
+				{`UPDATE ` + s.t.reactions + ` r SET user_id = $3, anonymous_subject = NULL WHERE r.tenant_id = $1 AND r.anonymous_subject = $2
  AND NOT EXISTS (SELECT 1 FROM ` + s.t.reactions + ` a WHERE a.tenant_id = r.tenant_id AND a.user_id = $3 AND a.content_kind = r.content_kind
   AND a.content_id = r.content_id AND a.content_version_id IS NOT DISTINCT FROM r.content_version_id)`, []any{s.tenant, l.Anonymous, l.Account.String()}},
+				{s.unlinkReactions("$2"), []any{s.tenant, l.Anonymous}},
 				{`UPDATE ` + s.t.searches + ` x SET subject = $3 WHERE x.tenant_id = $1 AND x.subject = $2
  AND NOT EXISTS (SELECT 1 FROM ` + s.t.searches + ` a WHERE a.tenant_id = x.tenant_id AND a.subject = $3 AND a.normalized = x.normalized)`,
 					[]any{s.tenant, l.Anonymous.String(), l.Account.String()}},

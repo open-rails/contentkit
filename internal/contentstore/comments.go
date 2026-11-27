@@ -12,7 +12,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/open-rails/contentkit/access"
 	content "github.com/open-rails/contentkit/content"
@@ -550,8 +549,8 @@ func (c *comments) attachMine(ctx context.Context, actor access.Actor, list []co
 	if len(list) == 0 {
 		return nil
 	}
-	userID, ip, ok := reactionKey(actor)
-	if !ok {
+	who := c.rt.reactor(ctx, actor)
+	if !who.ok() {
 		return nil
 	}
 	ids := make([]string, len(list))
@@ -559,8 +558,8 @@ func (c *comments) attachMine(ctx context.Context, actor access.Actor, list []co
 		ids[i] = list[i].ID
 	}
 	rows, err := c.s.pool.Query(ctx, `SELECT content_id, value FROM `+c.s.t.reactions+`
-		WHERE tenant_id = $1 AND content_kind = $2 AND content_version_id IS NULL AND content_id = ANY($3) AND `+actorPred(userID, 4),
-		c.s.tenant, content.KindComment, ids, actorArg(userID, ip))
+		WHERE tenant_id = $1 AND content_kind = $2 AND content_version_id IS NULL AND content_id = ANY($3) AND `+who.pred(4),
+		c.s.tenant, content.KindComment, ids, who.arg())
 	if err != nil {
 		return err
 	}
@@ -792,7 +791,7 @@ func (c *comments) loadComment(ctx context.Context, cid string) (writeTarget, er
 // counter on the comment row in the same tx. Its owning content must be visible
 // and open to the actor; the comment must still be published and not deleted
 // when its row is locked.
-func (c *comments) reactTx(ctx context.Context, actor access.Actor, cid string, value int16, anon uuid.UUID) (content.ReactionCounts, error) {
+func (c *comments) reactTx(ctx context.Context, actor access.Actor, who reactor, cid string, value int16) (content.ReactionCounts, error) {
 	if !uuidRe.MatchString(cid) {
 		return content.ReactionCounts{}, ErrNotFound
 	}
@@ -803,6 +802,9 @@ func (c *comments) reactTx(ctx context.Context, actor access.Actor, cid string, 
 	if _, res, err := c.rt.resolveTarget(ctx, ref, actor, false); err != nil || res.Comments == content.CommentsHidden {
 		return content.ReactionCounts{}, cmp.Or(err, ErrNotFound)
 	} else if err := c.rt.commentsLocked(ref, res); err != nil {
+		return content.ReactionCounts{}, err
+	}
+	if err := c.rt.limitBallot(ctx, actor, who, c.rt.Ref(content.KindComment, strings.ToLower(cid)).Key()); err != nil {
 		return content.ReactionCounts{}, err
 	}
 	tx, err := c.s.beginMutation(ctx)
@@ -827,7 +829,7 @@ func (c *comments) reactTx(ctx context.Context, actor access.Actor, cid string, 
 		return content.ReactionCounts{}, ErrNotFound
 	}
 	key := c.rt.Ref(content.KindComment, cid).Key()
-	dLikes, dDislikes, err := c.rt.reactions.applyTx(ctx, tx, actor, key, value, anon)
+	dLikes, dDislikes, err := c.rt.reactions.applyTx(ctx, tx, who, key, value)
 	if err != nil {
 		return content.ReactionCounts{}, err
 	}
@@ -853,7 +855,7 @@ func (c *comments) reactTx(ctx context.Context, actor access.Actor, cid string, 
 	if err := tx.Commit(ctx); err != nil {
 		return content.ReactionCounts{}, err
 	}
-	return c.rt.reactions.counts(ctx, c.s.pool, actor, key, true)
+	return c.rt.reactions.counts(ctx, c.s.pool, who, key, true)
 }
 
 func commentRoutes() []httpapi.Route[*comments] {
@@ -1079,7 +1081,11 @@ func (c *comments) handleDelete(w http.ResponseWriter, req *http.Request) {
 func (c *comments) handleReact(value int16) http.HandlerFunc {
 	return func(w http.ResponseWriter, req *http.Request) {
 		actor := c.rt.actor(req.Context())
+		who := c.rt.reactor(req.Context(), actor)
 		err := participant(actor, c.rt.anonymous.Reactions)
+		if err == nil && !who.ok() {
+			err = errNoReactor
+		}
 		if err == nil {
 			err = c.rt.limit(req.Context(), content.ActionCommentReaction, actor)
 		}
@@ -1087,7 +1093,7 @@ func (c *comments) handleReact(value int16) http.HandlerFunc {
 			writeErr(w, err)
 			return
 		}
-		cnt, err := c.reactTx(req.Context(), actor, req.PathValue("cid"), value, c.rt.anonymousSubject(req, actor))
+		cnt, err := c.reactTx(req.Context(), actor, who, req.PathValue("cid"), value)
 		if err != nil {
 			writeErr(w, err)
 			return

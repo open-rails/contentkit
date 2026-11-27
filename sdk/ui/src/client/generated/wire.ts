@@ -881,7 +881,7 @@ export interface ErrorReply {
   error: string;
   code: ErrorCode;
   retry_after?: number;
-  action?: "comment" | "comment_reaction" | "favorite" | "poll_vote" | "reaction";
+  action?: "anonymous_reaction" | "comment" | "comment_reaction" | "favorite" | "poll_vote" | "reaction";
   ban?: BanNotice;
   blobs?: string[];
   details?: ErrorDetails;
@@ -1728,7 +1728,7 @@ export interface ReactionFeedback {
 export interface ReactionRecord {
   target: TargetRef;
   user_id?: string;
-  ip?: string;
+  anonymous_key?: string;
   value: number;
   created_at?: string;
   updated_at?: string;
